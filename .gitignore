@@ -1,0 +1,16 @@
+# Dependencies and generated frontend output
+customer/frontend/node_modules/
+customer/frontend/dist/
+
+# Local environment and secrets
+customer/backend/.env
+customer/frontend/.env
+customer/frontend/.env.*
+!customer/frontend/.env.example
+
+# IDE and operating-system files
+.vscode/
+.idea/
+*.log
+Thumbs.db
+.DS_Store
