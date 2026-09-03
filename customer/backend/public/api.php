@@ -131,10 +131,33 @@ if ($action === 'me') {
     respond(array('user' => $user ? publicUser($user) : null));
 }
 
-if ($action === 'logout') {
-    $_SESSION = array();
-    session_destroy();
-    respond(array('message' => 'Đã đăng xuất.'));
+if ($action === 'movies') {
+    $statusFilter = isset($_GET['status']) ? $_GET['status'] : '';
+    $sql = 'SELECT id, title, description, duration_minutes, age_rating, format, poster_url, trailer_url, status, release_date FROM movies';
+    if ($statusFilter !== '') {
+        $cleanStatus = mysqli_real_escape_string($connection, $statusFilter);
+        $sql .= " WHERE status = '{$cleanStatus}'";
+    }
+    $sql .= ' ORDER BY id ASC';
+    $result = $connection->query($sql);
+    $movies = array();
+    if ($result) {
+        while ($row = $result->fetch_assoc()) {
+            $movies[] = array(
+                'id' => (int) $row['id'],
+                'title' => $row['title'],
+                'description' => $row['description'],
+                'durationMinutes' => (int) $row['duration_minutes'],
+                'ageRating' => $row['age_rating'],
+                'format' => $row['format'],
+                'posterUrl' => $row['poster_url'],
+                'trailerUrl' => $row['trailer_url'],
+                'status' => $row['status'],
+                'releaseDate' => $row['release_date'],
+            );
+        }
+    }
+    respond(array('movies' => $movies));
 }
 
 if ($_SERVER['REQUEST_METHOD'] !== 'POST') {

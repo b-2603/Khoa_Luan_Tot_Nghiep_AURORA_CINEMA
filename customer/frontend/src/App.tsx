@@ -48,16 +48,37 @@ function ratingBg(r: string) {
 
 /* ─── COMPONENT ─────────────────────────────────────────────── */
 export default function App() {
-  const [activeTab, setActiveTab] = useState(1);
+  const [activeTab, setActiveTab] = useState(0);
+  const [movieTab, setMovieTab] = useState<'NOW_SHOWING' | 'COMING_SOON' | 'SPECIAL_SHOWING'>('NOW_SHOWING');
   const [chatMsg, setChatMsg] = useState('');
   const [authMode, setAuthMode] = useState<'login' | 'register' | null>(null);
   const [authUser, setAuthUser] = useState<{ fullName: string; email: string } | null>(null);
+  const [moviesList, setMoviesList] = useState<any[]>([]);
 
   useEffect(() => {
     fetch(`${API_URL}?action=me`, { credentials: 'include' })
       .then(response => response.json())
       .then(result => setAuthUser(result.user))
       .catch(() => setAuthUser(null));
+
+    // Lấy dữ liệu phim trực tiếp từ MySQL Database aurora_db
+    fetch(`${API_URL}?action=movies`)
+      .then(response => response.json())
+      .then(result => {
+        if (result && result.movies && result.movies.length > 0) {
+          setMoviesList(result.movies.map((m: any) => ({
+            id: m.id,
+            title: m.title,
+            rating: m.ageRating || 'T13',
+            format: m.format || '2D Digital',
+            poster: m.posterUrl,
+            duration: m.durationMinutes,
+            status: m.status || 'NOW_SHOWING',
+            releaseDate: m.releaseDate
+          })));
+        }
+      })
+      .catch(() => {});
   }, []);
 
   async function handleLogout() {
@@ -317,42 +338,218 @@ export default function App() {
                   </div>
                 </div>
 
-                {/* Movie Tabs */}
-                <div style={{ background: '#fff', borderRadius: 14, padding: '16px 20px', boxShadow: '0 2px 8px rgba(0,0,0,.06)' }}>
-                  <div style={{ display: 'flex', borderBottom: '2px solid #eef0f4', marginBottom: 16 }}>
-                    {['Phim sắp chiếu', 'Phim đang chiếu', 'Suất chiếu đặc biệt'].map((tab, i) => (
-                      <button key={tab} onClick={() => setActiveTab(i)} style={{ padding: '8px 16px', background: 'none', border: 'none', borderBottom: activeTab === i ? '2px solid #f4c04a' : '2px solid transparent', marginBottom: -2, fontSize: 12.5, fontWeight: activeTab === i ? 800 : 600, color: activeTab === i ? '#0d1b2e' : '#6b7f94', cursor: 'pointer', whiteSpace: 'nowrap' }}>
-                        {tab}
-                      </button>
-                    ))}
-                  </div>
-                  <div style={{ position: 'relative' }}>
-                    <button style={{ position: 'absolute', left: -14, top: '42%', transform: 'translateY(-50%)', width: 27, height: 27, borderRadius: '50%', background: '#fff', border: '1px solid #d5dee9', display: 'flex', alignItems: 'center', justifyContent: 'center', cursor: 'pointer', zIndex: 2, boxShadow: '0 2px 6px rgba(0,0,0,.08)' }}>
-                      <ChevronLeft size={15} />
-                    </button>
-                    <button style={{ position: 'absolute', right: -14, top: '42%', transform: 'translateY(-50%)', width: 27, height: 27, borderRadius: '50%', background: '#fff', border: '1px solid #d5dee9', display: 'flex', alignItems: 'center', justifyContent: 'center', cursor: 'pointer', zIndex: 2, boxShadow: '0 2px 6px rgba(0,0,0,.08)' }}>
-                      <ChevronRight size={15} />
-                    </button>
-                    <div style={{ display: 'grid', gridTemplateColumns: 'repeat(5,1fr)', gap: 10 }}>
-                      {MOVIES.map(m => (
-                        <div key={m.title} style={{ borderRadius: 12, overflow: 'hidden', border: '1px solid #eef0f4', background: '#f8fafc' }}>
-                          <div style={{ position: 'relative', background: 'linear-gradient(160deg,#d0d7e4 0%,#b8c2d4 100%)', height: 130, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
-                            <Film size={32} color="#8a97aa" />
-                            <div style={{ position: 'absolute', top: 6, left: 6, background: ratingBg(m.rating), color: '#fff', fontSize: 9, fontWeight: 800, padding: '2px 5px', borderRadius: 4 }}>{m.rating}</div>
-                            <div style={{ position: 'absolute', top: 0, right: 0, background: '#e74c3c', color: '#fff', fontSize: 9, fontWeight: 800, padding: '3px 6px', borderRadius: '0 10px 0 8px' }}>HOT</div>
-                          </div>
-                          <div style={{ padding: '7px 8px 0' }}>
-                            <div style={{ fontSize: 10.5, fontWeight: 700, color: '#1a2332', lineHeight: 1.3, height: 28, overflow: 'hidden' }}>{m.title}</div>
-                            <div style={{ height: 7, background: '#e2e8f0', borderRadius: 99, margin: '5px 0 3px', width: '80%' }} />
-                            <div style={{ height: 5, background: '#e2e8f0', borderRadius: 99, width: '55%' }} />
-                          </div>
-                          <button style={{ margin: '7px 7px 7px', width: 'calc(100% - 14px)', padding: '7px 0', background: '#0d1b2e', border: 'none', borderRadius: 7, color: '#f4c04a', fontWeight: 800, fontSize: 11, cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 4 }}>
-                            <Ticket size={11} />MUA VÉ
+                {/* Movie Tabs & Vertical Grid */}
+                <div style={{ background: '#fff', borderRadius: 14, padding: '18px 20px', boxShadow: '0 2px 8px rgba(0,0,0,.06)' }}>
+                  {/* Tabs header với 3 mục rõ ràng */}
+                  <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', borderBottom: '2px solid #eef0f4', marginBottom: 20, flexWrap: 'wrap', gap: 10 }}>
+                    <div style={{ display: 'flex', gap: 6 }}>
+                      {[
+                        { key: 'NOW_SHOWING', label: 'Phim đang chiếu' },
+                        { key: 'COMING_SOON', label: 'Phim sắp chiếu' },
+                        { key: 'SPECIAL_SHOWING', label: 'Suất chiếu đặc biệt' },
+                      ].map((item) => {
+                        const count = moviesList.filter((m: any) => m.status === item.key).length;
+                        const isSelected = movieTab === item.key;
+                        return (
+                          <button
+                            key={item.key}
+                            onClick={() => setMovieTab(item.key as any)}
+                            style={{
+                              padding: '10px 18px',
+                              background: isSelected ? '#0d1b2e' : '#f8fafc',
+                              border: isSelected ? '1px solid #0d1b2e' : '1px solid #e2e8f0',
+                              borderRadius: '8px 8px 0 0',
+                              marginBottom: -2,
+                              fontSize: 13,
+                              fontWeight: isSelected ? 800 : 600,
+                              color: isSelected ? '#f4c04a' : '#475569',
+                              cursor: 'pointer',
+                              display: 'flex',
+                              alignItems: 'center',
+                              gap: 7,
+                              transition: 'all 0.2s ease',
+                              boxShadow: isSelected ? '0 -2px 6px rgba(0,0,0,0.06)' : 'none'
+                            }}
+                          >
+                            <span>{item.label}</span>
+                            <span style={{
+                              fontSize: 11,
+                              fontWeight: 800,
+                              background: isSelected ? '#f4c04a' : '#e2e8f0',
+                              color: isSelected ? '#0d1b2e' : '#64748b',
+                              padding: '1px 6px',
+                              borderRadius: 99
+                            }}>
+                              {count}
+                            </span>
                           </button>
-                        </div>
-                      ))}
+                        );
+                      })}
+                    </div>
+
+                    <div style={{ fontSize: 12, color: '#64748b', fontStyle: 'italic' }}>
+                      {movieTab === 'NOW_SHOWING' && '⚡ Các suất chiếu đang diễn ra trong ngày'}
+                      {movieTab === 'COMING_SOON' && '🎬 Đặt vé sớm nhận ưu đãi combo độc quyền'}
+                      {movieTab === 'SPECIAL_SHOWING' && '⭐ Suất chiếu sneak show & fan screening đặc biệt'}
                     </div>
                   </div>
+
+                  {/* Danh sách phim dạng Grid dài xuống dưới - KHÔNG CÓ MŨI TÊN LƯỚT */}
+                  {(() => {
+                    const filteredMovies = moviesList.filter((m: any) => m.status === movieTab);
+                    const displayList = filteredMovies.length > 0 ? filteredMovies : moviesList.filter((m: any) => m.status === 'NOW_SHOWING');
+
+                    return (
+                      <div style={{
+                        display: 'grid',
+                        gridTemplateColumns: 'repeat(auto-fill, minmax(180px, 1fr))',
+                        gap: 16,
+                      }}>
+                        {displayList.map((m: any) => {
+                          const isSpecial = m.status === 'SPECIAL_SHOWING';
+                          const isComing = m.status === 'COMING_SOON';
+
+                          return (
+                            <div
+                              key={m.id || m.title}
+                              style={{
+                                borderRadius: 12,
+                                overflow: 'hidden',
+                                border: isSpecial ? '1.5px solid #f4c04a' : '1px solid #eef0f4',
+                                background: '#fff',
+                                display: 'flex',
+                                flexDirection: 'column',
+                                boxShadow: '0 3px 10px rgba(0,0,0,0.04)',
+                                transition: 'transform 0.2s ease, box-shadow 0.2s ease',
+                              }}
+                            >
+                              {/* Poster phim */}
+                              <div style={{
+                                position: 'relative',
+                                background: m.poster ? `url(${m.poster}) center/cover no-repeat` : 'linear-gradient(160deg,#1e293b 0%,#0f172a 100%)',
+                                height: 210,
+                                display: 'flex',
+                                alignItems: 'center',
+                                justifyContent: 'center'
+                              }}>
+                                {!m.poster && <Film size={36} color="#94a3b8" />}
+                                
+                                {/* Badge độ tuổi */}
+                                <div style={{
+                                  position: 'absolute',
+                                  top: 8,
+                                  left: 8,
+                                  background: ratingBg(m.rating),
+                                  color: '#fff',
+                                  fontSize: 10,
+                                  fontWeight: 900,
+                                  padding: '2px 7px',
+                                  borderRadius: 5,
+                                  boxShadow: '0 2px 5px rgba(0,0,0,0.2)'
+                                }}>
+                                  {m.rating}
+                                </div>
+
+                                {/* Badge loại danh mục */}
+                                <div style={{
+                                  position: 'absolute',
+                                  top: 0,
+                                  right: 0,
+                                  background: isSpecial ? '#d97706' : (isComing ? '#2563eb' : '#dc2626'),
+                                  color: '#fff',
+                                  fontSize: 9.5,
+                                  fontWeight: 800,
+                                  padding: '4px 8px',
+                                  borderRadius: '0 10px 0 8px',
+                                  letterSpacing: '0.04em'
+                                }}>
+                                  {isSpecial ? 'ĐẶC BIỆT' : (isComing ? 'SẮP CHIẾU' : 'ĐANG CHIẾU')}
+                                </div>
+
+                                {/* Định dạng chiếu */}
+                                {m.format && (
+                                  <div style={{
+                                    position: 'absolute',
+                                    bottom: 8,
+                                    left: 8,
+                                    background: 'rgba(13, 27, 46, 0.88)',
+                                    color: '#f4c04a',
+                                    fontSize: 9,
+                                    fontWeight: 700,
+                                    padding: '2px 7px',
+                                    borderRadius: 4,
+                                    backdropFilter: 'blur(4px)'
+                                  }}>
+                                    {m.format}
+                                  </div>
+                                )}
+                              </div>
+
+                              {/* Thông tin phim */}
+                              <div style={{ padding: '10px 10px 0', flex: 1, display: 'flex', flexDirection: 'column' }}>
+                                <div
+                                  style={{
+                                    fontSize: 12.5,
+                                    fontWeight: 700,
+                                    color: '#0f172a',
+                                    lineHeight: 1.35,
+                                    minHeight: 34,
+                                    overflow: 'hidden',
+                                    display: '-webkit-box',
+                                    WebkitLineClamp: 2,
+                                    WebkitBoxOrient: 'vertical'
+                                  }}
+                                  title={m.title}
+                                >
+                                  {m.title}
+                                </div>
+
+                                <div style={{
+                                  fontSize: 10.5,
+                                  color: '#64748b',
+                                  marginTop: 6,
+                                  display: 'flex',
+                                  alignItems: 'center',
+                                  gap: 5
+                                }}>
+                                  <span>⏱ {m.duration ? `${m.duration} phút` : 'Đang cập nhật'}</span>
+                                </div>
+
+                                {m.releaseDate && (
+                                  <div style={{ fontSize: 9.5, color: '#94a3b8', marginTop: 3 }}>
+                                    Khởi chiếu: {m.releaseDate}
+                                  </div>
+                                )}
+                              </div>
+
+                              {/* Nút hành động */}
+                              <button
+                                style={{
+                                  margin: '10px',
+                                  padding: '8px 0',
+                                  background: isSpecial ? '#d97706' : '#0d1b2e',
+                                  border: 'none',
+                                  borderRadius: 8,
+                                  color: isSpecial ? '#fff' : '#f4c04a',
+                                  fontWeight: 800,
+                                  fontSize: 11.5,
+                                  cursor: 'pointer',
+                                  display: 'flex',
+                                  alignItems: 'center',
+                                  justifyContent: 'center',
+                                  gap: 5,
+                                  boxShadow: '0 2px 6px rgba(0,0,0,0.1)'
+                                }}
+                              >
+                                <Ticket size={13} />
+                                <span>{isSpecial ? 'VÉ ĐẶC BIỆT' : (isComing ? 'ĐẶT TRƯỚC' : 'MUA VÉ')}</span>
+                              </button>
+                            </div>
+                          );
+                        })}
+                      </div>
+                    );
+                  })()}
                 </div>
               </div>
 

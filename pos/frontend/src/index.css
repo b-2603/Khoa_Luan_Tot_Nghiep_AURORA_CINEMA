@@ -1,12 +1,24 @@
 :root {
-  --bg: #f1f1f1;
-  --card-bg: #f7f7f7;
-  --border: #d5d5d5;
-  --text: #1e293b;
-  --muted: #6b7280;
-  --primary: #0d6efd;
-  --primary-dark: #0a5ed7;
-  --input-bg: #f8fafc;
+  --bg: #eef3f2;
+  --card-bg: #ffffff;
+  --border: #d8e1df;
+  --text: #19333a;
+  --muted: #6a7b7d;
+  --primary: #e0a12b;
+  --primary-dark: #c78312;
+  --input-bg: #f7faf9;
+
+  /* POS Dashboard System Colors */
+  --pos-bg: #eaeded;
+  --pos-card-bg: #ffffff;
+  --pos-border: #d5d9dd;
+  --pos-text: #222222;
+  --pos-label: #333333;
+  --pos-blue: #0284c7;
+  --pos-blue-hover: #0369a1;
+  --pos-warning: #eab308;
+  --pos-danger: #dc2626;
+  --pos-danger-hover: #b91c1c;
 }
 
 * {
@@ -16,7 +28,7 @@
 html, body, #root {
   margin: 0;
   min-height: 100%;
-  font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+  font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif;
   background: var(--bg);
   color: var(--text);
 }
@@ -29,54 +41,90 @@ button, input {
   font: inherit;
 }
 
+/* ========================================================
+   1. MÀN HÌNH ĐĂNG NHẬP POS (Login Page)
+   ======================================================== */
 .pos-page {
   min-height: 100vh;
   display: flex;
   align-items: center;
   justify-content: center;
-  background: var(--bg);
+  background: linear-gradient(135deg, #e9f1ef 0%, #f6f4ed 100%);
   padding: 24px;
 }
 
 .pos-card {
-  width: min(100%, 520px);
-  background: rgba(255, 255, 255, 0.55);
+  width: min(100%, 480px);
+  background: var(--card-bg);
   border: 1px solid var(--border);
-  border-radius: 12px;
-  box-shadow: 0 2px 8px rgba(15, 23, 42, 0.04);
-  padding: 32px 26px 22px;
+  border-radius: 16px;
+  box-shadow: 0 20px 55px rgba(25, 51, 58, 0.12);
+  padding: 38px 42px 24px;
+  position: relative;
+  overflow: hidden;
+}
+
+.pos-card::before {
+  content: '';
+  position: absolute;
+  inset: 0 0 auto;
+  height: 5px;
+  background: var(--primary);
 }
 
 .brand {
   margin: 0;
   text-align: center;
-  color: #0a5ba9;
-  font-size: clamp(2rem, 2.3vw, 2.4rem);
+  color: var(--text);
+  font-size: 1.7rem;
   font-weight: 700;
-  letter-spacing: 0.02em;
+  letter-spacing: 0.08em;
 }
 
 .title {
-  margin: 38px 0 10px;
+  margin: 34px 0 8px;
   text-align: center;
-  font-size: clamp(2.1rem, 3vw, 3rem);
+  font-size: clamp(1.8rem, 3vw, 2.35rem);
   line-height: 1.2;
-  color: #0f172a;
+  color: var(--text);
   font-weight: 700;
 }
 
 .subtitle {
   margin: 0;
   text-align: center;
-  color: #4b5563;
-  font-size: 1.05rem;
-  font-weight: 500;
+  color: var(--muted);
+  font-size: 0.98rem;
+  line-height: 1.5;
 }
 
 .divider {
   height: 1px;
-  background: rgba(148, 163, 184, 0.7);
-  margin: 22px 0 18px;
+  background: var(--border);
+  margin: 25px 0 18px;
+}
+
+.pos-login-error {
+  background: #fef2f2;
+  border: 1px solid #fecaca;
+  color: #b91c1c;
+  padding: 10px 14px;
+  border-radius: 8px;
+  font-size: 0.88rem;
+  margin-bottom: 15px;
+  text-align: center;
+}
+
+.pos-login-success {
+  background: #ecfdf5;
+  border: 1px solid #a7f3d0;
+  color: #065f46;
+  padding: 10px 14px;
+  border-radius: 8px;
+  font-size: 0.88rem;
+  margin-bottom: 15px;
+  text-align: center;
+  font-weight: 600;
 }
 
 .login-form {
@@ -85,10 +133,10 @@ button, input {
 }
 
 .field-label {
-  margin: 10px 0 10px;
+  margin: 12px 0 8px;
   font-weight: 700;
-  font-size: 1.05rem;
-  color: #1f2937;
+  font-size: 0.9rem;
+  color: var(--text);
 }
 
 .input-wrap {
@@ -97,15 +145,16 @@ button, input {
   width: 100%;
   background: var(--input-bg);
   border: 1px solid var(--border);
-  border-radius: 8px;
+  border-radius: 10px;
   padding: 0 14px;
-  min-height: 58px;
-  transition: border-color 0.2s ease, box-shadow 0.2s ease;
+  min-height: 54px;
+  transition: border-color 0.2s ease, box-shadow 0.2s ease, background 0.2s ease;
 }
 
 .input-wrap:focus-within {
-  border-color: rgba(13, 110, 253, 0.8);
-  box-shadow: 0 0 0 3px rgba(13, 110, 253, 0.12);
+  background: #ffffff;
+  border-color: var(--primary);
+  box-shadow: 0 0 0 3px rgba(224, 161, 43, 0.16);
 }
 
 .icon {
@@ -113,7 +162,7 @@ button, input {
   align-items: center;
   justify-content: center;
   width: 24px;
-  color: #7a7a7a;
+  color: #809294;
   margin-right: 10px;
 }
 
@@ -123,50 +172,501 @@ button, input {
   background: transparent;
   outline: none;
   color: var(--text);
-  font-size: 1.04rem;
+  font-size: 0.98rem;
   min-width: 0;
 }
 
 .input-wrap input::placeholder {
-  color: #8b9097;
+  color: #91a0a0;
 }
 
 .login-button {
-  margin-top: 22px;
+  margin-top: 24px;
   border: none;
-  border-radius: 8px;
+  border-radius: 10px;
   background: linear-gradient(180deg, var(--primary) 0%, var(--primary-dark) 100%);
   color: #fff;
   font-weight: 700;
-  font-size: 1.05rem;
-  min-height: 56px;
+  font-size: 0.98rem;
+  letter-spacing: 0.06em;
+  min-height: 54px;
   cursor: pointer;
   transition: transform 0.15s ease, box-shadow 0.15s ease;
-  box-shadow: 0 6px 14px rgba(13, 110, 253, 0.22);
+  box-shadow: 0 8px 18px rgba(199, 131, 18, 0.22);
 }
 
 .login-button:hover {
   transform: translateY(-1px);
+  box-shadow: 0 10px 22px rgba(199, 131, 18, 0.3);
+}
+
+.login-button:active {
+  transform: translateY(0);
 }
 
 .footer {
   text-align: center;
-  margin-top: 28px;
-  color: #6b7280;
-  font-size: 0.94rem;
+  margin-top: 26px;
+  color: var(--muted);
+  font-size: 0.78rem;
+}
+
+/* ========================================================
+   2. MÀN HÌNH DASHBOARD PHIÊN LÀM VIỆC (SHIFT DASHBOARD)
+   (Chuẩn xác theo hình ảnh người dùng cung cấp)
+   ======================================================== */
+.pos-dashboard-wrap {
+  min-height: 100vh;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background-color: var(--pos-bg);
+  padding: 20px;
+  position: relative;
+}
+
+.pos-dashboard-card {
+  width: min(100%, 650px);
+  background: var(--pos-card-bg);
+  border: 1px solid var(--pos-border);
+  box-shadow: 0 1px 4px rgba(0, 0, 0, 0.06);
+  padding: 40px 50px 30px;
+  box-sizing: border-box;
+}
+
+.pos-cinema-title {
+  margin: 0 0 35px 0;
+  text-align: center;
+  font-size: 1.35rem;
+  font-weight: 800;
+  color: #1a1a1a;
+  letter-spacing: 0.05em;
+  text-transform: uppercase;
+}
+
+.pos-info-list {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+  margin-bottom: 35px;
+}
+
+.pos-info-row {
+  display: flex;
+  align-items: center;
+  font-size: 1rem;
+  line-height: 1.5;
+}
+
+.pos-info-label {
+  width: 175px;
+  flex-shrink: 0;
+  color: var(--pos-label);
   font-weight: 500;
 }
 
+.pos-info-value {
+  flex: 1;
+  color: var(--pos-text);
+}
+
+.pos-info-value.font-bold {
+  font-weight: 700;
+  color: #111111;
+}
+
+/* Badges */
+.pos-badge {
+  display: inline-block;
+  padding: 4px 12px;
+  border-radius: 3px;
+  font-size: 0.88rem;
+  font-weight: 700;
+  color: #ffffff;
+  user-select: none;
+}
+
+.pos-badge-warning {
+  background-color: #eab308;
+  cursor: pointer;
+  transition: opacity 0.15s ease;
+}
+
+.pos-badge-warning:hover {
+  opacity: 0.9;
+}
+
+.pos-badge-success {
+  background-color: #10b981;
+  cursor: pointer;
+}
+
+.pos-badge-primary {
+  background-color: #0369a1;
+  letter-spacing: 0.04em;
+  font-variant-numeric: tabular-nums;
+}
+
+/* Actions Row (3 nút căn phải) */
+.pos-actions-row {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 10px;
+  margin-top: 30px;
+  padding-top: 10px;
+}
+
+.pos-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 7px;
+  padding: 8px 18px;
+  font-size: 0.92rem;
+  font-weight: 600;
+  border-radius: 4px;
+  border: 1px solid transparent;
+  cursor: pointer;
+  transition: background-color 0.15s ease, border-color 0.15s ease, transform 0.1s ease;
+}
+
+.pos-btn:active {
+  transform: translateY(1px);
+}
+
+.pos-btn-primary {
+  background-color: #0284c7;
+  color: #ffffff;
+  border-color: #0284c7;
+}
+
+.pos-btn-primary:hover {
+  background-color: #0369a1;
+  border-color: #0369a1;
+}
+
+.pos-btn-secondary {
+  background-color: #ffffff;
+  color: #374151;
+  border-color: #d1d5db;
+}
+
+.pos-btn-secondary:hover {
+  background-color: #f3f4f6;
+}
+
+.pos-btn-warning {
+  background-color: #f59e0b;
+  color: #ffffff;
+  border-color: #f59e0b;
+}
+
+.pos-btn-warning:hover {
+  background-color: #d97706;
+  border-color: #d97706;
+}
+
+.pos-btn-danger {
+  background-color: #dc2626;
+  color: #ffffff;
+  border-color: #dc2626;
+}
+
+.pos-btn-danger:hover {
+  background-color: #b91c1c;
+  border-color: #b91c1c;
+}
+
+/* Modal Popup xác nhận đóng ca */
+.pos-modal-overlay {
+  position: fixed;
+  inset: 0;
+  background-color: rgba(0, 0, 0, 0.5);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 16px;
+  z-index: 999;
+  animation: fadeIn 0.2s ease-out;
+}
+
+.pos-modal-card {
+  width: min(100%, 460px);
+  background: #ffffff;
+  border-radius: 8px;
+  box-shadow: 0 10px 30px rgba(0, 0, 0, 0.2);
+  overflow: hidden;
+  animation: scaleUp 0.25s ease-out;
+}
+
+.pos-modal-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 16px 20px;
+  border-bottom: 1px solid #e5e7eb;
+}
+
+.pos-modal-title {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  font-weight: 700;
+  font-size: 1.05rem;
+  color: #111827;
+}
+
+.pos-modal-close-btn {
+  background: transparent;
+  border: none;
+  cursor: pointer;
+  color: #6b7280;
+  padding: 4px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 4px;
+}
+
+.pos-modal-close-btn:hover {
+  background: #f3f4f6;
+  color: #111827;
+}
+
+.pos-modal-body {
+  padding: 20px;
+}
+
+.pos-modal-desc {
+  margin: 0 0 16px;
+  color: #374151;
+  font-size: 0.95rem;
+  line-height: 1.5;
+}
+
+.pos-modal-summary {
+  background: #f9fafb;
+  border: 1px solid #e5e7eb;
+  border-radius: 6px;
+  padding: 14px 16px;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.pos-summary-row {
+  display: flex;
+  justify-content: space-between;
+  font-size: 0.92rem;
+  color: #4b5563;
+}
+
+.pos-summary-row strong {
+  color: #111827;
+}
+
+.pos-modal-footer {
+  display: flex;
+  justify-content: flex-end;
+  gap: 10px;
+  padding: 14px 20px;
+  background: #f9fafb;
+  border-top: 1px solid #e5e7eb;
+}
+
+@keyframes fadeIn {
+  from { opacity: 0; }
+  to { opacity: 1; }
+}
+
+@keyframes scaleUp {
+  from { opacity: 0; transform: scale(0.96); }
+  to { opacity: 1; transform: scale(1); }
+}
+
+.spin-icon {
+  animation: spin 0.8s linear infinite;
+}
+
+@keyframes spin {
+  from {
+    transform: rotate(0deg);
+  }
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+/* Toast Message */
+.pos-toast {
+  position: absolute;
+  top: 24px;
+  background-color: #10b981;
+  color: #ffffff;
+  padding: 10px 20px;
+  border-radius: 6px;
+  font-weight: 600;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  box-shadow: 0 4px 15px rgba(0, 0, 0, 0.15);
+  animation: slideDown 0.3s ease-out;
+  z-index: 100;
+}
+
+@keyframes slideDown {
+  from {
+    opacity: 0;
+    transform: translateY(-12px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+/* ========================================================
+   3. MÀN HÌNH BÁN HÀNG (Sales Screen)
+   ======================================================== */
+.pos-sales-layout {
+  min-height: 100vh;
+  display: flex;
+  flex-direction: column;
+  background-color: #f8fafc;
+}
+
+.pos-sales-header {
+  background-color: #ffffff;
+  border-bottom: 1px solid #e2e8f0;
+  padding: 12px 24px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+
+.pos-sales-header-left {
+  display: flex;
+  align-items: center;
+  gap: 16px;
+}
+
+.btn-sm {
+  padding: 6px 12px;
+  font-size: 0.85rem;
+}
+
+.pos-sales-branch {
+  font-weight: 700;
+  color: #1e293b;
+  font-size: 1.05rem;
+}
+
+.pos-sales-user {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-weight: 600;
+  color: #475569;
+  background: #f1f5f9;
+  padding: 6px 14px;
+  border-radius: 20px;
+}
+
+.pos-sales-body {
+  flex: 1;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 30px;
+}
+
+.pos-sales-welcome {
+  max-width: 600px;
+  width: 100%;
+}
+
+.pos-sales-card {
+  background: #ffffff;
+  border: 1px solid #e2e8f0;
+  border-radius: 12px;
+  padding: 36px;
+  text-align: center;
+  box-shadow: 0 4px 20px rgba(0, 0, 0, 0.05);
+}
+
+.pos-sales-card h3 {
+  margin: 0 0 10px;
+  color: #0f172a;
+  font-size: 1.3rem;
+}
+
+.pos-sales-card p {
+  color: #64748b;
+  margin-bottom: 30px;
+}
+
+.pos-quick-actions {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 16px;
+}
+
+.pos-quick-btn {
+  background: #f8fafc;
+  border: 1px solid #cbd5e1;
+  border-radius: 8px;
+  padding: 20px 12px;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 10px;
+  cursor: pointer;
+  color: #1e293b;
+  font-weight: 600;
+  transition: all 0.2s ease;
+}
+
+.pos-quick-btn:hover {
+  background: #0284c7;
+  border-color: #0284c7;
+  color: #ffffff;
+  transform: translateY(-2px);
+}
+
+/* ========================================================
+   Responsive Breakpoints
+   ======================================================== */
 @media (max-width: 560px) {
   .pos-card {
-    padding: 22px 18px 18px;
+    padding: 32px 20px 20px;
   }
 
-  .title {
-    font-size: 2.2rem;
+  .pos-dashboard-card {
+    padding: 24px 20px;
   }
 
-  .subtitle {
-    font-size: 0.95rem;
+  .pos-info-row {
+    flex-direction: column;
+    align-items: flex-start;
+    gap: 4px;
+  }
+
+  .pos-info-label {
+    width: 100%;
+    font-size: 0.9rem;
+  }
+
+  .pos-actions-row {
+    flex-direction: column;
+    width: 100%;
+  }
+
+  .pos-btn {
+    width: 100%;
+  }
+
+  .pos-quick-actions {
+    grid-template-columns: 1fr;
   }
 }

@@ -1,0 +1,13 @@
+{
+  "name": "aurora-cinema-root",
+  "version": "1.0.0",
+  "private": true,
+  "scripts": {
+    "dev": "start-all.bat",
+    "start": "start-all.bat",
+    "dev:customer": "cd customer/frontend && npm run dev -- --port 3000",
+    "dev:pos": "cd pos/frontend && npm run dev -- --port 5174",
+    "dev:tms": "cd tms/frontend && npm run dev -- --port 5175",
+    "dev:ems": "cd ems/frontend && npm run dev -- --port 5176"
+  }
+}

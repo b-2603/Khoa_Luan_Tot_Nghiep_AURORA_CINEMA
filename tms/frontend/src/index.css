@@ -1,11 +1,662 @@
-* { box-sizing: border-box; }
-html, body, #root {
+* {
+  box-sizing: border-box;
   margin: 0;
-  min-height: 100%;
-  font-family: 'Segoe UI', sans-serif;
-  background: #ecfeff;
-  color: #0f172a;
+  padding: 0;
 }
-body {
+
+html, body, #root {
+  min-height: 100%;
+  font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+  background-color: #f8fafc;
+  color: #1e293b;
+}
+
+/* ========================================================
+   1. BỐ CỤC CHÍNH SPLIT-SCREEN
+   ======================================================== */
+.tms-page-container {
   min-height: 100vh;
+  position: relative;
+  display: flex;
+  background-color: #f8fafc;
+}
+
+/* Nút chọn ngôn ngữ góc trên phải */
+.tms-language-picker {
+  position: absolute;
+  top: 24px;
+  right: 32px;
+  z-index: 50;
+}
+
+.tms-lang-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  background: #ffffff;
+  border: 1px solid #e2e8f0;
+  border-radius: 9999px;
+  padding: 8px 16px;
+  font-size: 0.88rem;
+  font-weight: 500;
+  color: #334155;
+  cursor: pointer;
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.04);
+  transition: all 0.2s ease;
+}
+
+.tms-lang-btn:hover {
+  background: #f8fafc;
+  border-color: #cbd5e1;
+}
+
+.tms-lang-dropdown {
+  position: absolute;
+  top: 100%;
+  right: 0;
+  margin-top: 8px;
+  background: #ffffff;
+  border: 1px solid #e2e8f0;
+  border-radius: 12px;
+  box-shadow: 0 10px 25px rgba(0, 0, 0, 0.08);
+  min-width: 140px;
+  overflow: hidden;
+  animation: fadeIn 0.15s ease-out;
+}
+
+.tms-lang-item {
+  padding: 10px 14px;
+  font-size: 0.88rem;
+  color: #334155;
+  cursor: pointer;
+  transition: background 0.15s ease;
+}
+
+.tms-lang-item:hover, .tms-lang-item.active {
+  background: #f1f5f9;
+  font-weight: 600;
+}
+
+/* Khung chia 2 cột */
+.tms-split-layout {
+  display: flex;
+  width: 100%;
+  min-height: 100vh;
+}
+
+/* ========================================================
+   2. CỘT TRÁI: HERO BANNER & BRANDING
+   ======================================================== */
+.tms-hero-panel {
+  width: 42%;
+  min-width: 440px;
+  position: relative;
+  background-color: #080f1e;
+  background-image: url('/cinema-bg.jpg');
+  background-size: cover;
+  background-position: center bottom;
+  display: flex;
+  flex-direction: column;
+  justify-content: space-between;
+  padding: 50px 48px 40px;
+  overflow: hidden;
+}
+
+/* Lớp phủ Spotlight & Gradient bóng tối rạp chiếu */
+.tms-hero-overlay {
+  position: absolute;
+  inset: 0;
+  background: 
+    radial-gradient(circle at 25% 10%, rgba(229, 169, 60, 0.18) 0%, transparent 45%),
+    radial-gradient(circle at 75% 10%, rgba(229, 169, 60, 0.18) 0%, transparent 45%),
+    linear-gradient(180deg, 
+      rgba(8, 15, 30, 0.95) 0%, 
+      rgba(8, 15, 30, 0.75) 30%, 
+      rgba(8, 15, 30, 0.55) 55%, 
+      rgba(5, 10, 22, 0.94) 85%, 
+      rgba(4, 8, 18, 0.98) 100%
+    );
+  pointer-events: none;
+}
+
+.tms-hero-content {
+  position: relative;
+  z-index: 10;
+  display: flex;
+  flex-direction: column;
+  justify-content: space-between;
+  height: 100%;
+}
+
+/* Header thương hiệu */
+.tms-brand-header {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  text-align: center;
+  padding-top: 10px;
+}
+
+.tms-logo-symbol {
+  margin-bottom: 12px;
+  filter: drop-shadow(0 4px 12px rgba(229, 169, 60, 0.35));
+}
+
+.tms-brand-name {
+  font-family: 'Inter', -apple-system, BlinkMacSystemFont, sans-serif;
+  font-size: 2.3rem;
+  font-weight: 900;
+  letter-spacing: 0.08em;
+  color: #ffffff;
+  margin: 0;
+  line-height: 1.1;
+  text-shadow: 0 2px 14px rgba(240, 181, 45, 0.45);
+}
+
+.tms-brand-sub {
+  font-family: 'Inter', -apple-system, BlinkMacSystemFont, sans-serif;
+  font-size: 0.88rem;
+  font-weight: 700;
+  letter-spacing: 0.44em;
+  color: #94a3b8;
+  margin-top: 6px;
+  margin-bottom: 22px;
+}
+
+/* Dải kẻ ngang TMS */
+.tms-system-divider {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 14px;
+  width: 220px;
+  margin-bottom: 8px;
+}
+
+.tms-div-line {
+  flex: 1;
+  height: 1px;
+  background: linear-gradient(90deg, transparent, #b87b1c, transparent);
+}
+
+.tms-system-tag {
+  font-size: 1.15rem;
+  font-weight: 800;
+  color: #ffffff;
+  letter-spacing: 0.08em;
+}
+
+.tms-system-fullname {
+  font-size: 0.72rem;
+  font-weight: 500;
+  letter-spacing: 0.18em;
+  color: #94a3b8;
+  margin-bottom: 6px;
+}
+
+.tms-star-icon {
+  color: #e5a93c;
+  font-size: 0.9rem;
+}
+
+/* Danh sách 3 tính năng cột trái */
+.tms-feature-list {
+  display: flex;
+  flex-direction: column;
+  gap: 18px;
+  margin-top: auto;
+  padding-top: 40px;
+}
+
+.tms-feature-item {
+  display: flex;
+  align-items: center;
+  gap: 16px;
+}
+
+.tms-feat-icon-box {
+  width: 44px;
+  height: 44px;
+  border-radius: 10px;
+  background: rgba(229, 169, 60, 0.08);
+  border: 1px solid rgba(229, 169, 60, 0.35);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+}
+
+.gold-icon {
+  color: #e5a93c;
+}
+
+.tms-feat-text {
+  display: flex;
+  flex-direction: column;
+}
+
+.tms-feat-title {
+  color: #ffffff;
+  font-size: 0.96rem;
+  font-weight: 600;
+  line-height: 1.3;
+}
+
+.tms-feat-desc {
+  color: #94a3b8;
+  font-size: 0.82rem;
+  line-height: 1.3;
+  margin-top: 2px;
+}
+
+/* ========================================================
+   3. CỘT PHẢI: FORM ĐĂNG NHẬP
+   ======================================================== */
+.tms-form-panel {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  padding: 40px 24px;
+  position: relative;
+  background-color: #f8fafc;
+}
+
+.tms-form-container {
+  width: min(100%, 450px);
+  background: #ffffff;
+  border-radius: 20px;
+  border: 1px solid #f1f5f9;
+  box-shadow: 0 12px 35px rgba(15, 23, 42, 0.05);
+  padding: 40px 38px 36px;
+  display: flex;
+  flex-direction: column;
+}
+
+/* Huy hiệu tròn Clapperboard */
+.tms-form-badge {
+  display: flex;
+  justify-content: center;
+  margin-bottom: 20px;
+}
+
+.tms-badge-circle {
+  width: 66px;
+  height: 66px;
+  border-radius: 50%;
+  background: #091a32;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  box-shadow: 0 8px 22px rgba(9, 26, 50, 0.28);
+}
+
+.tms-login-title {
+  text-align: center;
+  font-size: 1.45rem;
+  font-weight: 700;
+  color: #0f172a;
+  margin: 0;
+  letter-spacing: -0.01em;
+}
+
+.tms-login-subtitle {
+  text-align: center;
+  font-size: 0.88rem;
+  color: #64748b;
+  margin: 6px 0 24px;
+}
+
+.tms-alert-error {
+  background: #fef2f2;
+  border: 1px solid #fecaca;
+  color: #b91c1c;
+  padding: 10px 14px;
+  border-radius: 8px;
+  font-size: 0.86rem;
+  margin-bottom: 16px;
+  text-align: center;
+}
+
+.tms-auth-form {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+}
+
+/* Input wrap */
+.tms-input-field {
+  display: flex;
+  align-items: center;
+  background: #ffffff;
+  border: 1px solid #e2e8f0;
+  border-radius: 10px;
+  height: 48px;
+  padding: 0 14px;
+  transition: all 0.2s ease;
+}
+
+.tms-input-field:focus-within {
+  border-color: #091b36;
+  box-shadow: 0 0 0 3px rgba(9, 27, 54, 0.1);
+}
+
+.tms-input-icon {
+  color: #94a3b8;
+  display: flex;
+  align-items: center;
+  margin-right: 12px;
+}
+
+.tms-input-field input {
+  flex: 1;
+  border: none;
+  background: transparent;
+  outline: none;
+  font-size: 0.94rem;
+  color: #1e293b;
+  min-width: 0;
+}
+
+.tms-input-field input::placeholder {
+  color: #94a3b8;
+}
+
+.tms-toggle-pwd {
+  background: transparent;
+  border: none;
+  color: #94a3b8;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  padding: 4px;
+  transition: color 0.15s ease;
+}
+
+.tms-toggle-pwd:hover {
+  color: #475569;
+}
+
+/* Form options */
+.tms-form-options {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-top: 2px;
+  font-size: 0.88rem;
+}
+
+.tms-checkbox-label {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  color: #475569;
+  cursor: pointer;
+  user-select: none;
+}
+
+.tms-checkbox-label input[type="checkbox"] {
+  width: 16px;
+  height: 16px;
+  border-radius: 4px;
+  accent-color: #091b36;
+  cursor: pointer;
+}
+
+.tms-forgot-link {
+  color: #2563eb;
+  text-decoration: none;
+  font-weight: 500;
+  transition: color 0.15s ease;
+}
+
+.tms-forgot-link:hover {
+  color: #1d4ed8;
+  text-decoration: underline;
+}
+
+/* Submit Button */
+.tms-submit-btn {
+  background: #091b36;
+  color: #ffffff;
+  border: none;
+  border-radius: 10px;
+  height: 48px;
+  font-size: 0.94rem;
+  font-weight: 700;
+  letter-spacing: 0.05em;
+  cursor: pointer;
+  box-shadow: 0 4px 14px rgba(9, 27, 54, 0.22);
+  transition: all 0.15s ease;
+  margin-top: 6px;
+}
+
+.tms-submit-btn:hover {
+  background: #0d274f;
+  transform: translateY(-1px);
+  box-shadow: 0 6px 18px rgba(9, 27, 54, 0.3);
+}
+
+.tms-submit-btn:active {
+  transform: translateY(0);
+}
+
+.tms-submit-btn:disabled {
+  opacity: 0.7;
+  cursor: not-allowed;
+}
+
+/* Phân cách hoặc */
+.tms-or-divider {
+  display: flex;
+  align-items: center;
+  text-align: center;
+  margin: 20px 0;
+  color: #94a3b8;
+  font-size: 0.84rem;
+}
+
+.tms-or-divider::before,
+.tms-or-divider::after {
+  content: '';
+  flex: 1;
+  border-bottom: 1px solid #e2e8f0;
+}
+
+.tms-or-divider span {
+  padding: 0 14px;
+}
+
+/* SSO Button */
+.tms-sso-btn {
+  background: #ffffff;
+  border: 1px solid #e2e8f0;
+  border-radius: 10px;
+  height: 48px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 10px;
+  font-size: 0.9rem;
+  font-weight: 600;
+  color: #1e293b;
+  cursor: pointer;
+  transition: all 0.2s ease;
+}
+
+.tms-sso-btn:hover {
+  background: #f8fafc;
+  border-color: #cbd5e1;
+}
+
+/* Footer Copyright */
+.tms-footer {
+  margin-top: 32px;
+  font-size: 0.82rem;
+  color: #94a3b8;
+  text-align: center;
+}
+
+/* ========================================================
+   4. DASHBOARD VIEW (Sau khi đăng nhập)
+   ======================================================== */
+.tms-dashboard-view {
+  min-height: 100vh;
+  display: flex;
+  flex-direction: column;
+  background-color: #f1f5f9;
+}
+
+.tms-topbar {
+  background: #091a32;
+  color: #ffffff;
+  padding: 16px 32px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  box-shadow: 0 2px 10px rgba(0, 0, 0, 0.1);
+}
+
+.tms-topbar-brand {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  font-weight: 700;
+  letter-spacing: 0.05em;
+  font-size: 1.05rem;
+}
+
+.tms-topbar-user {
+  display: flex;
+  align-items: center;
+  gap: 20px;
+  font-size: 0.92rem;
+}
+
+.tms-btn-logout {
+  background: rgba(255, 255, 255, 0.1);
+  border: 1px solid rgba(255, 255, 255, 0.2);
+  color: #ffffff;
+  padding: 6px 14px;
+  border-radius: 6px;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 0.86rem;
+  transition: background 0.15s ease;
+}
+
+.tms-btn-logout:hover {
+  background: #ef4444;
+  border-color: #ef4444;
+}
+
+.tms-dashboard-body {
+  flex: 1;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 40px 20px;
+}
+
+.tms-welcome-box {
+  background: #ffffff;
+  border-radius: 16px;
+  padding: 40px;
+  max-width: 650px;
+  width: 100%;
+  text-align: center;
+  box-shadow: 0 10px 35px rgba(0, 0, 0, 0.05);
+}
+
+.tms-welcome-box h2 {
+  margin: 16px 0 8px;
+  color: #0f172a;
+  font-size: 1.4rem;
+}
+
+.tms-welcome-box p {
+  color: #64748b;
+  margin-bottom: 30px;
+}
+
+.tms-stats-grid {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 16px;
+  margin-bottom: 30px;
+}
+
+.tms-stat-card {
+  background: #f8fafc;
+  border: 1px solid #e2e8f0;
+  border-radius: 12px;
+  padding: 20px 14px;
+  text-align: left;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.tms-stat-card h4 {
+  margin: 0 0 4px;
+  color: #0f172a;
+  font-size: 0.94rem;
+}
+
+.tms-stat-card p {
+  margin: 0;
+  color: #64748b;
+  font-size: 0.8rem;
+}
+
+.tms-btn-action {
+  background: #091b36;
+  color: #ffffff;
+  border: none;
+  padding: 10px 24px;
+  border-radius: 8px;
+  font-weight: 600;
+  cursor: pointer;
+}
+
+/* ========================================================
+   Responsive Breakpoints
+   ======================================================== */
+@media (max-width: 980px) {
+  .tms-split-layout {
+    flex-direction: column;
+  }
+
+  .tms-hero-panel {
+    width: 100%;
+    min-width: unset;
+    min-height: 480px;
+  }
+
+  .tms-language-picker {
+    top: 16px;
+    right: 16px;
+  }
+}
+
+@media (max-width: 540px) {
+  .tms-hero-panel {
+    padding: 30px 20px;
+  }
+
+  .tms-form-container {
+    padding: 30px 20px;
+  }
+
+  .tms-stats-grid {
+    grid-template-columns: 1fr;
+  }
+}
+
+@keyframes fadeIn {
+  from { opacity: 0; transform: translateY(-4px); }
+  to { opacity: 1; transform: translateY(0); }
 }
