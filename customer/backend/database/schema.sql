@@ -87,11 +87,13 @@ CREATE TABLE IF NOT EXISTS bookings (
 CREATE TABLE IF NOT EXISTS booking_seats (
   id BIGINT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
   booking_id BIGINT UNSIGNED NOT NULL,
+  showtime_id BIGINT UNSIGNED NOT NULL,
   seat_id BIGINT UNSIGNED NOT NULL,
   price DECIMAL(10,2) NOT NULL DEFAULT 0,
   FOREIGN KEY (booking_id) REFERENCES bookings(id) ON DELETE CASCADE,
+  FOREIGN KEY (showtime_id) REFERENCES showtimes(id) ON DELETE CASCADE,
   FOREIGN KEY (seat_id) REFERENCES seats(id),
-  UNIQUE KEY unique_booked_seat (booking_id, seat_id)
+  UNIQUE KEY unique_booked_seat (showtime_id, seat_id)
 ) ENGINE=InnoDB;
 
 CREATE TABLE IF NOT EXISTS promotions (

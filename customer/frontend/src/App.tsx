@@ -5,8 +5,11 @@ import {
   CreditCard, Percent, Phone, Check, Clock3, Sparkles, Facebook, Instagram, Youtube
 } from 'lucide-react';
 import AuthModal from './components/customer/AuthModal';
+import MovieDetailPage from './components/customer/MovieDetailPage';
+import BookingModal from './components/customer/BookingModal';
+import TrailerModal from './components/customer/TrailerModal';
 
-const API_URL = 'http://localhost/AURORA%20CINEMA/customer/backend/public/api';
+const API_URL = 'http://localhost/AURORA%20CINEMA/customer/backend/public/api.php';
 
 /* ─── DATA ──────────────────────────────────────────────────── */
 
@@ -56,25 +59,35 @@ export default function App() {
   const [moviesList, setMoviesList] = useState<any[]>([]);
   const [theatersList, setTheatersList] = useState<any[]>([]);
   const [selectedTheater, setSelectedTheater] = useState<string>('Aurora Q1');
+  const [selectedTheaterId, setSelectedTheaterId] = useState<number | null>(null);
+  const [showtimesList, setShowtimesList] = useState<any[]>([]);
+  const [detailMovie, setDetailMovie] = useState<any | null>(null);
+  const [booking, setBooking] = useState<{ movie: any; showtime: any } | null>(null);
+  const [trailerMovie, setTrailerMovie] = useState<any | null>(null);
+  const scheduleDate = '2026-09-04';
   const [showTheaterMenu, setShowTheaterMenu] = useState<boolean>(false);
 
   useEffect(() => {
-    fetch(`${API_URL}/me`, { credentials: 'include' })
+    fetch(`${API_URL}?action=me`, { credentials: 'include' })
       .then(response => response.json())
       .then(result => setAuthUser(result.user))
       .catch(() => setAuthUser(null));
 
     // Lấy dữ liệu phim trực tiếp từ MySQL Database aurora_db
-    fetch(`${API_URL}/movies`)
+    fetch(`${API_URL}?action=movies`)
       .then(response => response.json())
       .then(result => {
         if (result && result.movies && result.movies.length > 0) {
           setMoviesList(result.movies.map((m: any) => ({
             id: m.id,
             title: m.title,
+            description: m.description,
             rating: m.ageRating || 'T13',
+            ageRating: m.ageRating,
             format: m.format || '2D Digital',
             poster: m.posterUrl,
+            posterUrl: m.posterUrl,
+            trailerUrl: m.trailerUrl,
             duration: m.durationMinutes,
             status: m.status || 'NOW_SHOWING',
             releaseDate: m.releaseDate
@@ -84,18 +97,29 @@ export default function App() {
       .catch(() => {});
 
     // Lấy dữ liệu cụm rạp trực tiếp từ MySQL Database aurora_db
-    fetch(`${API_URL}/theaters`)
+    fetch(`${API_URL}?action=theaters`)
       .then(response => response.json())
       .then(result => {
         if (result && result.theaters && result.theaters.length > 0) {
           setTheatersList(result.theaters);
+          const current = result.theaters.find((t: any) => t.name === selectedTheater) || result.theaters[0];
+          setSelectedTheater(current.name);
+          setSelectedTheaterId(current.id);
         }
       })
       .catch(() => {});
   }, []);
 
+  useEffect(() => {
+    if (selectedTheaterId === null) return;
+    fetch(`${API_URL}?action=showtimes&theater_id=${selectedTheaterId}&date=${scheduleDate}`)
+      .then(response => response.json())
+      .then(result => setShowtimesList(result && result.showtimes ? result.showtimes : []))
+      .catch(() => setShowtimesList([]));
+  }, [selectedTheaterId]);
+
   async function handleLogout() {
-    await fetch(`${API_URL}/logout`, { method: 'POST', credentials: 'include' });
+    await fetch(`${API_URL}?action=logout`, { method: 'POST', credentials: 'include' });
     setAuthUser(null);
   }
 
@@ -237,6 +261,7 @@ export default function App() {
                       key={t.id}
                       onClick={() => {
                         setSelectedTheater(t.name);
+                        setSelectedTheaterId(t.id);
                         setShowTheaterMenu(false);
                       }}
                       style={{
@@ -272,7 +297,7 @@ export default function App() {
             {NAV.map((item, i) => (
               <button
                 key={item}
-                onClick={i === 0 ? () => setAuthMode(null) : undefined}
+                onClick={i === 0 ? () => { setAuthMode(null); setDetailMovie(null); } : undefined}
                 style={{
                   fontSize: 11.5,
                   fontWeight: 700,
@@ -318,6 +343,22 @@ export default function App() {
         />
       ) : (
         <>
+          {detailMovie ? (
+            <MovieDetailPage
+              movie={detailMovie}
+              theaters={theatersList}
+              theater={selectedTheater}
+              showtimes={showtimesList.filter((showtime: any) => showtime.movie_id === detailMovie.id)}
+              date={scheduleDate}
+              onBack={() => setDetailMovie(null)}
+              onBook={(showtime, theaterName) => {
+                setSelectedTheater(theaterName);
+                setSelectedTheaterId(showtime.theater_id);
+                setBooking({ movie: detailMovie, showtime });
+              }}
+            />
+          ) : (
+            <>
           <main style={{ maxWidth: 1320, margin: '0 auto', padding: '14px 16px 20px' }}>
             <div style={{ display: 'grid', gridTemplateColumns: '230px 1fr 280px', gap: 14 }}>
 
@@ -421,7 +462,7 @@ export default function App() {
                         action: () => setShowTheaterMenu(prev => !prev)
                       },
                       { label: 'Chọn phim', val: 'Tất cả phim', icon: <Film size={13} color="#6b7f94" />, action: undefined },
-                      { label: 'Chọn ngày', val: 'Hôm nay, 29/05/2025', icon: null, action: undefined },
+                      { label: 'Chọn ngày', val: 'Hôm nay, 04/09/2026', icon: null, action: undefined },
                     ].map(f => (
                       <div key={f.label}>
                         <label style={{ display: 'block', fontSize: 10.5, fontWeight: 700, color: '#6b7f94', marginBottom: 5, textTransform: 'uppercase' }}>{f.label}</label>
@@ -497,8 +538,15 @@ export default function App() {
 
                   {/* Danh sách phim dạng Grid dài xuống dưới - KHÔNG CÓ MŨI TÊN LƯỚT */}
                   {(() => {
-                    const filteredMovies = moviesList.filter((m: any) => m.status === movieTab);
-                    const displayList = filteredMovies.length > 0 ? filteredMovies : moviesList.filter((m: any) => m.status === 'NOW_SHOWING');
+                    const theaterMovieIds = new Set(showtimesList.map((showtime: any) => showtime.movie_id));
+                    // Keep the movie catalogue visible while a theater has no schedule yet.
+                    const theaterMovies = showtimesList.length > 0
+                      ? moviesList.filter((m: any) => theaterMovieIds.has(m.id))
+                      : moviesList.filter((m: any) => m.status === 'NOW_SHOWING');
+                    const filteredMovies = theaterMovies.filter((m: any) => m.status === movieTab);
+                    const displayList = filteredMovies.length > 0
+                      ? filteredMovies
+                      : (movieTab === 'NOW_SHOWING' ? theaterMovies.filter((m: any) => m.status === 'NOW_SHOWING') : []);
 
                     return (
                       <div style={{
@@ -531,8 +579,9 @@ export default function App() {
                                 height: 210,
                                 display: 'flex',
                                 alignItems: 'center',
-                                justifyContent: 'center'
-                              }}>
+                                justifyContent: 'center',
+                                cursor: 'pointer'
+                              }} onClick={() => setTrailerMovie(m)} role="button" tabIndex={0} onKeyDown={event => { if (event.key === 'Enter' || event.key === ' ') setTrailerMovie(m); }}>
                                 {!m.poster && <Film size={36} color="#94a3b8" />}
                                 
                                 {/* Badge độ tuổi */}
@@ -589,6 +638,7 @@ export default function App() {
                               {/* Thông tin phim */}
                               <div style={{ padding: '10px 10px 0', flex: 1, display: 'flex', flexDirection: 'column' }}>
                                 <div
+                                  onClick={() => setDetailMovie(m)}
                                   style={{
                                     fontSize: 12.5,
                                     fontWeight: 700,
@@ -599,6 +649,7 @@ export default function App() {
                                     display: '-webkit-box',
                                     WebkitLineClamp: 2,
                                     WebkitBoxOrient: 'vertical'
+                                    ,cursor: 'pointer'
                                   }}
                                   title={m.title}
                                 >
@@ -621,12 +672,37 @@ export default function App() {
                                     Khởi chiếu: {m.releaseDate}
                                   </div>
                                 )}
+
+                                <div style={{ marginTop: 8 }}>
+                                  <div style={{ fontSize: 9.5, color: '#64748b', fontWeight: 800, textTransform: 'uppercase', marginBottom: 5 }}>
+                                    Suất chiếu tại {selectedTheater}
+                                  </div>
+                                  <div style={{ display: 'flex', flexWrap: 'wrap', gap: 4 }}>
+                                    {showtimesList.filter((showtime: any) => showtime.movie_id === m.id).map((showtime: any) => (
+                                      <span key={showtime.id} style={{ background: '#fff8e8', border: '1px solid #f4c04a', color: '#9a6700', borderRadius: 5, padding: '3px 5px', fontSize: 10, fontWeight: 800 }}>
+                                        {new Date(showtime.starts_at.replace(' ', 'T')).toLocaleTimeString('vi-VN', { hour: '2-digit', minute: '2-digit' })}
+                                      </span>
+                                    ))}
+                                    {showtimesList.filter((showtime: any) => showtime.movie_id === m.id).length === 0 && (
+                                      <span style={{ fontSize: 10, color: '#94a3b8' }}>Chưa có suất hôm nay</span>
+                                    )}
+                                  </div>
+                                </div>
                               </div>
 
                               {/* Nút hành động */}
+                              <div style={{ display: 'flex', gap: 6, margin: '10px' }}>
                               <button
+                                onClick={() => {
+                                  const firstShowtime = showtimesList.find((showtime: any) => showtime.movie_id === m.id);
+                                  if (firstShowtime) setBooking({ movie: m, showtime: firstShowtime });
+                                  else setDetailMovie(m);
+                                }}
                                 style={{
+                                  flex: 1,
                                   margin: '10px',
+                                  marginLeft: 0,
+                                  marginRight: 0,
                                   padding: '8px 0',
                                   background: isSpecial ? '#d97706' : '#0d1b2e',
                                   border: 'none',
@@ -645,6 +721,7 @@ export default function App() {
                                 <Ticket size={13} />
                                 <span>{isSpecial ? 'VÉ ĐẶC BIỆT' : (isComing ? 'ĐẶT TRƯỚC' : 'MUA VÉ')}</span>
                               </button>
+                              </div>
                             </div>
                           );
                         })}
@@ -731,6 +808,8 @@ export default function App() {
               ))}
             </div>
           </main>
+            </>
+          )}
 
           {/* FOOTER */}
           <footer style={{ background: '#071526', color: '#e2e8f0', marginTop: '24px', borderTop: '4px solid #f4c04a', padding: '36px 20px 20px' }}>
@@ -941,6 +1020,18 @@ export default function App() {
           </footer>
         </>
       )}
+      {booking && <BookingModal
+        movie={booking.movie}
+        theater={selectedTheater}
+        showtime={booking.showtime}
+        user={authUser}
+        onClose={() => setBooking(null)}
+        onRequireLogin={() => {
+          setBooking(null);
+          setAuthMode('login');
+        }}
+      />}
+      {trailerMovie && <TrailerModal movie={trailerMovie} onClose={() => setTrailerMovie(null)} />}
     </div>
   );
 }
