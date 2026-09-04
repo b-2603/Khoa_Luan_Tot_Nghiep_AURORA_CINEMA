@@ -19,7 +19,7 @@ type AuthModalProps = {
   onSwitchMode?: (mode: AuthMode) => void;
 };
 
-const API_URL = 'http://localhost/AURORA%20CINEMA/customer/backend/public/api.php';
+const API_URL = 'http://localhost/AURORA%20CINEMA/customer/backend/public/api';
 
 export default function AuthModal({
   mode: initialMode,
@@ -107,7 +107,7 @@ export default function AuthModal({
     setIsSubmitting(true);
     setError('');
     try {
-      const response = await fetch(`${API_URL}?action=${mode}`, {
+      const response = await fetch(`${API_URL}/${mode}`, {
         method: 'POST',
         credentials: 'include',
         headers: { 'Content-Type': 'application/json' },
@@ -134,13 +134,13 @@ export default function AuthModal({
     setIsSubmitting(true);
     setError('');
     try {
-      const response = await fetch(`${API_URL}?action=oauth_start&provider=${provider}`, { credentials: 'include' });
+      const response = await fetch(`${API_URL}/oauth/start?provider=${provider}`, { credentials: 'include' });
       const result = await response.json();
       if (!response.ok) {
         setError(result.message || 'Đăng nhập mạng xã hội chưa được cấu hình.');
         return;
       }
-      window.location.href = result.url;
+      setError(result.message || 'Đăng nhập mạng xã hội chưa được cấu hình.');
     } catch {
       setError('Không thể kết nối máy chủ xác thực.');
     } finally {

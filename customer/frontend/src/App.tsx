@@ -6,7 +6,7 @@ import {
 } from 'lucide-react';
 import AuthModal from './components/customer/AuthModal';
 
-const API_URL = 'http://localhost/AURORA%20CINEMA/customer/backend/public/api.php';
+const API_URL = 'http://localhost/AURORA%20CINEMA/customer/backend/public/api';
 
 /* ─── DATA ──────────────────────────────────────────────────── */
 
@@ -54,15 +54,18 @@ export default function App() {
   const [authMode, setAuthMode] = useState<'login' | 'register' | null>(null);
   const [authUser, setAuthUser] = useState<{ fullName: string; email: string } | null>(null);
   const [moviesList, setMoviesList] = useState<any[]>([]);
+  const [theatersList, setTheatersList] = useState<any[]>([]);
+  const [selectedTheater, setSelectedTheater] = useState<string>('Aurora Q1');
+  const [showTheaterMenu, setShowTheaterMenu] = useState<boolean>(false);
 
   useEffect(() => {
-    fetch(`${API_URL}?action=me`, { credentials: 'include' })
+    fetch(`${API_URL}/me`, { credentials: 'include' })
       .then(response => response.json())
       .then(result => setAuthUser(result.user))
       .catch(() => setAuthUser(null));
 
     // Lấy dữ liệu phim trực tiếp từ MySQL Database aurora_db
-    fetch(`${API_URL}?action=movies`)
+    fetch(`${API_URL}/movies`)
       .then(response => response.json())
       .then(result => {
         if (result && result.movies && result.movies.length > 0) {
@@ -79,10 +82,20 @@ export default function App() {
         }
       })
       .catch(() => {});
+
+    // Lấy dữ liệu cụm rạp trực tiếp từ MySQL Database aurora_db
+    fetch(`${API_URL}/theaters`)
+      .then(response => response.json())
+      .then(result => {
+        if (result && result.theaters && result.theaters.length > 0) {
+          setTheatersList(result.theaters);
+        }
+      })
+      .catch(() => {});
   }, []);
 
   async function handleLogout() {
-    await fetch(`${API_URL}?action=logout`, { credentials: 'include' });
+    await fetch(`${API_URL}/logout`, { method: 'POST', credentials: 'include' });
     setAuthUser(null);
   }
 
@@ -172,8 +185,88 @@ export default function App() {
               <div style={{ fontSize: 8.5, letterSpacing: 4, color: '#7a8fa6', fontWeight: 600 }}>CINEMA</div>
             </div>
           </div>
-          <div style={{ display: 'flex', alignItems: 'center', gap: 5, background: '#f3f6fa', border: '1px solid #d5dee9', borderRadius: 20, padding: '5px 12px', fontSize: 13, color: '#3d5166', cursor: 'pointer', flexShrink: 0 }}>
-            <MapPin size={13} color="#f4c04a" /><span>Aurora Q1</span><ChevronDown size={13} color="#7a8fa6" />
+          <div style={{ position: 'relative' }}>
+            <div
+              onClick={() => setShowTheaterMenu(!showTheaterMenu)}
+              style={{
+                display: 'flex',
+                alignItems: 'center',
+                gap: 6,
+                background: showTheaterMenu ? '#e5edf7' : '#f3f6fa',
+                border: '1px solid #d5dee9',
+                borderRadius: 20,
+                padding: '5px 12px',
+                fontSize: 13,
+                color: '#1a2332',
+                fontWeight: 700,
+                cursor: 'pointer',
+                flexShrink: 0,
+                userSelect: 'none',
+                transition: 'all 0.2s ease'
+              }}
+            >
+              <MapPin size={13} color="#f4c04a" />
+              <span>{selectedTheater}</span>
+              <ChevronDown size={13} color="#7a8fa6" style={{ transform: showTheaterMenu ? 'rotate(180deg)' : 'none', transition: 'transform 0.2s ease' }} />
+            </div>
+
+            {showTheaterMenu && (
+              <div
+                style={{
+                  position: 'absolute',
+                  top: 'calc(100% + 8px)',
+                  left: 0,
+                  background: '#fff',
+                  borderRadius: 12,
+                  boxShadow: '0 12px 36px rgba(0,0,0,0.18)',
+                  border: '1px solid #d5dee9',
+                  width: 330,
+                  zIndex: 100,
+                  overflow: 'hidden'
+                }}
+              >
+                <div style={{ padding: '10px 14px', background: '#0d1b2e', color: '#fff', fontSize: 12, fontWeight: 800, display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                  <span>HỆ THỐNG CỤM RẠP AURORA</span>
+                  <span style={{ fontSize: 10, background: '#f4c04a', color: '#0d1b2e', padding: '2px 7px', borderRadius: 4, fontWeight: 900 }}>
+                    {theatersList.length} CỤM RẠP
+                  </span>
+                </div>
+                <div style={{ maxHeight: 360, overflowY: 'auto' }}>
+                  {theatersList.map((t: any) => (
+                    <div
+                      key={t.id}
+                      onClick={() => {
+                        setSelectedTheater(t.name);
+                        setShowTheaterMenu(false);
+                      }}
+                      style={{
+                        padding: '11px 14px',
+                        borderBottom: '1px solid #f1f5f9',
+                        cursor: 'pointer',
+                        background: selectedTheater === t.name ? '#fff9e6' : '#fff',
+                        transition: 'background 0.15s ease'
+                      }}
+                    >
+                      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 3 }}>
+                        <div style={{ fontSize: 13, fontWeight: selectedTheater === t.name ? 900 : 700, color: selectedTheater === t.name ? '#b8860b' : '#0d1b2e', display: 'flex', alignItems: 'center', gap: 6 }}>
+                          <MapPin size={12} color={selectedTheater === t.name ? '#f4c04a' : '#94a3b8'} />
+                          {t.name}
+                        </div>
+                        <span style={{ fontSize: 10, padding: '1px 6px', borderRadius: 4, background: '#f1f5f9', color: '#475569', fontWeight: 600 }}>{t.city}</span>
+                      </div>
+                      <div style={{ fontSize: 11, color: '#64748b', lineHeight: 1.4, paddingLeft: 18 }}>
+                        {t.address}
+                      </div>
+                      {t.screens && t.screens.length > 0 && (
+                        <div style={{ fontSize: 10.5, color: '#0284c7', marginTop: 4, paddingLeft: 18, fontWeight: 600, display: 'flex', alignItems: 'center', gap: 4 }}>
+                          <Film size={10} /> {t.screens.length} phòng chiếu ({t.screens.map((s: any) => s.name.split(' - ')[1] || s.name).slice(0, 2).join(', ')}...)
+                        </div>
+                      )}
+                    </div>
+                  ))}
+                </div>
+              </div>
+            )}
           </div>
           <nav style={{ display: 'flex', alignItems: 'center', gap: 18, flex: 1, justifyContent: 'center' }}>
             {NAV.map((item, i) => (
@@ -321,14 +414,22 @@ export default function App() {
                   <h3 style={{ margin: '0 0 12px', fontSize: 14, fontWeight: 900, color: '#0d1b2e', textTransform: 'uppercase' }}>ĐẶT VÉ NHANH</h3>
                   <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr auto', gap: 10, alignItems: 'end' }}>
                     {[
-                      { label: 'Chọn rạp', val: 'Tất cả rạp', icon: <ChevronDown size={13} color="#6b7f94" /> },
-                      { label: 'Chọn phim', val: 'Tất cả phim', icon: <Film size={13} color="#6b7f94" /> },
-                      { label: 'Chọn ngày', val: 'Hôm nay, 29/05/2025', icon: null },
+                      { 
+                        label: 'Chọn rạp', 
+                        val: selectedTheater, 
+                        icon: <ChevronDown size={13} color="#6b7f94" />,
+                        action: () => setShowTheaterMenu(prev => !prev)
+                      },
+                      { label: 'Chọn phim', val: 'Tất cả phim', icon: <Film size={13} color="#6b7f94" />, action: undefined },
+                      { label: 'Chọn ngày', val: 'Hôm nay, 29/05/2025', icon: null, action: undefined },
                     ].map(f => (
                       <div key={f.label}>
                         <label style={{ display: 'block', fontSize: 10.5, fontWeight: 700, color: '#6b7f94', marginBottom: 5, textTransform: 'uppercase' }}>{f.label}</label>
-                        <div style={{ border: '1px solid #d5dee9', borderRadius: 8, padding: '8px 12px', background: '#f8fafc', display: 'flex', alignItems: 'center', justifyContent: 'space-between', cursor: 'pointer', fontSize: 12.5, color: '#1a2332' }}>
-                          <span>{f.val}</span>{f.icon}
+                        <div 
+                          onClick={f.action}
+                          style={{ border: '1px solid #d5dee9', borderRadius: 8, padding: '8px 12px', background: '#f8fafc', display: 'flex', alignItems: 'center', justifyContent: 'space-between', cursor: 'pointer', fontSize: 12.5, color: '#1a2332', fontWeight: f.action ? 700 : 500 }}
+                        >
+                          <span style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{f.val}</span>{f.icon}
                         </div>
                       </div>
                     ))}

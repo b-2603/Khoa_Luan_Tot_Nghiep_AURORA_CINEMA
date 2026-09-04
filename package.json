@@ -5,6 +5,7 @@
   "scripts": {
     "dev": "start-all.bat",
     "start": "start-all.bat",
+    "stop": "stop-all.bat",
     "dev:customer": "cd customer/frontend && npm run dev -- --port 3000",
     "dev:pos": "cd pos/frontend && npm run dev -- --port 5174",
     "dev:tms": "cd tms/frontend && npm run dev -- --port 5175",

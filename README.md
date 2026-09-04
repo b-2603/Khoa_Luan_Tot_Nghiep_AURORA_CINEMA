@@ -20,7 +20,32 @@ AURORA CINEMA/
 └─ README.md
 ```
 
-## Chạy từng module
+## 🚀 Khởi chạy toàn bộ hệ thống (Chỉ 1 lần)
+
+### Cách 1: Double-click chuột (Nhanh nhất)
+- Nhấn đúp chuột vào file **`start-all.bat`** tại thư mục gốc dự án.
+- Để tắt toàn bộ hệ thống cùng lúc, chỉ cần nhấn đúp chuột vào **`stop-all.bat`**.
+
+### Cách 2: Dùng lệnh Terminal / VS Code
+Tại thư mục gốc `AURORA CINEMA`:
+```bash
+npm start
+# hoặc
+npm run dev
+```
+Để dừng tất cả các cổng:
+```bash
+npm run stop
+```
+
+### Cách 3: Dùng PowerShell
+```powershell
+.\start-all.ps1
+```
+
+---
+
+## Chạy từng module riêng lẻ
 
 ### Customer frontend
 ```powershell

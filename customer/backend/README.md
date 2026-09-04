@@ -1,69 +1,42 @@
 # Customer Backend
 
-Backend scaffold for the customer system.
+Backend phục vụ phân hệ Khách hàng (Customer Web) của Aurora Cinema.
 
-Stack:
-- Laravel PHP
-- MySQL
+## Công nghệ & Môi trường
+- Laravel PHP 11, chạy trên Apache/WAMP
+- MySQL `aurora_db`
 
-Purpose:
-- Keep API code organized
-- Separate business logic from the React frontend
-- Make future development easier to scale and maintain
-
-## Suggested Structure
+## Cấu trúc thư mục
 
 ```text
 backend/
-├─ app/
-│  ├─ Http/
-│  │  ├─ Controllers/
-│  │  │  └─ Api/
-│  │  │     └─ V1/
-│  │  ├─ Middleware/
-│  │  ├─ Requests/
-│  │  └─ Resources/
-│  ├─ Models/
-│  └─ Services/
-├─ config/
 ├─ database/
-│  ├─ factories/
-│  ├─ migrations/
-│  └─ seeders/
-├─ public/
-├─ resources/
-│  └─ views/
-├─ routes/
-├─ storage/
-│  ├─ app/
-│  └─ framework/
-└─ tests/
+│  ├─ schema.sql          # Khởi tạo cấu trúc MySQL cho customer
+│  ├─ seed_movies.sql     # Dữ liệu phim mẫu cho aurora_db
+│  └─ seed_theaters.sql   # Dữ liệu rạp + phòng chiếu cho aurora_db
+├─ app/Http/Controllers/
+│  └─ CustomerController.php
+├─ routes/api.php         # API customer
+├─ public/index.php       # Laravel entrypoint
+└─ README.md
 ```
 
-## Conventions
+## Nguồn dữ liệu
+- Chỉ dùng MySQL `aurora_db`
+- Không ghi dữ liệu sang database khác
+- Không dùng script ghi dữ liệu ở `public/`
 
-- `app/Http/Controllers/Api/V1`: API controllers by version
-- `app/Http/Requests`: request validation classes
-- `app/Http/Resources`: API response transformers
-- `app/Services`: business logic
-- `app/Models`: Eloquent models
-- `database/migrations`: database schema changes
-- `database/seeders`: sample data
+## Cấu hình kết nối MySQL
+- Host: `127.0.0.1`
+- Port: `3306`
+- Database: `aurora_db`
+- Username: `root`
+- Password: `(để trống)`
 
-## MySQL
-
-Use `.env` values like:
-
-```env
-DB_CONNECTION=mysql
-DB_HOST=127.0.0.1
-DB_PORT=3306
-DB_DATABASE=aurora_db
-DB_USERNAME=root
-DB_PASSWORD=
-```
-
-## Current State
-
-This folder is a clean Laravel-ready scaffold.
-The real Laravel framework files can be added here when the project is initialized with Composer.
+## API đang dùng
+- `GET /public/api/me`
+- `GET /public/api/movies`
+- `GET /public/api/theaters`
+- `POST /public/api/logout`
+- `POST /public/api/register`
+- `POST /public/api/login`
