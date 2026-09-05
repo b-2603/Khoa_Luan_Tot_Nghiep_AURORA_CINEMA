@@ -209,7 +209,7 @@ export default function App() {
   return (
     <div className="pos-page">
       <div className="pos-card">
-        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 12, marginBottom: 20 }}>
+        <div className="shared-brand" style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 12, marginBottom: 20 }}>
           <div style={{
             width: 44,
             height: 44,

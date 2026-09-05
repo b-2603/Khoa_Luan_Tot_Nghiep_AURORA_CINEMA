@@ -9,3 +9,6 @@ html, body, #root {
 body {
   min-height: 100vh;
 }
+:root { --aurora-logo: url('/aurora-logo.svg'); }
+.shared-brand { min-height: 57px; background: var(--aurora-logo) center / 208px 57px no-repeat; }
+.shared-brand > * { visibility: hidden; }

@@ -129,7 +129,7 @@ export default function ShiftDashboard({
 
       <div className="pos-dashboard-card">
         {/* Logo & Tên Thương hiệu Aurora Cinema */}
-        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 12, marginBottom: 14 }}>
+        <div className="shared-brand" style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 12, marginBottom: 14 }}>
           <div style={{
             width: 40,
             height: 40,

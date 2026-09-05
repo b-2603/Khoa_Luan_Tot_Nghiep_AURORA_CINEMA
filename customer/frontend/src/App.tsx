@@ -200,14 +200,8 @@ export default function App() {
       {/* HEADER */}
       <header style={{ position: 'sticky', top: 0, zIndex: 40, background: '#fff', borderBottom: '1px solid #dde3ec', boxShadow: '0 2px 10px rgba(0,0,0,0.08)' }}>
         <div style={{ maxWidth: 1320, margin: '0 auto', padding: '0 16px', display: 'flex', alignItems: 'center', gap: 20, height: 64 }}>
-          <div onClick={() => setAuthMode(null)} style={{ display: 'flex', alignItems: 'center', gap: 10, flexShrink: 0, cursor: 'pointer' }}>
-            <div style={{ width: 38, height: 38, background: '#f4c04a', borderRadius: 10, display: 'flex', alignItems: 'center', justifyContent: 'center', boxShadow: '0 4px 12px rgba(244,192,74,0.4)' }}>
-              <Star size={20} fill="#0d1b2e" color="#0d1b2e" />
-            </div>
-            <div style={{ lineHeight: 1.1 }}>
-              <div style={{ fontSize: 17, fontWeight: 900, letterSpacing: 1, color: '#0d1b2e' }}>AURORA</div>
-              <div style={{ fontSize: 8.5, letterSpacing: 4, color: '#7a8fa6', fontWeight: 600 }}>CINEMA</div>
-            </div>
+          <div onClick={() => setAuthMode(null)} style={{ display: 'flex', alignItems: 'center', flexShrink: 0, cursor: 'pointer' }}>
+            <img src="/aurora-logo.svg" alt="Aurora Cinema" style={{ width: 176, height: 48, objectFit: 'contain' }} />
           </div>
           <div style={{ position: 'relative' }}>
             <div
@@ -837,7 +831,7 @@ export default function App() {
                       justifyContent: 'center'
                     }}
                   >
-                    <Star size={20} fill="#071526" color="#071526" />
+                    <img src="/aurora-logo.svg" alt="Aurora Cinema" style={{ width: 176, height: 48, objectFit: 'contain', filter: 'brightness(0) invert(1)' }} />
                   </div>
                   <div style={{ lineHeight: 1.1 }}>
                     <div style={{ fontSize: 17, fontWeight: 900, letterSpacing: 1.2, color: '#ffffff' }}>AURORA</div>

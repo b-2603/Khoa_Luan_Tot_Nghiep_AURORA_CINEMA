@@ -168,3 +168,84 @@ INSERT INTO `tms_revenue_logs` (`log_date`, `ticket_sales`, `concession_sales`, 
 VALUES
 (CURDATE(), 185600000.00, 52400000.00, 238000000.00, 1820, 84.50)
 ON DUPLICATE KEY UPDATE `total_revenue` = VALUES(`total_revenue`);
+
+-- 7. Danh mục giá vé, hàng hóa, khuyến mãi và vận hành giao dịch
+CREATE TABLE IF NOT EXISTS `tms_ticket_types` (
+  `id` BIGINT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
+  `name` VARCHAR(100) NOT NULL,
+  `code` VARCHAR(40) NOT NULL UNIQUE,
+  `price` DECIMAL(12,2) NOT NULL DEFAULT 0,
+  `description` VARCHAR(255) NULL,
+  `status` ENUM('active','inactive') NOT NULL DEFAULT 'active',
+  `created_at` TIMESTAMP NULL DEFAULT CURRENT_TIMESTAMP
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
+CREATE TABLE IF NOT EXISTS `tms_products` (
+  `id` BIGINT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
+  `name` VARCHAR(150) NOT NULL,
+  `sku` VARCHAR(50) NOT NULL UNIQUE,
+  `category` VARCHAR(80) NOT NULL DEFAULT 'Concession',
+  `price` DECIMAL(12,2) NOT NULL DEFAULT 0,
+  `stock_quantity` INT UNSIGNED NOT NULL DEFAULT 0,
+  `status` ENUM('active','inactive') NOT NULL DEFAULT 'active',
+  `created_at` TIMESTAMP NULL DEFAULT CURRENT_TIMESTAMP
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
+CREATE TABLE IF NOT EXISTS `tms_vouchers` (
+  `id` BIGINT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
+  `code` VARCHAR(40) NOT NULL UNIQUE,
+  `name` VARCHAR(150) NOT NULL,
+  `discount_type` ENUM('percent','amount') NOT NULL DEFAULT 'percent',
+  `discount_value` DECIMAL(12,2) NOT NULL DEFAULT 0,
+  `starts_at` DATETIME NOT NULL,
+  `ends_at` DATETIME NOT NULL,
+  `usage_limit` INT UNSIGNED NOT NULL DEFAULT 0,
+  `used_count` INT UNSIGNED NOT NULL DEFAULT 0,
+  `status` ENUM('active','inactive','expired') NOT NULL DEFAULT 'active',
+  `created_at` TIMESTAMP NULL DEFAULT CURRENT_TIMESTAMP
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
+CREATE TABLE IF NOT EXISTS `tms_customers` (
+  `id` BIGINT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
+  `full_name` VARCHAR(120) NOT NULL,
+  `phone` VARCHAR(20) NOT NULL UNIQUE,
+  `email` VARCHAR(180) NULL,
+  `membership_level` ENUM('standard','silver','gold','platinum') NOT NULL DEFAULT 'standard',
+  `points` INT UNSIGNED NOT NULL DEFAULT 0,
+  `created_at` TIMESTAMP NULL DEFAULT CURRENT_TIMESTAMP
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
+CREATE TABLE IF NOT EXISTS `tms_transactions` (
+  `id` BIGINT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
+  `transaction_code` VARCHAR(40) NOT NULL UNIQUE,
+  `customer_id` BIGINT UNSIGNED NULL,
+  `channel` ENUM('pos','website','ota') NOT NULL DEFAULT 'pos',
+  `amount` DECIMAL(12,2) NOT NULL DEFAULT 0,
+  `payment_method` VARCHAR(40) NOT NULL DEFAULT 'cash',
+  `status` ENUM('paid','pending','cancelled','refunded') NOT NULL DEFAULT 'paid',
+  `created_at` TIMESTAMP NULL DEFAULT CURRENT_TIMESTAMP,
+  FOREIGN KEY (`customer_id`) REFERENCES `tms_customers`(`id`) ON DELETE SET NULL
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
+CREATE TABLE IF NOT EXISTS `tms_refunds` (
+  `id` BIGINT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
+  `transaction_id` BIGINT UNSIGNED NOT NULL,
+  `reason` VARCHAR(255) NOT NULL,
+  `amount` DECIMAL(12,2) NOT NULL DEFAULT 0,
+  `status` ENUM('pending','approved','rejected','completed') NOT NULL DEFAULT 'pending',
+  `requested_by` BIGINT UNSIGNED NULL,
+  `processed_at` DATETIME NULL,
+  `created_at` TIMESTAMP NULL DEFAULT CURRENT_TIMESTAMP,
+  FOREIGN KEY (`transaction_id`) REFERENCES `tms_transactions`(`id`) ON DELETE CASCADE,
+  FOREIGN KEY (`requested_by`) REFERENCES `tms_users`(`id`) ON DELETE SET NULL
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
+CREATE TABLE IF NOT EXISTS `tms_seats` (
+  `id` BIGINT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
+  `screen_id` BIGINT UNSIGNED NOT NULL,
+  `seat_code` VARCHAR(10) NOT NULL,
+  `seat_type` ENUM('standard','vip','couple') NOT NULL DEFAULT 'standard',
+  `status` ENUM('available','maintenance','blocked') NOT NULL DEFAULT 'available',
+  FOREIGN KEY (`screen_id`) REFERENCES `tms_screens`(`id`) ON DELETE CASCADE,
+  UNIQUE KEY `unique_screen_seat` (`screen_id`, `seat_code`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;

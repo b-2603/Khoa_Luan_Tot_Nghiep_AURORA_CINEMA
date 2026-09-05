@@ -2,7 +2,7 @@ export default function App() {
   return (
     <div style={{ fontFamily: 'Segoe UI, sans-serif', minHeight: '100vh', background: '#f3f6fb', padding: 32 }}>
       <div style={{ maxWidth: 1200, margin: '0 auto' }}>
-        <div style={{ display: 'flex', alignItems: 'center', gap: 14, marginBottom: 20 }}>
+        <div className="shared-brand" style={{ display: 'flex', alignItems: 'center', gap: 14, marginBottom: 20 }}>
           <div style={{
             width: 44,
             height: 44,
