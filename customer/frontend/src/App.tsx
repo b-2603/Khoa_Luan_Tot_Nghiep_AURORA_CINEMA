@@ -72,6 +72,7 @@ export default function App() {
   const [showAccount, setShowAccount] = useState<boolean>(false);
   const [accountTab, setAccountTab] = useState('info');
   const [currentPage, setCurrentPage] = useState<'home' | 'schedule'>('home');
+  const [footerPage, setFooterPage] = useState<'faq' | 'booking-guide' | 'privacy' | 'terms' | null>(null);
 
   useEffect(() => {
     fetch(`${API_URL}?action=me`, { credentials: 'include' })
@@ -136,6 +137,16 @@ export default function App() {
     setShowTheaterMenu(false);
     setShowUserMenu(false);
     setCurrentPage('home');
+    setFooterPage(null);
+    window.scrollTo({ top: 0, behavior: 'smooth' });
+  }
+
+  function openFooterPage(page: 'faq' | 'booking-guide' | 'privacy' | 'terms') {
+    setAuthMode(null);
+    setShowAccount(false);
+    setDetailMovie(null);
+    setCurrentPage('home');
+    setFooterPage(page);
     window.scrollTo({ top: 0, behavior: 'smooth' });
   }
 
@@ -553,7 +564,9 @@ export default function App() {
       </header>
 
       {/* CONTENT: AUTH, ACCOUNT, OR HOMEPAGE */}
-      {authMode ? (
+      {footerPage ? (
+        <FooterInfoPage page={footerPage} onBack={handleGoHome} />
+      ) : authMode ? (
         <AuthModal
           mode={authMode}
           onClose={() => setAuthMode(null)}
@@ -1256,7 +1269,7 @@ export default function App() {
           </footer>
         </>
       )}
-      <SiteFooter />
+      <SiteFooter onNavigate={openFooterPage} />
       {booking && <BookingModal
         movie={booking.movie}
         theater={selectedTheater}
@@ -1273,21 +1286,85 @@ export default function App() {
   );
 }
 
-function SiteFooter() {
+function SiteFooter({ onNavigate }: { onNavigate: (page: 'faq' | 'booking-guide' | 'privacy' | 'terms') => void }) {
   return (
     <footer style={{ background: '#071526', color: '#e2e8f0', borderTop: '4px solid #f4c04a', padding: '30px 20px 16px', marginTop: 'auto' }}>
       <div style={{ maxWidth: 1320, margin: '0 auto', display: 'grid', gridTemplateColumns: '1.5fr 1fr 1fr 1.2fr', gap: 28 }}>
         <div>
           <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 10 }}>
-            <img src="/aurora-logo.svg" alt="Aurora Cinema" style={{ width: 176, height: 48, objectFit: 'contain', filter: 'brightness(0) invert(1)' }} />
+            <div style={{ width: 214, height: 58, display: 'flex', alignItems: 'center', padding: '5px 12px', boxSizing: 'border-box', borderRadius: 12, background: '#fff' }}>
+              <img src="/aurora-logo.svg" alt="Aurora Cinema" style={{ width: '100%', height: '100%', objectFit: 'contain' }} />
+            </div>
           </div>
           <p style={{ margin: 0, color: '#94a3b8', fontSize: 12, lineHeight: 1.6 }}>Trải nghiệm điện ảnh đỉnh cao cùng Aurora Cinema.</p>
         </div>
         <div><h4 style={{ margin: '0 0 12px', fontSize: 12.5, color: '#fff' }}>VỀ AURORA CINEMA</h4><div style={{ display: 'grid', gap: 7, fontSize: 12, color: '#94a3b8' }}><span>Giới thiệu</span><span>Tin tức</span><span>Liên hệ</span></div></div>
-        <div><h4 style={{ margin: '0 0 12px', fontSize: 12.5, color: '#fff' }}>HỖ TRỢ KHÁCH HÀNG</h4><div style={{ display: 'grid', gap: 7, fontSize: 12, color: '#94a3b8' }}><span>Câu hỏi thường gặp</span><span>Hướng dẫn đặt vé</span><span>Chính sách bảo mật</span></div></div>
+        <div><h4 style={{ margin: '0 0 12px', fontSize: 12.5, color: '#fff' }}>HỖ TRỢ KHÁCH HÀNG</h4><div style={{ display: 'grid', gap: 7, fontSize: 12, color: '#94a3b8' }}>
+          <button onClick={() => onNavigate('faq')} style={footerLinkStyle}>Câu hỏi thường gặp</button>
+          <button onClick={() => onNavigate('booking-guide')} style={footerLinkStyle}>Hướng dẫn đặt vé</button>
+          <button onClick={() => onNavigate('privacy')} style={footerLinkStyle}>Chính sách bảo mật</button>
+          <button onClick={() => onNavigate('terms')} style={footerLinkStyle}>Điều khoản sử dụng</button>
+        </div></div>
         <div><h4 style={{ margin: '0 0 12px', fontSize: 12.5, color: '#fff' }}>LIÊN HỆ</h4><div style={{ display: 'grid', gap: 7, fontSize: 12, color: '#94a3b8' }}><div>Hotline: <strong style={{ color: '#fff' }}>1900 1234</strong></div><div>Email: <strong style={{ color: '#fff' }}>support@auroracinema.vn</strong></div><div>TP. Hồ Chí Minh</div></div></div>
       </div>
       <div style={{ maxWidth: 1320, margin: '24px auto 0', borderTop: '1px solid rgba(255,255,255,.08)', paddingTop: 14, textAlign: 'center', color: '#64748b', fontSize: 11.5 }}>© 2026 Aurora Cinema. All rights reserved.</div>
     </footer>
   );
+}
+
+const footerLinkStyle: React.CSSProperties = {
+  border: 0,
+  padding: 0,
+  background: 'transparent',
+  color: '#94a3b8',
+  textAlign: 'left',
+  cursor: 'pointer',
+  fontSize: 12,
+};
+
+function FooterInfoPage({ page, onBack }: { page: 'faq' | 'booking-guide' | 'privacy' | 'terms'; onBack: () => void }) {
+  const content = {
+    faq: {
+      eyebrow: 'HỖ TRỢ KHÁCH HÀNG', title: 'Câu hỏi thường gặp', intro: 'Giải đáp nhanh những câu hỏi phổ biến khi sử dụng Aurora Cinema.', sections: [
+        ['Làm thế nào để đặt vé?', 'Chọn phim, cụm rạp, ngày chiếu và suất chiếu. Sau đó chọn ghế, đăng nhập tài khoản và xác nhận đặt vé. Mã vé sẽ được lưu trong Lịch sử đặt vé.'],
+        ['Tôi có thể đổi hoặc hủy vé không?', 'Vé đang ở trạng thái chờ xử lý có thể được hỗ trợ đổi theo chính sách từng suất chiếu. Vui lòng liên hệ hotline 1900 1234 trước giờ chiếu.'],
+        ['Làm sao để nhận ưu đãi thành viên?', 'Đăng nhập tài khoản Aurora để tích điểm sau mỗi giao dịch và theo dõi hạng thành viên, voucher trong khu vực tài khoản.'],
+      ]
+    },
+    'booking-guide': {
+      eyebrow: 'HƯỚNG DẪN DỊCH VỤ', title: 'Hướng dẫn đặt vé', intro: 'Bốn bước đơn giản để hoàn tất một lần đặt vé tại Aurora Cinema.', sections: [
+        ['01 · Chọn phim và rạp', 'Tại trang chủ hoặc Lịch chiếu theo rạp, chọn bộ phim và cụm rạp bạn muốn trải nghiệm.'],
+        ['02 · Chọn ngày và suất chiếu', 'Lịch chiếu hiển thị theo từng ngày. Mỗi suất có phòng chiếu và giá vé riêng để bạn lựa chọn.'],
+        ['03 · Chọn ghế', 'Sơ đồ ghế cập nhật theo thời gian thực. Ghế màu xám đã được đặt, ghế màu vàng là ghế VIP.'],
+        ['04 · Xác nhận', 'Đăng nhập, chọn Tiếp tục và lưu lại mã vé. Hãy đến rạp trước giờ chiếu ít nhất 15 phút.'],
+      ]
+    },
+    privacy: {
+      eyebrow: 'AURORA CINEMA', title: 'Chính sách bảo mật', intro: 'Aurora Cinema tôn trọng và bảo vệ thông tin cá nhân của khách hàng.', sections: [
+        ['Thông tin chúng tôi thu thập', 'Thông tin đăng ký, liên hệ, lịch sử đặt vé và dữ liệu sử dụng dịch vụ được lưu để vận hành tài khoản và hỗ trợ khách hàng.'],
+        ['Mục đích sử dụng', 'Dữ liệu được dùng để xác thực tài khoản, xử lý đặt vé, cập nhật ưu đãi và cải thiện trải nghiệm. Aurora không bán thông tin cá nhân cho bên thứ ba.'],
+        ['Bảo vệ tài khoản', 'Khách hàng cần giữ kín mật khẩu và thông báo ngay cho Aurora nếu phát hiện hoạt động bất thường.'],
+      ]
+    },
+    terms: {
+      eyebrow: 'AURORA CINEMA', title: 'Điều khoản sử dụng', intro: 'Các quy định chung khi khách hàng sử dụng website và dịch vụ Aurora Cinema.', sections: [
+        ['Tài khoản thành viên', 'Mỗi khách hàng chịu trách nhiệm cung cấp thông tin chính xác và bảo mật thông tin đăng nhập của mình.'],
+        ['Đặt vé và thanh toán', 'Thông tin suất chiếu, giá vé và tình trạng ghế được xác nhận tại thời điểm đặt. Mã vé chỉ có giá trị cho đúng suất chiếu đã chọn.'],
+        ['Nội dung và dịch vụ', 'Aurora có thể cập nhật lịch chiếu, giá vé hoặc chương trình ưu đãi khi cần và sẽ cố gắng thông báo các thay đổi quan trọng.'],
+      ]
+    }
+  }[page];
+
+  return <main style={{ flex: 1, background: 'linear-gradient(180deg,#f3f6fa 0%,#eef0f4 100%)', padding: '34px 20px 58px' }}>
+    <div style={{ maxWidth: 900, margin: '0 auto' }}>
+      <button onClick={onBack} style={{ border: 0, background: 'transparent', color: '#64748b', cursor: 'pointer', padding: 0, fontSize: 13, fontWeight: 700, marginBottom: 20 }}>← Về trang chủ</button>
+      <div style={{ background: 'linear-gradient(135deg,#0d1b2e,#1d3a5c)', borderRadius: 20, padding: '34px 32px', color: '#fff', marginBottom: 18, boxShadow: '0 10px 30px rgba(13,27,46,.16)' }}>
+        <div style={{ color: '#f4c04a', fontSize: 11, fontWeight: 900, letterSpacing: 1.5, marginBottom: 8 }}>{content.eyebrow}</div>
+        <h1 style={{ margin: 0, fontSize: 30 }}>{content.title}</h1>
+        <p style={{ margin: '10px 0 0', color: '#c8d6e5', lineHeight: 1.6, fontSize: 14 }}>{content.intro}</p>
+      </div>
+      <div style={{ display: 'grid', gap: 12 }}>{content.sections.map(([title, text]) => <section key={title} style={{ background: '#fff', border: '1px solid #e2e8f0', borderRadius: 14, padding: '20px 22px' }}><h2 style={{ margin: '0 0 8px', color: '#0d1b2e', fontSize: 16 }}>{title}</h2><p style={{ margin: 0, color: '#64748b', lineHeight: 1.7, fontSize: 13.5 }}>{text}</p></section>)}</div>
+      <div style={{ marginTop: 20, padding: 18, borderRadius: 12, background: '#fff7dd', color: '#7c5a13', fontSize: 13 }}>Cần hỗ trợ thêm? Gọi hotline <strong>1900 1234</strong> hoặc email <strong>support@auroracinema.vn</strong>.</div>
+    </div>
+  </main>;
 }
