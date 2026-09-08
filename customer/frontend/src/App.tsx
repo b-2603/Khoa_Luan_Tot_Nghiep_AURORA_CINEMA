@@ -149,7 +149,7 @@ export default function App() {
   }
 
   return (
-    <div style={{ minHeight: '100vh', background: '#eef0f4', fontFamily: "'Segoe UI','Inter',sans-serif", color: '#1a2332' }}>
+    <div style={{ minHeight: '100vh', display: 'flex', flexDirection: 'column', background: '#eef0f4', fontFamily: "'Segoe UI','Inter',sans-serif", color: '#1a2332' }}>
 
       {/* TOP BAR */}
       <div style={{ background: '#0d1b2e', color: '#c8d6e5' }}>
@@ -1048,7 +1048,7 @@ export default function App() {
           )}
 
           {/* FOOTER */}
-          <footer style={{ background: '#071526', color: '#e2e8f0', marginTop: '24px', borderTop: '4px solid #f4c04a', padding: '36px 20px 20px' }}>
+          <footer style={{ display: 'none', background: '#071526', color: '#e2e8f0', marginTop: '24px', borderTop: '4px solid #f4c04a', padding: '36px 20px 20px' }}>
             <div
               style={{
                 maxWidth: 1320,
@@ -1256,6 +1256,7 @@ export default function App() {
           </footer>
         </>
       )}
+      <SiteFooter />
       {booking && <BookingModal
         movie={booking.movie}
         theater={selectedTheater}
@@ -1269,5 +1270,24 @@ export default function App() {
       />}
       {trailerMovie && <TrailerModal movie={trailerMovie} onClose={() => setTrailerMovie(null)} />}
     </div>
+  );
+}
+
+function SiteFooter() {
+  return (
+    <footer style={{ background: '#071526', color: '#e2e8f0', borderTop: '4px solid #f4c04a', padding: '30px 20px 16px', marginTop: 'auto' }}>
+      <div style={{ maxWidth: 1320, margin: '0 auto', display: 'grid', gridTemplateColumns: '1.5fr 1fr 1fr 1.2fr', gap: 28 }}>
+        <div>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 10 }}>
+            <img src="/aurora-logo.svg" alt="Aurora Cinema" style={{ width: 176, height: 48, objectFit: 'contain', filter: 'brightness(0) invert(1)' }} />
+          </div>
+          <p style={{ margin: 0, color: '#94a3b8', fontSize: 12, lineHeight: 1.6 }}>Trải nghiệm điện ảnh đỉnh cao cùng Aurora Cinema.</p>
+        </div>
+        <div><h4 style={{ margin: '0 0 12px', fontSize: 12.5, color: '#fff' }}>VỀ AURORA CINEMA</h4><div style={{ display: 'grid', gap: 7, fontSize: 12, color: '#94a3b8' }}><span>Giới thiệu</span><span>Tin tức</span><span>Liên hệ</span></div></div>
+        <div><h4 style={{ margin: '0 0 12px', fontSize: 12.5, color: '#fff' }}>HỖ TRỢ KHÁCH HÀNG</h4><div style={{ display: 'grid', gap: 7, fontSize: 12, color: '#94a3b8' }}><span>Câu hỏi thường gặp</span><span>Hướng dẫn đặt vé</span><span>Chính sách bảo mật</span></div></div>
+        <div><h4 style={{ margin: '0 0 12px', fontSize: 12.5, color: '#fff' }}>LIÊN HỆ</h4><div style={{ display: 'grid', gap: 7, fontSize: 12, color: '#94a3b8' }}><div>Hotline: <strong style={{ color: '#fff' }}>1900 1234</strong></div><div>Email: <strong style={{ color: '#fff' }}>support@auroracinema.vn</strong></div><div>TP. Hồ Chí Minh</div></div></div>
+      </div>
+      <div style={{ maxWidth: 1320, margin: '24px auto 0', borderTop: '1px solid rgba(255,255,255,.08)', paddingTop: 14, textAlign: 'center', color: '#64748b', fontSize: 11.5 }}>© 2026 Aurora Cinema. All rights reserved.</div>
+    </footer>
   );
 }
