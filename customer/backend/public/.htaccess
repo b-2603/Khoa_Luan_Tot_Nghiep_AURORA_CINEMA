@@ -7,6 +7,10 @@
 </IfModule>
 
 <IfModule mod_headers.c>
-    Header always set Access-Control-Allow-Origin "http://localhost:3000"
+    SetEnvIf Origin "^https?://(localhost|127\\.0\\.0\\.1)(:3000|:5173)?$" ACAO=$0
+    Header always set Access-Control-Allow-Origin "%{ACAO}e" env=ACAO
     Header always set Access-Control-Allow-Credentials "true"
+    Header always set Access-Control-Allow-Headers "Content-Type"
+    Header always set Access-Control-Allow-Methods "GET, POST, OPTIONS"
+    Header always set Vary "Origin"
 </IfModule>

@@ -37,10 +37,48 @@ Import dữ liệu theo đúng thứ tự: `schema.sql`, `seed_theaters.sql`, `s
 - Password: `(để trống)`
 
 ## API đang dùng
-- `GET /public/api/me`
-- `GET /public/api/movies`
-- `GET /public/api/theaters`
-- `GET /public/api/showtimes?theater_id=1&date=2026-09-04`
-- `POST /public/api/logout`
-- `POST /public/api/register`
-- `POST /public/api/login`
+
+Các endpoint chạy qua public/api.php?action=... trên WAMP và tương thích với
+các route Laravel trong routes/api.php.
+
+Public:
+
+- GET action=health
+- GET action=movies&status=NOW_SHOWING
+- GET action=movie&id=1
+- GET action=theaters
+- GET action=showtimes&theater_id=1&movie_id=1&date=2026-09-04
+- GET action=showtime_seats&showtime_id=1
+
+Authentication:
+
+- POST action=register (fullName, email, password)
+- POST action=login (email, password)
+- GET action=me
+- POST action=logout
+
+Customer:
+
+- GET action=profile
+- POST action=profile_update
+- POST action=change_password
+- POST action=bookings (showtimeId, seatIds[])
+- GET action=booking_history
+
+Đặt vé được xử lý trong transaction và khóa suất chiếu/ghế khi kiểm tra,
+tránh hai khách đặt trùng ghế. API không trả về password hash.
+
+## Khởi tạo database
+
+Chạy theo thứ tự:
+
+1. schema.sql
+2. alter_users_profile.sql (chỉ cần với database cũ)
+3. seed_theaters.sql
+4. seed_movies.sql
+5. seed_seats.sql
+6. alter_booking_seats.sql (chỉ cần với database cũ)
+7. seed_showtimes.sql
+
+seed_showtimes.sql là script bổ sung an toàn: không truncate dữ liệu lịch chiếu,
+giữ dữ liệu hiện có và chỉ thêm các suất còn thiếu theo từng rạp, phim và ngày.

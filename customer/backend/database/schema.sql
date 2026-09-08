@@ -8,11 +8,18 @@ CREATE TABLE IF NOT EXISTS users (
   id BIGINT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
   full_name VARCHAR(120) NOT NULL,
   email VARCHAR(180) NOT NULL UNIQUE,
+  phone VARCHAR(20) NULL,
+  id_number VARCHAR(30) NULL,
+  birthday DATE NULL,
+  gender ENUM('male','female','other') NULL,
+  city VARCHAR(100) NULL,
+  district VARCHAR(100) NULL,
+  address VARCHAR(255) NULL,
   password_hash VARCHAR(255) NOT NULL,
   membership_level ENUM('STANDARD', 'SILVER', 'GOLD', 'PLATINUM') NOT NULL DEFAULT 'STANDARD',
   points INT UNSIGNED NOT NULL DEFAULT 0,
   created_at TIMESTAMP NULL DEFAULT CURRENT_TIMESTAMP,
-    updated_at TIMESTAMP NULL
+  updated_at TIMESTAMP NULL
 ) ENGINE=InnoDB;
 
 CREATE TABLE IF NOT EXISTS theaters (
@@ -68,7 +75,9 @@ CREATE TABLE IF NOT EXISTS showtimes (
   status ENUM('OPEN', 'CLOSED', 'CANCELLED') NOT NULL DEFAULT 'OPEN',
   FOREIGN KEY (movie_id) REFERENCES movies(id) ON DELETE CASCADE,
   FOREIGN KEY (screen_id) REFERENCES screens(id) ON DELETE CASCADE,
-  INDEX idx_showtimes_start (starts_at)
+  INDEX idx_showtimes_start (starts_at),
+  INDEX idx_showtimes_movie_date (movie_id, starts_at),
+  INDEX idx_showtimes_screen_date (screen_id, starts_at)
 ) ENGINE=InnoDB;
 
 CREATE TABLE IF NOT EXISTS bookings (
@@ -81,7 +90,8 @@ CREATE TABLE IF NOT EXISTS bookings (
   created_at TIMESTAMP NULL DEFAULT CURRENT_TIMESTAMP,
     updated_at TIMESTAMP NULL,
   FOREIGN KEY (user_id) REFERENCES users(id),
-  FOREIGN KEY (showtime_id) REFERENCES showtimes(id)
+  FOREIGN KEY (showtime_id) REFERENCES showtimes(id),
+  INDEX idx_booking_seats_booking (booking_id)
 ) ENGINE=InnoDB;
 
 CREATE TABLE IF NOT EXISTS booking_seats (

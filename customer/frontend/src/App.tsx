@@ -8,6 +8,8 @@ import AuthModal from './components/customer/AuthModal';
 import MovieDetailPage from './components/customer/MovieDetailPage';
 import BookingModal from './components/customer/BookingModal';
 import TrailerModal from './components/customer/TrailerModal';
+import AccountPage from './components/customer/AccountPage';
+import TheaterSchedulePage from './components/customer/TheaterSchedulePage';
 
 const API_URL = 'http://localhost/AURORA%20CINEMA/customer/backend/public/api.php';
 
@@ -66,6 +68,10 @@ export default function App() {
   const [trailerMovie, setTrailerMovie] = useState<any | null>(null);
   const scheduleDate = '2026-09-04';
   const [showTheaterMenu, setShowTheaterMenu] = useState<boolean>(false);
+  const [showUserMenu, setShowUserMenu] = useState<boolean>(false);
+  const [showAccount, setShowAccount] = useState<boolean>(false);
+  const [accountTab, setAccountTab] = useState('info');
+  const [currentPage, setCurrentPage] = useState<'home' | 'schedule'>('home');
 
   useEffect(() => {
     fetch(`${API_URL}?action=me`, { credentials: 'include' })
@@ -121,6 +127,25 @@ export default function App() {
   async function handleLogout() {
     await fetch(`${API_URL}?action=logout`, { method: 'POST', credentials: 'include' });
     setAuthUser(null);
+  }
+
+  function handleGoHome() {
+    setAuthMode(null);
+    setShowAccount(false);
+    setDetailMovie(null);
+    setShowTheaterMenu(false);
+    setShowUserMenu(false);
+    setCurrentPage('home');
+    window.scrollTo({ top: 0, behavior: 'smooth' });
+  }
+
+  function openAccountTab(tab: string) {
+    setShowUserMenu(false);
+    setAccountTab(tab);
+    setShowAccount(true);
+    setAuthMode(null);
+    setDetailMovie(null);
+    window.scrollTo({ top: 0, behavior: 'smooth' });
   }
 
   return (
@@ -200,7 +225,7 @@ export default function App() {
       {/* HEADER */}
       <header style={{ position: 'sticky', top: 0, zIndex: 40, background: '#fff', borderBottom: '1px solid #dde3ec', boxShadow: '0 2px 10px rgba(0,0,0,0.08)' }}>
         <div style={{ maxWidth: 1320, margin: '0 auto', padding: '0 16px', display: 'flex', alignItems: 'center', gap: 20, height: 64 }}>
-          <div onClick={() => setAuthMode(null)} style={{ display: 'flex', alignItems: 'center', flexShrink: 0, cursor: 'pointer' }}>
+          <div onClick={handleGoHome} style={{ display: 'flex', alignItems: 'center', flexShrink: 0, cursor: 'pointer' }}>
             <img src="/aurora-logo.svg" alt="Aurora Cinema" style={{ width: 176, height: 48, objectFit: 'contain' }} />
           </div>
           <div style={{ position: 'relative' }}>
@@ -291,16 +316,16 @@ export default function App() {
             {NAV.map((item, i) => (
               <button
                 key={item}
-                onClick={i === 0 ? () => { setAuthMode(null); setDetailMovie(null); } : undefined}
+                onClick={i === 0 ? handleGoHome : i === 1 ? () => { setAuthMode(null); setShowAccount(false); setDetailMovie(null); setCurrentPage('schedule'); window.scrollTo({ top: 0, behavior: 'smooth' }); } : undefined}
                 style={{
                   fontSize: 11.5,
                   fontWeight: 700,
-                  color: (i === 0 && !authMode) ? '#0d1b2e' : '#6b7f94',
+                  color: ((i === 0 && currentPage === 'home' && !authMode) || (i === 1 && currentPage === 'schedule')) ? '#0d1b2e' : '#6b7f94',
                   background: 'none',
                   border: 'none',
                   padding: '4px 0',
                   cursor: 'pointer',
-                  borderBottom: (i === 0 && !authMode) ? '2px solid #f4c04a' : '2px solid transparent',
+                  borderBottom: ((i === 0 && currentPage === 'home' && !authMode) || (i === 1 && currentPage === 'schedule')) ? '2px solid #f4c04a' : '2px solid transparent',
                   whiteSpace: 'nowrap'
                 }}
               >
@@ -313,7 +338,210 @@ export default function App() {
               <Search size={16} color="#4a637a" />
             </button>
             {authUser ? (
-              <button onClick={handleLogout} style={{ padding: '8px 18px', borderRadius: 8, border: '1px solid #cdd7e2', background: '#fff', fontSize: 13, fontWeight: 600, cursor: 'pointer', color: '#1a2332' }}>Đăng xuất</button>
+              <div style={{ position: 'relative' }}>
+                {/* Trigger button */}
+                <button
+                  onClick={() => setShowUserMenu(v => !v)}
+                  style={{
+                    display: 'flex', alignItems: 'center', gap: 8,
+                    background: showUserMenu ? '#f1f5f9' : '#fff',
+                    border: '1px solid #d5dee9',
+                    borderRadius: 24, padding: '6px 14px 6px 8px',
+                    cursor: 'pointer', transition: 'all 0.2s',
+                    boxShadow: showUserMenu ? '0 0 0 3px rgba(244,192,74,0.2)' : 'none'
+                  }}
+                >
+                  {/* Avatar */}
+                  <div style={{
+                    width: 30, height: 30, borderRadius: '50%',
+                    background: 'linear-gradient(135deg, #f4c04a 0%, #e8a020 100%)',
+                    display: 'flex', alignItems: 'center', justifyContent: 'center',
+                    fontSize: 13, fontWeight: 800, color: '#0d1b2e', flexShrink: 0
+                  }}>
+                    {authUser.fullName.charAt(0).toUpperCase()}
+                  </div>
+                  <span style={{ fontSize: 13, fontWeight: 600, color: '#1a2332', maxWidth: 110, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                    {authUser.fullName.split(' ').slice(-1)[0]}
+                  </span>
+                  <ChevronDown size={13} color="#7a8fa6" style={{ transform: showUserMenu ? 'rotate(180deg)' : 'none', transition: 'transform 0.2s' }} />
+                </button>
+
+                {/* Dropdown */}
+                {showUserMenu && (
+                  <>
+                    {/* Overlay to close */}
+                    <div
+                      onClick={() => setShowUserMenu(false)}
+                      style={{ position: 'fixed', inset: 0, zIndex: 98 }}
+                    />
+                    <div style={{
+                      position: 'absolute', top: 'calc(100% + 10px)', right: 0,
+                      width: 260, background: '#fff',
+                      borderRadius: 14, zIndex: 99,
+                      boxShadow: '0 20px 60px rgba(0,0,0,0.18), 0 4px 16px rgba(0,0,0,0.10)',
+                      border: '1px solid #e8edf4',
+                      overflow: 'hidden',
+                      animation: 'auroraDropIn 0.18s ease'
+                    }}>
+                      <style>{`
+                        @keyframes auroraDropIn {
+                          from { opacity: 0; transform: translateY(-8px) scale(0.97); }
+                          to   { opacity: 1; transform: translateY(0)  scale(1); }
+                        }
+                        .aurora-menu-item {
+                          display: flex;
+                          align-items: center;
+                          gap: 12px;
+                          padding: 13px 18px;
+                          font-size: 13.5px;
+                          font-weight: 500;
+                          color: #1a2332;
+                          cursor: pointer;
+                          border: none;
+                          background: transparent;
+                          width: 100%;
+                          text-align: left;
+                          transition: background 0.15s ease;
+                          border-bottom: 1px solid #f1f5f9;
+                        }
+                        .aurora-menu-item:hover {
+                          background: #f8fafd;
+                          color: #0d1b2e;
+                        }
+                        .aurora-menu-item:last-child {
+                          border-bottom: none;
+                        }
+                        .aurora-menu-item .aurora-menu-icon {
+                          width: 32px; height: 32px;
+                          border-radius: 8px;
+                          display: flex; align-items: center; justify-content: center;
+                          flex-shrink: 0;
+                          background: #f3f6fa;
+                          transition: background 0.15s;
+                        }
+                        .aurora-menu-item:hover .aurora-menu-icon {
+                          background: #e8edf6;
+                        }
+                        .aurora-menu-item.danger { color: #dc2626; }
+                        .aurora-menu-item.danger:hover { background: #fff5f5; }
+                        .aurora-menu-item.danger .aurora-menu-icon { background: #fee2e2; }
+                        .aurora-menu-item.danger:hover .aurora-menu-icon { background: #fecaca; }
+                      `}</style>
+
+                      {/* Header section */}
+                      <div style={{
+                        padding: '16px 18px 14px',
+                        background: 'linear-gradient(135deg, #0d1b2e 0%, #1a3050 100%)',
+                        position: 'relative', overflow: 'hidden'
+                      }}>
+                        {/* Gold accent */}
+                        <div style={{ position: 'absolute', top: -20, right: -20, width: 80, height: 80, borderRadius: '50%', background: 'rgba(244,192,74,0.12)' }} />
+                        <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+                          <div style={{
+                            width: 42, height: 42, borderRadius: '50%',
+                            background: 'linear-gradient(135deg, #f4c04a 0%, #e8a020 100%)',
+                            display: 'flex', alignItems: 'center', justifyContent: 'center',
+                            fontSize: 18, fontWeight: 800, color: '#0d1b2e',
+                            border: '2px solid rgba(244,192,74,0.5)', flexShrink: 0
+                          }}>
+                            {authUser.fullName.charAt(0).toUpperCase()}
+                          </div>
+                          <div style={{ flex: 1, minWidth: 0 }}>
+                            <div style={{ fontSize: 14, fontWeight: 700, color: '#fff', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                              {authUser.fullName}
+                            </div>
+                            <div style={{ fontSize: 11, color: '#94a3b8', marginTop: 2, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                              {authUser.email}
+                            </div>
+                            <div style={{ marginTop: 5, display: 'flex', alignItems: 'center', gap: 5 }}>
+                              <span style={{
+                                fontSize: 10, fontWeight: 800, padding: '2px 8px',
+                                borderRadius: 20, background: 'linear-gradient(135deg, #f4c04a, #e8a020)',
+                                color: '#0d1b2e', letterSpacing: 0.5, display: 'flex', alignItems: 'center', gap: 4
+                              }}>
+                                ⭐ THÀNH VIÊN
+                              </span>
+                            </div>
+                          </div>
+                        </div>
+                      </div>
+
+                      {/* Menu items */}
+                      <div>
+                        <button className="aurora-menu-item" onClick={() => openAccountTab('info')}>
+                          <span className="aurora-menu-icon">
+                            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="#4a637a" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                              <path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2"/>
+                              <circle cx="12" cy="7" r="4"/>
+                            </svg>
+                          </span>
+                          Thông tin tài khoản
+                        </button>
+
+                        <button className="aurora-menu-item" onClick={() => openAccountTab('member')}>
+                          <span className="aurora-menu-icon">
+                            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="#7c3aed" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                              <polygon points="12 2 15.09 8.26 22 9.27 17 14.14 18.18 21.02 12 17.77 5.82 21.02 7 14.14 2 9.27 8.91 8.26 12 2"/>
+                            </svg>
+                          </span>
+                          Thẻ thành viên
+                          <span style={{ marginLeft: 'auto', fontSize: 10, fontWeight: 700, padding: '2px 7px', borderRadius: 10, background: 'linear-gradient(135deg,#f4c04a,#e8a020)', color: '#0d1b2e' }}>STANDARD</span>
+                        </button>
+
+                        <button className="aurora-menu-item" onClick={() => openAccountTab('history')}>
+                          <span className="aurora-menu-icon">
+                            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="#0284c7" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                              <rect x="2" y="7" width="20" height="14" rx="2" ry="2"/>
+                              <path d="M16 21V5a2 2 0 0 0-2-2h-4a2 2 0 0 0-2 2v16"/>
+                            </svg>
+                          </span>
+                          Lịch sử đặt vé
+                        </button>
+
+
+                        <button className="aurora-menu-item" onClick={() => openAccountTab('points')}>
+                          <span className="aurora-menu-icon">
+                            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="#f59e0b" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                              <circle cx="12" cy="12" r="10"/>
+                              <line x1="12" y1="8" x2="12" y2="12"/>
+                              <line x1="12" y1="16" x2="12.01" y2="16"/>
+                            </svg>
+                          </span>
+                          Điểm thưởng Aurora
+                          <span style={{ marginLeft: 'auto', fontSize: 11, fontWeight: 700, color: '#f59e0b' }}>0 điểm</span>
+                        </button>
+
+                        <button className="aurora-menu-item" onClick={() => openAccountTab('voucher')}>
+                          <span className="aurora-menu-icon">
+                            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="#16a34a" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                              <path d="M20 12v6a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2v-6"/>
+                              <path d="M12 3L8 12h8l-4-9z"/>
+                              <line x1="2" y1="12" x2="22" y2="12"/>
+                            </svg>
+                          </span>
+                          Voucher của tôi
+                        </button>
+
+                        <div style={{ borderTop: '1px solid #f1f5f9', margin: '4px 0' }} />
+
+                        <button
+                          className="aurora-menu-item danger"
+                          onClick={() => { setShowUserMenu(false); handleLogout(); }}
+                        >
+                          <span className="aurora-menu-icon">
+                            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="#dc2626" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                              <path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4"/>
+                              <polyline points="16 17 21 12 16 7"/>
+                              <line x1="21" y1="12" x2="9" y2="12"/>
+                            </svg>
+                          </span>
+                          Đăng xuất
+                        </button>
+                      </div>
+                    </div>
+                  </>
+                )}
+              </div>
             ) : (
               <>
                 <button onClick={() => setAuthMode('login')} style={{ padding: '8px 18px', borderRadius: 8, border: '1px solid #cdd7e2', background: authMode === 'login' ? '#f1f5f9' : '#fff', fontSize: 13, fontWeight: 600, cursor: 'pointer', color: '#1a2332' }}>Đăng nhập</button>
@@ -324,7 +552,7 @@ export default function App() {
         </div>
       </header>
 
-      {/* CONTENT: AUTH OR HOMEPAGE */}
+      {/* CONTENT: AUTH, ACCOUNT, OR HOMEPAGE */}
       {authMode ? (
         <AuthModal
           mode={authMode}
@@ -334,6 +562,20 @@ export default function App() {
             setAuthUser(account);
             setAuthMode(null);
           }}
+        />
+      ) : showAccount ? (
+        <AccountPage
+          authUser={authUser}
+          onUserUpdate={user => setAuthUser(user)}
+          initialTab={accountTab}
+        />
+      ) : currentPage === 'schedule' ? (
+        <TheaterSchedulePage
+          theaters={theatersList}
+          movies={moviesList}
+          selectedTheaterId={selectedTheaterId}
+          onSelectTheater={theater => { setSelectedTheater(theater.name); setSelectedTheaterId(theater.id); setShowTheaterMenu(false); }}
+          onBook={(movie, showtime) => setBooking({ movie, showtime })}
         />
       ) : (
         <>
