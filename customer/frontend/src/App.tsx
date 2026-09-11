@@ -1,8 +1,8 @@
 import { useEffect, useState } from 'react';
 import {
-  Star, MapPin, Search, Bell, Trophy, ChevronDown, ChevronLeft, ChevronRight,
+  MapPin, Search, Bell, Trophy, ChevronDown,
   PlayCircle, Gift, Ticket, Film, Send, ExternalLink, Smartphone,
-  CreditCard, Percent, Phone, Check, Clock3, Sparkles, Facebook, Instagram, Youtube
+  CreditCard, Percent, Phone, Check
 } from 'lucide-react';
 import AuthModal from './components/customer/AuthModal';
 import MovieDetailPage from './components/customer/MovieDetailPage';
@@ -10,20 +10,13 @@ import BookingModal from './components/customer/BookingModal';
 import TrailerModal from './components/customer/TrailerModal';
 import AccountPage from './components/customer/AccountPage';
 import TheaterSchedulePage from './components/customer/TheaterSchedulePage';
+import MoviesPage from './components/customer/MoviesPage';
 
 const API_URL = 'http://localhost/AURORA%20CINEMA/customer/backend/public/api.php';
 
 /* ─── DATA ──────────────────────────────────────────────────── */
 
 const NAV = ['TRANG CHỦ', 'LỊCH CHIẾU THEO RẠP', 'PHIM', 'RẠP', 'GIÁ VÉ', 'ƯU ĐÃI', 'THÀNH VIÊN', 'HỖ TRỢ'];
-
-const MOVIES = [
-  { title: 'Quý Tử Vượt Giàu', rating: 'T13' },
-  { title: 'Nghỉ Hè Sợ Nghỉ Hưu', rating: 'P' },
-  { title: 'Chiikawa: Bí Mật Đảo Nước', rating: 'K' },
-  { title: 'Hộ Linh Tráng Sĩ - Bí Ẩn', rating: 'T18' },
-  { title: 'Quái Vật 4DX Huyền Thoại', rating: '4DX' },
-];
 
 const CHATBOT_ITEMS = [
   'Tư vấn phim phù hợp',
@@ -46,6 +39,7 @@ function ratingBg(r: string) {
   if (r === 'P') return '#27ae60';
   if (r === 'K') return '#f39c12';
   if (r === 'T13') return '#e67e22';
+  if (r === 'T16') return '#ea580c';
   if (r === 'T18') return '#e74c3c';
   if (r === '4DX') return '#8e44ad';
   return '#555';
@@ -53,7 +47,6 @@ function ratingBg(r: string) {
 
 /* ─── COMPONENT ─────────────────────────────────────────────── */
 export default function App() {
-  const [activeTab, setActiveTab] = useState(0);
   const [movieTab, setMovieTab] = useState<'NOW_SHOWING' | 'COMING_SOON' | 'SPECIAL_SHOWING'>('NOW_SHOWING');
   const [chatMsg, setChatMsg] = useState('');
   const [authMode, setAuthMode] = useState<'login' | 'register' | null>(null);
@@ -71,7 +64,7 @@ export default function App() {
   const [showUserMenu, setShowUserMenu] = useState<boolean>(false);
   const [showAccount, setShowAccount] = useState<boolean>(false);
   const [accountTab, setAccountTab] = useState('info');
-  const [currentPage, setCurrentPage] = useState<'home' | 'schedule'>('home');
+  const [currentPage, setCurrentPage] = useState<'home' | 'schedule' | 'movies'>('home');
   const [footerPage, setFooterPage] = useState<'faq' | 'booking-guide' | 'privacy' | 'terms' | null>(null);
 
   useEffect(() => {
@@ -92,12 +85,15 @@ export default function App() {
             rating: m.ageRating || 'T13',
             ageRating: m.ageRating,
             format: m.format || '2D Digital',
+            genre: m.genre,
             poster: m.posterUrl,
             posterUrl: m.posterUrl,
             trailerUrl: m.trailerUrl,
             duration: m.durationMinutes,
+            durationMinutes: m.durationMinutes,
             status: m.status || 'NOW_SHOWING',
-            releaseDate: m.releaseDate
+            releaseDate: m.releaseDate,
+            isHot: m.isHot !== undefined ? m.isHot : true
           })));
         }
       })
@@ -137,6 +133,28 @@ export default function App() {
     setShowTheaterMenu(false);
     setShowUserMenu(false);
     setCurrentPage('home');
+    setFooterPage(null);
+    window.scrollTo({ top: 0, behavior: 'smooth' });
+  }
+
+  function handleGoSchedule() {
+    setAuthMode(null);
+    setShowAccount(false);
+    setDetailMovie(null);
+    setShowTheaterMenu(false);
+    setShowUserMenu(false);
+    setCurrentPage('schedule');
+    setFooterPage(null);
+    window.scrollTo({ top: 0, behavior: 'smooth' });
+  }
+
+  function handleGoMovies() {
+    setAuthMode(null);
+    setShowAccount(false);
+    setDetailMovie(null);
+    setShowTheaterMenu(false);
+    setShowUserMenu(false);
+    setCurrentPage('movies');
     setFooterPage(null);
     window.scrollTo({ top: 0, behavior: 'smooth' });
   }
@@ -324,25 +342,38 @@ export default function App() {
             )}
           </div>
           <nav style={{ display: 'flex', alignItems: 'center', gap: 18, flex: 1, justifyContent: 'center' }}>
-            {NAV.map((item, i) => (
-              <button
-                key={item}
-                onClick={i === 0 ? handleGoHome : i === 1 ? () => { setAuthMode(null); setShowAccount(false); setDetailMovie(null); setCurrentPage('schedule'); window.scrollTo({ top: 0, behavior: 'smooth' }); } : undefined}
-                style={{
-                  fontSize: 11.5,
-                  fontWeight: 700,
-                  color: ((i === 0 && currentPage === 'home' && !authMode) || (i === 1 && currentPage === 'schedule')) ? '#0d1b2e' : '#6b7f94',
-                  background: 'none',
-                  border: 'none',
-                  padding: '4px 0',
-                  cursor: 'pointer',
-                  borderBottom: ((i === 0 && currentPage === 'home' && !authMode) || (i === 1 && currentPage === 'schedule')) ? '2px solid #f4c04a' : '2px solid transparent',
-                  whiteSpace: 'nowrap'
-                }}
-              >
-                {item}
-              </button>
-            ))}
+            {NAV.map((item, i) => {
+              const isSelected =
+                (i === 0 && currentPage === 'home' && !authMode && !footerPage && !showAccount && !detailMovie) ||
+                (i === 1 && currentPage === 'schedule' && !authMode && !footerPage && !showAccount && !detailMovie) ||
+                (i === 2 && currentPage === 'movies' && !authMode && !footerPage && !showAccount && !detailMovie);
+
+              const handleClick =
+                i === 0 ? handleGoHome :
+                i === 1 ? handleGoSchedule :
+                i === 2 ? handleGoMovies : undefined;
+
+              return (
+                <button
+                  key={item}
+                  onClick={handleClick}
+                  style={{
+                    fontSize: 11.5,
+                    fontWeight: 700,
+                    color: isSelected ? '#0d1b2e' : '#6b7f94',
+                    background: 'none',
+                    border: 'none',
+                    padding: '4px 0',
+                    cursor: handleClick ? 'pointer' : 'default',
+                    borderBottom: isSelected ? '2px solid #f4c04a' : '2px solid transparent',
+                    whiteSpace: 'nowrap',
+                    transition: 'color 0.15s ease, border-color 0.15s ease'
+                  }}
+                >
+                  {item}
+                </button>
+              );
+            })}
           </nav>
           <div style={{ display: 'flex', alignItems: 'center', gap: 10, flexShrink: 0 }}>
             <button style={{ width: 36, height: 36, borderRadius: '50%', border: '1px solid #d5dee9', background: '#f3f6fa', display: 'flex', alignItems: 'center', justifyContent: 'center', cursor: 'pointer' }}>
@@ -582,6 +613,20 @@ export default function App() {
           onUserUpdate={user => setAuthUser(user)}
           initialTab={accountTab}
         />
+      ) : detailMovie ? (
+        <MovieDetailPage
+          movie={detailMovie}
+          theaters={theatersList}
+          theater={selectedTheater}
+          showtimes={showtimesList.filter((showtime: any) => showtime.movie_id === detailMovie.id)}
+          date={scheduleDate}
+          onBack={() => setDetailMovie(null)}
+          onBook={(showtime, theaterName) => {
+            setSelectedTheater(theaterName);
+            setSelectedTheaterId(showtime.theater_id);
+            setBooking({ movie: detailMovie, showtime });
+          }}
+        />
       ) : currentPage === 'schedule' ? (
         <TheaterSchedulePage
           theaters={theatersList}
@@ -590,25 +635,25 @@ export default function App() {
           onSelectTheater={theater => { setSelectedTheater(theater.name); setSelectedTheaterId(theater.id); setShowTheaterMenu(false); }}
           onBook={(movie, showtime) => setBooking({ movie, showtime })}
         />
+      ) : currentPage === 'movies' ? (
+        <MoviesPage
+          movies={moviesList}
+          theaters={theatersList}
+          selectedTheater={selectedTheater}
+          onSelectMovie={(movie) => {
+            setDetailMovie(movie);
+            window.scrollTo({ top: 0, behavior: 'smooth' });
+          }}
+          onBookMovie={(movie) => {
+            setDetailMovie(movie);
+            window.scrollTo({ top: 0, behavior: 'smooth' });
+          }}
+          onWatchTrailer={(movie) => {
+            setTrailerMovie(movie);
+          }}
+        />
       ) : (
-        <>
-          {detailMovie ? (
-            <MovieDetailPage
-              movie={detailMovie}
-              theaters={theatersList}
-              theater={selectedTheater}
-              showtimes={showtimesList.filter((showtime: any) => showtime.movie_id === detailMovie.id)}
-              date={scheduleDate}
-              onBack={() => setDetailMovie(null)}
-              onBook={(showtime, theaterName) => {
-                setSelectedTheater(theaterName);
-                setSelectedTheaterId(showtime.theater_id);
-                setBooking({ movie: detailMovie, showtime });
-              }}
-            />
-          ) : (
-            <>
-          <main style={{ maxWidth: 1320, margin: '0 auto', padding: '14px 16px 20px' }}>
+        <main style={{ maxWidth: 1320, margin: '0 auto', padding: '14px 16px 20px' }}>
             <div style={{ display: 'grid', gridTemplateColumns: '230px 1fr 280px', gap: 14 }}>
 
               {/* LEFT SIDEBAR */}
@@ -1057,217 +1102,6 @@ export default function App() {
               ))}
             </div>
           </main>
-            </>
-          )}
-
-          {/* FOOTER */}
-          <footer style={{ display: 'none', background: '#071526', color: '#e2e8f0', marginTop: '24px', borderTop: '4px solid #f4c04a', padding: '36px 20px 20px' }}>
-            <div
-              style={{
-                maxWidth: 1320,
-                margin: '0 auto',
-                display: 'grid',
-                gridTemplateColumns: '1.4fr 1fr 1fr 1fr 1.3fr',
-                gap: 28,
-                marginBottom: 28
-              }}
-            >
-              {/* Column 1: Logo & Socials */}
-              <div>
-                <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 12 }}>
-                  <div
-                    style={{
-                      width: 38,
-                      height: 38,
-                      background: 'linear-gradient(135deg, #f5d061 0%, #e5a826 100%)',
-                      borderRadius: 10,
-                      display: 'flex',
-                      alignItems: 'center',
-                      justifyContent: 'center'
-                    }}
-                  >
-                    <img src="/aurora-logo.svg" alt="Aurora Cinema" style={{ width: 176, height: 48, objectFit: 'contain', filter: 'brightness(0) invert(1)' }} />
-                  </div>
-                  <div style={{ lineHeight: 1.1 }}>
-                    <div style={{ fontSize: 17, fontWeight: 900, letterSpacing: 1.2, color: '#ffffff' }}>AURORA</div>
-                    <div style={{ fontSize: 8.5, letterSpacing: 3.5, color: '#94a3b8', fontWeight: 600 }}>CINEMA</div>
-                  </div>
-                </div>
-                <p style={{ fontSize: 12, color: '#94a3b8', lineHeight: 1.6, margin: '0 0 16px 0' }}>
-                  Trải nghiệm điện ảnh đỉnh cao
-                </p>
-                {/* Social Icons */}
-                <div style={{ display: 'flex', gap: 8 }}>
-                  <a
-                    href="#"
-                    style={{
-                      width: 30,
-                      height: 30,
-                      borderRadius: '50%',
-                      background: 'rgba(255,255,255,0.08)',
-                      display: 'flex',
-                      alignItems: 'center',
-                      justifyContent: 'center',
-                      color: '#ffffff'
-                    }}
-                  >
-                    <Facebook size={15} />
-                  </a>
-                  <a
-                    href="#"
-                    style={{
-                      width: 30,
-                      height: 30,
-                      borderRadius: '50%',
-                      background: 'rgba(255,255,255,0.08)',
-                      display: 'flex',
-                      alignItems: 'center',
-                      justifyContent: 'center',
-                      color: '#ffffff'
-                    }}
-                  >
-                    <Instagram size={15} />
-                  </a>
-                  <a
-                    href="#"
-                    style={{
-                      width: 30,
-                      height: 30,
-                      borderRadius: '50%',
-                      background: 'rgba(255,255,255,0.08)',
-                      display: 'flex',
-                      alignItems: 'center',
-                      justifyContent: 'center',
-                      color: '#ffffff'
-                    }}
-                  >
-                    <Youtube size={15} />
-                  </a>
-                  <a
-                    href="#"
-                    style={{
-                      width: 30,
-                      height: 30,
-                      borderRadius: '50%',
-                      background: 'rgba(255,255,255,0.08)',
-                      display: 'flex',
-                      alignItems: 'center',
-                      justifyContent: 'center',
-                      color: '#ffffff',
-                      fontSize: 13,
-                      fontWeight: 800
-                    }}
-                  >
-                    ♪
-                  </a>
-                </div>
-              </div>
-
-              {/* Column 2: VỀ AURORA CINEMA */}
-              <div>
-                <h4 style={{ fontSize: 12.5, fontWeight: 800, color: '#ffffff', textTransform: 'uppercase', marginBottom: 14, letterSpacing: 0.5 }}>
-                  VỀ AURORA CINEMA
-                </h4>
-                <div style={{ display: 'flex', flexDirection: 'column', gap: 8, fontSize: 12, color: '#94a3b8' }}>
-                  <a href="#" style={{ color: 'inherit' }}>Giới thiệu</a>
-                  <a href="#" style={{ color: 'inherit' }}>Tuyển dụng</a>
-                  <a href="#" style={{ color: 'inherit' }}>Tin tức</a>
-                  <a href="#" style={{ color: 'inherit' }}>Liên hệ</a>
-                </div>
-              </div>
-
-              {/* Column 3: HỖ TRỢ KHÁCH HÀNG */}
-              <div>
-                <h4 style={{ fontSize: 12.5, fontWeight: 800, color: '#ffffff', textTransform: 'uppercase', marginBottom: 14, letterSpacing: 0.5 }}>
-                  HỖ TRỢ KHÁCH HÀNG
-                </h4>
-                <div style={{ display: 'flex', flexDirection: 'column', gap: 8, fontSize: 12, color: '#94a3b8' }}>
-                  <a href="#" style={{ color: 'inherit' }}>Câu hỏi thường gặp</a>
-                  <a href="#" style={{ color: 'inherit' }}>Hướng dẫn đặt vé</a>
-                  <a href="#" style={{ color: 'inherit' }}>Chính sách bảo mật</a>
-                  <a href="#" style={{ color: 'inherit' }}>Điều khoản sử dụng</a>
-                </div>
-              </div>
-
-              {/* Column 4: TẢI ỨNG DỤNG */}
-              <div>
-                <h4 style={{ fontSize: 12.5, fontWeight: 800, color: '#ffffff', textTransform: 'uppercase', marginBottom: 14, letterSpacing: 0.5 }}>
-                  TẢI ỨNG DỤNG
-                </h4>
-                <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
-                  {/* App Store Badge */}
-                  <div
-                    style={{
-                      display: 'flex',
-                      alignItems: 'center',
-                      gap: 8,
-                      background: '#000000',
-                      border: '1px solid rgba(255,255,255,0.2)',
-                      borderRadius: 6,
-                      padding: '6px 10px',
-                      cursor: 'pointer',
-                      width: 'fit-content'
-                    }}
-                  >
-                    <span style={{ fontSize: 16 }}></span>
-                    <div>
-                      <div style={{ fontSize: 8, color: '#94a3b8', lineHeight: 1 }}>Download on the</div>
-                      <div style={{ fontSize: 12, fontWeight: 700, color: '#ffffff', lineHeight: 1.2 }}>App Store</div>
-                    </div>
-                  </div>
-
-                  {/* Google Play Badge */}
-                  <div
-                    style={{
-                      display: 'flex',
-                      alignItems: 'center',
-                      gap: 8,
-                      background: '#000000',
-                      border: '1px solid rgba(255,255,255,0.2)',
-                      borderRadius: 6,
-                      padding: '6px 10px',
-                      cursor: 'pointer',
-                      width: 'fit-content'
-                    }}
-                  >
-                    <span style={{ fontSize: 13, color: '#38bdf8' }}>▶</span>
-                    <div>
-                      <div style={{ fontSize: 8, color: '#94a3b8', lineHeight: 1 }}>GET IT ON</div>
-                      <div style={{ fontSize: 12, fontWeight: 700, color: '#ffffff', lineHeight: 1.2 }}>Google Play</div>
-                    </div>
-                  </div>
-                </div>
-              </div>
-
-              {/* Column 5: LIÊN HỆ */}
-              <div>
-                <h4 style={{ fontSize: 12.5, fontWeight: 800, color: '#ffffff', textTransform: 'uppercase', marginBottom: 14, letterSpacing: 0.5 }}>
-                  LIÊN HỆ
-                </h4>
-                <div style={{ display: 'flex', flexDirection: 'column', gap: 6, fontSize: 12, color: '#94a3b8' }}>
-                  <div>Hotline: <strong style={{ color: '#ffffff' }}>1900 1234</strong></div>
-                  <div>Email: <strong style={{ color: '#ffffff' }}>support@auroracinema.vn</strong></div>
-                  <div style={{ lineHeight: 1.5 }}>
-                    Địa chỉ: 123 Điện Biên Phủ, P. Bến Nghé, Quận 1, TP. Hồ Chí Minh
-                  </div>
-                </div>
-              </div>
-            </div>
-
-            {/* Copyright */}
-            <div
-              style={{
-                borderTop: '1px solid rgba(255,255,255,0.06)',
-                paddingTop: 16,
-                textAlign: 'center',
-                fontSize: 12,
-                color: '#64748b'
-              }}
-            >
-              © 2025 Aurora Cinema. All rights reserved.
-            </div>
-          </footer>
-        </>
       )}
       <SiteFooter onNavigate={openFooterPage} />
       {booking && <BookingModal

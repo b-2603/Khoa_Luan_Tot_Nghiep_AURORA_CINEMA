@@ -14,3 +14,6 @@ customer/frontend/.env.*
 *.log
 Thumbs.db
 .DS_Store
+
+# Local MySQL data folder
+data/

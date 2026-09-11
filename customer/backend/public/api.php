@@ -90,28 +90,52 @@ if ($resource === 'health') {
 if ($resource === 'movies') {
     $status = isset($_GET['status']) ? strtoupper(trim((string)$_GET['status'])) : '';
     $allowedStatuses = array('COMING_SOON', 'NOW_SHOWING', 'SPECIAL_SHOWING', 'ENDED');
-    $sql = 'SELECT id, title, description, duration_minutes, age_rating, format, poster_url, trailer_url, status, release_date FROM movies';
+    $sql = 'SELECT id, title, description, duration_minutes, age_rating, format, genre, poster_url, trailer_url, status, release_date, is_hot FROM movies';
     if (in_array($status, $allowedStatuses, true)) $sql .= " WHERE status = '" . $db->real_escape_string($status) . "'";
     $sql .= ' ORDER BY release_date IS NULL, release_date, title';
     $result = $db->query($sql);
     if (!$result) aurora_response(array('message' => $db->error), 500);
     $movies = array();
     while ($row = $result->fetch_assoc()) {
-        $movies[] = array('id' => (int) $row['id'], 'title' => $row['title'], 'description' => $row['description'],
-            'durationMinutes' => (int) $row['duration_minutes'], 'ageRating' => $row['age_rating'], 'format' => $row['format'],
-            'posterUrl' => $row['poster_url'], 'trailerUrl' => $row['trailer_url'], 'status' => $row['status'], 'releaseDate' => $row['release_date']);
+        $movies[] = array(
+            'id' => (int) $row['id'],
+            'title' => $row['title'],
+            'description' => $row['description'],
+            'durationMinutes' => (int) $row['duration_minutes'],
+            'ageRating' => $row['age_rating'],
+            'format' => $row['format'],
+            'genre' => isset($row['genre']) ? $row['genre'] : '',
+            'posterUrl' => $row['poster_url'],
+            'trailerUrl' => $row['trailer_url'],
+            'status' => $row['status'],
+            'releaseDate' => $row['release_date'],
+            'isHot' => isset($row['is_hot']) ? (bool)$row['is_hot'] : true
+        );
     }
     aurora_response(array('movies' => $movies), 200);
 }
 
 if ($resource === 'movie') {
     $movieId = isset($_GET['id']) ? (int)$_GET['id'] : 0;
-    $stmt = $db->prepare('SELECT id, title, description, duration_minutes, age_rating, format, poster_url, trailer_url, status, release_date FROM movies WHERE id = ?');
+    $stmt = $db->prepare('SELECT id, title, description, duration_minutes, age_rating, format, genre, poster_url, trailer_url, status, release_date, is_hot FROM movies WHERE id = ?');
     $stmt->bind_param('i', $movieId); $stmt->execute();
-    $stmt->bind_result($id, $title, $description, $duration, $rating, $format, $poster, $trailer, $status, $releaseDate);
+    $stmt->bind_result($id, $title, $description, $duration, $rating, $format, $genre, $poster, $trailer, $status, $releaseDate, $isHot);
     if (!$stmt->fetch()) { $stmt->close(); aurora_response(array('message' => 'Không tìm thấy phim.'), 404); }
     $stmt->close();
-    aurora_response(array('movie' => array('id'=>(int)$id, 'title'=>$title, 'description'=>$description, 'durationMinutes'=>(int)$duration, 'ageRating'=>$rating, 'format'=>$format, 'posterUrl'=>$poster, 'trailerUrl'=>$trailer, 'status'=>$status, 'releaseDate'=>$releaseDate)), 200);
+    aurora_response(array('movie' => array(
+        'id' => (int)$id,
+        'title' => $title,
+        'description' => $description,
+        'durationMinutes' => (int)$duration,
+        'ageRating' => $rating,
+        'format' => $format,
+        'genre' => $genre,
+        'posterUrl' => $poster,
+        'trailerUrl' => $trailer,
+        'status' => $status,
+        'releaseDate' => $releaseDate,
+        'isHot' => (bool)$isHot
+    )), 200);
 }
 
 if ($resource === 'theaters') {
