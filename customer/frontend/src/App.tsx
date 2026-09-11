@@ -6,7 +6,8 @@ import {
 } from 'lucide-react';
 import AuthModal from './components/customer/AuthModal';
 import MovieDetailPage from './components/customer/MovieDetailPage';
-import BookingModal from './components/customer/BookingModal';
+import BookingPage from './components/customer/BookingPage';
+import BookingConfirmationModal from './components/customer/BookingConfirmationModal';
 import TrailerModal from './components/customer/TrailerModal';
 import AccountPage from './components/customer/AccountPage';
 import TheaterSchedulePage from './components/customer/TheaterSchedulePage';
@@ -16,24 +17,47 @@ const API_URL = 'http://localhost/AURORA%20CINEMA/customer/backend/public/api.ph
 
 /* ─── DATA ──────────────────────────────────────────────────── */
 
-const NAV = ['TRANG CHỦ', 'LỊCH CHIẾU THEO RẠP', 'PHIM', 'RẠP', 'GIÁ VÉ', 'ƯU ĐÃI', 'THÀNH VIÊN', 'HỖ TRỢ'];
+const COPY = {
+  vi: {
+    greeting: 'Xin chào:', notLoggedIn: 'Bạn chưa đăng nhập', newAccount: 'Đăng ký tài khoản mới', accountLogin: 'Đăng nhập tài khoản', login: 'Đăng nhập', register: 'Đăng ký',
+    member: 'Thành viên', points: 'điểm', nav: ['TRANG CHỦ', 'LỊCH CHIẾU THEO RẠP', 'PHIM', 'RẠP', 'GIÁ VÉ', 'ƯU ĐÃI', 'THÀNH VIÊN', 'HỖ TRỢ'],
+  },
+  en: {
+    greeting: 'Welcome:', notLoggedIn: 'You are not signed in', newAccount: 'Create a new account', accountLogin: 'Sign in to your account', login: 'Sign in', register: 'Register',
+    member: 'Member', points: 'points', nav: ['HOME', 'SHOWTIMES', 'MOVIES', 'CINEMAS', 'TICKETS', 'OFFERS', 'MEMBERSHIP', 'SUPPORT'],
+  },
+} as const;
 
-const CHATBOT_ITEMS = [
-  'Tư vấn phim phù hợp',
-  'Tìm suất chiếu',
-  'Tư vấn giá vé',
-  'Sơ đồ ghế & vị trí đẹp',
-  'Hỗ trợ đặt vé',
-  'Ưu đãi thành viên',
-];
+type Language = keyof typeof COPY;
 
-const BOTTOM_FEATURES = [
-  { icon: Ticket, label: 'Đặt vé nhanh chóng', sub: 'Chọn ghế tiện lợi' },
-  { icon: CreditCard, label: 'Nhiều phương thức thanh toán', sub: 'An toàn & tiện lợi' },
-  { icon: Percent, label: 'Ưu đãi mỗi ngày', sub: 'Dành riêng cho bạn' },
-  { icon: Gift, label: 'Tích điểm đổi quà', sub: 'Thành viên Aurora' },
-  { icon: Phone, label: 'Hỗ trợ 24/7', sub: 'Luôn sẵn sàng' },
-];
+function LanguageSwitcher({ language, onChange }: { language: Language; onChange: (language: Language) => void }) {
+  const [open, setOpen] = useState(false);
+
+  return <div style={{ position: 'relative' }}>
+    <button type="button" onClick={() => setOpen(value => !value)} aria-haspopup="menu" aria-expanded={open} style={{ display: 'flex', alignItems: 'center', gap: 4, padding: '4px 2px', border: 0, background: 'transparent', color: '#dce8f5', cursor: 'pointer', fontSize: 12 }}>
+      <span>{language === 'vi' ? 'VN' : 'EN'}</span><ChevronDown size={12} style={{ transform: open ? 'rotate(180deg)' : 'none', transition: 'transform .15s' }} />
+    </button>
+    {open && <div role="menu" style={{ position: 'absolute', top: 'calc(100% + 8px)', right: 0, zIndex: 120, minWidth: 132, padding: 5, border: '1px solid #253c59', borderRadius: 8, background: '#10233a', boxShadow: '0 10px 24px rgba(0,0,0,.28)' }}>
+      {([{ key: 'vi', label: 'Tiếng Việt', code: 'VN' }, { key: 'en', label: 'English', code: 'EN' }] as const).map(option => <button key={option.key} type="button" role="menuitem" onClick={() => { onChange(option.key); setOpen(false); }} style={{ width: '100%', display: 'flex', justifyContent: 'space-between', alignItems: 'center', border: 0, borderRadius: 5, padding: '8px 9px', background: language === option.key ? '#1d3858' : 'transparent', color: language === option.key ? '#f4c04a' : '#dce8f5', cursor: 'pointer', fontSize: 12, textAlign: 'left' }}>
+        <span>{option.label}</span><small style={{ color: '#8aa0b8' }}>{option.code}</small>
+      </button>)}
+    </div>}
+  </div>;
+}
+
+const CHATBOT_ITEMS = {
+  vi: ['Tư vấn phim phù hợp', 'Tìm suất chiếu', 'Tư vấn giá vé', 'Sơ đồ ghế & vị trí đẹp', 'Hỗ trợ đặt vé', 'Ưu đãi thành viên'],
+  en: ['Find a suitable movie', 'Find showtimes', 'Ticket price advice', 'Seat map & best seats', 'Booking support', 'Member offers'],
+};
+
+const BOTTOM_FEATURES = {
+  vi: [
+    { icon: Ticket, label: 'Đặt vé nhanh chóng', sub: 'Chọn ghế tiện lợi' }, { icon: CreditCard, label: 'Nhiều phương thức thanh toán', sub: 'An toàn & tiện lợi' }, { icon: Percent, label: 'Ưu đãi mỗi ngày', sub: 'Dành riêng cho bạn' }, { icon: Gift, label: 'Tích điểm đổi quà', sub: 'Thành viên Aurora' }, { icon: Phone, label: 'Hỗ trợ 24/7', sub: 'Luôn sẵn sàng' },
+  ],
+  en: [
+    { icon: Ticket, label: 'Quick booking', sub: 'Convenient seat selection' }, { icon: CreditCard, label: 'Flexible payments', sub: 'Safe & convenient' }, { icon: Percent, label: 'Daily offers', sub: 'Made for you' }, { icon: Gift, label: 'Earn points & rewards', sub: 'Aurora members' }, { icon: Phone, label: '24/7 support', sub: 'Always ready to help' },
+  ],
+};
 
 function ratingBg(r: string) {
   if (r === 'P') return '#27ae60';
@@ -47,6 +71,7 @@ function ratingBg(r: string) {
 
 /* ─── COMPONENT ─────────────────────────────────────────────── */
 export default function App() {
+  const [language, setLanguage] = useState<Language>(() => localStorage.getItem('aurora-language') === 'en' ? 'en' : 'vi');
   const [movieTab, setMovieTab] = useState<'NOW_SHOWING' | 'COMING_SOON' | 'SPECIAL_SHOWING'>('NOW_SHOWING');
   const [chatMsg, setChatMsg] = useState('');
   const [authMode, setAuthMode] = useState<'login' | 'register' | null>(null);
@@ -58,6 +83,7 @@ export default function App() {
   const [showtimesList, setShowtimesList] = useState<any[]>([]);
   const [detailMovie, setDetailMovie] = useState<any | null>(null);
   const [booking, setBooking] = useState<{ movie: any; showtime: any } | null>(null);
+  const [pendingBooking, setPendingBooking] = useState<{ movie: any; showtime: any; theater: string } | null>(null);
   const [trailerMovie, setTrailerMovie] = useState<any | null>(null);
   const scheduleDate = '2026-09-04';
   const [showTheaterMenu, setShowTheaterMenu] = useState<boolean>(false);
@@ -66,6 +92,25 @@ export default function App() {
   const [accountTab, setAccountTab] = useState('info');
   const [currentPage, setCurrentPage] = useState<'home' | 'schedule' | 'movies'>('home');
   const [footerPage, setFooterPage] = useState<'faq' | 'booking-guide' | 'privacy' | 'terms' | null>(null);
+  const copy = COPY[language];
+  const t = (vi: string, en: string) => language === 'en' ? en : vi;
+
+  function changeLanguage(nextLanguage: Language) {
+    setLanguage(nextLanguage);
+    localStorage.setItem('aurora-language', nextLanguage);
+  }
+
+  function requestBooking(movie: any, showtime: any, theater = selectedTheater) {
+    setPendingBooking({ movie, showtime, theater });
+  }
+
+  function confirmBooking() {
+    if (!pendingBooking) return;
+    setSelectedTheater(pendingBooking.theater);
+    setSelectedTheaterId(pendingBooking.showtime.theater_id);
+    setBooking({ movie: pendingBooking.movie, showtime: pendingBooking.showtime });
+    setPendingBooking(null);
+  }
 
   useEffect(() => {
     fetch(`${API_URL}?action=me`, { credentials: 'include' })
@@ -112,6 +157,10 @@ export default function App() {
       })
       .catch(() => {});
   }, []);
+
+  useEffect(() => {
+    document.documentElement.lang = language === 'vi' ? 'vi' : 'en';
+  }, [language]);
 
   useEffect(() => {
     if (selectedTheaterId === null) return;
@@ -177,6 +226,27 @@ export default function App() {
     window.scrollTo({ top: 0, behavior: 'smooth' });
   }
 
+  /* ── Trang đặt vé – render toàn trang, thay thế toàn bộ layout thông thường ── */
+  if (booking) {
+    return (
+      <BookingPage
+        movie={booking.movie}
+        showtime={booking.showtime}
+        theater={selectedTheater}
+        user={authUser}
+        language={language}
+        onClose={() => {
+          setBooking(null);
+          window.scrollTo({ top: 0, behavior: 'smooth' });
+        }}
+        onRequireLogin={() => {
+          setBooking(null);
+          setAuthMode('login');
+        }}
+      />
+    );
+  }
+
   return (
     <div style={{ minHeight: '100vh', display: 'flex', flexDirection: 'column', background: '#eef0f4', fontFamily: "'Segoe UI','Inter',sans-serif", color: '#1a2332' }}>
 
@@ -185,10 +255,10 @@ export default function App() {
         <div style={{ maxWidth: 1320, margin: '0 auto', padding: '6px 16px', display: 'flex', alignItems: 'center', justifyContent: 'space-between', fontSize: 12, height: 32, boxSizing: 'border-box' }}>
           <span style={{ color: '#dce8f5' }}>
             {authMode === 'register'
-              ? 'Đăng ký tài khoản mới'
+              ? copy.newAccount
               : authMode === 'login'
-              ? 'Đăng nhập tài khoản'
-              : <>Xin chào: <strong>{authUser ? authUser.fullName : 'Bạn chưa đăng nhập'}</strong></>}
+              ? copy.accountLogin
+              : <>{copy.greeting} <strong>{authUser ? authUser.fullName : copy.notLoggedIn}</strong></>}
           </span>
           <div style={{ display: 'flex', alignItems: 'center', gap: 20 }}>
             {authMode ? (
@@ -206,7 +276,7 @@ export default function App() {
                       cursor: 'pointer'
                     }}
                   >
-                    Đăng nhập
+                    {copy.login}
                   </button>
                   <span style={{ color: '#475569' }}>|</span>
                   <button
@@ -221,29 +291,25 @@ export default function App() {
                       cursor: 'pointer'
                     }}
                   >
-                    Đăng ký
+                    {copy.register}
                   </button>
                 </div>
-                <div style={{ display: 'flex', alignItems: 'center', gap: 4, cursor: 'pointer' }}>
-                  <span>VN</span><ChevronDown size={12} />
-                </div>
+                <LanguageSwitcher language={language} onChange={changeLanguage} />
               </div>
             ) : (
               <>
                 <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
                   <Trophy size={13} color="#f4c04a" />
-                  <span>Thành viên <strong style={{ color: '#f4c04a' }}>GOLD</strong></span>
+                  <span>{copy.member} <strong style={{ color: '#f4c04a' }}>GOLD</strong></span>
                   <span style={{ color: '#8aa0b8' }}>|</span>
-                  <strong style={{ color: '#f4c04a' }}>1.250 điểm</strong>
+                  <strong style={{ color: '#f4c04a' }}>1,250 {copy.points}</strong>
                 </div>
                 <div style={{ display: 'flex', alignItems: 'center', gap: 14 }}>
                   <div style={{ position: 'relative', cursor: 'pointer' }}>
                     <Bell size={15} />
                     <span style={{ position: 'absolute', top: -5, right: -5, background: '#e74c3c', color: '#fff', borderRadius: 99, fontSize: 9, minWidth: 14, height: 14, display: 'flex', alignItems: 'center', justifyContent: 'center', padding: '0 3px', fontWeight: 700 }}>3</span>
                   </div>
-                  <div style={{ display: 'flex', alignItems: 'center', gap: 4, cursor: 'pointer' }}>
-                    <span>VN</span><ChevronDown size={12} />
-                  </div>
+                  <LanguageSwitcher language={language} onChange={changeLanguage} />
                 </div>
               </>
             )}
@@ -298,9 +364,9 @@ export default function App() {
                 }}
               >
                 <div style={{ padding: '10px 14px', background: '#0d1b2e', color: '#fff', fontSize: 12, fontWeight: 800, display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-                  <span>HỆ THỐNG CỤM RẠP AURORA</span>
+                  <span>{t('HỆ THỐNG CỤM RẠP AURORA', 'AURORA CINEMA LOCATIONS')}</span>
                   <span style={{ fontSize: 10, background: '#f4c04a', color: '#0d1b2e', padding: '2px 7px', borderRadius: 4, fontWeight: 900 }}>
-                    {theatersList.length} CỤM RẠP
+                    {theatersList.length} {t('CỤM RẠP', 'LOCATIONS')}
                   </span>
                 </div>
                 <div style={{ maxHeight: 360, overflowY: 'auto' }}>
@@ -342,7 +408,7 @@ export default function App() {
             )}
           </div>
           <nav style={{ display: 'flex', alignItems: 'center', gap: 18, flex: 1, justifyContent: 'center' }}>
-            {NAV.map((item, i) => {
+            {copy.nav.map((item, i) => {
               const isSelected =
                 (i === 0 && currentPage === 'home' && !authMode && !footerPage && !showAccount && !detailMovie) ||
                 (i === 1 && currentPage === 'schedule' && !authMode && !footerPage && !showAccount && !detailMovie) ||
@@ -517,7 +583,7 @@ export default function App() {
                               <circle cx="12" cy="7" r="4"/>
                             </svg>
                           </span>
-                          Thông tin tài khoản
+                          {t('Thông tin tài khoản', 'Account information')}
                         </button>
 
                         <button className="aurora-menu-item" onClick={() => openAccountTab('member')}>
@@ -526,7 +592,7 @@ export default function App() {
                               <polygon points="12 2 15.09 8.26 22 9.27 17 14.14 18.18 21.02 12 17.77 5.82 21.02 7 14.14 2 9.27 8.91 8.26 12 2"/>
                             </svg>
                           </span>
-                          Thẻ thành viên
+                          {t('Thẻ thành viên', 'Membership card')}
                           <span style={{ marginLeft: 'auto', fontSize: 10, fontWeight: 700, padding: '2px 7px', borderRadius: 10, background: 'linear-gradient(135deg,#f4c04a,#e8a020)', color: '#0d1b2e' }}>STANDARD</span>
                         </button>
 
@@ -537,7 +603,7 @@ export default function App() {
                               <path d="M16 21V5a2 2 0 0 0-2-2h-4a2 2 0 0 0-2 2v16"/>
                             </svg>
                           </span>
-                          Lịch sử đặt vé
+                          {t('Lịch sử đặt vé', 'Booking history')}
                         </button>
 
 
@@ -549,8 +615,8 @@ export default function App() {
                               <line x1="12" y1="16" x2="12.01" y2="16"/>
                             </svg>
                           </span>
-                          Điểm thưởng Aurora
-                          <span style={{ marginLeft: 'auto', fontSize: 11, fontWeight: 700, color: '#f59e0b' }}>0 điểm</span>
+                          {t('Điểm thưởng Aurora', 'Aurora reward points')}
+                          <span style={{ marginLeft: 'auto', fontSize: 11, fontWeight: 700, color: '#f59e0b' }}>0 {copy.points}</span>
                         </button>
 
                         <button className="aurora-menu-item" onClick={() => openAccountTab('voucher')}>
@@ -561,7 +627,7 @@ export default function App() {
                               <line x1="2" y1="12" x2="22" y2="12"/>
                             </svg>
                           </span>
-                          Voucher của tôi
+                          {t('Voucher của tôi', 'My vouchers')}
                         </button>
 
                         <div style={{ borderTop: '1px solid #f1f5f9', margin: '4px 0' }} />
@@ -577,7 +643,7 @@ export default function App() {
                               <line x1="21" y1="12" x2="9" y2="12"/>
                             </svg>
                           </span>
-                          Đăng xuất
+                          {t('Đăng xuất', 'Sign out')}
                         </button>
                       </div>
                     </div>
@@ -586,8 +652,8 @@ export default function App() {
               </div>
             ) : (
               <>
-                <button onClick={() => setAuthMode('login')} style={{ padding: '8px 18px', borderRadius: 8, border: '1px solid #cdd7e2', background: authMode === 'login' ? '#f1f5f9' : '#fff', fontSize: 13, fontWeight: 600, cursor: 'pointer', color: '#1a2332' }}>Đăng nhập</button>
-                <button onClick={() => setAuthMode('register')} style={{ padding: '8px 18px', borderRadius: 8, border: 'none', background: '#f4c04a', fontSize: 13, fontWeight: 700, cursor: 'pointer', color: '#0d1b2e', boxShadow: '0 4px 12px rgba(244,192,74,0.35)' }}>Đăng ký</button>
+                <button onClick={() => setAuthMode('login')} style={{ padding: '8px 18px', borderRadius: 8, border: '1px solid #cdd7e2', background: authMode === 'login' ? '#f1f5f9' : '#fff', fontSize: 13, fontWeight: 600, cursor: 'pointer', color: '#1a2332' }}>{copy.login}</button>
+                <button onClick={() => setAuthMode('register')} style={{ padding: '8px 18px', borderRadius: 8, border: 'none', background: '#f4c04a', fontSize: 13, fontWeight: 700, cursor: 'pointer', color: '#0d1b2e', boxShadow: '0 4px 12px rgba(244,192,74,0.35)' }}>{copy.register}</button>
               </>
             )}
           </div>
@@ -622,9 +688,7 @@ export default function App() {
           date={scheduleDate}
           onBack={() => setDetailMovie(null)}
           onBook={(showtime, theaterName) => {
-            setSelectedTheater(theaterName);
-            setSelectedTheaterId(showtime.theater_id);
-            setBooking({ movie: detailMovie, showtime });
+            requestBooking(detailMovie, showtime, theaterName);
           }}
         />
       ) : currentPage === 'schedule' ? (
@@ -633,7 +697,7 @@ export default function App() {
           movies={moviesList}
           selectedTheaterId={selectedTheaterId}
           onSelectTheater={theater => { setSelectedTheater(theater.name); setSelectedTheaterId(theater.id); setShowTheaterMenu(false); }}
-          onBook={(movie, showtime) => setBooking({ movie, showtime })}
+          onBook={(movie, showtime) => requestBooking(movie, showtime, theatersList.find(theater => theater.id === showtime.theater_id)?.name || selectedTheater)}
         />
       ) : currentPage === 'movies' ? (
         <MoviesPage
@@ -659,24 +723,24 @@ export default function App() {
               {/* LEFT SIDEBAR */}
               <div style={{ display: 'flex', flexDirection: 'column', gap: 14 }}>
                 <div style={{ background: '#0d1b2e', borderRadius: 14, padding: '18px 16px', color: '#f0f4f9' }}>
-                  <h3 style={{ margin: 0, fontSize: 13, fontWeight: 900, color: '#f4c04a', textTransform: 'uppercase', letterSpacing: 0.5, marginBottom: 14 }}>Đặc quyền thành viên</h3>
+                  <h3 style={{ margin: 0, fontSize: 13, fontWeight: 900, color: '#f4c04a', textTransform: 'uppercase', letterSpacing: 0.5, marginBottom: 14 }}>{t('Đặc quyền thành viên', 'Member privileges')}</h3>
                   <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
-                    {['Tích điểm mỗi giao dịch', 'Đổi quà hấp dẫn', 'Ưu đãi dành riêng cho bạn', 'Nhiều hạng thành viên'].map(t => (
-                      <div key={t} style={{ display: 'flex', alignItems: 'center', gap: 8, fontSize: 12, color: '#c8d8e8' }}>
+                    {(language === 'en' ? ['Earn points on every purchase', 'Redeem attractive rewards', 'Offers made for you', 'Multiple membership tiers'] : ['Tích điểm mỗi giao dịch', 'Đổi quà hấp dẫn', 'Ưu đãi dành riêng cho bạn', 'Nhiều hạng thành viên']).map(item => (
+                      <div key={item} style={{ display: 'flex', alignItems: 'center', gap: 8, fontSize: 12, color: '#c8d8e8' }}>
                         <div style={{ width: 17, height: 17, borderRadius: '50%', background: '#f4c04a', display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 }}>
                           <Check size={10} color="#0d1b2e" strokeWidth={3} />
                         </div>
-                        {t}
+                        {item}
                       </div>
                     ))}
                   </div>
                   <button onClick={() => setAuthMode('register')} style={{ marginTop: 16, width: '100%', padding: '10px 0', background: '#f4c04a', border: 'none', borderRadius: 9, fontWeight: 800, fontSize: 12.5, color: '#0d1b2e', cursor: 'pointer', textTransform: 'uppercase' }}>
-                    ĐĂNG KÝ NGAY
+                    {t('ĐĂNG KÝ NGAY', 'REGISTER NOW')}
                   </button>
                 </div>
                 <div style={{ background: '#fff8e8', border: '1px solid #f0d990', borderRadius: 14, padding: '16px' }}>
-                  <h3 style={{ margin: '0 0 4px', fontSize: 13, fontWeight: 900, color: '#0d1b2e', textTransform: 'uppercase' }}>Tải app Aurora</h3>
-                  <p style={{ margin: '0 0 10px', fontSize: 11.5, color: '#6b7f94' }}>Đặt vé dễ dàng và nhận nhiều ưu đãi</p>
+                  <h3 style={{ margin: '0 0 4px', fontSize: 13, fontWeight: 900, color: '#0d1b2e', textTransform: 'uppercase' }}>{t('Tải app Aurora', 'Get the Aurora app')}</h3>
+                  <p style={{ margin: '0 0 10px', fontSize: 11.5, color: '#6b7f94' }}>{t('Đặt vé dễ dàng và nhận nhiều ưu đãi', 'Book easily and enjoy more offers')}</p>
                   <div style={{ width: 64, height: 64, background: '#0d1b2e', borderRadius: 8, margin: '0 auto 12px', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
                     <Ticket size={28} color="#f4c04a" />
                   </div>
@@ -698,13 +762,13 @@ export default function App() {
                   <div style={{ position: 'absolute', top: '15%', left: '35%', width: 180, height: 180, background: 'radial-gradient(circle,rgba(255,220,80,.13) 0%,transparent 65%)', pointerEvents: 'none' }} />
                   <div style={{ position: 'absolute', top: 0, right: '8%', width: 150, height: 150, background: 'radial-gradient(circle,rgba(100,160,255,.12) 0%,transparent 65%)', pointerEvents: 'none' }} />
                   <div style={{ zIndex: 1, flex: 1, maxWidth: '55%' }}>
-                    <div style={{ fontSize: 22, fontWeight: 900, color: '#fff', textTransform: 'uppercase', marginBottom: 2 }}>TRẢI NGHIỆM ĐIỆN ẢNH</div>
-                    <div style={{ fontSize: 30, fontWeight: 900, color: '#f4c04a', textTransform: 'uppercase', letterSpacing: 1, marginBottom: 8 }}>ĐỈNH CAO</div>
+                    <div style={{ fontSize: 22, fontWeight: 900, color: '#fff', textTransform: 'uppercase', marginBottom: 2 }}>{t('TRẢI NGHIỆM ĐIỆN ẢNH', 'THE ULTIMATE')}</div>
+                    <div style={{ fontSize: 30, fontWeight: 900, color: '#f4c04a', textTransform: 'uppercase', letterSpacing: 1, marginBottom: 8 }}>{t('ĐỈNH CAO', 'CINEMA EXPERIENCE')}</div>
                     <div style={{ fontSize: 12.5, color: '#9ab5cc', marginBottom: 18, lineHeight: 1.7 }}>
-                      Đặt vé nhanh chóng – Thanh toán tiện lợi<br />Ưu đãi hấp dẫn dành riêng cho bạn
+                      {t('Đặt vé nhanh chóng – Thanh toán tiện lợi', 'Fast booking – Convenient payment')}<br />{t('Ưu đãi hấp dẫn dành riêng cho bạn', 'Exclusive offers made for you')}
                     </div>
                     <div style={{ display: 'flex', gap: 10 }}>
-                      <button style={{ padding: '9px 20px', background: '#f4c04a', border: 'none', borderRadius: 9, fontWeight: 800, fontSize: 12.5, color: '#0d1b2e', cursor: 'pointer' }}>ĐẶT VÉ NGAY</button>
+                      <button style={{ padding: '9px 20px', background: '#f4c04a', border: 'none', borderRadius: 9, fontWeight: 800, fontSize: 12.5, color: '#0d1b2e', cursor: 'pointer' }}>{t('ĐẶT VÉ NGAY', 'BOOK NOW')}</button>
                       <button style={{ padding: '9px 18px', background: 'rgba(255,255,255,.08)', border: '1px solid rgba(255,255,255,.25)', borderRadius: 9, fontWeight: 700, fontSize: 12.5, color: '#fff', cursor: 'pointer', display: 'flex', alignItems: 'center', gap: 6 }}>
                         <PlayCircle size={16} color="#f4c04a" />XEM TRAILER
                       </button>
@@ -746,17 +810,17 @@ export default function App() {
 
                 {/* Quick Booking */}
                 <div style={{ background: '#fff', borderRadius: 14, padding: '16px 20px', boxShadow: '0 2px 8px rgba(0,0,0,.06)' }}>
-                  <h3 style={{ margin: '0 0 12px', fontSize: 14, fontWeight: 900, color: '#0d1b2e', textTransform: 'uppercase' }}>ĐẶT VÉ NHANH</h3>
+                  <h3 style={{ margin: '0 0 12px', fontSize: 14, fontWeight: 900, color: '#0d1b2e', textTransform: 'uppercase' }}>{t('ĐẶT VÉ NHANH', 'QUICK BOOKING')}</h3>
                   <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr auto', gap: 10, alignItems: 'end' }}>
                     {[
                       { 
-                        label: 'Chọn rạp', 
+                        label: t('Chọn rạp', 'Choose cinema'), 
                         val: selectedTheater, 
                         icon: <ChevronDown size={13} color="#6b7f94" />,
                         action: () => setShowTheaterMenu(prev => !prev)
                       },
-                      { label: 'Chọn phim', val: 'Tất cả phim', icon: <Film size={13} color="#6b7f94" />, action: undefined },
-                      { label: 'Chọn ngày', val: 'Hôm nay, 04/09/2026', icon: null, action: undefined },
+                      { label: t('Chọn phim', 'Choose movie'), val: t('Tất cả phim', 'All movies'), icon: <Film size={13} color="#6b7f94" />, action: undefined },
+                      { label: t('Chọn ngày', 'Choose date'), val: t('Hôm nay, 04/09/2026', 'Today, 04/09/2026'), icon: null, action: undefined },
                     ].map(f => (
                       <div key={f.label}>
                         <label style={{ display: 'block', fontSize: 10.5, fontWeight: 700, color: '#6b7f94', marginBottom: 5, textTransform: 'uppercase' }}>{f.label}</label>
@@ -769,7 +833,7 @@ export default function App() {
                       </div>
                     ))}
                     <button style={{ padding: '8px 14px', background: '#0d1b2e', border: 'none', borderRadius: 8, color: '#f4c04a', fontWeight: 700, fontSize: 12, cursor: 'pointer', whiteSpace: 'nowrap', display: 'flex', alignItems: 'center', gap: 5, height: 37 }}>
-                      <Search size={13} />Tìm suất chiếu
+                      <Search size={13} />{t('Tìm suất chiếu', 'Find showtimes')}
                     </button>
                   </div>
                 </div>
@@ -989,7 +1053,7 @@ export default function App() {
                               <button
                                 onClick={() => {
                                   const firstShowtime = showtimesList.find((showtime: any) => showtime.movie_id === m.id);
-                                  if (firstShowtime) setBooking({ movie: m, showtime: firstShowtime });
+                                  if (firstShowtime) requestBooking(m, firstShowtime);
                                   else setDetailMovie(m);
                                 }}
                                 style={{
@@ -1029,9 +1093,9 @@ export default function App() {
               <div style={{ display: 'flex', flexDirection: 'column', gap: 14 }}>
                 <div style={{ background: '#0d1b2e', borderRadius: 14, padding: '14px 16px', display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
                   <div>
-                    <div style={{ fontSize: 12.5, fontWeight: 800, color: '#f4c04a', textTransform: 'uppercase', marginBottom: 4 }}>Ưu đãi hấp dẫn</div>
-                    <div style={{ fontSize: 11.5, color: '#9ab5cc', marginBottom: 10 }}>Nhiều voucher và combo siêu hấp dẫn</div>
-                    <button style={{ padding: '7px 16px', background: '#f4c04a', border: 'none', borderRadius: 7, fontWeight: 800, fontSize: 11.5, color: '#0d1b2e', cursor: 'pointer' }}>XEM NGAY</button>
+                    <div style={{ fontSize: 12.5, fontWeight: 800, color: '#f4c04a', textTransform: 'uppercase', marginBottom: 4 }}>{t('Ưu đãi hấp dẫn', 'Great offers')}</div>
+                    <div style={{ fontSize: 11.5, color: '#9ab5cc', marginBottom: 10 }}>{t('Nhiều voucher và combo siêu hấp dẫn', 'Many exciting vouchers and combos')}</div>
+                    <button style={{ padding: '7px 16px', background: '#f4c04a', border: 'none', borderRadius: 7, fontWeight: 800, fontSize: 11.5, color: '#0d1b2e', cursor: 'pointer' }}>{t('XEM NGAY', 'VIEW NOW')}</button>
                   </div>
                   <div style={{ width: 48, height: 48, background: 'rgba(244,192,74,.15)', borderRadius: 12, display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 }}>
                     <Gift size={24} color="#f4c04a" />
@@ -1049,7 +1113,7 @@ export default function App() {
                     <div style={{ width: '62.5%', height: '100%', background: 'linear-gradient(90deg,#f4c04a,#e8a020)', borderRadius: 99 }} />
                   </div>
                   <button style={{ width: '100%', padding: '8px 0', background: 'rgba(255,255,255,.08)', border: '1px solid rgba(255,255,255,.15)', borderRadius: 8, color: '#f0f4f9', fontWeight: 700, fontSize: 12, cursor: 'pointer' }}>
-                    XEM CHI TIẾT
+                    {t('XEM CHI TIẾT', 'VIEW DETAILS')}
                   </button>
                 </div>
 
@@ -1067,7 +1131,7 @@ export default function App() {
                     </div>
                   </div>
                   <div style={{ display: 'flex', flexDirection: 'column', gap: 5, marginBottom: 12 }}>
-                    {CHATBOT_ITEMS.map((item, i) => (
+                    {CHATBOT_ITEMS[language].map((item, i) => (
                       <div key={item} onClick={() => setChatMsg(item)} style={{ display: 'flex', alignItems: 'center', gap: 7, padding: '7px 9px', background: 'rgba(255,255,255,.05)', border: '1px solid rgba(255,255,255,.08)', borderRadius: 8, cursor: 'pointer', fontSize: 11.5, color: '#c8d8e8' }}>
                         <div style={{ width: 15, height: 15, borderRadius: 4, border: '1px solid rgba(255,255,255,.15)', background: 'rgba(255,255,255,.05)', display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 }}>
                           {i < 4 && <Check size={9} color="#f4c04a" strokeWidth={3} />}
@@ -1077,7 +1141,7 @@ export default function App() {
                     ))}
                   </div>
                   <div style={{ display: 'flex', alignItems: 'center', gap: 7, background: '#1a2d45', border: '1px solid rgba(255,255,255,.12)', borderRadius: 9, padding: '8px 11px', marginBottom: 7 }}>
-                    <input value={chatMsg} onChange={e => setChatMsg(e.target.value)} placeholder="Nhập câu hỏi của bạn..." style={{ flex: 1, background: 'none', border: 'none', outline: 'none', color: '#c8d8e8', fontSize: 12, fontFamily: 'inherit' }} />
+                    <input value={chatMsg} onChange={e => setChatMsg(e.target.value)} placeholder={t('Nhập câu hỏi của bạn...', 'Type your question...')} style={{ flex: 1, background: 'none', border: 'none', outline: 'none', color: '#c8d8e8', fontSize: 12, fontFamily: 'inherit' }} />
                     <button style={{ background: 'none', border: 'none', cursor: 'pointer', display: 'flex', alignItems: 'center' }}><Send size={14} color="#f4c04a" /></button>
                   </div>
                   <button style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 4, background: 'none', border: 'none', color: '#7a8fa6', fontSize: 11.5, cursor: 'pointer', padding: '2px 0' }}>
@@ -1089,7 +1153,7 @@ export default function App() {
 
             {/* BOTTOM FEATURE BAR */}
             <div style={{ marginTop: 14, display: 'grid', gridTemplateColumns: 'repeat(5,1fr)', gap: 10 }}>
-              {BOTTOM_FEATURES.map(({ icon: Icon, label, sub }) => (
+              {BOTTOM_FEATURES[language].map(({ icon: Icon, label, sub }) => (
                 <div key={label} style={{ background: '#fff', borderRadius: 12, padding: '13px 14px', display: 'flex', alignItems: 'center', gap: 10, boxShadow: '0 2px 6px rgba(0,0,0,.05)', border: '1px solid #eef0f4', cursor: 'pointer' }}>
                   <div style={{ width: 36, height: 36, borderRadius: 9, background: '#f3f6fa', display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 }}>
                     <Icon size={17} color="#0d1b2e" />
@@ -1103,24 +1167,22 @@ export default function App() {
             </div>
           </main>
       )}
-      <SiteFooter onNavigate={openFooterPage} />
-      {booking && <BookingModal
-        movie={booking.movie}
-        theater={selectedTheater}
-        showtime={booking.showtime}
-        user={authUser}
-        onClose={() => setBooking(null)}
-        onRequireLogin={() => {
-          setBooking(null);
-          setAuthMode('login');
-        }}
+      <SiteFooter language={language} onNavigate={openFooterPage} />
+      {pendingBooking && <BookingConfirmationModal
+        movie={pendingBooking.movie}
+        showtime={pendingBooking.showtime}
+        theater={pendingBooking.theater}
+        language={language}
+        onClose={() => setPendingBooking(null)}
+        onConfirm={confirmBooking}
       />}
       {trailerMovie && <TrailerModal movie={trailerMovie} onClose={() => setTrailerMovie(null)} />}
     </div>
   );
 }
 
-function SiteFooter({ onNavigate }: { onNavigate: (page: 'faq' | 'booking-guide' | 'privacy' | 'terms') => void }) {
+function SiteFooter({ language, onNavigate }: { language: Language; onNavigate: (page: 'faq' | 'booking-guide' | 'privacy' | 'terms') => void }) {
+  const t = (vi: string, en: string) => language === 'en' ? en : vi;
   return (
     <footer style={{ background: '#071526', color: '#e2e8f0', borderTop: '4px solid #f4c04a', padding: '30px 20px 16px', marginTop: 'auto' }}>
       <div style={{ maxWidth: 1320, margin: '0 auto', display: 'grid', gridTemplateColumns: '1.5fr 1fr 1fr 1.2fr', gap: 28 }}>
@@ -1130,16 +1192,16 @@ function SiteFooter({ onNavigate }: { onNavigate: (page: 'faq' | 'booking-guide'
               <img src="/aurora-logo.svg" alt="Aurora Cinema" style={{ width: '100%', height: '100%', objectFit: 'contain' }} />
             </div>
           </div>
-          <p style={{ margin: 0, color: '#94a3b8', fontSize: 12, lineHeight: 1.6 }}>Trải nghiệm điện ảnh đỉnh cao cùng Aurora Cinema.</p>
+          <p style={{ margin: 0, color: '#94a3b8', fontSize: 12, lineHeight: 1.6 }}>{t('Trải nghiệm điện ảnh đỉnh cao cùng Aurora Cinema.', 'Enjoy the ultimate movie experience with Aurora Cinema.')}</p>
         </div>
-        <div><h4 style={{ margin: '0 0 12px', fontSize: 12.5, color: '#fff' }}>VỀ AURORA CINEMA</h4><div style={{ display: 'grid', gap: 7, fontSize: 12, color: '#94a3b8' }}><span>Giới thiệu</span><span>Tin tức</span><span>Liên hệ</span></div></div>
-        <div><h4 style={{ margin: '0 0 12px', fontSize: 12.5, color: '#fff' }}>HỖ TRỢ KHÁCH HÀNG</h4><div style={{ display: 'grid', gap: 7, fontSize: 12, color: '#94a3b8' }}>
-          <button onClick={() => onNavigate('faq')} style={footerLinkStyle}>Câu hỏi thường gặp</button>
-          <button onClick={() => onNavigate('booking-guide')} style={footerLinkStyle}>Hướng dẫn đặt vé</button>
-          <button onClick={() => onNavigate('privacy')} style={footerLinkStyle}>Chính sách bảo mật</button>
-          <button onClick={() => onNavigate('terms')} style={footerLinkStyle}>Điều khoản sử dụng</button>
+        <div><h4 style={{ margin: '0 0 12px', fontSize: 12.5, color: '#fff' }}>{t('VỀ AURORA CINEMA', 'ABOUT AURORA CINEMA')}</h4><div style={{ display: 'grid', gap: 7, fontSize: 12, color: '#94a3b8' }}><span>{t('Giới thiệu', 'About us')}</span><span>{t('Tin tức', 'News')}</span><span>{t('Liên hệ', 'Contact')}</span></div></div>
+        <div><h4 style={{ margin: '0 0 12px', fontSize: 12.5, color: '#fff' }}>{t('HỖ TRỢ KHÁCH HÀNG', 'CUSTOMER SUPPORT')}</h4><div style={{ display: 'grid', gap: 7, fontSize: 12, color: '#94a3b8' }}>
+          <button onClick={() => onNavigate('faq')} style={footerLinkStyle}>{t('Câu hỏi thường gặp', 'Frequently asked questions')}</button>
+          <button onClick={() => onNavigate('booking-guide')} style={footerLinkStyle}>{t('Hướng dẫn đặt vé', 'Booking guide')}</button>
+          <button onClick={() => onNavigate('privacy')} style={footerLinkStyle}>{t('Chính sách bảo mật', 'Privacy policy')}</button>
+          <button onClick={() => onNavigate('terms')} style={footerLinkStyle}>{t('Điều khoản sử dụng', 'Terms of use')}</button>
         </div></div>
-        <div><h4 style={{ margin: '0 0 12px', fontSize: 12.5, color: '#fff' }}>LIÊN HỆ</h4><div style={{ display: 'grid', gap: 7, fontSize: 12, color: '#94a3b8' }}><div>Hotline: <strong style={{ color: '#fff' }}>1900 1234</strong></div><div>Email: <strong style={{ color: '#fff' }}>support@auroracinema.vn</strong></div><div>TP. Hồ Chí Minh</div></div></div>
+        <div><h4 style={{ margin: '0 0 12px', fontSize: 12.5, color: '#fff' }}>{t('LIÊN HỆ', 'CONTACT')}</h4><div style={{ display: 'grid', gap: 7, fontSize: 12, color: '#94a3b8' }}><div>Hotline: <strong style={{ color: '#fff' }}>1900 1234</strong></div><div>Email: <strong style={{ color: '#fff' }}>support@auroracinema.vn</strong></div><div>{t('TP. Hồ Chí Minh', 'Ho Chi Minh City')}</div></div></div>
       </div>
       <div style={{ maxWidth: 1320, margin: '24px auto 0', borderTop: '1px solid rgba(255,255,255,.08)', paddingTop: 14, textAlign: 'center', color: '#64748b', fontSize: 11.5 }}>© 2026 Aurora Cinema. All rights reserved.</div>
     </footer>

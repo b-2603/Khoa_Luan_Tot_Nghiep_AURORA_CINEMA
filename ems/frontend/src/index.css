@@ -1,14 +1,254 @@
-* { box-sizing: border-box; }
+:root {
+  --bg: #eef3f2;
+  --card-bg: #ffffff;
+  --border: #d8e1df;
+  --text: #19333a;
+  --muted: #6a7b7d;
+  --primary: #e0a12b;
+  --primary-dark: #c78312;
+  --input-bg: #f7faf9;
+  --aurora-logo: url('/aurora-logo.svg');
+}
+
+* {
+  box-sizing: border-box;
+}
+
 html, body, #root {
   margin: 0;
   min-height: 100%;
-  font-family: 'Segoe UI', sans-serif;
-  background: #f3f6fb;
-  color: #0f172a;
+  font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif;
+  background: var(--bg);
+  color: var(--text);
 }
+
 body {
   min-height: 100vh;
 }
-:root { --aurora-logo: url('/aurora-logo.svg'); }
-.shared-brand { min-height: 57px; background: var(--aurora-logo) center / 208px 57px no-repeat; }
-.shared-brand > * { visibility: hidden; }
+
+button, input {
+  font: inherit;
+}
+
+/* ========================================================
+   1. MÀN HÌNH ĐĂNG NHẬP BAN ĐẦU EMS
+   ======================================================== */
+.ems-page {
+  min-height: 100vh;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: linear-gradient(135deg, #e9f1ef 0%, #f6f4ed 100%);
+  padding: 24px;
+}
+
+.ems-card {
+  width: min(100%, 480px);
+  background: var(--card-bg);
+  border: 1px solid var(--border);
+  border-radius: 16px;
+  box-shadow: 0 20px 55px rgba(25, 51, 58, 0.12);
+  padding: 38px 42px 24px;
+  position: relative;
+  overflow: hidden;
+}
+
+.ems-card::before {
+  content: '';
+  position: absolute;
+  inset: 0 0 auto;
+  height: 5px;
+  background: var(--primary);
+}
+
+.brand {
+  margin: 0;
+  text-align: center;
+  color: var(--text);
+  font-size: 1.7rem;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+}
+
+.title {
+  margin: 24px 0 8px;
+  text-align: center;
+  font-size: clamp(1.6rem, 2.5vw, 2.1rem);
+  line-height: 1.2;
+  color: var(--text);
+  font-weight: 700;
+}
+
+.subtitle {
+  margin: 0;
+  text-align: center;
+  color: var(--muted);
+  font-size: 0.95rem;
+  line-height: 1.5;
+}
+
+.divider {
+  height: 1px;
+  background: var(--border);
+  margin: 25px 0 18px;
+}
+
+.ems-alert-error {
+  background: #fef2f2;
+  border: 1px solid #fecaca;
+  color: #b91c1c;
+  padding: 10px 14px;
+  border-radius: 8px;
+  font-size: 0.88rem;
+  margin-bottom: 15px;
+  text-align: center;
+}
+
+.ems-alert-success {
+  background: #ecfdf5;
+  border: 1px solid #a7f3d0;
+  color: #065f46;
+  padding: 10px 14px;
+  border-radius: 8px;
+  font-size: 0.88rem;
+  margin-bottom: 15px;
+  text-align: center;
+  font-weight: 600;
+}
+
+.login-form {
+  display: flex;
+  flex-direction: column;
+}
+
+.field-label {
+  margin: 12px 0 8px;
+  font-weight: 700;
+  font-size: 0.9rem;
+  color: var(--text);
+}
+
+.input-wrap {
+  display: flex;
+  align-items: center;
+  width: 100%;
+  background: var(--input-bg);
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  padding: 0 14px;
+  min-height: 54px;
+  transition: border-color 0.2s ease, box-shadow 0.2s ease, background 0.2s ease;
+}
+
+.input-wrap:focus-within {
+  background: #ffffff;
+  border-color: var(--primary);
+  box-shadow: 0 0 0 3px rgba(224, 161, 43, 0.16);
+}
+
+.icon {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 24px;
+  color: #809294;
+  margin-right: 10px;
+}
+
+.input-wrap input {
+  flex: 1;
+  border: none;
+  background: transparent;
+  outline: none;
+  color: var(--text);
+  font-size: 0.98rem;
+  min-width: 0;
+}
+
+.input-wrap input::placeholder {
+  color: #91a0a0;
+}
+
+.login-button {
+  margin-top: 24px;
+  border: none;
+  border-radius: 10px;
+  background: linear-gradient(180deg, var(--primary) 0%, var(--primary-dark) 100%);
+  color: #fff;
+  font-weight: 700;
+  font-size: 0.98rem;
+  letter-spacing: 0.06em;
+  min-height: 54px;
+  cursor: pointer;
+  transition: transform 0.15s ease, box-shadow 0.15s ease;
+  box-shadow: 0 8px 18px rgba(199, 131, 18, 0.22);
+}
+
+.login-button:hover {
+  transform: translateY(-1px);
+  box-shadow: 0 10px 22px rgba(199, 131, 18, 0.3);
+}
+
+.login-button:active {
+  transform: translateY(0);
+}
+
+.login-button:disabled {
+  opacity: 0.7;
+  cursor: not-allowed;
+}
+
+.footer {
+  text-align: center;
+  margin-top: 26px;
+  color: var(--muted);
+  font-size: 0.78rem;
+}
+
+/* ========================================================
+   2. BẢNG ĐIỀU KHIỂN EMS SAU KHI ĐĂNG NHẬP
+   ======================================================== */
+.ems-dashboard-page {
+  font-family: 'Segoe UI', sans-serif;
+  min-height: 100vh;
+  background: #f3f6fb;
+  padding: 32px;
+}
+
+.ems-dashboard-container {
+  max-width: 1200px;
+  margin: 0 auto;
+}
+
+.ems-dashboard-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 24px;
+  background: #ffffff;
+  padding: 16px 24px;
+  border-radius: 14px;
+  box-shadow: 0 4px 14px rgba(15, 23, 42, 0.04);
+  border: 1px solid #e2e8f0;
+}
+
+.ems-btn-logout {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 8px 16px;
+  background: #fee2e2;
+  color: #b91c1c;
+  border: 1px solid #fecaca;
+  border-radius: 8px;
+  font-size: 13px;
+  font-weight: 600;
+  cursor: pointer;
+  transition: all 0.2s;
+}
+
+.ems-btn-logout:hover {
+  background: #dc2626;
+  color: #ffffff;
+  border-color: #dc2626;
+}

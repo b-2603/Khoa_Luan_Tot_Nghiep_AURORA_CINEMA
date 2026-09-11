@@ -153,6 +153,17 @@ if ($resource === 'theaters') {
     aurora_response(array('theaters' => $theaters), 200);
 }
 
+if ($resource === 'showtime_dates') {
+    $theaterId = isset($_GET['theater_id']) ? (int) $_GET['theater_id'] : 0;
+    $where = $theaterId > 0 ? ' AND s.theater_id = '.$theaterId : '';
+    $sql = "SELECT DISTINCT DATE(st.starts_at) AS show_date FROM showtimes st INNER JOIN screens s ON s.id = st.screen_id WHERE st.status = 'OPEN'".$where." ORDER BY show_date LIMIT 14";
+    $result = $db->query($sql);
+    if (!$result) aurora_response(array('message' => $db->error), 500);
+    $dates = array();
+    while ($row = $result->fetch_assoc()) $dates[] = $row['show_date'];
+    aurora_response(array('dates' => $dates), 200);
+}
+
 if ($resource === 'showtimes') {
     $theaterId = isset($_GET['theater_id']) ? (int) $_GET['theater_id'] : 0;
     $date = isset($_GET['date']) ? trim((string)$_GET['date']) : '';
@@ -347,8 +358,11 @@ if ($resource === 'bookings') {
         $stmt = $db->prepare($seatSql);
         $refs = array($seatTypes); foreach ($seatParams as $key => $value) $refs[] = &$seatParams[$key];
         call_user_func_array(array($stmt, 'bind_param'), $refs);
-        $stmt->execute(); $stmt->bind_result($seatId, $seatType); $validSeats = array();
-        while ($stmt->fetch()) $validSeats[] = (int)$seatId;
+        $stmt->execute(); $stmt->bind_result($seatId, $seatType); $validSeats = array(); $seatTypeMap = array();
+        while ($stmt->fetch()) {
+            $validSeats[] = (int)$seatId;
+            $seatTypeMap[(int)$seatId] = $seatType;
+        }
         $stmt->close();
         sort($validSeats); $expectedSeats = $seatIds; sort($expectedSeats);
         if ($validSeats !== $expectedSeats) throw new Exception('Ghế đã chọn không thuộc phòng chiếu này.');
@@ -361,19 +375,41 @@ if ($resource === 'bookings') {
         if ((int)$taken > 0) throw new Exception('Một hoặc nhiều ghế vừa được đặt bởi khách khác.');
 
         $code = 'AUR-' . strtoupper(substr(md5(uniqid(mt_rand(), true)), 0, 10));
-        $total = (float)$ticketPrice * count($seatIds); $now = date('Y-m-d H:i:s');
-        $stmt = $db->prepare("INSERT INTO bookings (user_id, showtime_id, booking_code, total_amount, status, created_at, updated_at) VALUES (?, ?, ?, ?, 'PENDING', ?, ?)");
+        $total = 0;
+        foreach ($seatIds as $sId) {
+            $st = isset($seatTypeMap[$sId]) ? $seatTypeMap[$sId] : 'STANDARD';
+            $p = (float)$ticketPrice;
+            if ($st === 'VIP') $p += 20000;
+            else if ($st === 'COUPLE') $p = $p * 2;
+            $total += $p;
+        }
+        $now = date('Y-m-d H:i:s');
+        $stmt = $db->prepare("INSERT INTO bookings (user_id, showtime_id, booking_code, total_amount, status, created_at, updated_at) VALUES (?, ?, ?, ?, 'PAID', ?, ?)");
         $stmt->bind_param('iisdss', $userId, $showtimeId, $code, $total, $now, $now); $stmt->execute(); $bookingId = (int)$stmt->insert_id; $stmt->close();
         $stmt = $db->prepare('INSERT INTO booking_seats (booking_id, showtime_id, seat_id, price) VALUES (?, ?, ?, ?)');
         if ($stmt) {
-            foreach ($seatIds as $seatId) { $price = (float)$ticketPrice; $stmt->bind_param('iiid', $bookingId, $showtimeId, $seatId, $price); $stmt->execute(); }
+            foreach ($seatIds as $sId) {
+                $st = isset($seatTypeMap[$sId]) ? $seatTypeMap[$sId] : 'STANDARD';
+                $p = (float)$ticketPrice;
+                if ($st === 'VIP') $p += 20000;
+                else if ($st === 'COUPLE') $p = $p * 2;
+                $stmt->bind_param('iiid', $bookingId, $showtimeId, $sId, $p);
+                $stmt->execute();
+            }
         } else {
             $stmt = $db->prepare('INSERT INTO booking_seats (booking_id, seat_id, price) VALUES (?, ?, ?)');
-            foreach ($seatIds as $seatId) { $price = (float)$ticketPrice; $stmt->bind_param('iid', $bookingId, $seatId, $price); $stmt->execute(); }
+            foreach ($seatIds as $sId) {
+                $st = isset($seatTypeMap[$sId]) ? $seatTypeMap[$sId] : 'STANDARD';
+                $p = (float)$ticketPrice;
+                if ($st === 'VIP') $p += 20000;
+                else if ($st === 'COUPLE') $p = $p * 2;
+                $stmt->bind_param('iid', $bookingId, $sId, $p);
+                $stmt->execute();
+            }
         }
         $stmt->close(); $db->commit();
         $db->autocommit(true);
-        aurora_response(array('booking' => array('id'=>$bookingId, 'code'=>$code, 'showtimeId'=>$showtimeId, 'seatIds'=>$seatIds, 'totalAmount'=>$total, 'status'=>'PENDING')), 201);
+        aurora_response(array('booking' => array('id'=>$bookingId, 'code'=>$code, 'showtimeId'=>$showtimeId, 'seatIds'=>$seatIds, 'totalAmount'=>$total, 'status'=>'PAID')), 201);
     } catch (Exception $exception) {
         $db->rollback();
         $db->autocommit(true);
@@ -537,6 +573,237 @@ if ($resource === 'booking_history') {
     }
     $stmt->close();
     aurora_response(array('bookings' => $bookings), 200);
+}
+
+// ── /movie_showtimes (GET) ────────────────────────────────────────────────────
+// Trả về tất cả suất chiếu của 1 phim, nhóm theo ngày và rạp
+// Params: movie_id (bắt buộc), date (yyyy-mm-dd, tuỳ chọn)
+if ($resource === 'movie_showtimes') {
+    $movieId = isset($_GET['movie_id']) ? (int)$_GET['movie_id'] : 0;
+    if ($movieId < 1) aurora_response(array('message' => 'movie_id không hợp lệ.'), 422);
+
+    $date = isset($_GET['date']) ? trim((string)$_GET['date']) : '';
+    if ($date !== '' && !aurora_valid_date($date)) aurora_response(array('message' => 'Ngày không hợp lệ.'), 422);
+
+    $dateWhere = $date !== '' ? " AND DATE(st.starts_at) = '" . $db->real_escape_string($date) . "'" : '';
+
+    // Lấy 7 ngày có suất chiếu gần nhất
+    $daysResult = $db->query(
+        "SELECT DISTINCT DATE(st.starts_at) AS show_date FROM showtimes st
+         WHERE st.movie_id = " . (int)$movieId . " AND st.status = 'OPEN'
+           AND st.starts_at >= NOW()
+         ORDER BY show_date LIMIT 14"
+    );
+    $availableDates = array();
+    if ($daysResult) while ($r = $daysResult->fetch_assoc()) $availableDates[] = $r['show_date'];
+
+    $sql = "SELECT st.id, st.screen_id, s.name AS screen_name, s.total_seats,
+                   t.id AS theater_id, t.name AS theater_name, t.address AS theater_address, t.city,
+                   st.starts_at, st.ends_at, st.ticket_price, st.status,
+                   DATE(st.starts_at) AS show_date,
+                   (SELECT COUNT(*) FROM booking_seats bs2
+                    INNER JOIN bookings b2 ON b2.id = bs2.booking_id
+                    WHERE b2.showtime_id = st.id AND b2.status NOT IN ('CANCELLED','EXPIRED')) AS seats_taken
+            FROM showtimes st
+            INNER JOIN screens s ON s.id = st.screen_id
+            INNER JOIN theaters t ON t.id = s.theater_id
+            WHERE st.movie_id = " . (int)$movieId . " AND st.status = 'OPEN'
+              AND st.starts_at >= NOW()" . $dateWhere . "
+            ORDER BY st.starts_at";
+    $result = $db->query($sql);
+    if (!$result) aurora_response(array('message' => $db->error), 500);
+
+    $showtimes = array();
+    while ($row = $result->fetch_assoc()) {
+        $seatsTaken = (int)$row['seats_taken'];
+        $totalSeats = (int)$row['total_seats'];
+        $seatsLeft  = max(0, $totalSeats - $seatsTaken);
+        $showtimes[] = array(
+            'id'             => (int)$row['id'],
+            'screen_id'      => (int)$row['screen_id'],
+            'screen_name'    => $row['screen_name'],
+            'total_seats'    => $totalSeats,
+            'seats_left'     => $seatsLeft,
+            'theater_id'     => (int)$row['theater_id'],
+            'theater_name'   => $row['theater_name'],
+            'theater_address'=> $row['theater_address'],
+            'city'           => $row['city'],
+            'starts_at'      => $row['starts_at'],
+            'ends_at'        => $row['ends_at'],
+            'ticket_price'   => (float)$row['ticket_price'],
+            'status'         => $row['status'],
+            'show_date'      => $row['show_date'],
+        );
+    }
+    aurora_response(array(
+        'movie_id'        => $movieId,
+        'available_dates' => $availableDates,
+        'showtimes'       => $showtimes,
+    ), 200);
+}
+
+// ── /showtime_detail (GET) ────────────────────────────────────────────────────
+// Chi tiết đầy đủ 1 suất chiếu: phim + rạp + phòng + ghế
+if ($resource === 'showtime_detail') {
+    $showtimeId = isset($_GET['id']) ? (int)$_GET['id'] : 0;
+    if ($showtimeId < 1) aurora_response(array('message' => 'showtime id không hợp lệ.'), 422);
+
+    $stmt = $db->prepare(
+        "SELECT st.id, st.movie_id, st.screen_id, st.starts_at, st.ends_at, st.ticket_price, st.status,
+                m.title, m.age_rating, m.format, m.genre, m.poster_url, m.duration_minutes,
+                s.name AS screen_name, s.total_seats,
+                t.id AS theater_id, t.name AS theater_name, t.address, t.city
+         FROM showtimes st
+         INNER JOIN movies m ON m.id = st.movie_id
+         INNER JOIN screens s ON s.id = st.screen_id
+         INNER JOIN theaters t ON t.id = s.theater_id
+         WHERE st.id = ?"
+    );
+    if (!$stmt) aurora_response(array('message' => 'Lỗi truy vấn.'), 500);
+    $stmt->bind_param('i', $showtimeId);
+    $stmt->execute();
+    $row = $stmt->get_result()->fetch_assoc();
+    $stmt->close();
+    if (!$row) aurora_response(array('message' => 'Suất chiếu không tồn tại.'), 404);
+
+    // Đếm ghế còn lại
+    $takenStmt = $db->prepare(
+        "SELECT COUNT(*) FROM booking_seats bs INNER JOIN bookings b ON b.id=bs.booking_id
+         WHERE b.showtime_id=? AND b.status NOT IN ('CANCELLED','EXPIRED')"
+    );
+    $takenStmt->bind_param('i', $showtimeId);
+    $takenStmt->execute();
+    $taken = 0; $takenStmt->bind_result($taken); $takenStmt->fetch(); $takenStmt->close();
+
+    aurora_response(array('showtime' => array(
+        'id'             => (int)$row['id'],
+        'movie_id'       => (int)$row['movie_id'],
+        'screen_id'      => (int)$row['screen_id'],
+        'starts_at'      => $row['starts_at'],
+        'ends_at'        => $row['ends_at'],
+        'ticket_price'   => (float)$row['ticket_price'],
+        'status'         => $row['status'],
+        'movie_title'    => $row['title'],
+        'age_rating'     => $row['age_rating'],
+        'format'         => $row['format'],
+        'genre'          => $row['genre'],
+        'poster_url'     => $row['poster_url'],
+        'duration_minutes'=> (int)$row['duration_minutes'],
+        'screen_name'    => $row['screen_name'],
+        'total_seats'    => (int)$row['total_seats'],
+        'seats_taken'    => (int)$taken,
+        'seats_left'     => max(0, (int)$row['total_seats'] - (int)$taken),
+        'theater_id'     => (int)$row['theater_id'],
+        'theater_name'   => $row['theater_name'],
+        'theater_address'=> $row['address'],
+        'city'           => $row['city'],
+    )), 200);
+}
+
+// ── /apply_voucher (POST) ─────────────────────────────────────────────────────
+// Kiểm tra và áp dụng mã voucher – hiện tại là stub trả về giảm giá cố định
+// Trong production sẽ tra bảng vouchers
+if ($resource === 'apply_voucher') {
+    aurora_method('POST');
+    aurora_require_user();
+    $body = aurora_body();
+    $code = isset($body['code']) ? strtoupper(trim((string)$body['code'])) : '';
+    $total = isset($body['total']) ? (float)$body['total'] : 0;
+    if ($code === '') aurora_response(array('message' => 'Vui lòng nhập mã voucher.'), 422);
+
+    // Danh sách voucher demo (production: tra DB bảng vouchers)
+    $vouchers = array(
+        'AURORA10'  => array('type' => 'percent', 'value' => 10,    'desc' => 'Giảm 10%',         'max' => 50000),
+        'AURORA50K' => array('type' => 'fixed',   'value' => 50000, 'desc' => 'Giảm 50,000đ',     'max' => 0),
+        'WELCOME'   => array('type' => 'percent', 'value' => 15,    'desc' => 'Giảm 15% (mới)',   'max' => 75000),
+        'GOLD20'    => array('type' => 'percent', 'value' => 20,    'desc' => 'Thành viên GOLD -20%', 'max' => 100000),
+    );
+
+    if (!isset($vouchers[$code])) {
+        aurora_response(array('message' => 'Mã voucher không hợp lệ hoặc đã hết hạn.'), 404);
+    }
+
+    $v = $vouchers[$code];
+    $discount = 0;
+    if ($v['type'] === 'percent') {
+        $discount = $total * $v['value'] / 100;
+        if ($v['max'] > 0) $discount = min($discount, $v['max']);
+    } else {
+        $discount = min($v['value'], $total);
+    }
+    $discount = round($discount);
+
+    aurora_response(array(
+        'valid'    => true,
+        'code'     => $code,
+        'desc'     => $v['desc'],
+        'discount' => $discount,
+        'final'    => max(0, $total - $discount),
+    ), 200);
+}
+
+// ── /booking_detail (GET) ─────────────────────────────────────────────────────
+// Chi tiết đầy đủ 1 booking (dùng sau khi đặt thành công)
+if ($resource === 'booking_detail') {
+    $userId    = aurora_require_user();
+    $bookingId = isset($_GET['id']) ? (int)$_GET['id'] : 0;
+    if ($bookingId < 1) aurora_response(array('message' => 'booking id không hợp lệ.'), 422);
+
+    $sql = "SELECT b.id, b.booking_code, b.total_amount, b.status, b.created_at,
+                   st.starts_at, st.ends_at, st.ticket_price,
+                   m.title AS movie_title, m.poster_url, m.age_rating, m.format, m.duration_minutes,
+                   s.name AS screen_name,
+                   t.name AS theater_name, t.address AS theater_address, t.city,
+                   GROUP_CONCAT(CONCAT(se.seat_row, se.seat_number, '(', se.seat_type, ')') ORDER BY se.seat_row, se.seat_number SEPARATOR '|') AS seats_raw,
+                   GROUP_CONCAT(CONCAT(se.seat_row, se.seat_number) ORDER BY se.seat_row, se.seat_number SEPARATOR ', ') AS seats_display
+            FROM bookings b
+            INNER JOIN showtimes st ON st.id = b.showtime_id
+            INNER JOIN movies m ON m.id = st.movie_id
+            INNER JOIN screens s ON s.id = st.screen_id
+            INNER JOIN theaters t ON t.id = s.theater_id
+            LEFT JOIN booking_seats bs ON bs.booking_id = b.id
+            LEFT JOIN seats se ON se.id = bs.seat_id
+            WHERE b.id = ? AND b.user_id = ?
+            GROUP BY b.id";
+    $stmt = $db->prepare($sql);
+    if (!$stmt) aurora_response(array('message' => 'Lỗi truy vấn.'), 500);
+    $stmt->bind_param('ii', $bookingId, $userId);
+    $stmt->execute();
+    $row = $stmt->get_result()->fetch_assoc();
+    $stmt->close();
+    if (!$row) aurora_response(array('message' => 'Không tìm thấy đơn đặt vé.'), 404);
+
+    // Parse seats list
+    $seatsArr = array();
+    if ($row['seats_raw']) {
+        foreach (explode('|', $row['seats_raw']) as $seatStr) {
+            if (preg_match('/^([A-Z]+)(\d+)\((\w+)\)$/', $seatStr, $m)) {
+                $seatsArr[] = array('label' => $m[1].$m[2], 'row' => $m[1], 'number' => (int)$m[2], 'type' => $m[3]);
+            }
+        }
+    }
+
+    aurora_response(array('booking' => array(
+        'id'              => (int)$row['id'],
+        'code'            => $row['booking_code'],
+        'status'          => $row['status'],
+        'total_amount'    => (float)$row['total_amount'],
+        'created_at'      => $row['created_at'],
+        'ticket_price'    => (float)$row['ticket_price'],
+        'movie_title'     => $row['movie_title'],
+        'poster_url'      => $row['poster_url'],
+        'age_rating'      => $row['age_rating'],
+        'format'          => $row['format'],
+        'duration_minutes'=> (int)$row['duration_minutes'],
+        'starts_at'       => $row['starts_at'],
+        'ends_at'         => $row['ends_at'],
+        'screen_name'     => $row['screen_name'],
+        'theater_name'    => $row['theater_name'],
+        'theater_address' => $row['theater_address'],
+        'city'            => $row['city'],
+        'seats'           => $seatsArr,
+        'seats_display'   => $row['seats_display'],
+    )), 200);
 }
 
 aurora_response(array('message' => 'API không tồn tại.'), 404);

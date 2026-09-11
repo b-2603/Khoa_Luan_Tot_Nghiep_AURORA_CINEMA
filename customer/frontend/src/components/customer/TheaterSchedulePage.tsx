@@ -11,24 +11,36 @@ type Props = {
   onBook: (movie: any, showtime: any) => void;
 };
 
-const toDateKey = (date: Date) => `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, '0')}-${String(date.getDate()).padStart(2, '0')}`;
-const dates = Array.from({ length: 7 }, (_, index) => {
-  const date = new Date(2026, 8, 4 + index);
-  return { key: toDateKey(date), day: String(date.getDate()).padStart(2, '0'), month: `/${String(date.getMonth() + 1).padStart(2, '0')}`, weekDay: ['CN', 'T2', 'T3', 'T4', 'T5', 'T6', 'T7'][date.getDay()] };
-});
+const toDateItem = (value: string) => {
+  const date = new Date(`${value}T00:00:00`);
+  return { key: value, day: String(date.getDate()).padStart(2, '0'), month: `/${String(date.getMonth() + 1).padStart(2, '0')}`, weekDay: ['CN', 'T2', 'T3', 'T4', 'T5', 'T6', 'T7'][date.getDay()] };
+};
 
 function timeOf(value: string) {
   return new Date(value.replace(' ', 'T')).toLocaleTimeString('vi-VN', { hour: '2-digit', minute: '2-digit' });
 }
 
 export default function TheaterSchedulePage({ theaters, movies, selectedTheaterId, onSelectTheater, onBook }: Props) {
-  const [date, setDate] = useState(dates[0].key);
+  const [dates, setDates] = useState<ReturnType<typeof toDateItem>[]>([]);
+  const [date, setDate] = useState('');
   const [showtimes, setShowtimes] = useState<any[]>([]);
   const [loading, setLoading] = useState(false);
   const theater = theaters.find(item => item.id === selectedTheaterId) || theaters[0];
 
   useEffect(() => {
     if (!theater?.id) return;
+    fetch(`${API_URL}?action=showtime_dates&theater_id=${theater.id}`)
+      .then(response => response.json())
+      .then(data => {
+        const nextDates: ReturnType<typeof toDateItem>[] = (data.dates || []).map(toDateItem);
+        setDates(nextDates);
+        setDate(current => nextDates.some(item => item.key === current) ? current : (nextDates[0]?.key || ''));
+      })
+      .catch(() => { setDates([]); setDate(''); });
+  }, [theater?.id]);
+
+  useEffect(() => {
+    if (!theater?.id || !date) return;
     setLoading(true);
     fetch(`${API_URL}?action=showtimes&theater_id=${theater.id}&date=${date}`)
       .then(response => response.json())

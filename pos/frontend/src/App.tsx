@@ -20,19 +20,14 @@ export default function App() {
     status: 'Tạm nghỉ',
   });
 
-  // Tự động kiểm tra trạng thái phiên làm việc khi tải trang
+  // Khi tải trang: Bắt buộc luôn hiển thị màn hình ĐĂNG NHẬP trước
   useEffect(() => {
     const savedUser = localStorage.getItem('pos_user_session');
     if (savedUser) {
       try {
         const parsed = JSON.parse(savedUser);
-        if (parsed.isLoggedIn) {
-          setShiftData((prev) => ({
-            ...prev,
-            staffName: parsed.fullName || prev.staffName,
-            counter: parsed.counter || prev.counter,
-          }));
-          setView('dashboard');
+        if (parsed.username) {
+          setUsername(parsed.username);
         }
       } catch {
         // Bỏ qua nếu parse lỗi
@@ -287,6 +282,54 @@ export default function App() {
             {isLoading ? 'ĐANG ĐĂNG NHẬP...' : 'ĐĂNG NHẬP'}
           </button>
         </form>
+
+        <div style={{ marginTop: 20, paddingTop: 16, borderTop: '1px dashed #d8e1df' }}>
+          <div style={{ fontSize: '0.75rem', fontWeight: 700, textTransform: 'uppercase', color: '#6a7b7d', letterSpacing: '0.05em', marginBottom: 8, textAlign: 'center' }}>
+            Tài khoản nhân viên thu ngân mẫu
+          </div>
+          <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 8 }}>
+            <button
+              type="button"
+              onClick={() => {
+                setUsername('0328754062');
+                setPassword('8888');
+              }}
+              style={{
+                padding: '8px 10px',
+                background: '#f7faf9',
+                border: '1px solid #d8e1df',
+                borderRadius: 8,
+                fontSize: '0.78rem',
+                color: '#19333a',
+                textAlign: 'left',
+                cursor: 'pointer',
+              }}
+            >
+              <strong style={{ display: 'block' }}>Thu ngân chính</strong>
+              <span style={{ fontSize: '0.7rem', color: '#6a7b7d' }}>0328754062 • 8888</span>
+            </button>
+            <button
+              type="button"
+              onClick={() => {
+                setUsername('admin');
+                setPassword('admin123');
+              }}
+              style={{
+                padding: '8px 10px',
+                background: '#f7faf9',
+                border: '1px solid #d8e1df',
+                borderRadius: 8,
+                fontSize: '0.78rem',
+                color: '#19333a',
+                textAlign: 'left',
+                cursor: 'pointer',
+              }}
+            >
+              <strong style={{ display: 'block' }}>Quản lý ca trực</strong>
+              <span style={{ fontSize: '0.7rem', color: '#6a7b7d' }}>admin • admin123</span>
+            </button>
+          </div>
+        </div>
 
         <div className="footer">© 2026 Aurora Cinema POS - Powered by AuroraSoft</div>
       </div>

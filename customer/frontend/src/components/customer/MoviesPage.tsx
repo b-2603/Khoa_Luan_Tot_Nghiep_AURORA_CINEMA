@@ -98,7 +98,7 @@ export default function MoviesPage({
         
         {/* BREADCRUMB */}
         <div style={{ fontSize: 13, color: '#64748b', marginBottom: 20, display: 'flex', alignItems: 'center', gap: 6 }}>
-          <span style={{ color: '#0054a6', fontWeight: 600, cursor: 'pointer' }}>Trang chủ</span>
+          <span style={{ color: '#b7791f', fontWeight: 700, cursor: 'pointer' }}>Trang chủ</span>
           <span>›</span>
           <span style={{ color: '#1e293b', fontWeight: 700 }}>Danh sách phim</span>
         </div>
@@ -132,7 +132,7 @@ export default function MoviesPage({
                   fontSize: 16.5,
                   fontWeight: 800,
                   letterSpacing: 0.5,
-                  color: isActive ? '#0054a6' : '#334155',
+                  color: isActive ? '#b7791f' : '#334155',
                   cursor: 'pointer',
                   position: 'relative',
                   whiteSpace: 'nowrap',
@@ -149,7 +149,7 @@ export default function MoviesPage({
                       left: 0,
                       right: 0,
                       height: 3,
-                      background: '#0054a6',
+                      background: '#d4a72c',
                       borderRadius: '3px 3px 0 0',
                     }}
                   />
@@ -186,9 +186,9 @@ export default function MoviesPage({
                 borderRadius: 20,
                 fontSize: 12,
                 fontWeight: selectedGenre === 'ALL' ? 700 : 500,
-                background: selectedGenre === 'ALL' ? '#0054a6' : '#fff',
+                background: selectedGenre === 'ALL' ? '#0d1b2e' : '#fff',
                 color: selectedGenre === 'ALL' ? '#fff' : '#475569',
-                border: selectedGenre === 'ALL' ? '1px solid #0054a6' : '1px solid #d1d5db',
+                border: selectedGenre === 'ALL' ? '1px solid #0d1b2e' : '1px solid #d1d5db',
                 cursor: 'pointer',
                 transition: 'all 0.15s ease',
               }}
@@ -206,9 +206,9 @@ export default function MoviesPage({
                     borderRadius: 20,
                     fontSize: 12,
                     fontWeight: active ? 700 : 500,
-                    background: active ? '#0054a6' : '#fff',
+                    background: active ? '#0d1b2e' : '#fff',
                     color: active ? '#fff' : '#475569',
-                    border: active ? '1px solid #0054a6' : '1px solid #d1d5db',
+                    border: active ? '1px solid #0d1b2e' : '1px solid #d1d5db',
                     cursor: 'pointer',
                     transition: 'all 0.15s ease',
                   }}
@@ -421,7 +421,7 @@ export default function MoviesPage({
                         margin: '0 0 6px',
                         fontSize: 16,
                         fontWeight: 800,
-                        color: '#0054a6',
+                        color: '#0d1b2e',
                         lineHeight: 1.35,
                         cursor: 'pointer',
                         overflow: 'hidden',
@@ -473,9 +473,9 @@ export default function MoviesPage({
                         style={{
                           width: '100%',
                           padding: '10px 14px',
-                          background: '#0054a6',
-                          color: '#ffffff',
-                          border: 'none',
+                          background: 'linear-gradient(135deg, #0d1b2e 0%, #1a3050 100%)',
+                          color: '#f8e8b0',
+                          border: '1px solid #263f61',
                           borderRadius: 8,
                           fontSize: 13.5,
                           fontWeight: 800,
@@ -486,22 +486,22 @@ export default function MoviesPage({
                           gap: 9,
                           cursor: 'pointer',
                           transition: 'all 0.2s ease',
-                          boxShadow: '0 2px 6px rgba(0, 84, 166, 0.25)',
+                          boxShadow: '0 4px 10px rgba(13, 27, 46, 0.24)',
                         }}
                         className="btn-muave"
                       >
-                        {/* Pink ticket icon matching reference */}
+                        {/* Điểm nhấn vàng kim theo nhận diện Aurora Cinema */}
                         <span
                           style={{
                             display: 'inline-flex',
                             alignItems: 'center',
                             justifyContent: 'center',
-                            background: 'rgba(255, 255, 255, 0.18)',
+                            background: 'rgba(244, 192, 74, 0.16)',
                             borderRadius: 4,
                             padding: '2px 4px',
                           }}
                         >
-                          <Ticket size={16} color="#fb7185" />
+                          <Ticket size={16} color="#f4c04a" />
                         </span>
                         {movie.status === 'COMING_SOON' ? 'XEM CHI TIẾT' : 'MUA VÉ'}
                       </button>
@@ -542,9 +542,9 @@ export default function MoviesPage({
           opacity: 1 !important;
         }
         .btn-muave:hover {
-          background: #004385 !important;
+          background: linear-gradient(135deg, #1a3050 0%, #263f61 100%) !important;
           transform: translateY(-1px);
-          box-shadow: 0 4px 12px rgba(0, 84, 166, 0.35) !important;
+          box-shadow: 0 7px 16px rgba(13, 27, 46, 0.3) !important;
         }
         .btn-muave:active {
           transform: translateY(0);
