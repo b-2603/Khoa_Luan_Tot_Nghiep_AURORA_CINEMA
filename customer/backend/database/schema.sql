@@ -106,6 +106,18 @@ CREATE TABLE IF NOT EXISTS booking_seats (
   UNIQUE KEY unique_booked_seat (showtime_id, seat_id)
 ) ENGINE=InnoDB;
 
+CREATE TABLE IF NOT EXISTS booking_concessions (
+  id BIGINT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
+  booking_id BIGINT UNSIGNED NOT NULL,
+  item_code VARCHAR(50) NOT NULL,
+  item_name VARCHAR(160) NOT NULL,
+  quantity INT UNSIGNED NOT NULL,
+  unit_price DECIMAL(10,2) NOT NULL,
+  created_at TIMESTAMP NULL DEFAULT CURRENT_TIMESTAMP,
+  FOREIGN KEY (booking_id) REFERENCES bookings(id) ON DELETE CASCADE,
+  INDEX idx_booking_concessions_booking (booking_id)
+) ENGINE=InnoDB;
+
 CREATE TABLE IF NOT EXISTS promotions (
   id BIGINT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
   name VARCHAR(180) NOT NULL,

@@ -68,6 +68,24 @@ function aurora_db() {
     return $db;
 }
 
+function aurora_ensure_sales_orders($db) {
+    return $db->query("CREATE TABLE IF NOT EXISTS sales_orders (
+        id BIGINT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
+        order_code VARCHAR(30) NOT NULL UNIQUE,
+        channel VARCHAR(10) NOT NULL,
+        booking_id BIGINT UNSIGNED NULL,
+        customer_id BIGINT UNSIGNED NULL,
+        cashier_id INT UNSIGNED NULL,
+        total_amount DECIMAL(12,2) NOT NULL DEFAULT 0,
+        payment_method VARCHAR(30) NOT NULL DEFAULT 'UNKNOWN',
+        status VARCHAR(20) NOT NULL DEFAULT 'PAID',
+        created_at TIMESTAMP NULL DEFAULT CURRENT_TIMESTAMP,
+        INDEX idx_sales_orders_channel (channel),
+        INDEX idx_sales_orders_created (created_at),
+        INDEX idx_sales_orders_customer (customer_id)
+    ) ENGINE=InnoDB DEFAULT CHARSET=utf8");
+}
+
 function aurora_route() {
     $path = isset($_SERVER['PATH_INFO']) ? $_SERVER['PATH_INFO'] : '';
     if (!$path && isset($_SERVER['REQUEST_URI'])) {
@@ -336,12 +354,36 @@ if ($resource === 'bookings') {
     $userId = aurora_require_user();
     $body = aurora_body();
     $showtimeId = isset($body['showtimeId']) ? (int)$body['showtimeId'] : 0;
+    $paymentMethod = isset($body['paymentMethod']) ? strtoupper(trim((string)$body['paymentMethod'])) : 'ONLINE';
     $seatIds = isset($body['seatIds']) && is_array($body['seatIds']) ? array_values(array_unique(array_map('intval', $body['seatIds']))) : array();
+    $concessionCatalog = array(
+        'popcorn_cola' => array('name' => 'Combo Bắp nước', 'price' => 79000),
+        'cheese_pair' => array('name' => 'Combo Đôi', 'price' => 129000),
+        'family_feast' => array('name' => 'Combo Gia đình', 'price' => 189000),
+    );
+    $combos = array();
+    if (isset($body['combos']) && is_array($body['combos'])) {
+        foreach ($body['combos'] as $item) {
+            $id = is_array($item) && isset($item['id']) ? (string)$item['id'] : '';
+            $quantity = is_array($item) && isset($item['quantity']) ? (int)$item['quantity'] : 0;
+            if (isset($concessionCatalog[$id]) && $quantity > 0 && $quantity <= 10) {
+                $combos[$id] = min(10, (isset($combos[$id]) ? $combos[$id] : 0) + $quantity);
+            }
+        }
+    }
     $validSeatIds = array();
     foreach ($seatIds as $seatIdValue) if ($seatIdValue > 0) $validSeatIds[] = $seatIdValue;
     $seatIds = $validSeatIds;
     if ($showtimeId < 1 || count($seatIds) < 1 || count($seatIds) > 12) {
         aurora_response(array('message' => 'Vui lòng chọn suất chiếu và từ 1 đến 12 ghế.'), 422);
+    }
+
+    // Tạo bảng món kèm tự động để tương thích với database Aurora đã cài sẵn.
+    if (!$db->query("CREATE TABLE IF NOT EXISTS booking_concessions (id BIGINT UNSIGNED AUTO_INCREMENT PRIMARY KEY, booking_id BIGINT UNSIGNED NOT NULL, item_code VARCHAR(50) NOT NULL, item_name VARCHAR(160) NOT NULL, quantity INT UNSIGNED NOT NULL, unit_price DECIMAL(10,2) NOT NULL, created_at TIMESTAMP NULL DEFAULT CURRENT_TIMESTAMP, INDEX idx_booking_concessions_booking (booking_id), FOREIGN KEY (booking_id) REFERENCES bookings(id) ON DELETE CASCADE) ENGINE=InnoDB")) {
+        aurora_response(array('message' => 'Không thể khởi tạo dữ liệu combo.'), 500);
+    }
+    if (!aurora_ensure_sales_orders($db)) {
+        aurora_response(array('message' => 'Không thể khởi tạo bảng đơn hàng tổng.'), 500);
     }
 
     $db->autocommit(false);
@@ -383,6 +425,9 @@ if ($resource === 'bookings') {
             else if ($st === 'COUPLE') $p = $p * 2;
             $total += $p;
         }
+        foreach ($combos as $comboId => $quantity) {
+            $total += $concessionCatalog[$comboId]['price'] * $quantity;
+        }
         $now = date('Y-m-d H:i:s');
         $stmt = $db->prepare("INSERT INTO bookings (user_id, showtime_id, booking_code, total_amount, status, created_at, updated_at) VALUES (?, ?, ?, ?, 'PAID', ?, ?)");
         $stmt->bind_param('iisdss', $userId, $showtimeId, $code, $total, $now, $now); $stmt->execute(); $bookingId = (int)$stmt->insert_id; $stmt->close();
@@ -407,9 +452,26 @@ if ($resource === 'bookings') {
                 $stmt->execute();
             }
         }
-        $stmt->close(); $db->commit();
+        $stmt->close();
+        if (count($combos) > 0) {
+            $stmt = $db->prepare('INSERT INTO booking_concessions (booking_id, item_code, item_name, quantity, unit_price) VALUES (?, ?, ?, ?, ?)');
+            if (!$stmt) throw new Exception('Không thể lưu combo bắp nước.');
+            foreach ($combos as $comboId => $quantity) {
+                $comboName = $concessionCatalog[$comboId]['name'];
+                $comboPrice = $concessionCatalog[$comboId]['price'];
+                $stmt->bind_param('issid', $bookingId, $comboId, $comboName, $quantity, $comboPrice);
+                if (!$stmt->execute()) throw new Exception('Không thể lưu combo bắp nước.');
+            }
+            $stmt->close();
+        }
+        $stmt = $db->prepare("INSERT INTO sales_orders (order_code, channel, booking_id, customer_id, total_amount, payment_method, status) VALUES (?, 'ONLINE', ?, ?, ?, ?, 'PAID')");
+        if (!$stmt) throw new Exception('Không thể lưu đơn hàng tổng.');
+        $stmt->bind_param('siids', $code, $bookingId, $userId, $total, $paymentMethod);
+        if (!$stmt->execute()) throw new Exception('Không thể lưu đơn hàng tổng.');
+        $stmt->close();
+        $db->commit();
         $db->autocommit(true);
-        aurora_response(array('booking' => array('id'=>$bookingId, 'code'=>$code, 'showtimeId'=>$showtimeId, 'seatIds'=>$seatIds, 'totalAmount'=>$total, 'status'=>'PAID')), 201);
+        aurora_response(array('booking' => array('id'=>$bookingId, 'code'=>$code, 'showtimeId'=>$showtimeId, 'seatIds'=>$seatIds, 'combos'=>$combos, 'totalAmount'=>$total, 'status'=>'PAID')), 201);
     } catch (Exception $exception) {
         $db->rollback();
         $db->autocommit(true);

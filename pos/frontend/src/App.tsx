@@ -57,6 +57,7 @@ export default function App() {
       const apiUrl = 'http://localhost/AURORA%20CINEMA/pos/backend/public/api.php?action=login';
       const response = await fetch(apiUrl, {
         method: 'POST',
+        credentials: 'include',
         headers: {
           'Content-Type': 'application/json',
         },

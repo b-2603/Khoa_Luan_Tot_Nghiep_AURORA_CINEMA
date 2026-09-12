@@ -19,6 +19,7 @@ export default function MovieDetailPage({ movie, theaters, theater, showtimes, d
   const [currentShowtimes, setCurrentShowtimes] = useState<any[]>(showtimes);
   const selectedTheater = theaters.find(item => item.id === theaterId);
   const trailerId = movie.trailerUrl && (movie.trailerUrl.match(/[?&]v=([^&]+)/) || movie.trailerUrl.match(/youtu\.be\/([^?]+)/));
+  const formattedDate = new Intl.DateTimeFormat('vi-VN', { timeZone: 'Asia/Ho_Chi_Minh', day: '2-digit', month: '2-digit', year: 'numeric' }).format(new Date(`${date}T00:00:00+07:00`));
 
   useEffect(() => {
     if (theaterId === null) return;
@@ -47,7 +48,7 @@ export default function MovieDetailPage({ movie, theaters, theater, showtimes, d
     <section style={scheduleCard}>
       <div style={sectionTitle}><CalendarDays size={18} color="#d59a17" /> LỊCH CHIẾU THEO CỤM RẠP</div>
       <div style={{ display: 'flex', flexWrap: 'wrap', gap: 8, marginBottom: 18 }}>{theaters.map(item => <button key={item.id} onClick={() => setTheaterId(item.id)} style={{ ...theaterButton, ...(theaterId === item.id ? activeTheaterButton : {}) }}><MapPin size={13} /> {item.name}</button>)}</div>
-      <div style={{ background: '#f5f7fa', borderRadius: 10, padding: '12px 14px', display: 'flex', alignItems: 'center', gap: 8, color: '#0d1b2e', fontWeight: 900, fontSize: 13, marginBottom: 15 }}>{selectedTheater?.name || theater} <span style={{ color: '#94a3b8', fontWeight: 500 }}>· Suất chiếu ngày 04/09/2026</span></div>
+      <div style={{ background: '#f5f7fa', borderRadius: 10, padding: '12px 14px', display: 'flex', alignItems: 'center', gap: 8, color: '#0d1b2e', fontWeight: 900, fontSize: 13, marginBottom: 15 }}>{selectedTheater?.name || theater} <span style={{ color: '#94a3b8', fontWeight: 500 }}>· Suất chiếu ngày {formattedDate}</span></div>
       {currentShowtimes.length ? <div style={{ display: 'flex', flexWrap: 'wrap', gap: 12 }}>{currentShowtimes.map(item => <button key={item.id} onClick={() => onBook(item, selectedTheater?.name || theater)} style={showtimeButton}><strong>{new Date(item.starts_at.replace(' ', 'T')).toLocaleTimeString('vi-VN', { hour: '2-digit', minute: '2-digit' })}</strong><small>{item.screen_name || 'Phòng chiếu'} · {Number(item.ticket_price).toLocaleString('vi-VN')}đ</small></button>)}</div> : <div style={{ color: '#94a3b8', fontSize: 13 }}>Chưa có suất chiếu trong database cho cụm rạp và ngày này.</div>}
     </section>
 

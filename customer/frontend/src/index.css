@@ -13,17 +13,16 @@
   -webkit-font-smoothing: antialiased;
   -moz-osx-font-smoothing: grayscale;
 }
-
 * { box-sizing: border-box; }
-html { scroll-behavior: smooth; }
+html { scroll-behavior: smooth; overflow-x: hidden; }
 body {
   margin: 0;
   min-width: 320px;
   min-height: 100vh;
+  overflow-x: hidden;
   background: linear-gradient(180deg, #ece7e1 0%, #f3f1ee 100%);
   color: #0f172a;
 }
-
 button, input { font: inherit; }
 button { cursor: pointer; }
 img { max-width: 100%; display: block; }
@@ -38,3 +37,113 @@ a { color: inherit; text-decoration: none; }
   from { opacity: 0; transform: scale(0.97) translateY(8px); }
   to   { opacity: 1; transform: scale(1)   translateY(0); }
 }
+
+.payment-top-grid {
+  display: grid;
+  grid-template-columns: minmax(0, 1.15fr) minmax(320px, 0.85fr);
+  gap: 20px;
+  align-items: start;
+}
+
+.payment-top-grid > * {
+  margin-bottom: 0 !important;
+}
+
+.booking-summary-panel {
+  align-self: flex-start;
+}
+
+@media (max-width: 900px) {
+  .payment-top-grid {
+    grid-template-columns: 1fr;
+    gap: 16px;
+  }
+}
+
+/* Custom styles for Aurora Cinema Booking */
+.aurora-booking-card {
+  background: #ffffff;
+  border-radius: 16px;
+  border: 1px solid #e2e8f0;
+  box-shadow: 0 4px 20px -2px rgba(13, 27, 46, 0.06);
+  transition: all 0.2s ease;
+}
+
+.aurora-booking-card:hover {
+  border-color: #cbd5e1;
+  box-shadow: 0 6px 24px -4px rgba(13, 27, 46, 0.09);
+}
+
+.aurora-gold-badge {
+  background: linear-gradient(135deg, #fef3c7, #fde68a);
+  color: #92400e;
+  border: 1px solid #f59e0b;
+}
+
+@keyframes timerPulse {
+  0%, 100% { opacity: 1; transform: scale(1); }
+  50% { opacity: 0.85; transform: scale(1.02); }
+}
+
+.timer-warning {
+  animation: timerPulse 1.5s ease-in-out infinite;
+}
+
+.booking-btn-back {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 14px;
+  border-radius: 10px;
+  border: 1px solid #e2e8f0;
+  background: #ffffff;
+  color: #475569;
+  font-size: 13px;
+  font-weight: 600;
+  cursor: pointer;
+  transition: all 0.2s ease;
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.04);
+}
+
+.booking-btn-back:hover {
+  background: #0d1b2e;
+  color: #f4c04a;
+  border-color: #0d1b2e;
+  transform: translateX(-3px);
+  box-shadow: 0 4px 12px rgba(13, 27, 46, 0.15);
+}
+
+.combo-option-card {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  padding: 14px 16px;
+  border-radius: 12px;
+  transition: all 0.2s cubic-bezier(0.16, 1, 0.3, 1);
+}
+
+.combo-option-card:hover {
+  transform: translateY(-1px);
+}
+
+@media (max-width: 640px) {
+  .payment-top-grid {
+    gap: 12px;
+  }
+
+  .aurora-booking-card {
+    border-radius: 12px;
+  }
+
+  .booking-btn-back {
+    max-width: 100%;
+    padding: 8px 10px;
+    font-size: 12px;
+  }
+
+  .combo-option-card {
+    gap: 10px;
+    padding: 12px;
+  }
+}
+

@@ -14,6 +14,7 @@
 body {
   margin: 0;
   min-width: 320px;
+  overflow-x: hidden;
   background: #f8f9fc;
 }
 
@@ -584,27 +585,22 @@ nav button.nav-active { color: #fff; background: linear-gradient(100deg, #287cf3
 .notice-row > span { align-self: start; margin-top: 12px; color: #77839a; font-size: 9px; white-space: nowrap; }
 footer { display: flex; justify-content: space-between; padding: 25px 17px 0; color: #697690; font-size: 11px; }
 
-@media (max-width: 980px) {
-  .tms-split-layout {
-    flex-direction: column;
+@media (min-width: 768px) and (max-width: 1200px) {
+  .content {
+    padding: 18px;
   }
-  .tms-hero-panel {
-    width: 100%;
-    min-width: unset;
-    min-height: 480px;
-  }
-  .tms-language-picker {
-    top: 16px;
-    right: 16px;
-  }
-}
 
-@media (max-width: 540px) {
-  .tms-hero-panel {
-    padding: 30px 20px;
+  .stats-grid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
   }
-  .tms-form-container {
-    padding: 30px 20px;
+
+  .charts-grid,
+  .bottom-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .card {
+    min-width: 0;
   }
 }
 

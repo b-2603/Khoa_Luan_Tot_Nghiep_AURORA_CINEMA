@@ -69,6 +69,26 @@ function ratingBg(r: string) {
   return '#555';
 }
 
+function getVietnamDate() {
+  const parts = new Intl.DateTimeFormat('en-CA', {
+    timeZone: 'Asia/Ho_Chi_Minh',
+    year: 'numeric',
+    month: '2-digit',
+    day: '2-digit',
+  }).formatToParts(new Date());
+  const value = (type: Intl.DateTimeFormatPartTypes) => parts.find(part => part.type === type)?.value || '';
+  return `${value('year')}-${value('month')}-${value('day')}`;
+}
+
+function formatScheduleDate(date: string, language: Language) {
+  return new Intl.DateTimeFormat(language === 'vi' ? 'vi-VN' : 'en-GB', {
+    timeZone: 'Asia/Ho_Chi_Minh',
+    day: '2-digit',
+    month: '2-digit',
+    year: 'numeric',
+  }).format(new Date(`${date}T00:00:00+07:00`));
+}
+
 /* ─── COMPONENT ─────────────────────────────────────────────── */
 export default function App() {
   const [language, setLanguage] = useState<Language>(() => localStorage.getItem('aurora-language') === 'en' ? 'en' : 'vi');
@@ -85,7 +105,7 @@ export default function App() {
   const [booking, setBooking] = useState<{ movie: any; showtime: any } | null>(null);
   const [pendingBooking, setPendingBooking] = useState<{ movie: any; showtime: any; theater: string } | null>(null);
   const [trailerMovie, setTrailerMovie] = useState<any | null>(null);
-  const scheduleDate = '2026-09-04';
+  const scheduleDate = getVietnamDate();
   const [showTheaterMenu, setShowTheaterMenu] = useState<boolean>(false);
   const [showUserMenu, setShowUserMenu] = useState<boolean>(false);
   const [showAccount, setShowAccount] = useState<boolean>(false);
@@ -820,7 +840,7 @@ export default function App() {
                         action: () => setShowTheaterMenu(prev => !prev)
                       },
                       { label: t('Chọn phim', 'Choose movie'), val: t('Tất cả phim', 'All movies'), icon: <Film size={13} color="#6b7f94" />, action: undefined },
-                      { label: t('Chọn ngày', 'Choose date'), val: t('Hôm nay, 04/09/2026', 'Today, 04/09/2026'), icon: null, action: undefined },
+                      { label: t('Chọn ngày', 'Choose date'), val: t(`Hôm nay, ${formatScheduleDate(scheduleDate, language)}`, `Today, ${formatScheduleDate(scheduleDate, language)}`), icon: null, action: undefined },
                     ].map(f => (
                       <div key={f.label}>
                         <label style={{ display: 'block', fontSize: 10.5, fontWeight: 700, color: '#6b7f94', marginBottom: 5, textTransform: 'uppercase' }}>{f.label}</label>
