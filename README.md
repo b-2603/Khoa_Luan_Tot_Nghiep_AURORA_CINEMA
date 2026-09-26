@@ -57,7 +57,7 @@ npm run dev
 
 ### EMS
 ```powershell
-cd "D:\HỌC TẬP CỦA BẢO\wamp\www\AURORA CINEMA\ems"
+cd "D:\HỌC TẬP CỦA BẢO\wamp\www\AURORA CINEMA\ems\frontend"
 Set-ExecutionPolicy -Scope Process -ExecutionPolicy Bypass
 npm install
 npm run dev
@@ -65,7 +65,7 @@ npm run dev
 
 ### TMS
 ```powershell
-cd "D:\HỌC TẬP CỦA BẢO\wamp\www\AURORA CINEMA\tms"
+cd "D:\HỌC TẬP CỦA BẢO\wamp\www\AURORA CINEMA\tms\frontend"
 Set-ExecutionPolicy -Scope Process -ExecutionPolicy Bypass
 npm install
 npm run dev
@@ -73,7 +73,7 @@ npm run dev
 
 ### POS
 ```powershell
-cd "D:\HỌC TẬP CỦA BẢO\wamp\www\AURORA CINEMA\pos"
+cd "D:\HỌC TẬP CỦA BẢO\wamp\www\AURORA CINEMA\pos\frontend"
 Set-ExecutionPolicy -Scope Process -ExecutionPolicy Bypass
 npm install
 npm run dev
@@ -82,9 +82,9 @@ npm run dev
 ## Port mặc định
 
 - Customer Frontend: 3000
-- EMS: 3001
-- TMS: 3002
-- POS: 3003
+- POS: 5174
+- TMS: 5175
+- EMS: 5176
 
 ## Mục tiêu phát triển
 
