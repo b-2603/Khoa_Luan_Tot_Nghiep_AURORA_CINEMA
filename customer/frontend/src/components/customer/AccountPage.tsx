@@ -217,7 +217,7 @@ export default function AccountPage({ authUser, onUserUpdate, initialTab = 'info
   const avatarLetter = (authUser?.fullName || fullName || 'A').charAt(0).toUpperCase();
 
   return (
-    <div style={{ minHeight: '100vh', background: 'linear-gradient(180deg,#f0f4f8 0%,#eef0f4 100%)', fontFamily: "'Segoe UI','Inter',sans-serif" }}>
+    <div style={{ minHeight: '100vh', background: 'linear-gradient(180deg,#f0f4f8 0%,#eef0f4 100%)', fontFamily: "'Inter','Segoe UI',Arial,sans-serif" }}>
 
       {/* Page Header */}
       <div style={{ background: 'linear-gradient(135deg,#0d1b2e 0%,#1a3050 100%)', padding: '32px 20px 56px', position: 'relative', overflow: 'hidden' }}>

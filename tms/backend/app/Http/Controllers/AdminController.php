@@ -256,6 +256,10 @@ class AdminController
         if (!isset($this->resources[$resource])) {
             jsonResponse(array('success' => false, 'message' => 'Resource không tồn tại.'), 404);
         }
+        if ($resource === 'movies') {
+            $this->ensureMovieCatalogSchema();
+            $this->listMovies();
+        }
         $cfg = $this->resources[$resource];
         $where = array('1=1');
 
@@ -331,6 +335,9 @@ class AdminController
     {
         if (!isset($this->resources[$resource])) {
             jsonResponse(array('success' => false, 'message' => 'Resource không tồn tại.'), 404);
+        }
+        if ($resource === 'movies') {
+            $this->saveMovie();
         }
         requireAdmin();
         $role = $this->getCurrentRole();
@@ -444,6 +451,207 @@ class AdminController
         jsonResponse(array('success' => true, 'message' => $message, 'data' => array('id' => $id)), $id && !isset($input['id']) ? 201 : 200);
     }
 
+    private function ensureMovieCatalogSchema()
+    {
+        $masterTable = $this->db->query("SHOW TABLES LIKE 'movies'");
+        if (!$masterTable || !$masterTable->num_rows) {
+            jsonResponse(array('success' => false, 'message' => 'Không tìm thấy bảng movies trong aurora_db.'), 500);
+        }
+
+        $masterColumns = array(
+            'movie_code' => 'VARCHAR(50) NULL', 'original_title' => 'VARCHAR(180) NULL',
+            'director' => 'VARCHAR(180) NULL', 'cast' => 'TEXT NULL', 'writer' => 'VARCHAR(180) NULL',
+            'producer' => 'VARCHAR(180) NULL', 'production_country' => 'VARCHAR(100) NULL',
+            'production_year' => 'SMALLINT UNSIGNED NULL', 'plot_details' => 'MEDIUMTEXT NULL',
+            'original_language' => 'VARCHAR(80) NULL', 'localization_versions' => 'VARCHAR(255) NULL',
+            'expected_end_date' => 'DATE NULL', 'distributor' => 'VARCHAR(180) NULL', 'banner_url' => 'VARCHAR(500) NULL'
+        );
+        $columnResult = $this->db->query('SHOW COLUMNS FROM movies');
+        if (!$columnResult) {
+            jsonResponse(array('success' => false, 'message' => 'Không thể đọc cấu trúc movies: ' . $this->db->error), 500);
+        }
+        $existingColumns = array();
+        while ($column = $columnResult->fetch_assoc()) $existingColumns[$column['Field']] = true;
+        foreach ($masterColumns as $column => $definition) {
+            if (!isset($existingColumns[$column]) && !$this->db->query("ALTER TABLE movies ADD COLUMN `{$column}` {$definition}")) {
+                jsonResponse(array('success' => false, 'message' => 'Không thể nâng cấp movies: ' . $this->db->error), 500);
+            }
+        }
+
+        $formatResult = $this->db->query("SHOW COLUMNS FROM movies LIKE 'format'");
+        if ($formatResult && ($format = $formatResult->fetch_assoc()) && preg_match('/varchar\((\d+)\)/i', $format['Type'], $match) && (int)$match[1] < 100) {
+            if (!$this->db->query("ALTER TABLE movies MODIFY format VARCHAR(100) NOT NULL DEFAULT '2D Digital'")) {
+                jsonResponse(array('success' => false, 'message' => 'Không thể mở rộng định dạng movies: ' . $this->db->error), 500);
+            }
+        }
+
+        $codeIndex = $this->db->query("SHOW INDEX FROM movies WHERE Column_name = 'movie_code'");
+        if ($codeIndex && !$codeIndex->num_rows && !$this->db->query('ALTER TABLE movies ADD UNIQUE KEY uq_movies_movie_code (movie_code)')) {
+            jsonResponse(array('success' => false, 'message' => 'Không thể tạo chỉ mục mã phim: ' . $this->db->error), 500);
+        }
+
+        $tmsResult = $this->db->query('SHOW COLUMNS FROM tms_movies');
+        if (!$tmsResult) {
+            jsonResponse(array('success' => false, 'message' => 'Không tìm thấy bảng tms_movies trong aurora_db: ' . $this->db->error), 500);
+        }
+        $tmsColumns = array();
+        while ($column = $tmsResult->fetch_assoc()) $tmsColumns[$column['Field']] = $column;
+        if (!$this->db->query('CREATE TABLE IF NOT EXISTS tms_movie_catalog_links (tms_movie_id BIGINT UNSIGNED NOT NULL PRIMARY KEY, catalog_movie_id BIGINT UNSIGNED NOT NULL UNIQUE, created_at TIMESTAMP NULL DEFAULT CURRENT_TIMESTAMP, CONSTRAINT fk_tms_movie_catalog_tms FOREIGN KEY (tms_movie_id) REFERENCES tms_movies(id) ON DELETE CASCADE, CONSTRAINT fk_tms_movie_catalog_master FOREIGN KEY (catalog_movie_id) REFERENCES movies(id) ON DELETE CASCADE) ENGINE=InnoDB DEFAULT CHARSET=utf8 COLLATE=utf8_unicode_ci')) {
+            jsonResponse(array('success' => false, 'message' => 'Không thể tạo liên kết catalog phim: ' . $this->db->error), 500);
+        }
+        if (isset($tmsColumns['format']) && preg_match('/varchar\((\d+)\)/i', $tmsColumns['format']['Type'], $match) && (int)$match[1] < 100) {
+            if (!$this->db->query("ALTER TABLE tms_movies MODIFY format VARCHAR(100) NOT NULL DEFAULT '2D Digital / 3D'")) {
+                jsonResponse(array('success' => false, 'message' => 'Không thể mở rộng định dạng TMS: ' . $this->db->error), 500);
+            }
+        }
+        if (isset($tmsColumns['status']) && stripos($tmsColumns['status']['Type'], 'enum(') === 0) {
+            if (!$this->db->query("ALTER TABLE tms_movies MODIFY status VARCHAR(40) NOT NULL DEFAULT 'now_showing'")) {
+                jsonResponse(array('success' => false, 'message' => 'Không thể mở rộng trạng thái TMS: ' . $this->db->error), 500);
+            }
+        }
+    }
+
+    private function listMovies()
+    {
+        $where = array('1=1');
+        if (!empty($_GET['q'])) {
+            $query = $this->db->real_escape_string($_GET['q']);
+            $where[] = "(tm.title LIKE '%{$query}%' OR tm.format LIKE '%{$query}%' OR m.movie_code LIKE '%{$query}%')";
+        }
+        if (!empty($_GET['status'])) {
+            $status = $this->db->real_escape_string(strtolower($_GET['status']));
+            $where[] = "tm.status = '{$status}'";
+        }
+        $sql = "SELECT tm.id, l.catalog_movie_id, COALESCE(m.movie_code, '') movie_code,
+            COALESCE(m.title, tm.title) title, COALESCE(m.original_title, '') original_title,
+            COALESCE(m.genre, '') genre, tm.duration_minutes, tm.age_rating,
+            COALESCE(m.director, '') director, COALESCE(m.`cast`, '') `cast`,
+            COALESCE(m.writer, '') writer, COALESCE(m.producer, '') producer,
+            COALESCE(m.production_country, '') production_country, m.production_year,
+            COALESCE(m.description, '') description, COALESCE(m.plot_details, '') plot_details,
+            COALESCE(m.original_language, '') original_language, COALESCE(m.localization_versions, '') localization_versions,
+            COALESCE(m.format, tm.format) format, COALESCE(m.release_date, '') release_date,
+            COALESCE(m.expected_end_date, '') expected_end_date, COALESCE(m.distributor, '') distributor,
+            COALESCE(m.poster_url, '') poster_url, COALESCE(m.banner_url, '') banner_url,
+            COALESCE(m.trailer_url, '') trailer_url, LOWER(COALESCE(m.status, tm.status)) status
+            FROM tms_movies tm LEFT JOIN tms_movie_catalog_links l ON l.tms_movie_id = tm.id LEFT JOIN movies m ON m.id = l.catalog_movie_id
+            WHERE " . implode(' AND ', $where) . ' ORDER BY tm.id DESC';
+        jsonResponse(array('success' => true, 'data' => $this->rows($sql)));
+    }
+
+    private function saveMovie()
+    {
+        requireAdmin();
+        $role = $this->getCurrentRole();
+        if (!in_array($role, array('super_admin', 'cinema_admin'), true)) {
+            jsonResponse(array('success' => false, 'message' => 'Chỉ Admin Tổng hoặc Admin Rạp mới có quyền chỉnh sửa danh mục phim.'), 403);
+        }
+        $this->ensureMovieCatalogSchema();
+        $input = requestJson();
+        $id = isset($_GET['id']) ? (int)$_GET['id'] : (isset($input['id']) ? (int)$input['id'] : 0);
+        $fields = array(
+            'movie_code', 'title', 'original_title', 'genre', 'age_rating', 'director', 'cast', 'writer',
+            'producer', 'production_country', 'description', 'plot_details', 'original_language',
+            'localization_versions', 'format', 'release_date', 'expected_end_date', 'distributor',
+            'poster_url', 'banner_url', 'trailer_url'
+        );
+        $movie = array();
+        foreach ($fields as $field) $movie[$field] = isset($input[$field]) ? trim((string)$input[$field]) : '';
+        foreach (array('movie_code', 'title', 'genre', 'age_rating', 'director', 'cast', 'production_country', 'description', 'original_language', 'format', 'release_date', 'poster_url') as $required) {
+            if ($movie[$required] === '') jsonResponse(array('success' => false, 'message' => 'Vui lòng nhập đầy đủ các trường bắt buộc.'), 400);
+        }
+        if (!preg_match('/^[A-Za-z0-9][A-Za-z0-9._-]{0,49}$/', $movie['movie_code'])) {
+            jsonResponse(array('success' => false, 'message' => 'Mã phim chỉ được gồm chữ không dấu, số, dấu chấm, gạch ngang hoặc gạch dưới.'), 400);
+        }
+        $duration = isset($input['duration_minutes']) ? filter_var($input['duration_minutes'], FILTER_VALIDATE_INT) : false;
+        if ($duration === false || $duration < 1 || $duration > 600) jsonResponse(array('success' => false, 'message' => 'Thời lượng phim phải từ 1 đến 600 phút.'), 400);
+        $year = isset($input['production_year']) && $input['production_year'] !== '' ? filter_var($input['production_year'], FILTER_VALIDATE_INT) : null;
+        if ($year === false || ($year !== null && ($year < 1888 || $year > 2100))) jsonResponse(array('success' => false, 'message' => 'Năm sản xuất không hợp lệ.'), 400);
+        $movie['duration_minutes'] = $duration;
+        $movie['production_year'] = $year;
+
+        foreach (array('release_date' => true, 'expected_end_date' => false) as $field => $required) {
+            if ($movie[$field] === '' && !$required) { $movie[$field] = null; continue; }
+            if (!preg_match('/^(\d{4})-(\d{2})-(\d{2})$/', $movie[$field], $parts) || !checkdate((int)$parts[2], (int)$parts[3], (int)$parts[1])) {
+                jsonResponse(array('success' => false, 'message' => 'Ngày khởi chiếu hoặc ngày kết thúc không hợp lệ.'), 400);
+            }
+        }
+        if ($movie['expected_end_date'] !== null && $movie['expected_end_date'] < $movie['release_date']) jsonResponse(array('success' => false, 'message' => 'Ngày kết thúc phải bằng hoặc sau ngày khởi chiếu.'), 400);
+        if (!$this->isMovieMediaReference($movie['poster_url'], 'poster')) jsonResponse(array('success' => false, 'message' => 'Poster tải lên không hợp lệ.'), 400);
+        foreach (array('banner_url' => 'banner', 'trailer_url' => 'trailer') as $urlField => $kind) {
+            if ($movie[$urlField] !== '' && !$this->isMovieMediaReference($movie[$urlField], $kind)) jsonResponse(array('success' => false, 'message' => 'Tệp banner hoặc trailer không hợp lệ.'), 400);
+            if ($movie[$urlField] === '') $movie[$urlField] = null;
+        }
+        if (!in_array($movie['age_rating'], array('P', 'K', 'T13', 'T16', 'T18'), true)) jsonResponse(array('success' => false, 'message' => 'Độ tuổi không hợp lệ.'), 400);
+        $status = isset($input['status']) ? strtolower(trim((string)$input['status'])) : '';
+        if (!in_array($status, array('now_showing', 'coming_soon', 'special_showing', 'ended'), true)) jsonResponse(array('success' => false, 'message' => 'Trạng thái phim không hợp lệ.'), 400);
+        $movie['status'] = strtoupper($status);
+
+        $this->db->begin_transaction();
+        $catalogId = 0;
+        if ($id > 0) {
+            $existing = $this->rows('SELECT l.catalog_movie_id FROM tms_movies tm LEFT JOIN tms_movie_catalog_links l ON l.tms_movie_id = tm.id WHERE tm.id = ' . $id . ' FOR UPDATE');
+            if (!$existing) { $this->db->rollback(); jsonResponse(array('success' => false, 'message' => 'Không tìm thấy phim cần cập nhật.'), 404); }
+            $catalogId = (int)$existing[0]['catalog_movie_id'];
+        }
+
+        $masterFields = array(
+            'movie_code', 'title', 'original_title', 'genre', 'duration_minutes', 'age_rating', 'director', 'cast',
+            'writer', 'producer', 'production_country', 'production_year', 'description', 'plot_details',
+            'original_language', 'localization_versions', 'format', 'release_date', 'expected_end_date',
+            'distributor', 'poster_url', 'banner_url', 'trailer_url', 'status'
+        );
+        $values = array();
+        $types = '';
+        foreach ($masterFields as $field) {
+            $values[] = isset($movie[$field]) ? $movie[$field] : null;
+            $types .= in_array($field, array('duration_minutes', 'production_year'), true) ? 'i' : 's';
+        }
+        if ($catalogId > 0) {
+            $sets = array();
+            foreach ($masterFields as $field) $sets[] = "`{$field}` = ?";
+            $values[] = $catalogId;
+            $this->executeMovieStatement('UPDATE movies SET ' . implode(', ', $sets) . ' WHERE id = ?', $types . 'i', $values);
+        } else {
+            $columns = array();
+            foreach ($masterFields as $field) $columns[] = '`' . $field . '`';
+            $this->executeMovieStatement('INSERT INTO movies (' . implode(', ', $columns) . ') VALUES (' . implode(', ', array_fill(0, count($masterFields), '?')) . ')', $types, $values);
+            $catalogId = (int)$this->db->insert_id;
+        }
+        if ($id > 0) {
+            $this->executeMovieStatement('UPDATE tms_movies SET title = ?, duration_minutes = ?, age_rating = ?, format = ?, status = ? WHERE id = ?', 'sisssi', array($movie['title'], $duration, $movie['age_rating'], $movie['format'], $status, $id));
+            $this->executeMovieStatement('INSERT INTO tms_movie_catalog_links (tms_movie_id, catalog_movie_id) VALUES (?, ?) ON DUPLICATE KEY UPDATE catalog_movie_id = VALUES(catalog_movie_id)', 'ii', array($id, $catalogId));
+            $message = 'Cập nhật thông tin phim thành công.';
+        } else {
+            $this->executeMovieStatement('INSERT INTO tms_movies (title, duration_minutes, age_rating, format, status) VALUES (?, ?, ?, ?, ?)', 'sisss', array($movie['title'], $duration, $movie['age_rating'], $movie['format'], $status));
+            $id = (int)$this->db->insert_id;
+            $this->executeMovieStatement('INSERT INTO tms_movie_catalog_links (tms_movie_id, catalog_movie_id) VALUES (?, ?)', 'ii', array($id, $catalogId));
+            $message = 'Đã lưu đầy đủ thông tin phim vào aurora_db.';
+        }
+        $this->db->commit();
+        jsonResponse(array('success' => true, 'message' => $message, 'data' => array('id' => $id, 'catalog_movie_id' => $catalogId)), 200);
+    }
+
+    private function isMovieMediaReference($value, $kind)
+    {
+        if (filter_var($value, FILTER_VALIDATE_URL)) return true;
+        $path = parse_url($value, PHP_URL_PATH);
+        $extensions = $kind === 'trailer' ? 'mp4|webm|mov' : 'jpg|png|webp';
+        return is_string($path) && preg_match('#^/(?:[A-Za-z0-9%._-]+/)*uploads/movies/movie-' . $kind . '-[a-f0-9]{40}\\.(' . $extensions . ')$#i', $path) === 1;
+    }
+
+    private function executeMovieStatement($sql, $types, $params)
+    {
+        $stmt = $this->prepare($sql, $types, $params);
+        if (!$stmt->execute()) {
+            $error = $stmt->error;
+            $duplicate = $stmt->errno === 1062;
+            $this->db->rollback();
+            jsonResponse(array('success' => false, 'message' => $duplicate ? 'Mã phim đã tồn tại trong kho hệ thống.' : $error), $duplicate ? 400 : 500);
+        }
+        return $stmt;
+    }
+
     public function delete($resource)
     {
         if (!isset($this->resources[$resource])) {
@@ -463,6 +671,26 @@ class AdminController
         $id = isset($_GET['id']) ? (int)$_GET['id'] : 0;
         if (!$id) {
             jsonResponse(array('success' => false, 'message' => 'Thiếu id.'), 400);
+        }
+        if ($resource === 'movies') {
+            $this->ensureMovieCatalogSchema();
+            $linked = $this->rows('SELECT catalog_movie_id FROM tms_movie_catalog_links WHERE tms_movie_id = ' . $id);
+            if (!empty($linked[0]['catalog_movie_id'])) {
+                $catalogId = (int)$linked[0]['catalog_movie_id'];
+                $showtimesTable = $this->db->query("SHOW TABLES LIKE 'showtimes'");
+                $hasCustomerShowtimes = $showtimesTable && $showtimesTable->num_rows && $this->scalar('SELECT COUNT(*) FROM showtimes WHERE movie_id = ' . $catalogId) > 0;
+                if ($this->scalar('SELECT COUNT(*) FROM tms_schedules WHERE movie_id = ' . $id) > 0 || $hasCustomerShowtimes) {
+                    jsonResponse(array('success' => false, 'message' => 'Không thể xóa phim đã có lịch chiếu hoặc suất chiếu được mở bán.'), 400);
+                }
+                $this->db->begin_transaction();
+                if (!$this->db->query('DELETE FROM tms_movies WHERE id = ' . $id) || !$this->db->query('DELETE FROM movies WHERE id = ' . $catalogId)) {
+                    $error = $this->db->error;
+                    $this->db->rollback();
+                    jsonResponse(array('success' => false, 'message' => $error), 500);
+                }
+                $this->db->commit();
+                jsonResponse(array('success' => true, 'message' => 'Đã xóa phim khỏi kho hệ thống.'));
+            }
         }
         if ($resource === 'movie-plans') {
             $this->db->query("DELETE FROM tms_movie_allocations WHERE plan_id = " . $id);

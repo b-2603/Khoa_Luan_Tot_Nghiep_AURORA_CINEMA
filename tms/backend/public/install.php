@@ -18,11 +18,45 @@ if (!$mysqli) {
 
 mysqli_query($mysqli, "SET NAMES utf8");
 
-// 1. Tạo Database aurora_tms
-mysqli_query($mysqli, "CREATE DATABASE IF NOT EXISTS `aurora_tms` CHARACTER SET utf8 COLLATE utf8_unicode_ci");
-mysqli_select_db($mysqli, 'aurora_tms');
+// 1. Dùng chung database aurora_db với website customer
+mysqli_query($mysqli, "CREATE DATABASE IF NOT EXISTS `aurora_db` CHARACTER SET utf8 COLLATE utf8_unicode_ci");
+mysqli_select_db($mysqli, 'aurora_db');
 
-// 2. Tạo bảng tms_users
+// 2. Catalog phim dùng chung cho customer và TMS
+mysqli_query($mysqli, "
+    CREATE TABLE IF NOT EXISTS `movies` (
+        `id` BIGINT UNSIGNED NOT NULL AUTO_INCREMENT PRIMARY KEY,
+        `title` VARCHAR(180) NOT NULL,
+        `description` TEXT NULL,
+        `duration_minutes` SMALLINT UNSIGNED NOT NULL,
+        `age_rating` VARCHAR(10) NOT NULL DEFAULT 'P',
+        `format` VARCHAR(100) NOT NULL DEFAULT '2D Digital',
+        `genre` VARCHAR(150) NULL,
+        `poster_url` VARCHAR(500) NULL,
+        `trailer_url` VARCHAR(500) NULL,
+        `status` VARCHAR(40) NOT NULL DEFAULT 'COMING_SOON',
+        `is_hot` TINYINT(1) NOT NULL DEFAULT 1,
+        `release_date` DATE NULL,
+        `created_at` TIMESTAMP NULL DEFAULT CURRENT_TIMESTAMP,
+        `updated_at` TIMESTAMP NULL DEFAULT NULL,
+        `movie_code` VARCHAR(50) NULL UNIQUE,
+        `original_title` VARCHAR(180) NULL,
+        `director` VARCHAR(180) NULL,
+        `cast` TEXT NULL,
+        `writer` VARCHAR(180) NULL,
+        `producer` VARCHAR(180) NULL,
+        `production_country` VARCHAR(100) NULL,
+        `production_year` SMALLINT UNSIGNED NULL,
+        `plot_details` MEDIUMTEXT NULL,
+        `original_language` VARCHAR(80) NULL,
+        `localization_versions` VARCHAR(255) NULL,
+        `expected_end_date` DATE NULL,
+        `distributor` VARCHAR(180) NULL,
+        `banner_url` VARCHAR(500) NULL
+    ) ENGINE=InnoDB DEFAULT CHARSET=utf8 COLLATE=utf8_unicode_ci;
+");
+
+// 3. Tạo bảng tms_users
 mysqli_query($mysqli, "
     CREATE TABLE IF NOT EXISTS `tms_users` (
         `id` BIGINT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
@@ -61,9 +95,19 @@ mysqli_query($mysqli, "
         `title` VARCHAR(200) NOT NULL,
         `duration_minutes` INT UNSIGNED NOT NULL,
         `age_rating` VARCHAR(10) NOT NULL DEFAULT 'T16',
-        `format` VARCHAR(50) NOT NULL DEFAULT '2D Digital / 3D',
-        `status` ENUM('now_showing', 'coming_soon', 'ended') NOT NULL DEFAULT 'now_showing',
+        `format` VARCHAR(100) NOT NULL DEFAULT '2D Digital / 3D',
+        `status` VARCHAR(40) NOT NULL DEFAULT 'now_showing',
         `created_at` TIMESTAMP NULL DEFAULT CURRENT_TIMESTAMP
+    ) ENGINE=InnoDB DEFAULT CHARSET=utf8 COLLATE=utf8_unicode_ci;
+");
+
+mysqli_query($mysqli, "
+    CREATE TABLE IF NOT EXISTS `tms_movie_catalog_links` (
+        `tms_movie_id` BIGINT UNSIGNED NOT NULL PRIMARY KEY,
+        `catalog_movie_id` BIGINT UNSIGNED NOT NULL UNIQUE,
+        `created_at` TIMESTAMP NULL DEFAULT CURRENT_TIMESTAMP,
+        CONSTRAINT `fk_tms_movie_catalog_tms` FOREIGN KEY (`tms_movie_id`) REFERENCES `tms_movies` (`id`) ON DELETE CASCADE,
+        CONSTRAINT `fk_tms_movie_catalog_master` FOREIGN KEY (`catalog_movie_id`) REFERENCES `movies` (`id`) ON DELETE CASCADE
     ) ENGINE=InnoDB DEFAULT CHARSET=utf8 COLLATE=utf8_unicode_ci;
 ");
 
@@ -165,8 +209,8 @@ mysqli_query($mysqli, "
 
 echo json_encode(array(
     'success' => true,
-    'message' => 'Cài đặt và khởi tạo toàn bộ Cơ sở dữ liệu aurora_tms vào MySQL thành công!',
-    'database' => 'aurora_tms',
+    'message' => 'Cài đặt và khởi tạo các bảng TMS trong aurora_db thành công!',
+    'database' => 'aurora_db',
     'tables_created' => array(
         'tms_users',
         'tms_screens',

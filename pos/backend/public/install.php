@@ -6,21 +6,16 @@ $port = 3306;
 $username = 'root';
 $password = '';
 
-$mysqli = @new mysqli($host, $username, $password, 'aurora_pos', $port);
+$mysqli = @new mysqli($host, $username, $password, 'aurora_db', $port);
 if ($mysqli->connect_error) {
-    $mysqli = @new mysqli($host, $username, $password, '', $port);
-    if ($mysqli->connect_error) {
-        echo json_encode(array(
-            'success' => false,
-            'message' => 'Lỗi kết nối MySQL: ' . $mysqli->connect_error
-        ));
-        exit;
-    }
-    $mysqli->query("CREATE DATABASE IF NOT EXISTS `aurora_pos` CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci");
-    $mysqli->select_db('aurora_pos');
+    echo json_encode(array(
+        'success' => false,
+        'message' => 'Không thể kết nối aurora_db: ' . $mysqli->connect_error
+    ));
+    exit;
 }
 
-$mysqli->set_charset('utf8mb4');
+$mysqli->set_charset('utf8');
 
 $phone = '0328754062';
 $passwordHash = '$2y$12$wZ3cvdry6kOqHV6vdTllB.B9qrFsJLdIZKjofc02GnNletKab1/G2';
@@ -36,6 +31,6 @@ $user = $result ? $result->fetch_assoc() : null;
 
 echo json_encode(array(
     'success' => true,
-    'message' => 'Đã cập nhật trực tiếp vào MySQL Database aurora_pos thành công!',
+    'message' => 'Đã cập nhật trực tiếp vào MySQL Database aurora_db thành công!',
     'updated_user' => $user
 ));

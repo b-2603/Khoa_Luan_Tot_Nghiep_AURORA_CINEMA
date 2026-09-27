@@ -176,14 +176,11 @@ function posHasBookingShowtimeColumn($db) {
     return $result && $result->num_rows > 0;
 }
 
-// Kết nối cơ sở dữ liệu MySQL - ưu tiên aurora_db chứa pos_users
+// POS, TMS và customer dùng chung aurora_db.
 $db = @new mysqli('127.0.0.1', 'root', '', 'aurora_db', 3306);
-if ($db->connect_error) {
-    $db = @new mysqli('127.0.0.1', 'root', '', 'aurora_pos', 3306);
-}
 
 if ($db->connect_error) {
-    jsonResponse(array('success' => false, 'message' => 'Lỗi kết nối MySQL: ' . $db->connect_error), 500);
+    jsonResponse(array('success' => false, 'message' => 'Không thể kết nối aurora_db: ' . $db->connect_error), 500);
 }
 
 $db->set_charset('utf8');

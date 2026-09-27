@@ -3,11 +3,11 @@
 -- THEATER MANAGEMENT SYSTEM (Quản lý rạp chiếu phim)
 -- ========================================================
 
-CREATE DATABASE IF NOT EXISTS `aurora_tms`
-  CHARACTER SET utf8mb4
-  COLLATE utf8mb4_unicode_ci;
+CREATE DATABASE IF NOT EXISTS `aurora_db`
+  CHARACTER SET utf8
+  COLLATE utf8_unicode_ci;
 
-USE `aurora_tms`;
+USE `aurora_db`;
 
 -- 1. Bảng tài khoản quản trị TMS (Quản lý rạp, Giám sát, Kỹ thuật viên)
 CREATE TABLE IF NOT EXISTS `tms_users` (
@@ -21,7 +21,7 @@ CREATE TABLE IF NOT EXISTS `tms_users` (
   `last_login` DATETIME NULL,
   `created_at` TIMESTAMP NULL DEFAULT CURRENT_TIMESTAMP,
   `updated_at` TIMESTAMP NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP
-) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+) ENGINE=InnoDB DEFAULT CHARSET=utf8 COLLATE=utf8_unicode_ci;
 
 -- 2. Bảng quản lý phòng chiếu (Screens / Auditoriums)
 CREATE TABLE IF NOT EXISTS `tms_screens` (
@@ -36,20 +36,60 @@ CREATE TABLE IF NOT EXISTS `tms_screens` (
   `lamp_hours` INT UNSIGNED NOT NULL DEFAULT 1420,
   `status` ENUM('active', 'paused', 'cleaning', 'closed') NOT NULL DEFAULT 'active',
   `created_at` TIMESTAMP NULL DEFAULT CURRENT_TIMESTAMP
-) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+) ENGINE=InnoDB DEFAULT CHARSET=utf8 COLLATE=utf8_unicode_ci;
 
--- 3. Bảng quản lý phim (Movies)
+-- 3. Catalog phim dùng chung cho customer và TMS
+CREATE TABLE IF NOT EXISTS `movies` (
+  `id` BIGINT UNSIGNED NOT NULL AUTO_INCREMENT PRIMARY KEY,
+  `title` VARCHAR(180) NOT NULL,
+  `description` TEXT NULL,
+  `duration_minutes` SMALLINT UNSIGNED NOT NULL,
+  `age_rating` VARCHAR(10) NOT NULL DEFAULT 'P',
+  `format` VARCHAR(100) NOT NULL DEFAULT '2D Digital',
+  `genre` VARCHAR(150) NULL,
+  `poster_url` VARCHAR(500) NULL,
+  `trailer_url` VARCHAR(500) NULL,
+  `status` VARCHAR(40) NOT NULL DEFAULT 'COMING_SOON',
+  `is_hot` TINYINT(1) NOT NULL DEFAULT 1,
+  `release_date` DATE NULL,
+  `created_at` TIMESTAMP NULL DEFAULT CURRENT_TIMESTAMP,
+  `updated_at` TIMESTAMP NULL DEFAULT NULL,
+  `movie_code` VARCHAR(50) NULL UNIQUE,
+  `original_title` VARCHAR(180) NULL,
+  `director` VARCHAR(180) NULL,
+  `cast` TEXT NULL,
+  `writer` VARCHAR(180) NULL,
+  `producer` VARCHAR(180) NULL,
+  `production_country` VARCHAR(100) NULL,
+  `production_year` SMALLINT UNSIGNED NULL,
+  `plot_details` MEDIUMTEXT NULL,
+  `original_language` VARCHAR(80) NULL,
+  `localization_versions` VARCHAR(255) NULL,
+  `expected_end_date` DATE NULL,
+  `distributor` VARCHAR(180) NULL,
+  `banner_url` VARCHAR(500) NULL
+) ENGINE=InnoDB DEFAULT CHARSET=utf8 COLLATE=utf8_unicode_ci;
+
+-- 4. Bảng quản lý phim vận hành (ID được dùng bởi lịch chiếu TMS)
 CREATE TABLE IF NOT EXISTS `tms_movies` (
   `id` BIGINT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
   `title` VARCHAR(200) NOT NULL,
   `duration_minutes` INT UNSIGNED NOT NULL,
   `age_rating` VARCHAR(10) NOT NULL DEFAULT 'T16',
-  `format` VARCHAR(50) NOT NULL DEFAULT '2D Digital / 3D',
-  `status` ENUM('now_showing', 'coming_soon', 'ended') NOT NULL DEFAULT 'now_showing',
+  `format` VARCHAR(100) NOT NULL DEFAULT '2D Digital / 3D',
+  `status` VARCHAR(40) NOT NULL DEFAULT 'now_showing',
   `created_at` TIMESTAMP NULL DEFAULT CURRENT_TIMESTAMP
-) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+) ENGINE=InnoDB DEFAULT CHARSET=utf8 COLLATE=utf8_unicode_ci;
 
--- 4. Bảng quản lý suất chiếu (Schedules / Showtimes)
+CREATE TABLE IF NOT EXISTS `tms_movie_catalog_links` (
+  `tms_movie_id` BIGINT UNSIGNED NOT NULL PRIMARY KEY,
+  `catalog_movie_id` BIGINT UNSIGNED NOT NULL UNIQUE,
+  `created_at` TIMESTAMP NULL DEFAULT CURRENT_TIMESTAMP,
+  CONSTRAINT `fk_tms_movie_catalog_tms` FOREIGN KEY (`tms_movie_id`) REFERENCES `tms_movies` (`id`) ON DELETE CASCADE,
+  CONSTRAINT `fk_tms_movie_catalog_master` FOREIGN KEY (`catalog_movie_id`) REFERENCES `movies` (`id`) ON DELETE CASCADE
+) ENGINE=InnoDB DEFAULT CHARSET=utf8 COLLATE=utf8_unicode_ci;
+
+-- 5. Bảng quản lý suất chiếu (Schedules / Showtimes)
 CREATE TABLE IF NOT EXISTS `tms_schedules` (
   `id` BIGINT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
   `screen_id` BIGINT UNSIGNED NOT NULL,
@@ -63,7 +103,7 @@ CREATE TABLE IF NOT EXISTS `tms_schedules` (
   `created_at` TIMESTAMP NULL DEFAULT CURRENT_TIMESTAMP,
   FOREIGN KEY (`screen_id`) REFERENCES `tms_screens`(`id`) ON DELETE CASCADE,
   FOREIGN KEY (`movie_id`) REFERENCES `tms_movies`(`id`) ON DELETE CASCADE
-) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+) ENGINE=InnoDB DEFAULT CHARSET=utf8 COLLATE=utf8_unicode_ci;
 
 -- 5. Bảng quản lý nhân sự ca trực & chấm công (Staff & Attendance)
 CREATE TABLE IF NOT EXISTS `tms_staff_shifts` (
@@ -78,7 +118,7 @@ CREATE TABLE IF NOT EXISTS `tms_staff_shifts` (
   `check_out_at` DATETIME NULL,
   `work_date` DATE NOT NULL,
   `created_at` TIMESTAMP NULL DEFAULT CURRENT_TIMESTAMP
-) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+) ENGINE=InnoDB DEFAULT CHARSET=utf8 COLLATE=utf8_unicode_ci;
 
 -- 6. Bảng báo cáo doanh thu theo thời gian thực (Revenue Logs)
 CREATE TABLE IF NOT EXISTS `tms_revenue_logs` (
@@ -90,7 +130,7 @@ CREATE TABLE IF NOT EXISTS `tms_revenue_logs` (
   `total_tickets` INT UNSIGNED NOT NULL DEFAULT 0,
   `occupancy_rate` DECIMAL(5, 2) NOT NULL DEFAULT 0.00,
   `updated_at` TIMESTAMP NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP
-) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+) ENGINE=InnoDB DEFAULT CHARSET=utf8 COLLATE=utf8_unicode_ci;
 
 -- ========================================================
 -- DỮ LIỆU KHỞI TẠO BAN ĐẦU (SEED DATA)
@@ -178,7 +218,7 @@ CREATE TABLE IF NOT EXISTS `tms_ticket_types` (
   `description` VARCHAR(255) NULL,
   `status` ENUM('active','inactive') NOT NULL DEFAULT 'active',
   `created_at` TIMESTAMP NULL DEFAULT CURRENT_TIMESTAMP
-) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+) ENGINE=InnoDB DEFAULT CHARSET=utf8 COLLATE=utf8_unicode_ci;
 
 CREATE TABLE IF NOT EXISTS `tms_products` (
   `id` BIGINT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
@@ -189,7 +229,7 @@ CREATE TABLE IF NOT EXISTS `tms_products` (
   `stock_quantity` INT UNSIGNED NOT NULL DEFAULT 0,
   `status` ENUM('active','inactive') NOT NULL DEFAULT 'active',
   `created_at` TIMESTAMP NULL DEFAULT CURRENT_TIMESTAMP
-) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+) ENGINE=InnoDB DEFAULT CHARSET=utf8 COLLATE=utf8_unicode_ci;
 
 CREATE TABLE IF NOT EXISTS `tms_vouchers` (
   `id` BIGINT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
@@ -203,7 +243,7 @@ CREATE TABLE IF NOT EXISTS `tms_vouchers` (
   `used_count` INT UNSIGNED NOT NULL DEFAULT 0,
   `status` ENUM('active','inactive','expired') NOT NULL DEFAULT 'active',
   `created_at` TIMESTAMP NULL DEFAULT CURRENT_TIMESTAMP
-) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+) ENGINE=InnoDB DEFAULT CHARSET=utf8 COLLATE=utf8_unicode_ci;
 
 CREATE TABLE IF NOT EXISTS `tms_customers` (
   `id` BIGINT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
@@ -213,7 +253,7 @@ CREATE TABLE IF NOT EXISTS `tms_customers` (
   `membership_level` ENUM('standard','silver','gold','platinum') NOT NULL DEFAULT 'standard',
   `points` INT UNSIGNED NOT NULL DEFAULT 0,
   `created_at` TIMESTAMP NULL DEFAULT CURRENT_TIMESTAMP
-) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+) ENGINE=InnoDB DEFAULT CHARSET=utf8 COLLATE=utf8_unicode_ci;
 
 CREATE TABLE IF NOT EXISTS `tms_transactions` (
   `id` BIGINT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
@@ -225,7 +265,7 @@ CREATE TABLE IF NOT EXISTS `tms_transactions` (
   `status` ENUM('paid','pending','cancelled','refunded') NOT NULL DEFAULT 'paid',
   `created_at` TIMESTAMP NULL DEFAULT CURRENT_TIMESTAMP,
   FOREIGN KEY (`customer_id`) REFERENCES `tms_customers`(`id`) ON DELETE SET NULL
-) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+) ENGINE=InnoDB DEFAULT CHARSET=utf8 COLLATE=utf8_unicode_ci;
 
 CREATE TABLE IF NOT EXISTS `tms_refunds` (
   `id` BIGINT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
@@ -238,7 +278,7 @@ CREATE TABLE IF NOT EXISTS `tms_refunds` (
   `created_at` TIMESTAMP NULL DEFAULT CURRENT_TIMESTAMP,
   FOREIGN KEY (`transaction_id`) REFERENCES `tms_transactions`(`id`) ON DELETE CASCADE,
   FOREIGN KEY (`requested_by`) REFERENCES `tms_users`(`id`) ON DELETE SET NULL
-) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+) ENGINE=InnoDB DEFAULT CHARSET=utf8 COLLATE=utf8_unicode_ci;
 
 CREATE TABLE IF NOT EXISTS `tms_seats` (
   `id` BIGINT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
@@ -248,4 +288,4 @@ CREATE TABLE IF NOT EXISTS `tms_seats` (
   `status` ENUM('available','maintenance','blocked') NOT NULL DEFAULT 'available',
   FOREIGN KEY (`screen_id`) REFERENCES `tms_screens`(`id`) ON DELETE CASCADE,
   UNIQUE KEY `unique_screen_seat` (`screen_id`, `seat_code`)
-) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+) ENGINE=InnoDB DEFAULT CHARSET=utf8 COLLATE=utf8_unicode_ci;

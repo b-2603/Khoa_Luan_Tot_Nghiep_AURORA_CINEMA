@@ -40,14 +40,14 @@ pos/backend/
 
 ## Database mặc định
 
-Sử dụng MySQL với DB name là `aurora_pos`.
+POS, TMS và customer dùng chung MySQL database `aurora_db`.
 
 ### Ví dụ `.env`
 
 ```env
 DB_HOST=127.0.0.1
 DB_PORT=3306
-DB_DATABASE=aurora_pos
+DB_DATABASE=aurora_db
 DB_USERNAME=root
 DB_PASSWORD=
 ```
@@ -61,8 +61,8 @@ DB_PASSWORD=
 
 ## Bước chạy
 
-1. Tạo database `aurora_pos` trong MySQL.
-2. Chạy SQL trong `database/schema.sql`.
+1. Khởi tạo database `aurora_db` bằng schema chính ở thư mục gốc.
+2. Chạy SQL trong `database/schema.sql` để bổ sung các bảng POS còn thiếu.
 3. Truy cập frontend POS và đăng nhập bằng tài khoản demo.
 
 ## Tài khoản demo

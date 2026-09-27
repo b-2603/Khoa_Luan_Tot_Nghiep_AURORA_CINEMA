@@ -687,7 +687,7 @@ export default function BookingPage({ movie, showtime: initShowtime, theater: in
 
   /* ═══════════════════════════════════════════════════════ RENDER ═══ */
   return (
-    <div style={{ minHeight:'100vh', background:'#f8fafc', fontFamily:"'Montserrat','Segoe UI','Inter',sans-serif", display:'flex', flexDirection:'column' }}>
+    <div style={{ minHeight:'100vh', background:'#f8fafc', fontFamily:"'Inter','Segoe UI',Arial,sans-serif", display:'flex', flexDirection:'column' }}>
 
       {/* ── TOP HEADER ── */}
       <div style={{ background:'linear-gradient(90deg, #091322, #0d1b2e 50%, #15253c)', color:'#dce8f5', padding:'0 24px', height:56, display:'flex', alignItems:'center', justifyContent:'space-between', flexShrink:0, borderBottom:'1px solid rgba(244,192,74,0.2)', boxShadow:'0 2px 10px rgba(0,0,0,0.15)' }}>

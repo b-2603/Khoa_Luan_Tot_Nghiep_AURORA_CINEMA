@@ -1,13 +1,13 @@
 -- Database Schema cho hệ thống AURORA CINEMA POS
-CREATE DATABASE IF NOT EXISTS aurora_pos
-  CHARACTER SET utf8mb4
-  COLLATE utf8mb4_unicode_ci;
+CREATE DATABASE IF NOT EXISTS aurora_db
+  CHARACTER SET utf8
+  COLLATE utf8_unicode_ci;
 
-USE aurora_pos;
+USE aurora_db;
 
 -- 1. Bảng nhân viên / tài khoản POS
 CREATE TABLE IF NOT EXISTS pos_users (
-  id BIGINT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
+  id INT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
   username VARCHAR(60) NOT NULL UNIQUE,
   password_hash VARCHAR(255) NOT NULL,
   full_name VARCHAR(120) NOT NULL,
@@ -21,7 +21,7 @@ CREATE TABLE IF NOT EXISTS pos_users (
 -- 2. Bảng ca làm việc (Phiên làm việc POS)
 CREATE TABLE IF NOT EXISTS pos_shifts (
   id BIGINT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
-  user_id BIGINT UNSIGNED NOT NULL,
+  user_id INT UNSIGNED NOT NULL,
   cinema_name VARCHAR(120) NOT NULL DEFAULT 'AURORA CINEMA',
   counter VARCHAR(60) NOT NULL DEFAULT 'AURORA BOX 02',
   initial_cash DECIMAL(12, 2) NOT NULL DEFAULT 500000.00,

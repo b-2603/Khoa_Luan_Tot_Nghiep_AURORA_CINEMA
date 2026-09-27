@@ -31,4 +31,4 @@ Riêng `schedules` nhận thêm `date=YYYY-MM-DD`; `GET ?action=seats&screen_id=
 
 ## Cài đặt database
 
-Chạy `backend/database/schema.sql` trên MySQL database `aurora_tms` trước khi gọi các API CRUD. File schema bao gồm các bảng cũ và bảng mới cho giá vé, hàng hóa, voucher, khách hàng, giao dịch, hoàn tiền và ghế.
+TMS và website customer dùng chung database `aurora_db`. Chạy `backend/database/schema.sql` trên MySQL để khởi tạo các bảng TMS và catalog phim; với database Aurora đã tồn tại, API tự bổ sung các cột metadata phim và bảng liên kết giữa ID catalog và ID lịch chiếu TMS khi mở danh sách phim.

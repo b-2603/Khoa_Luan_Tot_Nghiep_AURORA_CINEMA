@@ -22,7 +22,7 @@ class AuthController
             ), 400);
         }
 
-        // Truy vấn trực tiếp từ bảng tms_users trong database MySQL aurora_tms
+        // Truy vấn trực tiếp từ bảng tms_users trong database MySQL aurora_db
         $stmt = $this->db->prepare("SELECT id, username, password_hash, full_name, phone, role, status FROM tms_users WHERE username = ? LIMIT 1");
         if (!$stmt) {
             jsonResponse(array(

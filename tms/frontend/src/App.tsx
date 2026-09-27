@@ -122,9 +122,65 @@ interface ScreenData { id: number; screen_code: string; name: string; screen_typ
 interface RefundItem { id: number; transaction_code: string; customer_name: string; reason: string; amount: number; payment_method: string; status: 'pending'|'approved'|'rejected'|'completed'; created_at?: string; requested_by?: string; }
 interface TxnItem { id: number; transaction_code: string; customer_name?: string; customer_phone?: string; channel: 'pos'|'website'|'ota'; amount: number; payment_method: string; status: 'paid'|'pending'|'cancelled'|'refunded'; created_at?: string; cancel_requested?: boolean; }
 interface StaffShift { id: number; name: string; position: string; shift: string; time: string; status: 'on_duty'|'checked_in'|'absent'; checkin: string; }
+interface MovieForm {
+  id: number;
+  movie_code: string;
+  title: string;
+  original_title: string;
+  genre: string;
+  duration_minutes: number;
+  age_rating: string;
+  director: string;
+  cast: string;
+  writer: string;
+  producer: string;
+  production_country: string;
+  production_year: number | '';
+  description: string;
+  plot_details: string;
+  original_language: string;
+  localization_versions: string;
+  format: string;
+  release_date: string;
+  expected_end_date: string;
+  distributor: string;
+  poster_url: string;
+  banner_url: string;
+  trailer_url: string;
+  status: string;
+}
+
+const EMPTY_MOVIE_FORM: MovieForm = {
+  id: 0,
+  movie_code: '',
+  title: '',
+  original_title: '',
+  genre: '',
+  duration_minutes: 120,
+  age_rating: 'T13',
+  director: '',
+  cast: '',
+  writer: '',
+  producer: '',
+  production_country: '',
+  production_year: '',
+  description: '',
+  plot_details: '',
+  original_language: '',
+  localization_versions: '',
+  format: '2D Digital',
+  release_date: '',
+  expected_end_date: '',
+  distributor: '',
+  poster_url: '',
+  banner_url: '',
+  trailer_url: '',
+  status: 'coming_soon'
+};
 
 export interface MoviePlan {
   id: number;
+  plan_code?: string;
   plan_name: string;
   plan_month: number;
   plan_year: number;
@@ -136,9 +192,14 @@ export interface MoviePlan {
   target_revenue: number;
   target_screenings_per_day: number;
   priority_level: 'blockbuster' | 'high' | 'medium' | 'low';
-  status: 'draft' | 'approved' | 'in_progress' | 'completed';
+  status: 'draft' | 'pending_approval' | 'approved' | 'published' | 'in_progress' | 'completed' | 'cancelled';
   note?: string;
   created_by?: string;
+  created_at?: string;
+  approved_by?: string;
+  approved_at?: string;
+  updated_by?: string;
+  updated_at?: string;
   allocations?: MovieAllocation[];
   allocated_count?: number;
   total_theaters?: number;
@@ -164,10 +225,29 @@ export interface MovieAllocation {
 
 export interface MovieItem {
   id: number;
+  movie_code: string;
   title: string;
+  original_title: string;
+  genre: string;
   duration_minutes: number;
   age_rating: string;
+  director: string;
+  cast: string;
+  writer: string;
+  producer: string;
+  production_country: string;
+  production_year?: number | null;
+  description: string;
+  plot_details: string;
+  original_language: string;
+  localization_versions: string;
   format: string;
+  release_date: string;
+  expected_end_date: string;
+  distributor: string;
+  poster_url: string;
+  banner_url: string;
+  trailer_url: string;
   status: string;
 }
 
@@ -250,6 +330,7 @@ export default function App() {
   const [showPlanModal, setShowPlanModal] = useState(false);
   const [planForm, setPlanForm] = useState({
     id: 0,
+    plan_code: '',
     plan_name: 'Kế hoạch Phim Tháng 10/2026 - Mùa Halloween & Bom Tấn Cuối Năm',
     plan_month: 10,
     plan_year: 2026,
@@ -261,8 +342,14 @@ export default function App() {
     target_revenue: 950000000,
     target_screenings_per_day: 8,
     priority_level: 'blockbuster' as 'blockbuster' | 'high' | 'medium' | 'low',
-    status: 'approved' as 'draft' | 'approved' | 'in_progress' | 'completed',
+    status: 'draft' as 'draft' | 'pending_approval' | 'approved' | 'published' | 'in_progress' | 'completed' | 'cancelled',
     note: '',
+    created_by: '',
+    created_at: '',
+    approved_by: '',
+    approved_at: '',
+    updated_by: '',
+    updated_at: '',
     selected_theaters: [1, 2, 3, 4, 5] as number[]
   });
 
@@ -274,14 +361,8 @@ export default function App() {
 
   // MOVIE MODAL
   const [showMovieModal, setShowMovieModal] = useState(false);
-  const [movieForm, setMovieForm] = useState({
-    id: 0,
-    title: '',
-    duration_minutes: 120,
-    age_rating: 'T13',
-    format: '2D Digital / 3D',
-    status: 'now_showing'
-  });
+  const [movieForm, setMovieForm] = useState<MovieForm>({ ...EMPTY_MOVIE_FORM });
+  const [movieFiles, setMovieFiles] = useState<{ poster: File | null; banner: File | null; trailer: File | null }>({ poster: null, banner: null, trailer: null });
 
   const API_BASE = 'http://localhost/AURORA%20CINEMA/tms/backend/public/api.php';
 
@@ -371,6 +452,10 @@ export default function App() {
     e.preventDefault();
     if (currentUser?.role !== 'super_admin') {
       alert('Chỉ Admin Tổng mới có đặc quyền lập kế hoạch phim!');
+      return;
+    }
+    if (planForm.selected_theaters.length === 0) {
+      alert('Vui lòng chọn ít nhất một rạp được phân bổ cho kế hoạch.');
       return;
     }
     try {
@@ -494,22 +579,44 @@ export default function App() {
   const handleSaveMovie = async (e: FormEvent) => {
     e.preventDefault();
     try {
+      const moviePayload = { ...movieForm };
+      const uploadFields = [
+        { key: 'poster' as const, field: 'poster_url' as const },
+        { key: 'banner' as const, field: 'banner_url' as const },
+        { key: 'trailer' as const, field: 'trailer_url' as const }
+      ];
+      for (const { key, field } of uploadFields) {
+        const file = movieFiles[key];
+        if (!file) continue;
+        const formData = new FormData();
+        formData.append('media', file);
+        const uploadResponse = await fetch(`${API_BASE}?action=movie-media&kind=${key}`, {
+          method: 'POST',
+          headers: { 'X-TMS-User': currentUser?.username || 'admin_tong' },
+          body: formData
+        });
+        const uploadData = await uploadResponse.json();
+        if (!uploadResponse.ok || !uploadData.success) throw new Error(uploadData.message || `Không thể tải ${key} lên.`);
+        moviePayload[field] = uploadData.data.url;
+      }
+
       const url = movieForm.id > 0 ? `${API_BASE}?action=movies&id=${movieForm.id}` : `${API_BASE}?action=movies`;
       const res = await fetch(url, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json', 'X-TMS-User': currentUser?.username || 'admin_tong' },
-        body: JSON.stringify(movieForm)
+        body: JSON.stringify(moviePayload)
       });
       const data = await res.json();
       if (data.success) {
         alert(movieForm.id > 0 ? 'Đã cập nhật phim!' : 'Đã thêm phim mới vào kho hệ thống!');
         setShowMovieModal(false);
+        setMovieFiles({ poster: null, banner: null, trailer: null });
         loadMovies();
       } else {
         alert(data.message);
       }
-    } catch {
-      alert('Lỗi kết nối cơ sở dữ liệu.');
+    } catch (error) {
+      alert(error instanceof Error ? error.message : 'Lỗi kết nối cơ sở dữ liệu.');
     }
   };
 
@@ -1183,6 +1290,7 @@ export default function App() {
                     const defaultMovie = moviesList[0] || { id: 1, title: 'Avatar: Dòng Chảy Của Nước', format: '3D IMAX' };
                     setPlanForm({
                       id: 0,
+                      plan_code: '',
                       plan_name: `Kế hoạch Phim Tháng ${planMonth < 10 ? `0${planMonth}` : planMonth}/${planYear}`,
                       plan_month: planMonth,
                       plan_year: planYear,
@@ -1194,8 +1302,14 @@ export default function App() {
                       target_revenue: 500000000,
                       target_screenings_per_day: 6,
                       priority_level: 'high',
-                      status: 'approved',
+                      status: 'draft',
                       note: '',
+                      created_by: currentUser?.full_name || currentUser?.username || '',
+                      created_at: '',
+                      approved_by: '',
+                      approved_at: '',
+                      updated_by: '',
+                      updated_at: '',
                       selected_theaters: [1, 2, 3, 4, 5]
                     });
                     setShowPlanModal(true);
@@ -1238,10 +1352,13 @@ export default function App() {
                     }[plan.priority_level] || { label: plan.priority_level, bg: '#f1f5f9', color: '#475569', border: '#cbd5e1' };
 
                     const statusCfg = {
-                      draft: { label: 'Dự thảo', bg: '#f1f5f9', color: '#475569' },
+                      draft: { label: 'Nháp', bg: '#f1f5f9', color: '#475569' },
+                      pending_approval: { label: 'Chờ duyệt', bg: '#fef3c7', color: '#92400e' },
                       approved: { label: 'Đã duyệt', bg: '#dbeafe', color: '#1d4ed8' },
+                      published: { label: 'Đã ban hành', bg: '#e0e7ff', color: '#4338ca' },
                       in_progress: { label: 'Đang chiếu', bg: '#dcfce7', color: '#15803d' },
-                      completed: { label: 'Hoàn thành', bg: '#f3e8ff', color: '#7e22ce' }
+                      completed: { label: 'Hoàn tất', bg: '#f3e8ff', color: '#7e22ce' },
+                      cancelled: { label: 'Hủy', bg: '#fee2e2', color: '#b91c1c' }
                     }[plan.status] || { label: plan.status, bg: '#f1f5f9', color: '#475569' };
 
                     const allocCount = plan.allocated_count || (plan.allocations ? plan.allocations.length : 0);
@@ -1302,10 +1419,13 @@ export default function App() {
                             value={plan.status}
                             onChange={e => handleUpdatePlanStatus(plan.id, e.target.value)}
                           >
-                            <option value="draft">Dự thảo</option>
+                            <option value="draft">Nháp</option>
+                            <option value="pending_approval">Chờ duyệt</option>
                             <option value="approved">Đã duyệt</option>
+                            <option value="published">Đã ban hành</option>
                             <option value="in_progress">Đang chiếu</option>
-                            <option value="completed">Hoàn thành</option>
+                            <option value="completed">Hoàn tất</option>
+                            <option value="cancelled">Hủy</option>
                           </select>
                         </td>
                         <td>
@@ -1353,6 +1473,7 @@ export default function App() {
                               onClick={() => {
                                 setPlanForm({
                                   id: plan.id,
+                                  plan_code: plan.plan_code || `KH-${plan.plan_year}${String(plan.plan_month).padStart(2, '0')}-${plan.id}`,
                                   plan_name: plan.plan_name,
                                   plan_month: Number(plan.plan_month),
                                   plan_year: Number(plan.plan_year),
@@ -1366,6 +1487,12 @@ export default function App() {
                                   priority_level: plan.priority_level,
                                   status: plan.status,
                                   note: plan.note || '',
+                                  created_by: plan.created_by || '',
+                                  created_at: plan.created_at || '',
+                                  approved_by: plan.approved_by || '',
+                                  approved_at: plan.approved_at || '',
+                                  updated_by: plan.updated_by || '',
+                                  updated_at: plan.updated_at || '',
                                   selected_theaters: plan.allocations ? plan.allocations.map(a => Number(a.theater_id)) : [1, 2, 3, 4, 5]
                                 });
                                 setShowPlanModal(true);
@@ -1558,7 +1685,8 @@ export default function App() {
             <button
               className="tms-btn tms-btn-primary"
               onClick={() => {
-                setMovieForm({ id: 0, title: '', duration_minutes: 120, age_rating: 'T13', format: '2D Digital / 3D', status: 'now_showing' });
+                setMovieForm({ ...EMPTY_MOVIE_FORM });
+                setMovieFiles({ poster: null, banner: null, trailer: null });
                 setShowMovieModal(true);
               }}
             >
@@ -1609,7 +1737,15 @@ export default function App() {
                         className="tms-btn tms-btn-outline"
                         style={{ padding: '4px 8px' }}
                         onClick={() => {
-                          setMovieForm({ id: m.id, title: m.title, duration_minutes: m.duration_minutes, age_rating: m.age_rating, format: m.format, status: m.status });
+                          setMovieForm({
+                            ...EMPTY_MOVIE_FORM,
+                            ...m,
+                            id: Number(m.id),
+                            production_year: m.production_year ? Number(m.production_year) : '',
+                            expected_end_date: m.expected_end_date || '',
+                            status: String(m.status || 'coming_soon').toLowerCase()
+                          });
+                          setMovieFiles({ poster: null, banner: null, trailer: null });
                           setShowMovieModal(true);
                         }}
                       >
@@ -2338,33 +2474,35 @@ export default function App() {
             </div>
             <form onSubmit={handleSavePlan}>
               <div className="tms-modal-body">
-                <div className="tms-form-group">
-                  <label className="tms-form-label">Chọn phim từ kho hệ thống *</label>
-                  <select
-                    className="tms-form-select"
-                    value={planForm.movie_id}
-                    onChange={e => {
-                      const mId = Number(e.target.value);
-                      const m = moviesList.find(item => item.id === mId);
-                      if (m) {
-                        setPlanForm({
-                          ...planForm,
-                          movie_id: m.id,
-                          movie_title: m.title,
-                          format: m.format
-                        });
-                      }
-                    }}
-                    required
-                  >
-                    {moviesList.map(m => (
-                      <option key={m.id} value={m.id}>
-                        {m.title} ({m.duration_minutes}p • {m.age_rating} • {m.format})
-                      </option>
-                    ))}
-                  </select>
+                <div style={{ marginBottom: 18 }}>
+                  <div style={{ fontSize: '0.76rem', fontWeight: 800, color: '#64748b', letterSpacing: '0.06em', marginBottom: 10 }}>THÔNG TIN PHIM</div>
+                  <div className="tms-form-group">
+                    <label className="tms-form-label">Phim *</label>
+                    <select
+                      className="tms-form-select"
+                      value={planForm.movie_id}
+                      onChange={e => {
+                        const mId = Number(e.target.value);
+                        const m = moviesList.find(item => item.id === mId);
+                        if (m) setPlanForm({ ...planForm, movie_id: m.id, movie_title: m.title, format: m.format });
+                      }}
+                      required
+                    >
+                      {moviesList.map(m => <option key={m.id} value={m.id}>{m.title}</option>)}
+                    </select>
+                  </div>
+                  <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: 10, padding: 12, background: '#f8fafc', border: '1px solid #e2e8f0', borderRadius: 8 }}>
+                    <div><small>Mã phim</small><strong>{moviesList.find(m => m.id === planForm.movie_id)?.movie_code || 'Tự động'}</strong></div>
+                    <div><small>Tên phim</small><strong>{moviesList.find(m => m.id === planForm.movie_id)?.title || planForm.movie_title}</strong></div>
+                    <div><small>Thể loại</small><strong>{moviesList.find(m => m.id === planForm.movie_id)?.genre || 'Chưa cập nhật'}</strong></div>
+                    <div><small>Thời lượng</small><strong>{moviesList.find(m => m.id === planForm.movie_id)?.duration_minutes || '-'} phút</strong></div>
+                    <div><small>Độ tuổi</small><strong>{moviesList.find(m => m.id === planForm.movie_id)?.age_rating || '-'}</strong></div>
+                    <div><small>Định dạng / Ngôn ngữ</small><strong>{planForm.format} / {moviesList.find(m => m.id === planForm.movie_id)?.original_language || '-'}</strong></div>
+                    <div><small>Quốc gia sản xuất</small><strong>{moviesList.find(m => m.id === planForm.movie_id)?.production_country || 'Chưa cập nhật'}</strong></div>
+                  </div>
                 </div>
 
+                <div style={{ fontSize: '0.76rem', fontWeight: 800, color: '#64748b', letterSpacing: '0.06em', marginBottom: 10 }}>THÔNG TIN KẾ HOẠCH</div>
                 <div className="tms-form-group">
                   <label className="tms-form-label">Tên kế hoạch phát hành *</label>
                   <input
@@ -2458,10 +2596,13 @@ export default function App() {
                     value={planForm.status}
                     onChange={e => setPlanForm({ ...planForm, status: e.target.value as any })}
                   >
-                    <option value="approved">Đã duyệt (Chính thức ban hành)</option>
-                    <option value="in_progress">Đang chiếu tại cụm rạp</option>
-                    <option value="draft">Dự thảo (Lưu tạm)</option>
-                    <option value="completed">Đã kết thúc</option>
+                    <option value="draft">Nháp</option>
+                    <option value="pending_approval">Chờ duyệt</option>
+                    <option value="approved">Đã duyệt</option>
+                    <option value="published">Đã ban hành</option>
+                    <option value="in_progress">Đang triển khai</option>
+                    <option value="completed">Hoàn tất</option>
+                    <option value="cancelled">Hủy</option>
                   </select>
                 </div>
 
@@ -2500,6 +2641,18 @@ export default function App() {
                     onChange={e => setPlanForm({ ...planForm, note: e.target.value })}
                     placeholder="vd: Ưu tiên phòng chiếu Laser IMAX và khung giờ vàng cuối tuần..."
                   />
+                </div>
+
+                <div style={{ marginTop: 8 }}>
+                  <div style={{ fontSize: '0.76rem', fontWeight: 800, color: '#64748b', letterSpacing: '0.06em', marginBottom: 10 }}>THÔNG TIN QUẢN TRỊ</div>
+                  <div style={{ display: 'grid', gridTemplateColumns: 'repeat(2, 1fr)', gap: 10, padding: 12, background: '#f8fafc', border: '1px solid #e2e8f0', borderRadius: 8 }}>
+                    <div><small>Mã kế hoạch</small><strong>{planForm.plan_code || (planForm.id > 0 ? `KH-${planForm.plan_year}${String(planForm.plan_month).padStart(2, '0')}-${planForm.id}` : 'Tự động khi lưu')}</strong></div>
+                    <div><small>Người lập kế hoạch</small><strong>{planForm.created_by || currentUser?.full_name || currentUser?.username || 'Tự động'}</strong></div>
+                    <div><small>Ngày lập</small><strong>{planForm.created_at || 'Tự động khi lưu'}</strong></div>
+                    <div><small>Người duyệt</small><strong>{planForm.approved_by || 'Chưa duyệt'}</strong></div>
+                    <div><small>Ngày duyệt</small><strong>{planForm.approved_at || 'Chưa duyệt'}</strong></div>
+                    <div><small>Người cập nhật / Ngày cập nhật</small><strong>{planForm.updated_by ? `${planForm.updated_by} / ${planForm.updated_at || '-'}` : 'Chưa cập nhật'}</strong></div>
+                  </div>
                 </div>
               </div>
               <div className="tms-modal-footer">
@@ -2584,76 +2737,159 @@ export default function App() {
       {/* MODAL: THÊM / SỬA PHIM VÀO KHO HỆ THỐNG */}
       {showMovieModal && (
         <div className="tms-modal-overlay" onClick={() => setShowMovieModal(false)}>
-          <div className="tms-modal-box" style={{ maxWidth: 480 }} onClick={e => e.stopPropagation()}>
+          <div className="tms-modal-box tms-movie-modal" onClick={e => e.stopPropagation()}>
             <div className="tms-modal-header">
               <div className="tms-modal-title">{movieForm.id > 0 ? 'Chỉnh sửa phim' : 'Thêm phim mới vào kho hệ thống'}</div>
-              <button className="temp-btn" onClick={() => setShowMovieModal(false)}><X size={16} /></button>
+              <button type="button" className="temp-btn" onClick={() => setShowMovieModal(false)}><X size={16} /></button>
             </div>
             <form onSubmit={handleSaveMovie}>
-              <div className="tms-modal-body">
-                <div className="tms-form-group">
-                  <label className="tms-form-label">Tên phim *</label>
-                  <input
-                    className="tms-form-input"
-                    value={movieForm.title}
-                    onChange={e => setMovieForm({ ...movieForm, title: e.target.value })}
-                    placeholder="vd: Avatar 3: Lửa và Tro Tàn"
-                    required
-                  />
-                </div>
-                <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12 }}>
+              <div className="tms-modal-body tms-movie-modal-body">
+                <section className="tms-movie-form-section">
+                  <h3 className="tms-movie-form-heading">1. Thông tin phim</h3>
+                  <div className="tms-movie-form-grid">
+                    <div className="tms-form-group">
+                      <label className="tms-form-label">Mã phim *</label>
+                      <input className="tms-form-input" value={movieForm.movie_code} onChange={e => setMovieForm({ ...movieForm, movie_code: e.target.value })} placeholder="vd: AUR-2026-001" required maxLength={50} />
+                    </div>
+                    <div className="tms-form-group">
+                      <label className="tms-form-label">Tên phim *</label>
+                      <input className="tms-form-input" value={movieForm.title} onChange={e => setMovieForm({ ...movieForm, title: e.target.value })} placeholder="Tên phát hành tại Việt Nam" required maxLength={180} />
+                    </div>
+                    <div className="tms-form-group">
+                      <label className="tms-form-label">Tên phim gốc</label>
+                      <input className="tms-form-input" value={movieForm.original_title} onChange={e => setMovieForm({ ...movieForm, original_title: e.target.value })} maxLength={180} />
+                    </div>
+                    <div className="tms-form-group">
+                      <label className="tms-form-label">Thể loại *</label>
+                      <input className="tms-form-input" value={movieForm.genre} onChange={e => setMovieForm({ ...movieForm, genre: e.target.value })} placeholder="Hành động, Khoa học viễn tưởng" required maxLength={150} />
+                    </div>
+                    <div className="tms-form-group">
+                      <label className="tms-form-label">Thời lượng (phút) *</label>
+                      <input type="number" min={1} max={600} className="tms-form-input" value={movieForm.duration_minutes} onChange={e => setMovieForm({ ...movieForm, duration_minutes: Number(e.target.value) })} required />
+                    </div>
+                    <div className="tms-form-group">
+                      <label className="tms-form-label">Độ tuổi *</label>
+                      <select className="tms-form-select" value={movieForm.age_rating} onChange={e => setMovieForm({ ...movieForm, age_rating: e.target.value })} required>
+                        <option value="P">P - Phổ biến mọi lứa tuổi</option>
+                        <option value="K">K - Dưới 13 tuổi có bảo trợ</option>
+                        <option value="T13">T13 - Từ 13 tuổi trở lên</option>
+                        <option value="T16">T16 - Từ 16 tuổi trở lên</option>
+                        <option value="T18">T18 - Từ 18 tuổi trở lên</option>
+                      </select>
+                    </div>
+                  </div>
+                </section>
+
+                <section className="tms-movie-form-section">
+                  <h3 className="tms-movie-form-heading">2. Thông tin sản xuất</h3>
+                  <div className="tms-movie-form-grid">
+                    <div className="tms-form-group">
+                      <label className="tms-form-label">Đạo diễn *</label>
+                      <input className="tms-form-input" value={movieForm.director} onChange={e => setMovieForm({ ...movieForm, director: e.target.value })} required maxLength={180} />
+                    </div>
+                    <div className="tms-form-group">
+                      <label className="tms-form-label">Diễn viên *</label>
+                      <input className="tms-form-input" value={movieForm.cast} onChange={e => setMovieForm({ ...movieForm, cast: e.target.value })} placeholder="Phân cách bằng dấu phẩy" required maxLength={1000} />
+                    </div>
+                    <div className="tms-form-group">
+                      <label className="tms-form-label">Biên kịch</label>
+                      <input className="tms-form-input" value={movieForm.writer} onChange={e => setMovieForm({ ...movieForm, writer: e.target.value })} maxLength={180} />
+                    </div>
+                    <div className="tms-form-group">
+                      <label className="tms-form-label">Nhà sản xuất</label>
+                      <input className="tms-form-input" value={movieForm.producer} onChange={e => setMovieForm({ ...movieForm, producer: e.target.value })} maxLength={180} />
+                    </div>
+                    <div className="tms-form-group">
+                      <label className="tms-form-label">Quốc gia sản xuất *</label>
+                      <input className="tms-form-input" value={movieForm.production_country} onChange={e => setMovieForm({ ...movieForm, production_country: e.target.value })} placeholder="vd: Việt Nam, Hoa Kỳ" required maxLength={100} />
+                    </div>
+                    <div className="tms-form-group">
+                      <label className="tms-form-label">Năm sản xuất</label>
+                      <input type="number" min={1888} max={2100} className="tms-form-input" value={movieForm.production_year} onChange={e => setMovieForm({ ...movieForm, production_year: e.target.value ? Number(e.target.value) : '' })} />
+                    </div>
+                  </div>
+                </section>
+
+                <section className="tms-movie-form-section">
+                  <h3 className="tms-movie-form-heading">3. Nội dung</h3>
                   <div className="tms-form-group">
-                    <label className="tms-form-label">Thời lượng (phút) *</label>
-                    <input
-                      type="number"
-                      className="tms-form-input"
-                      value={movieForm.duration_minutes}
-                      onChange={e => setMovieForm({ ...movieForm, duration_minutes: Number(e.target.value) })}
-                      required
-                    />
+                    <label className="tms-form-label">Tóm tắt phim *</label>
+                    <textarea className="tms-form-input" rows={3} value={movieForm.description} onChange={e => setMovieForm({ ...movieForm, description: e.target.value })} required />
                   </div>
                   <div className="tms-form-group">
-                    <label className="tms-form-label">Độ tuổi</label>
-                    <select
-                      className="tms-form-select"
-                      value={movieForm.age_rating}
-                      onChange={e => setMovieForm({ ...movieForm, age_rating: e.target.value })}
-                    >
-                      <option value="P">P - Phổ biến mọi lứa tuổi</option>
-                      <option value="K">K - Dưới 13 tuổi có bảo trợ</option>
-                      <option value="T13">T13 - Từ 13 tuổi trở lên</option>
-                      <option value="T16">T16 - Từ 16 tuổi trở lên</option>
-                      <option value="T18">T18 - Từ 18 tuổi trở lên</option>
+                    <label className="tms-form-label">Nội dung chi tiết</label>
+                    <textarea className="tms-form-input" rows={5} value={movieForm.plot_details} onChange={e => setMovieForm({ ...movieForm, plot_details: e.target.value })} />
+                  </div>
+                </section>
+
+                <section className="tms-movie-form-section">
+                  <h3 className="tms-movie-form-heading">4. Ngôn ngữ &amp; định dạng</h3>
+                  <div className="tms-movie-form-grid">
+                    <div className="tms-form-group">
+                      <label className="tms-form-label">Ngôn ngữ gốc *</label>
+                      <input className="tms-form-input" value={movieForm.original_language} onChange={e => setMovieForm({ ...movieForm, original_language: e.target.value })} required maxLength={80} />
+                    </div>
+                    <div className="tms-form-group">
+                      <label className="tms-form-label">Phiên bản phụ đề / lồng tiếng</label>
+                      <input className="tms-form-input" value={movieForm.localization_versions} onChange={e => setMovieForm({ ...movieForm, localization_versions: e.target.value })} placeholder="Phụ đề Việt / Lồng tiếng Việt" maxLength={255} />
+                    </div>
+                    <div className="tms-form-group tms-movie-form-full">
+                      <label className="tms-form-label">Định dạng chiếu *</label>
+                      <input className="tms-form-input" value={movieForm.format} onChange={e => setMovieForm({ ...movieForm, format: e.target.value })} placeholder="2D Digital / 3D IMAX / Dolby Atmos" required maxLength={100} />
+                    </div>
+                  </div>
+                </section>
+
+                <section className="tms-movie-form-section">
+                  <h3 className="tms-movie-form-heading">5. Phát hành &amp; media</h3>
+                  <div className="tms-movie-form-grid">
+                    <div className="tms-form-group">
+                      <label className="tms-form-label">Ngày khởi chiếu *</label>
+                      <input type="date" className="tms-form-input" value={movieForm.release_date} onChange={e => setMovieForm({ ...movieForm, release_date: e.target.value })} required />
+                    </div>
+                    <div className="tms-form-group">
+                      <label className="tms-form-label">Ngày kết thúc dự kiến</label>
+                      <input type="date" className="tms-form-input" value={movieForm.expected_end_date} onChange={e => setMovieForm({ ...movieForm, expected_end_date: e.target.value })} />
+                    </div>
+                    <div className="tms-form-group tms-movie-form-full">
+                      <label className="tms-form-label">Nhà phát hành</label>
+                      <input className="tms-form-input" value={movieForm.distributor} onChange={e => setMovieForm({ ...movieForm, distributor: e.target.value })} maxLength={180} />
+                    </div>
+                    <div className="tms-form-group tms-movie-form-full">
+                      <label className="tms-form-label">Poster *</label>
+                      <input type="file" className="tms-form-input tms-movie-file-input" accept="image/jpeg,image/png,image/webp" onChange={e => setMovieFiles({ ...movieFiles, poster: e.target.files?.[0] || null })} required={!movieForm.poster_url && !movieFiles.poster} />
+                      {movieFiles.poster ? <span className="tms-movie-file-name">{movieFiles.poster.name}</span> : movieForm.poster_url && <img className="tms-movie-media-preview" src={movieForm.poster_url} alt="Poster hiện tại" />}
+                    </div>
+                    <div className="tms-form-group tms-movie-form-full">
+                      <label className="tms-form-label">Banner</label>
+                      <input type="file" className="tms-form-input tms-movie-file-input" accept="image/jpeg,image/png,image/webp" onChange={e => setMovieFiles({ ...movieFiles, banner: e.target.files?.[0] || null })} />
+                      {movieFiles.banner ? <span className="tms-movie-file-name">{movieFiles.banner.name}</span> : movieForm.banner_url && <img className="tms-movie-media-preview tms-movie-banner-preview" src={movieForm.banner_url} alt="Banner hiện tại" />}
+                    </div>
+                    <div className="tms-form-group tms-movie-form-full">
+                      <label className="tms-form-label">Trailer video</label>
+                      <input type="file" className="tms-form-input tms-movie-file-input" accept="video/mp4,video/webm,video/quicktime" onChange={e => setMovieFiles({ ...movieFiles, trailer: e.target.files?.[0] || null })} />
+                      {movieFiles.trailer ? <span className="tms-movie-file-name">{movieFiles.trailer.name}</span> : movieForm.trailer_url && <span className="tms-movie-file-name">Đã có trailer: {movieForm.trailer_url.split('/').pop()}</span>}
+                    </div>
+                  </div>
+                </section>
+
+                <section className="tms-movie-form-section">
+                  <h3 className="tms-movie-form-heading">6. Trạng thái</h3>
+                  <div className="tms-form-group">
+                    <label className="tms-form-label">Trạng thái *</label>
+                    <select className="tms-form-select" value={movieForm.status} onChange={e => setMovieForm({ ...movieForm, status: e.target.value })} required>
+                      <option value="coming_soon">Sắp chiếu (Coming Soon)</option>
+                      <option value="now_showing">Đang chiếu (Now Showing)</option>
+                      <option value="special_showing">Suất chiếu đặc biệt (Sneak Show)</option>
+                      <option value="ended">Đã kết thúc</option>
                     </select>
                   </div>
-                </div>
-                <div className="tms-form-group">
-                  <label className="tms-form-label">Định dạng chiếu</label>
-                  <input
-                    className="tms-form-input"
-                    value={movieForm.format}
-                    onChange={e => setMovieForm({ ...movieForm, format: e.target.value })}
-                    placeholder="vd: 2D Digital / 3D IMAX / Dolby Atmos"
-                    required
-                  />
-                </div>
-                <div className="tms-form-group">
-                  <label className="tms-form-label">Trạng thái kho</label>
-                  <select
-                    className="tms-form-select"
-                    value={movieForm.status}
-                    onChange={e => setMovieForm({ ...movieForm, status: e.target.value })}
-                  >
-                    <option value="now_showing">Đang chiếu (Now Showing)</option>
-                    <option value="coming_soon">Sắp chiếu (Coming Soon)</option>
-                    <option value="special_showing">Suất chiếu đặc biệt (Sneak Show)</option>
-                  </select>
-                </div>
+                </section>
               </div>
               <div className="tms-modal-footer">
                 <button type="button" className="tms-btn tms-btn-outline" onClick={() => setShowMovieModal(false)}>Hủy</button>
                 <button type="submit" className="tms-btn tms-btn-primary">
-                  {movieForm.id > 0 ? 'Cập nhật phim' : 'Lưu vào kho hệ thống'}
+                  {movieForm.id > 0 ? 'Cập nhật phim' : 'Lưu phim'}
                 </button>
               </div>
             </form>

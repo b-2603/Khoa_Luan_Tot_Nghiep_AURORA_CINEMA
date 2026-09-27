@@ -69,14 +69,11 @@ function passwordMatches($password, $hash) {
     return crypt($password, $hash) === $hash;
 }
 
-// Kết nối cơ sở dữ liệu MySQL - ưu tiên aurora_db chứa toàn bộ dữ liệu hệ thống
+// TMS và website customer dùng chung aurora_db.
 $db = @new mysqli('127.0.0.1', 'root', '', 'aurora_db', 3306);
-if ($db->connect_error) {
-    $db = @new mysqli('127.0.0.1', 'root', '', 'aurora_tms', 3306);
-}
 
 if ($db->connect_error) {
-    jsonResponse(array('success' => false, 'message' => 'Không thể kết nối cơ sở dữ liệu: ' . $db->connect_error), 500);
+    jsonResponse(array('success' => false, 'message' => 'Không thể kết nối aurora_db: ' . $db->connect_error), 500);
 }
 
 $db->set_charset('utf8');
@@ -84,6 +81,64 @@ $db->set_charset('utf8');
 require_once dirname(__FILE__) . '/../app/Http/Controllers/AdminController.php';
 $controller = new AdminController($db);
 $action = isset($_GET['action']) ? $_GET['action'] : 'health';
+
+if ($action === 'movie-media') {
+    if ($requestMethod !== 'POST') {
+        jsonResponse(array('success' => false, 'message' => 'Phương thức không được hỗ trợ.'), 400);
+    }
+    $user = requireAdmin();
+    $role = AdminController::normalizeRole($user['role']);
+    if (!in_array($role, array('super_admin', 'cinema_admin'), true)) {
+        jsonResponse(array('success' => false, 'message' => 'Bạn không có quyền tải media phim lên.'), 403);
+    }
+
+    $kind = isset($_GET['kind']) ? $_GET['kind'] : '';
+    $allowedMimeTypes = array(
+        'poster' => array('image/jpeg' => 'jpg', 'image/png' => 'png', 'image/webp' => 'webp'),
+        'banner' => array('image/jpeg' => 'jpg', 'image/png' => 'png', 'image/webp' => 'webp'),
+        'trailer' => array('video/mp4' => 'mp4', 'video/webm' => 'webm', 'video/quicktime' => 'mov')
+    );
+    if (!isset($allowedMimeTypes[$kind])) {
+        jsonResponse(array('success' => false, 'message' => 'Loại media không hợp lệ.'), 400);
+    }
+    if (!isset($_FILES['media']) || !is_array($_FILES['media'])) {
+        jsonResponse(array('success' => false, 'message' => 'Hãy chọn một tệp để tải lên.'), 400);
+    }
+
+    $file = $_FILES['media'];
+    if ($file['error'] !== UPLOAD_ERR_OK || !is_uploaded_file($file['tmp_name'])) {
+        jsonResponse(array('success' => false, 'message' => 'Tải tệp lên thất bại. Hãy thử tệp nhỏ hơn hoặc kiểm tra cấu hình upload của PHP.'), 400);
+    }
+    $maxBytes = $kind === 'trailer' ? 100 * 1024 * 1024 : 8 * 1024 * 1024;
+    if ((int)$file['size'] <= 0 || (int)$file['size'] > $maxBytes) {
+        $limit = $kind === 'trailer' ? '100 MB' : '8 MB';
+        jsonResponse(array('success' => false, 'message' => 'Dung lượng tệp phải nhỏ hơn ' . $limit . '.'), 400);
+    }
+    if (!function_exists('finfo_open')) {
+        jsonResponse(array('success' => false, 'message' => 'Máy chủ PHP cần bật extension fileinfo để xác thực tệp.'), 500);
+    }
+    $fileInfo = finfo_open(FILEINFO_MIME_TYPE);
+    $mimeType = $fileInfo ? finfo_file($fileInfo, $file['tmp_name']) : '';
+    if ($fileInfo) finfo_close($fileInfo);
+    if (!isset($allowedMimeTypes[$kind][$mimeType])) {
+        jsonResponse(array('success' => false, 'message' => $kind === 'trailer' ? 'Trailer phải là MP4, WebM hoặc MOV.' : 'Ảnh phải có định dạng JPG, PNG hoặc WebP.'), 400);
+    }
+
+    $uploadDirectory = dirname(__FILE__) . DIRECTORY_SEPARATOR . 'uploads' . DIRECTORY_SEPARATOR . 'movies';
+    if (!is_dir($uploadDirectory) && !mkdir($uploadDirectory, 0755, true) && !is_dir($uploadDirectory)) {
+        jsonResponse(array('success' => false, 'message' => 'Không thể tạo thư mục lưu media trên máy chủ.'), 500);
+    }
+    $extension = $allowedMimeTypes[$kind][$mimeType];
+    $fileName = 'movie-' . $kind . '-' . sha1(uniqid((string)mt_rand(), true)) . '.' . $extension;
+    if (!move_uploaded_file($file['tmp_name'], $uploadDirectory . DIRECTORY_SEPARATOR . $fileName)) {
+        jsonResponse(array('success' => false, 'message' => 'Không thể lưu tệp vào thư mục media.'), 500);
+    }
+    $publicDirectory = str_replace('\\', '/', dirname($_SERVER['SCRIPT_NAME']));
+    $host = isset($_SERVER['HTTP_HOST']) && preg_match('/^[A-Za-z0-9.-]+(?::[0-9]{1,5})?$/', $_SERVER['HTTP_HOST']) ? $_SERVER['HTTP_HOST'] : 'localhost';
+    $scheme = !empty($_SERVER['HTTPS']) && strtolower($_SERVER['HTTPS']) !== 'off' ? 'https' : 'http';
+    $publicUrl = $scheme . '://' . $host . rtrim($publicDirectory, '/') . '/uploads/movies/' . rawurlencode($fileName);
+    jsonResponse(array('success' => true, 'data' => array('url' => $publicUrl, 'name' => $fileName)), 201);
+}
 
 if ($action === 'health') {
     $resDb = $db->query('SELECT DATABASE()');

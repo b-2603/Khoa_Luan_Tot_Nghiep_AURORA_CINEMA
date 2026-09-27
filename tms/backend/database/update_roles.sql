@@ -1,6 +1,6 @@
 -- ========================================================
 -- Cập nhật cấu trúc bảng & Dữ liệu đồng bộ cho AURORA CINEMA TMS
--- Áp dụng cho MySQL CSDL: aurora_db và aurora_tms (phpMyAdmin)
+-- Áp dụng duy nhất trên MySQL database aurora_db (phpMyAdmin)
 -- ========================================================
 
 USE `aurora_db`;
@@ -96,9 +96,9 @@ CREATE TABLE IF NOT EXISTS `tms_system_configs` (
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8;
 
 -- ========================================================
--- ĐỒNG BỘ CHO DATABASE aurora_tms
+-- Các lệnh đồng bộ bổ sung trong cùng database aurora_db
 -- ========================================================
-USE `aurora_tms`;
+USE `aurora_db`;
 
 ALTER TABLE `tms_users` MODIFY COLUMN `role` VARCHAR(50) NOT NULL DEFAULT 'cinema_admin';
 
@@ -224,4 +224,15 @@ CREATE TABLE IF NOT EXISTS `tms_movie_allocations` (
     `created_at` TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
     `updated_at` DATETIME NULL
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8;
+
+-- Bổ sung metadata quản trị và trạng thái đầy đủ cho kế hoạch phim.
+ALTER TABLE `tms_movie_plans`
+    ADD COLUMN IF NOT EXISTS `plan_code` VARCHAR(40) NULL AFTER `id`,
+    ADD COLUMN IF NOT EXISTS `approved_by` VARCHAR(100) NULL AFTER `created_by`,
+    ADD COLUMN IF NOT EXISTS `approved_at` DATETIME NULL AFTER `approved_by`,
+    ADD COLUMN IF NOT EXISTS `updated_by` VARCHAR(100) NULL AFTER `approved_at`,
+    ADD COLUMN IF NOT EXISTS `updated_at` DATETIME NULL AFTER `updated_by`;
+
+ALTER TABLE `tms_movie_plans`
+    MODIFY COLUMN `status` ENUM('draft', 'pending_approval', 'approved', 'published', 'in_progress', 'completed', 'cancelled') NOT NULL DEFAULT 'draft';
 

@@ -4,6 +4,13 @@ return [
     'name' => 'Aurora POS',
     'env' => 'local',
     'debug' => true,
+    'db' => [
+        'host' => '127.0.0.1',
+        'port' => 3306,
+        'database' => 'aurora_db',
+        'username' => 'root',
+        'password' => '',
+    ],
     'api_prefix' => 'api',
     'allowed_origins' => [
         'http://localhost:3000',

@@ -25,7 +25,7 @@ class Database
             // Thử kết nối tạo database nếu database chưa tồn tại
             $rootConn = @new mysqli($host, $username, $password, '', $port);
             if (!$rootConn->connect_error) {
-                $rootConn->query("CREATE DATABASE IF NOT EXISTS `{$database}` CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci");
+                $rootConn->query("CREATE DATABASE IF NOT EXISTS `{$database}` CHARACTER SET utf8 COLLATE utf8_unicode_ci");
                 $rootConn->close();
                 $mysqli = @new mysqli($host, $username, $password, $database, $port);
             }
@@ -35,7 +35,7 @@ class Database
             throw new Exception('Không thể kết nối MySQL TMS: ' . $mysqli->connect_error);
         }
 
-        $mysqli->set_charset('utf8mb4');
+        $mysqli->set_charset('utf8');
         self::$connection = $mysqli;
 
         return self::$connection;

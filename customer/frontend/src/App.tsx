@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import {
   MapPin, Search, Bell, Trophy, ChevronDown,
   PlayCircle, Gift, Ticket, Film, Send, ExternalLink, Smartphone,
@@ -91,6 +91,7 @@ function formatScheduleDate(date: string, language: Language) {
 
 /* ─── COMPONENT ─────────────────────────────────────────────── */
 export default function App() {
+  const contentRef = useRef<HTMLDivElement>(null);
   const [language, setLanguage] = useState<Language>(() => localStorage.getItem('aurora-language') === 'en' ? 'en' : 'vi');
   const [movieTab, setMovieTab] = useState<'NOW_SHOWING' | 'COMING_SOON' | 'SPECIAL_SHOWING'>('NOW_SHOWING');
   const [chatMsg, setChatMsg] = useState('');
@@ -114,6 +115,10 @@ export default function App() {
   const [footerPage, setFooterPage] = useState<'faq' | 'booking-guide' | 'privacy' | 'terms' | null>(null);
   const copy = COPY[language];
   const t = (vi: string, en: string) => language === 'en' ? en : vi;
+
+  function scrollContentToTop() {
+    contentRef.current?.scrollTo({ top: 0, behavior: 'smooth' });
+  }
 
   function changeLanguage(nextLanguage: Language) {
     setLanguage(nextLanguage);
@@ -203,7 +208,7 @@ export default function App() {
     setShowUserMenu(false);
     setCurrentPage('home');
     setFooterPage(null);
-    window.scrollTo({ top: 0, behavior: 'smooth' });
+    scrollContentToTop();
   }
 
   function handleGoSchedule() {
@@ -214,7 +219,7 @@ export default function App() {
     setShowUserMenu(false);
     setCurrentPage('schedule');
     setFooterPage(null);
-    window.scrollTo({ top: 0, behavior: 'smooth' });
+    scrollContentToTop();
   }
 
   function handleGoMovies() {
@@ -225,7 +230,7 @@ export default function App() {
     setShowUserMenu(false);
     setCurrentPage('movies');
     setFooterPage(null);
-    window.scrollTo({ top: 0, behavior: 'smooth' });
+    scrollContentToTop();
   }
 
   function openFooterPage(page: 'faq' | 'booking-guide' | 'privacy' | 'terms') {
@@ -234,7 +239,7 @@ export default function App() {
     setDetailMovie(null);
     setCurrentPage('home');
     setFooterPage(page);
-    window.scrollTo({ top: 0, behavior: 'smooth' });
+    scrollContentToTop();
   }
 
   function openAccountTab(tab: string) {
@@ -243,7 +248,7 @@ export default function App() {
     setShowAccount(true);
     setAuthMode(null);
     setDetailMovie(null);
-    window.scrollTo({ top: 0, behavior: 'smooth' });
+    scrollContentToTop();
   }
 
   /* ── Trang đặt vé – render toàn trang, thay thế toàn bộ layout thông thường ── */
@@ -257,7 +262,7 @@ export default function App() {
         language={language}
         onClose={() => {
           setBooking(null);
-          window.scrollTo({ top: 0, behavior: 'smooth' });
+          scrollContentToTop();
         }}
         onRequireLogin={() => {
           setBooking(null);
@@ -268,10 +273,10 @@ export default function App() {
   }
 
   return (
-    <div style={{ minHeight: '100vh', display: 'flex', flexDirection: 'column', background: '#eef0f4', fontFamily: "'Segoe UI','Inter',sans-serif", color: '#1a2332' }}>
+    <div style={{ height: '100vh', display: 'flex', flexDirection: 'column', overflow: 'hidden', background: '#eef0f4', fontFamily: "'Inter','Segoe UI',Arial,sans-serif", color: '#1a2332' }}>
 
       {/* TOP BAR */}
-      <div style={{ background: '#0d1b2e', color: '#c8d6e5' }}>
+      <div style={{ flexShrink: 0, background: '#0d1b2e', color: '#c8d6e5' }}>
         <div style={{ maxWidth: 1320, margin: '0 auto', padding: '6px 16px', display: 'flex', alignItems: 'center', justifyContent: 'space-between', fontSize: 12, height: 32, boxSizing: 'border-box' }}>
           <span style={{ color: '#dce8f5' }}>
             {authMode === 'register'
@@ -338,7 +343,7 @@ export default function App() {
       </div>
 
       {/* HEADER */}
-      <header style={{ position: 'sticky', top: 0, zIndex: 40, background: '#fff', borderBottom: '1px solid #dde3ec', boxShadow: '0 2px 10px rgba(0,0,0,0.08)' }}>
+      <header style={{ flexShrink: 0, zIndex: 40, background: '#fff', borderBottom: '1px solid #dde3ec', boxShadow: '0 2px 10px rgba(0,0,0,0.08)' }}>
         <div style={{ maxWidth: 1320, margin: '0 auto', padding: '0 16px', display: 'flex', alignItems: 'center', gap: 20, height: 64 }}>
           <div onClick={handleGoHome} style={{ display: 'flex', alignItems: 'center', flexShrink: 0, cursor: 'pointer' }}>
             <img src="/aurora-logo.svg" alt="Aurora Cinema" style={{ width: 176, height: 48, objectFit: 'contain' }} />
@@ -680,6 +685,7 @@ export default function App() {
         </div>
       </header>
 
+      <div ref={contentRef} style={{ flex: 1, minHeight: 0, overflowY: 'auto', overscrollBehavior: 'contain' }}>
       {/* CONTENT: AUTH, ACCOUNT, OR HOMEPAGE */}
       {footerPage ? (
         <FooterInfoPage page={footerPage} onBack={handleGoHome} />
@@ -726,11 +732,11 @@ export default function App() {
           selectedTheater={selectedTheater}
           onSelectMovie={(movie) => {
             setDetailMovie(movie);
-            window.scrollTo({ top: 0, behavior: 'smooth' });
+            scrollContentToTop();
           }}
           onBookMovie={(movie) => {
             setDetailMovie(movie);
-            window.scrollTo({ top: 0, behavior: 'smooth' });
+            scrollContentToTop();
           }}
           onWatchTrailer={(movie) => {
             setTrailerMovie(movie);
@@ -1187,6 +1193,7 @@ export default function App() {
             </div>
           </main>
       )}
+      </div>
       <SiteFooter language={language} onNavigate={openFooterPage} />
       {pendingBooking && <BookingConfirmationModal
         movie={pendingBooking.movie}
@@ -1204,7 +1211,7 @@ export default function App() {
 function SiteFooter({ language, onNavigate }: { language: Language; onNavigate: (page: 'faq' | 'booking-guide' | 'privacy' | 'terms') => void }) {
   const t = (vi: string, en: string) => language === 'en' ? en : vi;
   return (
-    <footer style={{ background: '#071526', color: '#e2e8f0', borderTop: '4px solid #f4c04a', padding: '30px 20px 16px', marginTop: 'auto' }}>
+    <footer style={{ flexShrink: 0, background: '#071526', color: '#e2e8f0', borderTop: '4px solid #f4c04a', padding: '30px 20px 16px', marginTop: 'auto' }}>
       <div style={{ maxWidth: 1320, margin: '0 auto', display: 'grid', gridTemplateColumns: '1.5fr 1fr 1fr 1.2fr', gap: 28 }}>
         <div>
           <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 10 }}>
