@@ -13,7 +13,7 @@ class TheaterController
     {
         // 1. Số phòng chiếu đang hoạt động
         $screenCount = 6;
-        $res = $this->db->query("SELECT COUNT(*) as cnt FROM tms_screens WHERE status = 'active'");
+        $res = $this->db->query("SELECT COUNT(*) as cnt FROM screens WHERE status = 'active'");
         if ($res && $row = $res->fetch_assoc()) {
             $screenCount = (int)$row['cnt'];
         }
@@ -25,7 +25,7 @@ class TheaterController
             'concession_sales' => 52400000.0,
             'occupancy_rate' => 84.5
         );
-        $resRev = $this->db->query("SELECT * FROM tms_revenue_logs WHERE log_date = CURDATE() ORDER BY id DESC LIMIT 1");
+        $resRev = $this->db->query("SELECT * FROM revenue_logs WHERE log_date = CURDATE() ORDER BY id DESC LIMIT 1");
         if ($resRev && $rowRev = $resRev->fetch_assoc()) {
             $revenue = array(
                 'total_revenue' => (float)$rowRev['total_revenue'],
@@ -37,7 +37,7 @@ class TheaterController
 
         // 3. Nhân sự ca trực
         $staffCount = 5;
-        $resStaff = $this->db->query("SELECT COUNT(*) as cnt FROM tms_staff_shifts WHERE work_date = CURDATE()");
+        $resStaff = $this->db->query("SELECT COUNT(*) as cnt FROM staff_shifts WHERE work_date = CURDATE()");
         if ($resStaff && $rowStaff = $resStaff->fetch_assoc()) {
             $staffCount = (int)$rowStaff['cnt'];
         }
@@ -61,7 +61,7 @@ class TheaterController
     public function screens()
     {
         $screens = array();
-        $res = $this->db->query("SELECT * FROM tms_screens ORDER BY id ASC");
+        $res = $this->db->query("SELECT * FROM screens ORDER BY id ASC");
         if ($res) {
             while ($row = $res->fetch_assoc()) {
                 $screens[] = array(
@@ -90,9 +90,9 @@ class TheaterController
         $schedules = array();
         $sql = "
             SELECT s.*, m.title as movie_title, m.format as movie_format, sc.name as screen_name
-            FROM tms_schedules s
-            JOIN tms_movies m ON s.movie_id = m.id
-            JOIN tms_screens sc ON s.screen_id = sc.id
+            FROM showtimes s
+            JOIN movies m ON s.movie_id = m.id
+            JOIN screens sc ON s.screen_id = sc.id
             WHERE s.show_date = CURDATE()
             ORDER BY s.start_time ASC
         ";

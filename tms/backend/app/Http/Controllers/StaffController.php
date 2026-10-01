@@ -11,7 +11,7 @@ class StaffController
 
     public function index()
     {
-        $res = $this->db->query("SELECT * FROM tms_staff_shifts WHERE work_date = CURDATE() ORDER BY id ASC");
+        $res = $this->db->query("SELECT * FROM staff_shifts WHERE work_date = CURDATE() ORDER BY id ASC");
         $shifts = array();
         if ($res) {
             while ($row = $res->fetch_assoc()) {

@@ -1,4 +1,5 @@
-import { useState, useEffect, FormEvent } from 'react';
+import { useState, useEffect, FormEvent, useRef } from 'react';
+import * as XLSX from 'xlsx';
 import {
   User, Lock, Eye, EyeOff, ChevronDown, Clapperboard,
   ShieldCheck, TrendingUp, Users, LogOut, Bell, BarChart3,
@@ -50,12 +51,8 @@ export const ROLE_CONFIGS: Record<TMSRole, RoleConfig> = {
 };
 
 // Demo accounts table shown on login
-const DEMO_ACCOUNTS = [
-  { role: 'super_admin' as TMSRole, label: 'Admin Tổng', user: 'admin_tong', pass: '8888' },
-  { role: 'cinema_admin' as TMSRole, label: 'Admin Rạp', user: 'admin_rap', pass: '8888' },
-  { role: 'supervisor' as TMSRole, label: 'Supervisor', user: 'supervisor', pass: '8888' },
-  { role: 'accounting' as TMSRole, label: 'Kế Toán', user: 'accounting', pass: '8888' },
-];
+const DEMO_ACCOUNTS: Array<{ role: TMSRole; label: string; user: string; pass: string }> = [];
+
 
 // ============================================================
 // ROLE-SPECIFIC NAVIGATION (maps exactly to Use Cases)
@@ -122,6 +119,12 @@ interface ScreenData { id: number; screen_code: string; name: string; screen_typ
 interface RefundItem { id: number; transaction_code: string; customer_name: string; reason: string; amount: number; payment_method: string; status: 'pending'|'approved'|'rejected'|'completed'; created_at?: string; requested_by?: string; }
 interface TxnItem { id: number; transaction_code: string; customer_name?: string; customer_phone?: string; channel: 'pos'|'website'|'ota'; amount: number; payment_method: string; status: 'paid'|'pending'|'cancelled'|'refunded'; created_at?: string; cancel_requested?: boolean; }
 interface StaffShift { id: number; name: string; position: string; shift: string; time: string; status: 'on_duty'|'checked_in'|'absent'; checkin: string; }
+interface ScheduleItem { id: number; screen_id: number; movie_id: number; movie_title: string; screen_name: string; show_date: string; start_time: string; end_time: string; booked_seats: number; total_seats: number; ticket_price?: number; status: 'scheduled'|'running'|'finished'|'cancelled'; customer_showtime_id?: number; }
+interface MovieImportRow extends Omit<MovieForm, 'id'> {
+  raw: Record<string, string>;
+  fieldHeaders: Record<string, string>;
+}
+interface MovieImportError { row: number; field?: string; message: string; }
 interface MovieForm {
   id: number;
   movie_code: string;
@@ -149,6 +152,12 @@ interface MovieForm {
   trailer_url: string;
   status: string;
 }
+
+const MOVIE_GENRES = ['Hành động', 'Khoa học viễn tưởng', 'Tâm lý', 'Hài hước', 'Kinh dị', 'Hoạt hình', 'Phiêu lưu', 'Thần thoại', 'Gia đình', 'Tình cảm', 'Hành động - Hài', 'Chiến tranh', 'Võ thuật', 'Trinh thám'];
+const MOVIE_COUNTRIES = ['Việt Nam', 'Hoa Kỳ', 'Hàn Quốc', 'Nhật Bản', 'Trung Quốc', 'Thái Lan', 'Hong Kong', 'Anh', 'Pháp', 'Đức', 'Canada', 'Úc', 'Ấn Độ'];
+const MOVIE_LANGUAGES = ['Tiếng Anh', 'Tiếng Việt', 'Tiếng Nhật', 'Tiếng Hàn', 'Tiếng Trung', 'Tiếng Thái', 'Tiếng Pháp', 'Tiếng Tây Ban Nha', 'Tiếng Nga'];
+const MOVIE_LOCALIZATION_OPTIONS = ['Phụ đề Việt / Lồng tiếng Việt', 'Phụ đề Việt / Lồng tiếng Anh', 'Phụ đề Việt', 'Lồng tiếng Việt', 'Phụ đề Anh / Lồng tiếng Việt', 'Phụ đề Việt / Lồng tiếng Hàn'];
+const MOVIE_FORMAT_OPTIONS = ['2D Digital', '3D Digital', 'IMAX 2D', 'IMAX 3D', '4DX', 'Dolby Atmos', 'VIP', 'ScreenX'];
 
 const EMPTY_MOVIE_FORM: MovieForm = {
   id: 0,
@@ -319,6 +328,8 @@ export default function App() {
   const [planSearch, setPlanSearch] = useState('');
   const [planStatusFilter, setPlanStatusFilter] = useState('all');
   const [selectedTheaterFilter, setSelectedTheaterFilter] = useState<number>(0);
+  const [systemNotice, setSystemNotice] = useState<{ message: string; type: 'success' | 'error' | 'warning' } | null>(null);
+  const [systemConfirm, setSystemConfirm] = useState<{ message: string; actionLabel: string; onConfirm: () => void | Promise<void> } | null>(null);
 
   // MODALS
   const [showUserModal, setShowUserModal] = useState(false);
@@ -363,8 +374,42 @@ export default function App() {
   const [showMovieModal, setShowMovieModal] = useState(false);
   const [movieForm, setMovieForm] = useState<MovieForm>({ ...EMPTY_MOVIE_FORM });
   const [movieFiles, setMovieFiles] = useState<{ poster: File | null; banner: File | null; trailer: File | null }>({ poster: null, banner: null, trailer: null });
+  const movieImportRef = useRef<HTMLInputElement>(null);
+  const [showMovieImportModal, setShowMovieImportModal] = useState(false);
+  const [movieImportFileName, setMovieImportFileName] = useState('');
+  const [movieImportRows, setMovieImportRows] = useState<MovieImportRow[]>([]);
+  const [movieImportColumns, setMovieImportColumns] = useState<string[]>([]);
+  const [movieImportErrors, setMovieImportErrors] = useState<MovieImportError[]>([]);
+  const [movieImportStatus, setMovieImportStatus] = useState<'preview' | 'validated' | 'errors' | 'importing'>('preview');
+  const [movieFormError, setMovieFormError] = useState('');
+  const [schedulesList, setSchedulesList] = useState<ScheduleItem[]>([]);
+  const [showScheduleModal, setShowScheduleModal] = useState(false);
+  const [scheduleForm, setScheduleForm] = useState({ id: 0, movie_id: 0, screen_id: 0, show_date: new Date().toISOString().slice(0, 10), start_time: '09:00', end_time: '11:00', ticket_price: 90000, status: 'scheduled' });
 
   const API_BASE = 'http://localhost/AURORA%20CINEMA/tms/backend/public/api.php';
+
+  const showSystemNotice = (message: string) => {
+    const text = String(message || 'Đã hoàn tất thao tác.');
+    const type = /lỗi|không thể|không có quyền|vui lòng|thất bại|từ chối/i.test(text) ? 'error' : /chưa|chờ|cảnh báo/i.test(text) ? 'warning' : 'success';
+    setSystemNotice({ message: text, type });
+  };
+
+  const requestSystemConfirmation = (message: string, onConfirm: () => void | Promise<void>, actionLabel = 'Xác nhận') => {
+    setSystemConfirm({ message, onConfirm, actionLabel });
+  };
+
+  // Chuyển mọi alert cũ sang thông báo nội bộ Aurora trong khi TMS đang mở.
+  useEffect(() => {
+    const nativeAlert = window.alert;
+    window.alert = (message?: any) => showSystemNotice(String(message || ''));
+    return () => { window.alert = nativeAlert; };
+  }, []);
+
+  useEffect(() => {
+    if (!systemNotice || systemNotice.type !== 'success') return;
+    const timer = window.setTimeout(() => setSystemNotice(null), 4500);
+    return () => window.clearTimeout(timer);
+  }, [systemNotice]);
 
   // -------- DATA LOADERS (DIRECT MYSQL PERSISTENCE) --------
   const loadUsers = async () => {
@@ -419,6 +464,26 @@ export default function App() {
     }
   };
 
+  const loadSchedules = async () => {
+    try {
+      const res = await fetch(`${API_BASE}?action=schedules`);
+      const data = await res.json();
+      if (data.success && Array.isArray(data.data)) setSchedulesList(data.data);
+    } catch (e) {
+      console.error('Error loading schedules:', e);
+    }
+  };
+
+  const loadScreens = async () => {
+    try {
+      const res = await fetch(`${API_BASE}?action=screens`);
+      const data = await res.json();
+      if (data.success && Array.isArray(data.data)) setScreensList(data.data);
+    } catch (e) {
+      console.error('Error loading screens:', e);
+    }
+  };
+
   const loadTheaters = async () => {
     try {
       const res = await fetch(`${API_BASE}?action=theaters`);
@@ -438,6 +503,8 @@ export default function App() {
       loadMovieAllocations();
       loadMovies();
       loadTheaters();
+      loadSchedules();
+      loadScreens();
     }
   }, [isLoggedIn]);
 
@@ -462,6 +529,7 @@ export default function App() {
       const url = planForm.id > 0 ? `${API_BASE}?action=movie-plans&id=${planForm.id}` : `${API_BASE}?action=movie-plans`;
       const res = await fetch(url, {
         method: 'POST',
+        credentials: 'include',
         headers: { 'Content-Type': 'application/json', 'X-TMS-User': currentUser?.username || 'admin_tong' },
         body: JSON.stringify({
           ...planForm,
@@ -487,10 +555,11 @@ export default function App() {
       alert('Chỉ Admin Tổng mới có quyền xóa kế hoạch phim!');
       return;
     }
-    if (!window.confirm('Bạn có chắc chắn muốn xóa kế hoạch phim này và các phân bổ rạp liên quan?')) return;
-    try {
+    requestSystemConfirmation('Kế hoạch phim và các phân bổ rạp liên quan sẽ bị xóa. Hành động này không thể hoàn tác.', async () => {
+      try {
       const res = await fetch(`${API_BASE}?action=movie-plans&id=${id}`, {
         method: 'DELETE',
+        credentials: 'include',
         headers: { 'X-TMS-User': currentUser?.username || 'admin_tong' }
       });
       const data = await res.json();
@@ -501,9 +570,10 @@ export default function App() {
       } else {
         alert(data.message);
       }
-    } catch {
-      alert('Lỗi kết nối máy chủ.');
-    }
+      } catch {
+        alert('Lỗi kết nối máy chủ.');
+      }
+    }, 'Xóa kế hoạch');
   };
 
   const handleUpdatePlanStatus = async (planId: number, newStatus: string) => {
@@ -511,6 +581,7 @@ export default function App() {
     try {
       await fetch(`${API_BASE}?action=movie-plans&id=${planId}`, {
         method: 'POST',
+        credentials: 'include',
         headers: { 'Content-Type': 'application/json', 'X-TMS-User': currentUser?.username || 'admin_tong' },
         body: JSON.stringify({ status: newStatus })
       });
@@ -530,6 +601,7 @@ export default function App() {
         const tName = theater ? theater.name : `Rạp #${tId}`;
         await fetch(`${API_BASE}?action=movie-allocations`, {
           method: 'POST',
+          credentials: 'include',
           headers: { 'Content-Type': 'application/json', 'X-TMS-User': currentUser?.username || 'admin_tong' },
           body: JSON.stringify({
             plan_id: allocationTargetPlan.id,
@@ -559,6 +631,7 @@ export default function App() {
     try {
       const res = await fetch(`${API_BASE}?action=movie-allocations&id=${allocationId}`, {
         method: 'POST',
+        credentials: 'include',
         headers: { 'Content-Type': 'application/json', 'X-TMS-User': currentUser?.username || 'admin_rap' },
         body: JSON.stringify({ status: 'confirmed' })
       });
@@ -575,9 +648,99 @@ export default function App() {
     }
   };
 
+  const handleMovieMediaSelection = (key: 'poster' | 'banner' | 'trailer', file: File | null) => {
+    if (!file) {
+      setMovieFiles(prev => ({ ...prev, [key]: null }));
+      setMovieFormError('');
+      return;
+    }
+
+    const maxSize = key === 'trailer' ? 100 * 1024 * 1024 : 8 * 1024 * 1024;
+    if (file.size > maxSize) {
+      const sizeLabel = key === 'trailer' ? '100MB' : '8MB';
+      setMovieFormError(`Tệp ${key === 'poster' ? 'poster' : key === 'banner' ? 'banner' : 'trailer'} vượt quá kích thước cho phép (${sizeLabel}). Hãy chọn file nhỏ hơn ${sizeLabel}.`);
+      setMovieFiles(prev => ({ ...prev, [key]: null }));
+      return;
+    }
+
+    setMovieFiles(prev => ({ ...prev, [key]: file }));
+    setMovieFormError('');
+  };
+
+  const handleMovieImport = async (file?: File) => {
+    if (!file) return;
+    try {
+      const workbook = XLSX.read(await file.arrayBuffer(), { type: 'array' });
+      const rows = XLSX.utils.sheet_to_json<Record<string, unknown>>(workbook.Sheets[workbook.SheetNames[0]], { defval: '' });
+      const columns = Array.from(new Set(rows.flatMap(row => Object.keys(row))));
+      const cell = (row: Record<string, unknown>, keys: string[]) => { for (const key of keys) if (row[key] !== undefined && String(row[key]).trim() !== '') return row[key]; return ''; };
+      const headerFor = (row: Record<string, unknown>, keys: string[]) => keys.find(key => row[key] !== undefined) || keys[0];
+      const excelDate = (value: unknown) => { if (typeof value === 'number' && value > 20000) return XLSX.SSF.format('yyyy-mm-dd', value); const text = String(value || '').trim(); return /^\d{4}-\d{2}-\d{2}$/.test(text) ? text : (text || '1970-01-01'); };
+      const fields: Record<string, string[]> = {
+        movie_code: ['movie_code', 'Mã phim', 'Mã Phim'], title: ['title', 'Tên phim', 'Tên Phim', 'Tên phim*'], original_title: ['original_title', 'Tên phim gốc'],
+        genre: ['genre', 'Thể loại'], duration_minutes: ['duration_minutes', 'Thời lượng', 'Thời lượng (phút)', 'Thời lượng phim', 'Duration'], age_rating: ['age_rating', 'Độ tuổi', 'Phân loại độ tuổi'],
+        director: ['director', 'Đạo diễn'], cast: ['cast', 'Diễn viên'], writer: ['writer', 'Biên kịch'], producer: ['producer', 'Nhà sản xuất'], production_country: ['production_country', 'Quốc gia sản xuất'],
+        production_year: ['production_year', 'Năm sản xuất'], description: ['description', 'Mô tả', 'Tóm tắt phim'], plot_details: ['plot_details', 'Nội dung chi tiết'], original_language: ['original_language', 'Ngôn ngữ gốc'],
+        localization_versions: ['localization_versions', 'Phiên bản phát hành', 'Phiên bản bản địa hóa'], format: ['format', 'Định dạng', 'Định dạng chiếu'],
+        release_date: ['release_date', 'Ngày khởi chiếu', 'Ngày chiếu', 'Release date'], expected_end_date: ['expected_end_date', 'Ngày kết thúc dự kiến'], distributor: ['distributor', 'Nhà phát hành'],
+        poster_url: ['poster_url', 'Poster URL', 'Poster'], banner_url: ['banner_url', 'Banner URL', 'Banner'], trailer_url: ['trailer_url', 'Trailer URL', 'Trailer video'], status: ['status', 'Trạng thái']
+      };
+      const dateFields = ['release_date', 'expected_end_date'];
+      const movies: MovieImportRow[] = rows.map(row => {
+        const normalized: Record<string, string | number> = {};
+        const fieldHeaders: Record<string, string> = {};
+        Object.entries(fields).forEach(([field, aliases]) => {
+          const value = cell(row, aliases);
+          normalized[field] = dateFields.includes(field) ? excelDate(value) : String(value || '').trim();
+          fieldHeaders[field] = headerFor(row, aliases);
+        });
+        normalized.duration_minutes = Number(normalized.duration_minutes) || 0;
+        normalized.production_year = normalized.production_year === '' ? '' : Number(normalized.production_year) || '';
+        const raw: Record<string, string> = {};
+        columns.forEach(column => { const value = row[column]; raw[column] = typeof value === 'number' && value > 20000 && /ngày|date/i.test(column) ? excelDate(value) : String(value ?? '').trim(); });
+        return { ...(normalized as Omit<MovieForm, 'id'>), raw, fieldHeaders } as MovieImportRow;
+      });
+      if (!movies.length) throw new Error('File không có dòng dữ liệu phim.');
+      const previewErrors: MovieImportError[] = [];
+      movies.forEach((movie, index) => { if (!movie.title) previewErrors.push({ row: index + 2, field: 'title', message: 'Thiếu giá trị Tên phim.' }); if (!movie.duration_minutes) previewErrors.push({ row: index + 2, field: 'duration_minutes', message: 'Thời lượng phải là số phút lớn hơn 0.' }); });
+      setMovieImportFileName(file.name); setMovieImportColumns(columns); setMovieImportRows(movies); setMovieImportErrors(previewErrors); setMovieImportStatus('preview'); setShowMovieImportModal(true);
+    } catch (error) { alert(error instanceof Error ? error.message : 'Không thể đọc file Excel.'); }
+    finally { if (movieImportRef.current) movieImportRef.current.value = ''; }
+  };
+
+  const validateMovieImport = async () => {
+    setMovieImportStatus('importing');
+    try {
+      const response = await fetch(`${API_BASE}?action=movies-import`, { method: 'POST', credentials: 'include', headers: { 'Content-Type': 'application/json', 'X-TMS-User': currentUser?.username || '' }, body: JSON.stringify({ mode: 'validate', movies: movieImportRows }) });
+      const result = await response.json(); if (!response.ok || !result.success) throw new Error(result.message || 'Không thể kiểm tra file.');
+      const errors = result.data.errors || []; setMovieImportErrors(errors); setMovieImportStatus(errors.length ? 'errors' : 'validated');
+    } catch (error) { setMovieImportErrors([{ row: 0, message: error instanceof Error ? error.message : 'Không thể kiểm tra file.' }]); setMovieImportStatus('errors'); }
+  };
+
+  const confirmMovieImport = async () => {
+    setMovieImportStatus('importing');
+    try {
+      const response = await fetch(`${API_BASE}?action=movies-import`, { method: 'POST', credentials: 'include', headers: { 'Content-Type': 'application/json', 'X-TMS-User': currentUser?.username || '' }, body: JSON.stringify({ mode: 'import', movies: movieImportRows }) });
+      const result = await response.json(); if (!response.ok || !result.success) throw new Error(result.message || 'Không thể tạo phim.');
+      await loadMovies(); setShowMovieImportModal(false); alert(result.message);
+    } catch (error) { setMovieImportErrors([{ row: 0, message: error instanceof Error ? error.message : 'Không thể tạo phim.' }]); setMovieImportStatus('errors'); }
+  };
+
   // CRUD FOR MASTER MOVIE LIBRARY
   const handleSaveMovie = async (e: FormEvent) => {
     e.preventDefault();
+    setMovieFormError('');
+
+    if (!movieForm.release_date) {
+      setMovieFormError('Ngày khởi chiếu không được để trống.');
+      return;
+    }
+
+    if (movieForm.expected_end_date && movieForm.expected_end_date < movieForm.release_date) {
+      setMovieFormError('Ngày kết thúc dự kiến phải lớn hơn hoặc bằng ngày khởi chiếu.');
+      return;
+    }
+
     try {
       const moviePayload = { ...movieForm };
       const uploadFields = [
@@ -592,6 +755,7 @@ export default function App() {
         formData.append('media', file);
         const uploadResponse = await fetch(`${API_BASE}?action=movie-media&kind=${key}`, {
           method: 'POST',
+          credentials: 'include',
           headers: { 'X-TMS-User': currentUser?.username || 'admin_tong' },
           body: formData
         });
@@ -603,6 +767,7 @@ export default function App() {
       const url = movieForm.id > 0 ? `${API_BASE}?action=movies&id=${movieForm.id}` : `${API_BASE}?action=movies`;
       const res = await fetch(url, {
         method: 'POST',
+        credentials: 'include',
         headers: { 'Content-Type': 'application/json', 'X-TMS-User': currentUser?.username || 'admin_tong' },
         body: JSON.stringify(moviePayload)
       });
@@ -611,20 +776,26 @@ export default function App() {
         alert(movieForm.id > 0 ? 'Đã cập nhật phim!' : 'Đã thêm phim mới vào kho hệ thống!');
         setShowMovieModal(false);
         setMovieFiles({ poster: null, banner: null, trailer: null });
+        setMovieFormError('');
         loadMovies();
       } else {
-        alert(data.message);
+        const message = data.message || 'Lưu phim thất bại.';
+        setMovieFormError(message);
+        alert(message);
       }
     } catch (error) {
-      alert(error instanceof Error ? error.message : 'Lỗi kết nối cơ sở dữ liệu.');
+      const message = error instanceof Error ? error.message : 'Lỗi kết nối cơ sở dữ liệu.';
+      setMovieFormError(message);
+      alert(message);
     }
   };
 
   const handleDeleteMovie = async (id: number) => {
-    if (!window.confirm('Bạn có chắc chắn muốn xóa phim này khỏi kho hệ thống?')) return;
-    try {
+    requestSystemConfirmation('Phim này sẽ bị xóa khỏi kho hệ thống. Vui lòng kiểm tra rằng phim không còn được sử dụng trong kế hoạch hoặc lịch chiếu.', async () => {
+      try {
       const res = await fetch(`${API_BASE}?action=movies&id=${id}`, {
         method: 'DELETE',
+        credentials: 'include',
         headers: { 'X-TMS-User': currentUser?.username || 'admin_tong' }
       });
       const data = await res.json();
@@ -634,9 +805,51 @@ export default function App() {
       } else {
         alert(data.message);
       }
-    } catch {
-      alert('Lỗi kết nối cơ sở dữ liệu.');
+      } catch {
+        alert('Lỗi kết nối cơ sở dữ liệu.');
+      }
+    }, 'Xóa phim');
+  };
+
+  const openNewSchedule = () => {
+    if (!moviesList.length || !screensList.length) {
+      alert('Chưa có dữ liệu phim hoặc phòng chiếu từ aurora_db.');
+      return;
     }
+    setScheduleForm({ id: 0, movie_id: moviesList[0].id, screen_id: screensList[0].id, show_date: new Date().toISOString().slice(0, 10), start_time: '09:00', end_time: '11:00', ticket_price: 90000, status: 'scheduled' });
+    setShowScheduleModal(true);
+  };
+
+  const handleSaveSchedule = async (e: FormEvent) => {
+    e.preventDefault();
+    try {
+      const endpoint = scheduleForm.id ? `${API_BASE}?action=schedules&id=${scheduleForm.id}` : `${API_BASE}?action=schedules`;
+      const response = await fetch(endpoint, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', 'X-TMS-User': currentUser?.username || 'admin_rap' },
+        body: JSON.stringify(scheduleForm),
+      });
+      const result = await response.json();
+      if (!response.ok || !result.success) throw new Error(result.message || 'Không thể lưu suất chiếu.');
+      setShowScheduleModal(false);
+      await loadSchedules();
+      alert('Đã lưu suất chiếu. Suất đã được đồng bộ sang website customer.');
+    } catch (error) {
+      alert(error instanceof Error ? error.message : 'Lỗi kết nối cơ sở dữ liệu.');
+    }
+  };
+
+  const handleDeleteSchedule = async (id: number) => {
+    requestSystemConfirmation('Suất chiếu sẽ bị hủy và không còn hiển thị trên website khách hàng.', async () => {
+      try {
+      const response = await fetch(`${API_BASE}?action=schedules&id=${id}`, { method: 'DELETE', headers: { 'X-TMS-User': currentUser?.username || 'admin_rap' } });
+      const result = await response.json();
+      if (!response.ok || !result.success) throw new Error(result.message || 'Không thể hủy suất chiếu.');
+      await loadSchedules();
+      } catch (error) {
+        alert(error instanceof Error ? error.message : 'Lỗi kết nối cơ sở dữ liệu.');
+      }
+    }, 'Hủy suất chiếu');
   };
 
   // -------- LOGIN --------
@@ -648,7 +861,7 @@ export default function App() {
     if (!u || !p) { setErrorMsg('Vui lòng nhập đầy đủ tên đăng nhập và mật khẩu.'); return; }
     setIsLoading(true);
     try {
-      const res = await fetch(`${API_BASE}?action=login`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ username: u, password: p }) });
+      const res = await fetch(`${API_BASE}?action=login`, { method: 'POST', credentials: 'include', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ username: u, password: p }) });
       const result = await res.json();
       if (result.success && result.data?.user) {
         const user = result.data.user;
@@ -791,26 +1004,24 @@ export default function App() {
 
               {errorMsg && <div className="tms-alert-error">{errorMsg}</div>}
 
-              {/* Demo credentials info box */}
-              <div style={{ background: '#f8fafc', border: '1px solid #e2e8f0', borderRadius: 10, padding: '12px 14px', marginBottom: 20 }}>
-                <div style={{ fontSize: '0.72rem', fontWeight: 700, color: '#64748b', textTransform: 'uppercase', letterSpacing: '0.05em', marginBottom: 8 }}>
-                  Tài khoản demo (mật khẩu: 8888)
-                </div>
-                <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 6 }}>
-                  {DEMO_ACCOUNTS.map(a => {
-                    const cfg = ROLE_CONFIGS[a.role];
-                    return (
-                      <div key={a.role} style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '7px 10px', background: '#fff', border: `1px solid ${cfg.borderColor}30`, borderRadius: 8 }}>
-                        <span style={{ fontSize: '1rem' }}>{cfg.emoji}</span>
-                        <div>
-                          <div style={{ fontSize: '0.73rem', fontWeight: 700, color: cfg.color }}>{a.label}</div>
-                          <div style={{ fontSize: '0.7rem', color: '#64748b', fontFamily: 'monospace' }}>{a.user}</div>
+              {DEMO_ACCOUNTS.length > 0 && (
+                <div style={{ background: '#f8fafc', border: '1px solid #e2e8f0', borderRadius: 10, padding: '12px 14px', marginBottom: 20 }}>
+                  <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 6 }}>
+                    {DEMO_ACCOUNTS.map(a => {
+                      const cfg = ROLE_CONFIGS[a.role];
+                      return (
+                        <div key={a.role} style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '7px 10px', background: '#fff', border: `1px solid ${cfg.borderColor}30`, borderRadius: 8 }}>
+                          <span style={{ fontSize: '1rem' }}>{cfg.emoji}</span>
+                          <div>
+                            <div style={{ fontSize: '0.73rem', fontWeight: 700, color: cfg.color }}>{a.label}</div>
+                            <div style={{ fontSize: '0.7rem', color: '#64748b', fontFamily: 'monospace' }}>{a.user}</div>
+                          </div>
                         </div>
-                      </div>
-                    );
-                  })}
+                      );
+                    })}
+                  </div>
                 </div>
-              </div>
+              )}
 
               {/* LOGIN FORM - single form, no quick role selector */}
               <form onSubmit={handleLogin} className="tms-auth-form">
@@ -1649,12 +1860,12 @@ export default function App() {
                           <button
                             className="tms-btn tms-btn-outline"
                             style={{ padding: '3px 8px', fontSize: '0.73rem', color: '#dc2626' }}
-                            onClick={async () => {
-                              if (!window.confirm('Thu hồi phân bổ phim này khỏi rạp?')) return;
+                            onClick={() => requestSystemConfirmation('Phân bổ phim này sẽ bị thu hồi khỏi rạp đã chọn.', async () => {
                               await fetch(`${API_BASE}?action=movie-allocations&id=${al.id}`, { method: 'DELETE', headers: { 'X-TMS-User': currentUser?.username || 'admin_tong' } });
                               loadMovieAllocations();
                               loadMoviePlans();
-                            }}
+                              showSystemNotice('Đã thu hồi phân bổ phim khỏi rạp.');
+                            }, 'Thu hồi phân bổ')}
                           >
                             <Trash2 size={12} />
                             <span>Thu hồi</span>
@@ -1682,17 +1893,23 @@ export default function App() {
               <Film size={16} color="#94a3b8" />
               <input placeholder="Tìm phim trong kho hệ thống..." />
             </div>
-            <button
-              className="tms-btn tms-btn-primary"
-              onClick={() => {
-                setMovieForm({ ...EMPTY_MOVIE_FORM });
-                setMovieFiles({ poster: null, banner: null, trailer: null });
-                setShowMovieModal(true);
-              }}
-            >
-              <Plus size={16} />
-              <span>+ Thêm phim vào kho hệ thống</span>
-            </button>
+            <div style={{ display: 'flex', gap: 10, alignItems: 'center' }}>
+              <input ref={movieImportRef} type="file" accept=".xlsx,.xls,.csv" hidden onChange={e => handleMovieImport(e.target.files?.[0])} />
+              <button type="button" className="tms-btn tms-btn-outline" onClick={() => movieImportRef.current?.click()}>
+                <FileText size={16} /><span>Nhập Excel</span>
+              </button>
+              <button
+                className="tms-btn tms-btn-primary"
+                onClick={() => {
+                  setMovieForm({ ...EMPTY_MOVIE_FORM });
+                  setMovieFiles({ poster: null, banner: null, trailer: null });
+                  setShowMovieModal(true);
+                }}
+              >
+                <Plus size={16} />
+                <span>+ Thêm phim vào kho hệ thống</span>
+              </button>
+            </div>
           </div>
 
           <table className="tms-data-table">
@@ -1888,31 +2105,22 @@ export default function App() {
     // SCHEDULES
     if (a === 'schedules' || a === 'showtimes' || a === 'Lịch chiếu' || a === 'Theo dõi suất chiếu') {
       const canEdit = role === 'super_admin' || role === 'cinema_admin';
+      const statusLabel: Record<ScheduleItem['status'], string> = { scheduled: 'Mở bán', running: 'Đang chiếu', finished: 'Đã kết thúc', cancelled: 'Đã hủy' };
       return (
         <div className="tms-card-table">
           <div className="tms-table-toolbar">
-            <div style={{fontWeight:700}}>{role==='supervisor'?'Suất chiếu đang diễn ra hôm nay':'Lịch chiếu'}</div>
-            {canEdit&&<button className="tms-btn tms-btn-primary" onClick={()=>alert('Tạo suất chiếu mới')}><Plus size={16}/><span>Tạo suất chiếu</span></button>}
+            <div><div style={{fontWeight:700}}>{role==='supervisor'?'Suất chiếu đang diễn ra hôm nay':'Lịch chiếu'}</div>{canEdit && <small style={{color:'#64748b'}}>Admin Rạp tạo suất thì website customer mới mở bán.</small>}</div>
+            {canEdit&&<button className="tms-btn tms-btn-primary" onClick={openNewSchedule}><Plus size={16}/><span>Tạo suất chiếu</span></button>}
           </div>
           <table className="tms-data-table">
             <thead><tr><th>Phim</th><th>Phòng chiếu</th><th>Ngày</th><th>Giờ chiếu</th><th>Ghế đặt</th><th>Trạng thái</th><th>Thao tác</th></tr></thead>
-            <tbody>{[
-              {movie:'Avatar: Dòng Chảy Của Nước',room:'Phòng 01 - IMAX',date:'27/09/2026',time:'09:00',booked:'240/280',status:'Đang chiếu'},
-              {movie:'Dune: Hành Tinh Cát 2',room:'Phòng 02 - Dolby',date:'27/09/2026',time:'11:30',booked:'156/180',status:'Sắp chiếu'},
-              {movie:'Oppenheimer',room:'Phòng 05 - Standard',date:'27/09/2026',time:'14:00',booked:'98/140',status:'Sắp chiếu'},
-              {movie:'Mai (Trấn Thành)',room:'Phòng 06 - Standard',date:'27/09/2026',time:'16:30',booked:'120/140',status:'Sắp chiếu'},
-              {movie:'Avatar: Dòng Chảy Của Nước',room:'Phòng 01 - IMAX',date:'27/09/2026',time:'19:30',booked:'280/280',status:'Hết vé'},
-            ].map((s,i)=>(
-              <tr key={i}>
-                <td style={{fontWeight:700,fontSize:'0.85rem'}}>{s.movie}</td>
-                <td style={{fontSize:'0.82rem'}}>{s.room}</td>
-                <td>{s.date}</td>
-                <td style={{fontWeight:700,color:'#2563eb'}}>{s.time}</td>
-                <td>{s.booked}</td>
-                <td><span style={{fontSize:'0.73rem',fontWeight:700,padding:'2px 7px',borderRadius:4,background:s.status==='Đang chiếu'?'#d1fae5':s.status==='Hết vé'?'#fee2e2':'#eff6ff',color:s.status==='Đang chiếu'?'#065f46':s.status==='Hết vé'?'#991b1b':'#1e40af'}}>{s.status}</span></td>
-                <td>{role==='supervisor'?<button className="tms-btn tms-btn-outline" style={{padding:'4px 10px',fontSize:'0.73rem'}}>Cập nhật TT</button>:canEdit?<div style={{display:'flex',gap:4}}><button className="tms-btn tms-btn-outline" style={{padding:'4px 8px'}}><Edit size={13}/></button><button className="tms-btn tms-btn-outline" style={{padding:'4px 8px',color:'#dc2626'}}><Trash2 size={13}/></button></div>:<span style={{color:'#94a3b8',fontSize:'0.75rem'}}>Chỉ xem</span>}</td>
+            <tbody>{schedulesList.length ? schedulesList.map(s => (
+              <tr key={s.id}>
+                <td style={{fontWeight:700,fontSize:'0.85rem'}}>{s.movie_title}</td><td style={{fontSize:'0.82rem'}}>{s.screen_name}</td><td>{s.show_date}</td><td style={{fontWeight:700,color:'#2563eb'}}>{String(s.start_time).slice(0,5)} - {String(s.end_time).slice(0,5)}</td><td>{s.booked_seats}/{s.total_seats}</td>
+                <td><span style={{fontSize:'0.73rem',fontWeight:700,padding:'2px 7px',borderRadius:4,background:s.status==='running'?'#d1fae5':s.status==='cancelled'?'#fee2e2':'#eff6ff',color:s.status==='running'?'#065f46':s.status==='cancelled'?'#991b1b':'#1e40af'}}>{statusLabel[s.status]}</span></td>
+                <td>{canEdit ? <div style={{display:'flex',gap:4}}><button className="tms-btn tms-btn-outline" style={{padding:'4px 8px'}} onClick={() => { setScheduleForm({ id:s.id, movie_id:Number(s.movie_id), screen_id:Number(s.screen_id), show_date:s.show_date, start_time:String(s.start_time).slice(0,5), end_time:String(s.end_time).slice(0,5), ticket_price:Number(s.ticket_price || 0), status:s.status }); setShowScheduleModal(true); }}><Edit size={13}/></button><button className="tms-btn tms-btn-outline" style={{padding:'4px 8px',color:'#dc2626'}} onClick={() => handleDeleteSchedule(s.id)}><Trash2 size={13}/></button></div> : <span style={{color:'#94a3b8',fontSize:'0.75rem'}}>Chỉ xem</span>}</td>
               </tr>
-            ))}</tbody>
+            )) : <tr><td colSpan={7} style={{textAlign:'center',color:'#64748b',padding:24}}>Chưa có suất chiếu. Admin Rạp hãy tạo suất để mở bán trên customer.</td></tr>}</tbody>
           </table>
         </div>
       );
@@ -2257,6 +2465,32 @@ export default function App() {
 
   return (
     <div className="app-shell">
+      {systemConfirm && (
+        <div className="aurora-dialog-backdrop" role="presentation">
+          <section className="aurora-dialog" role="alertdialog" aria-modal="true" aria-labelledby="aurora-dialog-title" aria-describedby="aurora-dialog-message">
+            <button type="button" className="aurora-dialog-close" aria-label="Đóng" onClick={() => setSystemConfirm(null)}><X size={18} /></button>
+            <div className="aurora-dialog-mark"><ShieldAlert size={28} /></div>
+            <div className="aurora-dialog-eyebrow">AURORA CINEMA · XÁC NHẬN</div>
+            <h2 id="aurora-dialog-title">Bạn muốn tiếp tục?</h2>
+            <p id="aurora-dialog-message">{systemConfirm.message}</p>
+            <div className="aurora-dialog-actions">
+              <button type="button" className="aurora-dialog-cancel" onClick={() => setSystemConfirm(null)}>Quay lại</button>
+              <button type="button" className="aurora-dialog-confirm" onClick={() => {
+                const action = systemConfirm.onConfirm;
+                setSystemConfirm(null);
+                Promise.resolve(action()).catch(() => showSystemNotice('Không thể hoàn tất thao tác. Vui lòng thử lại.'));
+              }}>{systemConfirm.actionLabel}</button>
+            </div>
+          </section>
+        </div>
+      )}
+      {systemNotice && (
+        <div className={`aurora-notice aurora-notice-${systemNotice.type}`} role="alert" aria-live="assertive">
+          <div className="aurora-notice-icon">{systemNotice.type === 'success' ? <CheckCircle2 size={23} /> : systemNotice.type === 'error' ? <XCircle size={23} /> : <AlertTriangle size={23} />}</div>
+          <div className="aurora-notice-content"><strong>{systemNotice.type === 'success' ? 'Thao tác thành công' : systemNotice.type === 'error' ? 'Cần xử lý' : 'Lưu ý hệ thống'}</strong><span>{systemNotice.message}</span></div>
+          <button type="button" className="aurora-notice-close" aria-label="Đóng thông báo" onClick={() => setSystemNotice(null)}><X size={17} /></button>
+        </div>
+      )}
       {/* SIDEBAR */}
       <aside className={`sidebar ${sidebarOpen ? 'open' : ''}`}>
         <div className="sidebar-brand">
@@ -2264,17 +2498,6 @@ export default function App() {
           <button className="close-sidebar" onClick={() => setSidebarOpen(false)}><X /></button>
         </div>
         <div className="system-title"><b>TMS</b><span>Theater Management System</span></div>
-
-        {/* Role indicator in sidebar */}
-        <div style={{ padding: '0 16px 14px' }}>
-          <div style={{ background: rc.bg, border: `1px solid ${rc.borderColor}`, borderRadius: 10, padding: '8px 12px', display: 'flex', alignItems: 'center', gap: 10 }}>
-            <span style={{ fontSize: '1.1rem' }}>{rc.emoji}</span>
-            <div style={{ overflow: 'hidden' }}>
-              <div style={{ fontSize: '0.72rem', fontWeight: 800, color: rc.color, textTransform: 'uppercase' }}>{rc.badge}</div>
-              <div style={{ fontSize: '0.75rem', color: '#334155', fontWeight: 600, textOverflow: 'ellipsis', overflow: 'hidden', whiteSpace: 'nowrap' }}>{displayName}</div>
-            </div>
-          </div>
-        </div>
 
         {/* Navigation */}
         <nav>
@@ -2348,12 +2571,6 @@ export default function App() {
                     <div style={{ fontSize: '0.74rem', color: '#64748b', marginTop: 1 }}>@{currentUser?.username}</div>
                   </div>
 
-                  {/* Role description - read only, no switcher */}
-                  <div style={{ margin: '8px 12px', padding: '10px 12px', background: rc.bg, border: `1px solid ${rc.borderColor}40`, borderRadius: 8 }}>
-                    <div style={{ fontSize: '0.72rem', fontWeight: 700, color: rc.color, textTransform: 'uppercase', marginBottom: 4 }}>Phạm vi quyền hạn</div>
-                    <div style={{ fontSize: '0.78rem', color: '#334155', lineHeight: 1.5 }}>{rc.description}</div>
-                  </div>
-
                   <button type="button" className="user-dropdown-item danger" onClick={handleLogout} style={{ marginTop: 4 }}>
                     <LogOut size={16} /><span>Đăng xuất tài khoản</span>
                   </button>
@@ -2378,17 +2595,6 @@ export default function App() {
             <div className="filters">
               <button><CalendarDays size={17} />27/09/2026</button>
               <button onClick={() => setPeriod(p => p === 'Hôm nay' ? 'Tuần này' : 'Hôm nay')}>{period}<ChevronDown size={15} /></button>
-            </div>
-          </div>
-
-          {/* Role welcome banner */}
-          <div className="role-welcome-banner" style={{ borderLeft: `5px solid ${rc.color}` }}>
-            <div className="role-banner-left">
-              <div className="role-banner-icon" style={{ background: rc.bg, color: rc.color, fontSize: '1.4rem', minWidth: 48, height: 48, display: 'flex', alignItems: 'center', justifyContent: 'center', borderRadius: 12 }}>{rc.emoji}</div>
-              <div>
-                <div className="role-banner-title">Vai trò: <strong>{rc.name}</strong></div>
-                <div className="role-banner-desc">{rc.description}</div>
-              </div>
             </div>
           </div>
 
@@ -2734,6 +2940,65 @@ export default function App() {
         </div>
       )}
 
+      {showScheduleModal && (
+        <div className="tms-modal-overlay" onClick={() => setShowScheduleModal(false)}>
+          <div className="tms-modal-box" onClick={e => e.stopPropagation()}>
+            <div className="tms-modal-header"><div className="tms-modal-title">{scheduleForm.id ? 'Chỉnh sửa suất chiếu' : 'Tạo suất chiếu'}</div><button type="button" className="temp-btn" onClick={() => setShowScheduleModal(false)}><X size={16}/></button></div>
+            <form onSubmit={handleSaveSchedule}>
+              <div className="tms-modal-body">
+                <p style={{margin:'0 0 14px',fontSize:'0.82rem',color:'#64748b'}}>Khi lưu, suất chiếu được đồng bộ vào <strong>aurora_db</strong> và hiển thị trên customer nếu đang mở bán.</p>
+                <div className="tms-movie-form-grid">
+                  <div className="tms-form-group"><label className="tms-form-label">Phim *</label><select required className="tms-form-select" value={scheduleForm.movie_id} onChange={e => setScheduleForm({...scheduleForm,movie_id:Number(e.target.value)})}>{moviesList.map(m => <option key={m.id} value={m.id}>{m.title}</option>)}</select></div>
+                  <div className="tms-form-group"><label className="tms-form-label">Phòng chiếu *</label><select required className="tms-form-select" value={scheduleForm.screen_id} onChange={e => setScheduleForm({...scheduleForm,screen_id:Number(e.target.value)})}>{screensList.map(s => <option key={s.id} value={s.id}>{s.name}</option>)}</select></div>
+                  <div className="tms-form-group"><label className="tms-form-label">Ngày chiếu *</label><input required type="date" className="tms-form-input" value={scheduleForm.show_date} onChange={e => setScheduleForm({...scheduleForm,show_date:e.target.value})}/></div>
+                  <div className="tms-form-group"><label className="tms-form-label">Giờ bắt đầu *</label><input required type="time" className="tms-form-input" value={scheduleForm.start_time} onChange={e => setScheduleForm({...scheduleForm,start_time:e.target.value})}/></div>
+                  <div className="tms-form-group"><label className="tms-form-label">Giờ kết thúc *</label><input required type="time" className="tms-form-input" value={scheduleForm.end_time} onChange={e => setScheduleForm({...scheduleForm,end_time:e.target.value})}/></div>
+                  <div className="tms-form-group"><label className="tms-form-label">Giá vé (VNĐ) *</label><input required min="0" type="number" className="tms-form-input" value={scheduleForm.ticket_price} onChange={e => setScheduleForm({...scheduleForm,ticket_price:Number(e.target.value)})}/></div>
+                  <div className="tms-form-group"><label className="tms-form-label">Trạng thái *</label><select className="tms-form-select" value={scheduleForm.status} onChange={e => setScheduleForm({...scheduleForm,status:e.target.value})}><option value="scheduled">Mở bán</option><option value="running">Đang chiếu</option><option value="finished">Đã kết thúc</option><option value="cancelled">Đã hủy</option></select></div>
+                </div>
+              </div>
+              <div className="tms-modal-footer"><button type="button" className="tms-btn tms-btn-outline" onClick={() => setShowScheduleModal(false)}>Hủy</button><button type="submit" className="tms-btn tms-btn-primary">Lưu &amp; đồng bộ customer</button></div>
+            </form>
+          </div>
+        </div>
+      )}
+
+      {showMovieImportModal && (
+        <div className="tms-modal-overlay" onClick={() => movieImportStatus !== 'importing' && setShowMovieImportModal(false)}>
+          <div className="tms-modal-box" style={{ maxWidth: 1050 }} onClick={e => e.stopPropagation()}>
+            <div className="tms-modal-header"><div className="tms-modal-title">Nhập danh sách phim từ Excel</div><button type="button" className="temp-btn" onClick={() => setShowMovieImportModal(false)}><X size={16}/></button></div>
+            <div className="tms-modal-body">
+              <p style={{ marginTop: 0, color: '#475569' }}><strong>Tệp đã chọn:</strong> {movieImportFileName} — {movieImportRows.length} dòng phim. Hãy kiểm tra danh sách trước khi xác nhận.</p>
+              {movieImportStatus === 'preview' && <div className="tms-alert-error" style={{ background:'#eff6ff', color:'#1d4ed8', borderColor:'#bfdbfe' }}>Bước 1/3: File mới chỉ được xem trước, chưa có dữ liệu nào được tạo trong kho phim.</div>}
+              {movieImportStatus === 'validated' && <div className="tms-alert-error" style={{ background:'#ecfdf5', color:'#047857', borderColor:'#a7f3d0' }}>Bước 2/3: Kiểm tra hoàn tất. File hợp lệ, bạn có thể xác nhận tạo {movieImportRows.length} phim.</div>}
+              {movieImportStatus === 'errors' && <div className="tms-alert-error">Bước 2/3: Phát hiện {movieImportErrors.length} lỗi. Chưa tạo phim nào. Hãy sửa file Excel và chọn lại tệp.</div>}
+              <div style={{ maxHeight: 300, overflow: 'auto', border: '1px solid #e2e8f0', borderRadius: 8, marginTop: 14 }}>
+                <table className="tms-data-table" style={{ minWidth: Math.max(900, movieImportColumns.length * 150) }}><thead><tr><th>Dòng</th>{movieImportColumns.map(column => <th key={column}>{column}</th>)}<th>Lỗi tại dòng</th></tr></thead><tbody>
+                  {movieImportRows.map((movie, index) => {
+                    const rowErrors = movieImportErrors.filter(error => error.row === index + 2);
+                    const cellErrors = (column: string) => rowErrors.filter(error => error.field && movie.fieldHeaders[error.field] === column);
+                    return <tr key={`${movie.title}-${index}`} style={{ background: rowErrors.length ? '#fffafa' : undefined }}>
+                      <td style={{ fontWeight: 700 }}>{index + 2}</td>
+                      {movieImportColumns.map(column => {
+                        const errors = cellErrors(column); const value = movie.raw[column];
+                        return <td key={column} style={{ minWidth: 130, maxWidth: 260, whiteSpace: 'pre-wrap', color: errors.length ? '#b91c1c' : undefined, background: errors.length ? '#fee2e2' : undefined, verticalAlign: 'top' }}>{value || <em style={{ color: '#dc2626' }}>Trống</em>}{errors.map((error, errorIndex) => <small key={errorIndex} style={{ display:'block', marginTop:4, color:'#b91c1c', fontWeight:700 }}>⚠ {error.message}</small>)}</td>;
+                      })}
+                      <td style={{ minWidth: 220, color: '#b91c1c', verticalAlign: 'top' }}>{rowErrors.length ? rowErrors.map((error, errorIndex) => <div key={errorIndex} style={{ marginBottom: 4 }}>{error.field && movie.fieldHeaders[error.field] ? `${movie.fieldHeaders[error.field]}: ` : ''}{error.message}</div>) : <span style={{ color: '#047857', fontWeight: 700 }}>Không có lỗi</span>}</td>
+                    </tr>;
+                  })}
+                </tbody></table>
+              </div>
+              {movieImportErrors.length > 0 && <div style={{ marginTop: 14, maxHeight: 130, overflow: 'auto' }}><strong style={{color:'#b91c1c'}}>Chi tiết lỗi:</strong>{movieImportErrors.map((error, index) => <div key={`${error.row}-${error.field || ''}-${index}`} style={{ color:'#b91c1c', fontSize:'0.84rem', marginTop:4 }}>{error.row ? `Dòng ${error.row}${error.field ? ` — ${error.field}: ` : ': '}` : ''}{error.message}</div>)}</div>}
+            </div>
+            <div className="tms-modal-footer">
+              <button type="button" className="tms-btn tms-btn-outline" onClick={() => movieImportRef.current?.click()} disabled={movieImportStatus === 'importing'}>Chọn lại file</button>
+              <button type="button" className="tms-btn tms-btn-outline" onClick={() => setShowMovieImportModal(false)} disabled={movieImportStatus === 'importing'}>Hủy</button>
+              {movieImportStatus === 'validated' ? <button type="button" className="tms-btn tms-btn-primary" onClick={confirmMovieImport}>Xác nhận tạo phim</button> : <button type="button" className="tms-btn tms-btn-primary" onClick={validateMovieImport} disabled={movieImportStatus === 'importing'}>{movieImportStatus === 'importing' ? 'Đang kiểm tra...' : 'Xác nhận kiểm tra lỗi'}</button>}
+            </div>
+          </div>
+        </div>
+      )}
+
       {/* MODAL: THÊM / SỬA PHIM VÀO KHO HỆ THỐNG */}
       {showMovieModal && (
         <div className="tms-modal-overlay" onClick={() => setShowMovieModal(false)}>
@@ -2743,6 +3008,9 @@ export default function App() {
               <button type="button" className="temp-btn" onClick={() => setShowMovieModal(false)}><X size={16} /></button>
             </div>
             <form onSubmit={handleSaveMovie}>
+              {movieFormError && (
+                <div className="tms-alert-error" style={{ margin: '12px 0 0', fontSize: '0.82rem' }}>{movieFormError}</div>
+              )}
               <div className="tms-modal-body tms-movie-modal-body">
                 <section className="tms-movie-form-section">
                   <h3 className="tms-movie-form-heading">1. Thông tin phim</h3>
@@ -2761,7 +3029,12 @@ export default function App() {
                     </div>
                     <div className="tms-form-group">
                       <label className="tms-form-label">Thể loại *</label>
-                      <input className="tms-form-input" value={movieForm.genre} onChange={e => setMovieForm({ ...movieForm, genre: e.target.value })} placeholder="Hành động, Khoa học viễn tưởng" required maxLength={150} />
+                      <select className="tms-form-select" value={movieForm.genre} onChange={e => setMovieForm({ ...movieForm, genre: e.target.value })} required>
+                        <option value="">-- Chọn thể loại --</option>
+                        {MOVIE_GENRES.map(item => (
+                          <option key={item} value={item}>{item}</option>
+                        ))}
+                      </select>
                     </div>
                     <div className="tms-form-group">
                       <label className="tms-form-label">Thời lượng (phút) *</label>
@@ -2801,7 +3074,12 @@ export default function App() {
                     </div>
                     <div className="tms-form-group">
                       <label className="tms-form-label">Quốc gia sản xuất *</label>
-                      <input className="tms-form-input" value={movieForm.production_country} onChange={e => setMovieForm({ ...movieForm, production_country: e.target.value })} placeholder="vd: Việt Nam, Hoa Kỳ" required maxLength={100} />
+                      <select className="tms-form-select" value={movieForm.production_country} onChange={e => setMovieForm({ ...movieForm, production_country: e.target.value })} required>
+                        <option value="">-- Chọn quốc gia --</option>
+                        {MOVIE_COUNTRIES.map(item => (
+                          <option key={item} value={item}>{item}</option>
+                        ))}
+                      </select>
                     </div>
                     <div className="tms-form-group">
                       <label className="tms-form-label">Năm sản xuất</label>
@@ -2827,15 +3105,30 @@ export default function App() {
                   <div className="tms-movie-form-grid">
                     <div className="tms-form-group">
                       <label className="tms-form-label">Ngôn ngữ gốc *</label>
-                      <input className="tms-form-input" value={movieForm.original_language} onChange={e => setMovieForm({ ...movieForm, original_language: e.target.value })} required maxLength={80} />
+                      <select className="tms-form-select" value={movieForm.original_language} onChange={e => setMovieForm({ ...movieForm, original_language: e.target.value })} required>
+                        <option value="">-- Chọn ngôn ngữ --</option>
+                        {MOVIE_LANGUAGES.map(item => (
+                          <option key={item} value={item}>{item}</option>
+                        ))}
+                      </select>
                     </div>
                     <div className="tms-form-group">
                       <label className="tms-form-label">Phiên bản phụ đề / lồng tiếng</label>
-                      <input className="tms-form-input" value={movieForm.localization_versions} onChange={e => setMovieForm({ ...movieForm, localization_versions: e.target.value })} placeholder="Phụ đề Việt / Lồng tiếng Việt" maxLength={255} />
+                      <select className="tms-form-select" value={movieForm.localization_versions} onChange={e => setMovieForm({ ...movieForm, localization_versions: e.target.value })}>
+                        <option value="">-- Chọn phiên bản --</option>
+                        {MOVIE_LOCALIZATION_OPTIONS.map(item => (
+                          <option key={item} value={item}>{item}</option>
+                        ))}
+                      </select>
                     </div>
                     <div className="tms-form-group tms-movie-form-full">
                       <label className="tms-form-label">Định dạng chiếu *</label>
-                      <input className="tms-form-input" value={movieForm.format} onChange={e => setMovieForm({ ...movieForm, format: e.target.value })} placeholder="2D Digital / 3D IMAX / Dolby Atmos" required maxLength={100} />
+                      <select className="tms-form-select" value={movieForm.format} onChange={e => setMovieForm({ ...movieForm, format: e.target.value })} required>
+                        <option value="">-- Chọn định dạng --</option>
+                        {MOVIE_FORMAT_OPTIONS.map(item => (
+                          <option key={item} value={item}>{item}</option>
+                        ))}
+                      </select>
                     </div>
                   </div>
                 </section>
@@ -2857,17 +3150,17 @@ export default function App() {
                     </div>
                     <div className="tms-form-group tms-movie-form-full">
                       <label className="tms-form-label">Poster *</label>
-                      <input type="file" className="tms-form-input tms-movie-file-input" accept="image/jpeg,image/png,image/webp" onChange={e => setMovieFiles({ ...movieFiles, poster: e.target.files?.[0] || null })} required={!movieForm.poster_url && !movieFiles.poster} />
+                      <input type="file" className="tms-form-input tms-movie-file-input" accept="image/jpeg,image/png,image/webp" onChange={e => handleMovieMediaSelection('poster', e.target.files?.[0] || null)} required={!movieForm.poster_url && !movieFiles.poster} />
                       {movieFiles.poster ? <span className="tms-movie-file-name">{movieFiles.poster.name}</span> : movieForm.poster_url && <img className="tms-movie-media-preview" src={movieForm.poster_url} alt="Poster hiện tại" />}
                     </div>
                     <div className="tms-form-group tms-movie-form-full">
                       <label className="tms-form-label">Banner</label>
-                      <input type="file" className="tms-form-input tms-movie-file-input" accept="image/jpeg,image/png,image/webp" onChange={e => setMovieFiles({ ...movieFiles, banner: e.target.files?.[0] || null })} />
+                      <input type="file" className="tms-form-input tms-movie-file-input" accept="image/jpeg,image/png,image/webp" onChange={e => handleMovieMediaSelection('banner', e.target.files?.[0] || null)} />
                       {movieFiles.banner ? <span className="tms-movie-file-name">{movieFiles.banner.name}</span> : movieForm.banner_url && <img className="tms-movie-media-preview tms-movie-banner-preview" src={movieForm.banner_url} alt="Banner hiện tại" />}
                     </div>
                     <div className="tms-form-group tms-movie-form-full">
                       <label className="tms-form-label">Trailer video</label>
-                      <input type="file" className="tms-form-input tms-movie-file-input" accept="video/mp4,video/webm,video/quicktime" onChange={e => setMovieFiles({ ...movieFiles, trailer: e.target.files?.[0] || null })} />
+                      <input type="file" className="tms-form-input tms-movie-file-input" accept="video/mp4,video/webm,video/quicktime" onChange={e => handleMovieMediaSelection('trailer', e.target.files?.[0] || null)} />
                       {movieFiles.trailer ? <span className="tms-movie-file-name">{movieFiles.trailer.name}</span> : movieForm.trailer_url && <span className="tms-movie-file-name">Đã có trailer: {movieForm.trailer_url.split('/').pop()}</span>}
                     </div>
                   </div>

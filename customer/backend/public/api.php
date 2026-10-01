@@ -69,21 +69,37 @@ function aurora_db() {
 }
 
 function aurora_ensure_sales_orders($db) {
-    return $db->query("CREATE TABLE IF NOT EXISTS sales_orders (
+    return $db->query("CREATE TABLE IF NOT EXISTS orders (
         id BIGINT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
         order_code VARCHAR(30) NOT NULL UNIQUE,
         channel VARCHAR(10) NOT NULL,
         booking_id BIGINT UNSIGNED NULL,
         customer_id BIGINT UNSIGNED NULL,
-        cashier_id INT UNSIGNED NULL,
+        cashier_id INT UNSIGNED NOT NULL DEFAULT 0,
+        subtotal DECIMAL(12,2) NOT NULL DEFAULT 0,
+        discount_amount DECIMAL(12,2) NOT NULL DEFAULT 0,
         total_amount DECIMAL(12,2) NOT NULL DEFAULT 0,
         payment_method VARCHAR(30) NOT NULL DEFAULT 'UNKNOWN',
         status VARCHAR(20) NOT NULL DEFAULT 'PAID',
-        created_at TIMESTAMP NULL DEFAULT CURRENT_TIMESTAMP,
-        INDEX idx_sales_orders_channel (channel),
-        INDEX idx_sales_orders_created (created_at),
-        INDEX idx_sales_orders_customer (customer_id)
+        created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+        updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+        INDEX idx_orders_channel (channel),
+        INDEX idx_orders_created (created_at),
+        INDEX idx_orders_customer (customer_id)
     ) ENGINE=InnoDB DEFAULT CHARSET=utf8");
+}
+
+function aurora_concession_catalog($db) {
+    $catalog = array();
+    $result = $db->query("SELECT sku, name, price, category FROM products WHERE status='active' AND stock_quantity > 0 ORDER BY name");
+    if ($result) while ($row = $result->fetch_assoc()) {
+        $catalog[$row['sku']] = array('name' => $row['name'], 'price' => (float)$row['price'], 'description' => $row['category']);
+    }
+    return $catalog;
+}
+
+function aurora_ensure_vouchers($db) {
+    return $db->query('SELECT 1 FROM vouchers LIMIT 1') !== false;
 }
 
 function aurora_route() {
@@ -131,6 +147,12 @@ if ($resource === 'movies') {
         );
     }
     aurora_response(array('movies' => $movies), 200);
+}
+
+if ($resource === 'concessions') {
+    $items = array();
+    foreach (aurora_concession_catalog($db) as $sku => $item) $items[] = array('id' => $sku, 'name' => $item['name'], 'price' => $item['price'], 'description' => $item['description']);
+    aurora_response(array('concessions' => $items), 200);
 }
 
 if ($resource === 'movie') {
@@ -356,11 +378,7 @@ if ($resource === 'bookings') {
     $showtimeId = isset($body['showtimeId']) ? (int)$body['showtimeId'] : 0;
     $paymentMethod = isset($body['paymentMethod']) ? strtoupper(trim((string)$body['paymentMethod'])) : 'ONLINE';
     $seatIds = isset($body['seatIds']) && is_array($body['seatIds']) ? array_values(array_unique(array_map('intval', $body['seatIds']))) : array();
-    $concessionCatalog = array(
-        'popcorn_cola' => array('name' => 'Combo Bắp nước', 'price' => 79000),
-        'cheese_pair' => array('name' => 'Combo Đôi', 'price' => 129000),
-        'family_feast' => array('name' => 'Combo Gia đình', 'price' => 189000),
-    );
+    $concessionCatalog = aurora_concession_catalog($db);
     $combos = array();
     if (isset($body['combos']) && is_array($body['combos'])) {
         foreach ($body['combos'] as $item) {
@@ -464,9 +482,9 @@ if ($resource === 'bookings') {
             }
             $stmt->close();
         }
-        $stmt = $db->prepare("INSERT INTO sales_orders (order_code, channel, booking_id, customer_id, total_amount, payment_method, status) VALUES (?, 'ONLINE', ?, ?, ?, ?, 'PAID')");
+        $stmt = $db->prepare("INSERT INTO orders (order_code, channel, booking_id, customer_id, subtotal, total_amount, payment_method, amount_received, change_amount, status) VALUES (?, 'ONLINE', ?, ?, ?, ?, ?, ?, 0, 'PAID')");
         if (!$stmt) throw new Exception('Không thể lưu đơn hàng tổng.');
-        $stmt->bind_param('siids', $code, $bookingId, $userId, $total, $paymentMethod);
+        $stmt->bind_param('siiddsd', $code, $bookingId, $userId, $total, $total, $paymentMethod, $total);
         if (!$stmt->execute()) throw new Exception('Không thể lưu đơn hàng tổng.');
         $stmt->close();
         $db->commit();
@@ -773,32 +791,25 @@ if ($resource === 'apply_voucher') {
     $total = isset($body['total']) ? (float)$body['total'] : 0;
     if ($code === '') aurora_response(array('message' => 'Vui lòng nhập mã voucher.'), 422);
 
-    // Danh sách voucher demo (production: tra DB bảng vouchers)
-    $vouchers = array(
-        'AURORA10'  => array('type' => 'percent', 'value' => 10,    'desc' => 'Giảm 10%',         'max' => 50000),
-        'AURORA50K' => array('type' => 'fixed',   'value' => 50000, 'desc' => 'Giảm 50,000đ',     'max' => 0),
-        'WELCOME'   => array('type' => 'percent', 'value' => 15,    'desc' => 'Giảm 15% (mới)',   'max' => 75000),
-        'GOLD20'    => array('type' => 'percent', 'value' => 20,    'desc' => 'Thành viên GOLD -20%', 'max' => 100000),
-    );
-
-    if (!isset($vouchers[$code])) {
+    if (!aurora_ensure_vouchers($db)) aurora_response(array('message' => 'Không thể đọc danh mục voucher.'), 500);
+    $stmt = $db->prepare("SELECT name, discount_type, discount_value FROM vouchers WHERE code=? AND status='active' AND starts_at <= NOW() AND ends_at >= NOW() AND (usage_limit=0 OR used_count < usage_limit) LIMIT 1");
+    $stmt->bind_param('s', $code); $stmt->execute(); $stmt->bind_result($voucherName, $voucherType, $voucherValue);
+    $foundVoucher = $stmt->fetch(); $stmt->close();
+    if (!$foundVoucher) {
         aurora_response(array('message' => 'Mã voucher không hợp lệ hoặc đã hết hạn.'), 404);
     }
-
-    $v = $vouchers[$code];
     $discount = 0;
-    if ($v['type'] === 'percent') {
-        $discount = $total * $v['value'] / 100;
-        if ($v['max'] > 0) $discount = min($discount, $v['max']);
+    if ($voucherType === 'percent') {
+        $discount = $total * (float)$voucherValue / 100;
     } else {
-        $discount = min($v['value'], $total);
+        $discount = min((float)$voucherValue, $total);
     }
     $discount = round($discount);
 
     aurora_response(array(
         'valid'    => true,
         'code'     => $code,
-        'desc'     => $v['desc'],
+        'desc'     => $voucherName,
         'discount' => $discount,
         'final'    => max(0, $total - $discount),
     ), 200);

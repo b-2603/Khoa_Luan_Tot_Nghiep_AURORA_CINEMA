@@ -995,22 +995,35 @@ footer { display: flex; justify-content: space-between; padding: 25px 17px 0; co
 .tms-btn {
   display: inline-flex;
   align-items: center;
-  gap: 6px;
-  padding: 8px 16px;
-  border-radius: 8px;
+  justify-content: center;
+  gap: 8px;
+  padding: 10px 18px;
+  border-radius: 12px;
   font-size: 0.85rem;
-  font-weight: 600;
+  font-weight: 700;
   border: none;
   cursor: pointer;
-  transition: all 0.15s ease;
+  transition: transform 0.15s ease, box-shadow 0.15s ease, filter 0.15s ease;
+  box-shadow: 0 6px 16px rgba(15, 23, 42, 0.08);
+}
+
+.tms-btn:hover {
+  transform: translateY(-1px);
+  filter: brightness(1.02);
+}
+
+.tms-btn:active {
+  transform: translateY(0);
 }
 
 .tms-btn-primary {
-  background: #2563eb;
+  background: linear-gradient(135deg, #2563eb 0%, #3b82f6 100%);
   color: #ffffff;
+  box-shadow: 0 10px 22px rgba(37, 99, 235, 0.25);
 }
 .tms-btn-primary:hover {
-  background: #1d4ed8;
+  background: linear-gradient(135deg, #1d4ed8 0%, #2563eb 100%);
+  box-shadow: 0 12px 24px rgba(37, 99, 235, 0.3);
 }
 
 .tms-btn-success {
@@ -1388,3 +1401,96 @@ footer { display: flex; justify-content: space-between; padding: 25px 17px 0; co
   border-color: #bfdbfe;
 }
 
+/* Aurora system notification: replaces browser alert dialogs. */
+.aurora-dialog-backdrop {
+  position: fixed;
+  inset: 0;
+  z-index: 10001;
+  display: grid;
+  place-items: center;
+  padding: 20px;
+  background: rgba(3, 13, 28, .66);
+  backdrop-filter: blur(5px);
+  animation: aurora-dialog-backdrop-in .18s ease-out;
+}
+
+.aurora-dialog {
+  position: relative;
+  width: min(440px, 100%);
+  padding: 30px;
+  border: 1px solid rgba(244, 192, 74, .38);
+  border-radius: 22px;
+  background: linear-gradient(145deg, #102746, #091a31);
+  color: #fff;
+  box-shadow: 0 30px 70px rgba(0, 0, 0, .42), inset 0 1px 0 rgba(255,255,255,.1);
+  text-align: center;
+  animation: aurora-dialog-in .22s cubic-bezier(.2,.8,.2,1);
+}
+
+.aurora-dialog::before {
+  content: '';
+  position: absolute;
+  top: 0;
+  left: 15%;
+  right: 15%;
+  height: 3px;
+  border-radius: 0 0 4px 4px;
+  background: linear-gradient(90deg, transparent, #f4c04a, transparent);
+}
+
+.aurora-dialog-close {
+  position: absolute;
+  top: 14px;
+  right: 14px;
+  display: grid;
+  place-items: center;
+  padding: 6px;
+  border: 0;
+  border-radius: 8px;
+  background: rgba(255,255,255,.08);
+  color: #c6d5e5;
+  cursor: pointer;
+}
+
+.aurora-dialog-close:hover { background: rgba(255,255,255,.16); color: #fff; }
+.aurora-dialog-mark { width: 54px; height: 54px; display: grid; place-items: center; margin: 0 auto 13px; border-radius: 18px; color: #f6cb58; background: rgba(244,192,74,.15); border: 1px solid rgba(244,192,74,.32); }
+.aurora-dialog-eyebrow { margin-bottom: 8px; color: #f4c04a; font-size: .68rem; font-weight: 800; letter-spacing: .11em; }
+.aurora-dialog h2 { margin: 0 0 10px; color: #fff; font-size: 1.34rem; }
+.aurora-dialog p { margin: 0 auto; max-width: 360px; color: #c2d3e5; font-size: .9rem; line-height: 1.55; }
+.aurora-dialog-actions { display: flex; justify-content: center; gap: 10px; margin-top: 24px; }
+.aurora-dialog-actions button { min-width: 126px; border-radius: 10px; padding: 10px 15px; font-weight: 800; font-size: .84rem; cursor: pointer; transition: transform .15s ease, filter .15s ease; }
+.aurora-dialog-actions button:hover { transform: translateY(-1px); filter: brightness(1.06); }
+.aurora-dialog-cancel { border: 1px solid rgba(206,220,235,.35); background: rgba(255,255,255,.08); color: #e5eef8; }
+.aurora-dialog-confirm { border: 1px solid #f9d36d; background: linear-gradient(135deg, #f7cb52, #e9a91f); color: #11223a; box-shadow: 0 8px 18px rgba(0,0,0,.18); }
+@keyframes aurora-dialog-backdrop-in { from { opacity: 0; } to { opacity: 1; } }
+@keyframes aurora-dialog-in { from { opacity: 0; transform: translateY(14px) scale(.97); } to { opacity: 1; transform: translateY(0) scale(1); } }
+
+.aurora-notice {
+  position: fixed;
+  top: 22px;
+  right: 24px;
+  z-index: 10000;
+  width: min(420px, calc(100vw - 32px));
+  display: flex;
+  align-items: flex-start;
+  gap: 13px;
+  padding: 15px 16px;
+  border-radius: 14px;
+  background: #ffffff;
+  border: 1px solid #dbe4f0;
+  box-shadow: 0 18px 42px rgba(15, 23, 42, .2);
+  animation: aurora-notice-in .22s ease-out;
+}
+.aurora-notice-success { border-left: 5px solid #10b981; }
+.aurora-notice-error { border-left: 5px solid #ef4444; }
+.aurora-notice-warning { border-left: 5px solid #f59e0b; }
+.aurora-notice-icon { flex: 0 0 auto; padding-top: 2px; }
+.aurora-notice-success .aurora-notice-icon { color: #059669; }
+.aurora-notice-error .aurora-notice-icon { color: #dc2626; }
+.aurora-notice-warning .aurora-notice-icon { color: #d97706; }
+.aurora-notice-content { display: grid; gap: 4px; flex: 1; min-width: 0; }
+.aurora-notice-content strong { color: #0f172a; font-size: .91rem; }
+.aurora-notice-content span { color: #475569; font-size: .84rem; line-height: 1.45; }
+.aurora-notice-close { border: 0; background: #f1f5f9; color: #64748b; padding: 5px; border-radius: 7px; cursor: pointer; display: grid; place-items: center; }
+.aurora-notice-close:hover { background: #e2e8f0; color: #0f172a; }
+@keyframes aurora-notice-in { from { opacity: 0; transform: translateY(-12px) translateX(8px); } to { opacity: 1; transform: translateY(0) translateX(0); } }

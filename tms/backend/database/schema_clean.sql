@@ -22,7 +22,7 @@ CREATE TABLE IF NOT EXISTS `users` (
   `status` ENUM('active','inactive','locked') NOT NULL DEFAULT 'active',
   `last_login` DATETIME NULL,
   `created_at` TIMESTAMP NULL DEFAULT CURRENT_TIMESTAMP,
-  `updated_at` DATETIME NULL DEFAULT NULL
+  `updated_at` TIMESTAMP NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8 COLLATE=utf8_unicode_ci;
 
 -- 2. Rạp
@@ -35,7 +35,7 @@ CREATE TABLE IF NOT EXISTS `theaters` (
   `total_screens` INT UNSIGNED NOT NULL DEFAULT 0,
   `status` ENUM('active','inactive','maintenance') NOT NULL DEFAULT 'active',
   `created_at` TIMESTAMP NULL DEFAULT CURRENT_TIMESTAMP,
-  `updated_at` DATETIME NULL DEFAULT NULL
+  `updated_at` TIMESTAMP NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8 COLLATE=utf8_unicode_ci;
 
 -- 3. Phòng chiếu
@@ -52,7 +52,7 @@ CREATE TABLE IF NOT EXISTS `screens` (
   `lamp_hours` INT UNSIGNED NOT NULL DEFAULT 0,
   `status` ENUM('active','paused','cleaning','closed') NOT NULL DEFAULT 'active',
   `created_at` TIMESTAMP NULL DEFAULT CURRENT_TIMESTAMP,
-  `updated_at` DATETIME NULL DEFAULT NULL,
+  `updated_at` TIMESTAMP NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
   KEY `idx_theater_id` (`theater_id`),
   CONSTRAINT `fk_screens_theater` FOREIGN KEY (`theater_id`) REFERENCES `theaters`(`id`) ON DELETE SET NULL
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8 COLLATE=utf8_unicode_ci;
@@ -82,7 +82,7 @@ CREATE TABLE IF NOT EXISTS `movies` (
   `status` VARCHAR(40) NOT NULL DEFAULT 'coming_soon',
   `is_hot` TINYINT(1) NOT NULL DEFAULT 0,
   `created_at` TIMESTAMP NULL DEFAULT CURRENT_TIMESTAMP,
-  `updated_at` DATETIME NULL DEFAULT NULL
+  `updated_at` TIMESTAMP NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8 COLLATE=utf8_unicode_ci;
 
 -- 5. Lịch chiếu / suất chiếu
@@ -97,7 +97,7 @@ CREATE TABLE IF NOT EXISTS `showtimes` (
   `total_seats` INT UNSIGNED NOT NULL DEFAULT 120,
   `status` ENUM('scheduled','running','finished','cancelled') NOT NULL DEFAULT 'scheduled',
   `created_at` TIMESTAMP NULL DEFAULT CURRENT_TIMESTAMP,
-  `updated_at` DATETIME NULL DEFAULT NULL,
+  `updated_at` TIMESTAMP NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
   KEY `idx_screen_date` (`screen_id`,`show_date`),
   KEY `idx_movie_date` (`movie_id`,`show_date`),
   CONSTRAINT `fk_showtimes_screen` FOREIGN KEY (`screen_id`) REFERENCES `screens`(`id`) ON DELETE CASCADE,
@@ -128,7 +128,7 @@ CREATE TABLE IF NOT EXISTS `ticket_types` (
   `description` VARCHAR(255) NULL,
   `status` ENUM('active','inactive') NOT NULL DEFAULT 'active',
   `created_at` TIMESTAMP NULL DEFAULT CURRENT_TIMESTAMP,
-  `updated_at` DATETIME NULL DEFAULT NULL
+  `updated_at` TIMESTAMP NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8 COLLATE=utf8_unicode_ci;
 
 -- 8. F&B
@@ -141,7 +141,7 @@ CREATE TABLE IF NOT EXISTS `products` (
   `stock_quantity` INT UNSIGNED NOT NULL DEFAULT 0,
   `status` ENUM('active','inactive') NOT NULL DEFAULT 'active',
   `created_at` TIMESTAMP NULL DEFAULT CURRENT_TIMESTAMP,
-  `updated_at` DATETIME NULL DEFAULT NULL
+  `updated_at` TIMESTAMP NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8 COLLATE=utf8_unicode_ci;
 
 -- 9. Voucher / khuyến mãi (gộp promotions + tms_vouchers)
@@ -157,7 +157,7 @@ CREATE TABLE IF NOT EXISTS `vouchers` (
   `used_count` INT UNSIGNED NOT NULL DEFAULT 0,
   `status` ENUM('active','inactive','expired') NOT NULL DEFAULT 'active',
   `created_at` TIMESTAMP NULL DEFAULT CURRENT_TIMESTAMP,
-  `updated_at` DATETIME NULL DEFAULT NULL
+  `updated_at` TIMESTAMP NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8 COLLATE=utf8_unicode_ci;
 
 -- 10. Khách hàng / hội viên
@@ -169,7 +169,7 @@ CREATE TABLE IF NOT EXISTS `customers` (
   `membership_level` ENUM('standard','silver','gold','platinum') NOT NULL DEFAULT 'standard',
   `points` INT UNSIGNED NOT NULL DEFAULT 0,
   `created_at` TIMESTAMP NULL DEFAULT CURRENT_TIMESTAMP,
-  `updated_at` DATETIME NULL DEFAULT NULL
+  `updated_at` TIMESTAMP NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8 COLLATE=utf8_unicode_ci;
 
 -- 11. Giao dịch thanh toán
@@ -182,7 +182,7 @@ CREATE TABLE IF NOT EXISTS `transactions` (
   `payment_method` VARCHAR(40) NOT NULL DEFAULT 'cash',
   `status` ENUM('paid','pending','cancelled','refunded') NOT NULL DEFAULT 'paid',
   `created_at` TIMESTAMP NULL DEFAULT CURRENT_TIMESTAMP,
-  `updated_at` DATETIME NULL DEFAULT NULL,
+  `updated_at` TIMESTAMP NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
   CONSTRAINT `fk_transactions_customer` FOREIGN KEY (`customer_id`) REFERENCES `customers`(`id`) ON DELETE SET NULL
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8 COLLATE=utf8_unicode_ci;
 
@@ -196,7 +196,7 @@ CREATE TABLE IF NOT EXISTS `refunds` (
   `requested_by` BIGINT UNSIGNED NULL,
   `processed_at` DATETIME NULL,
   `created_at` TIMESTAMP NULL DEFAULT CURRENT_TIMESTAMP,
-  `updated_at` DATETIME NULL DEFAULT NULL,
+  `updated_at` TIMESTAMP NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
   CONSTRAINT `fk_refunds_transaction` FOREIGN KEY (`transaction_id`) REFERENCES `transactions`(`id`) ON DELETE CASCADE,
   CONSTRAINT `fk_refunds_user` FOREIGN KEY (`requested_by`) REFERENCES `users`(`id`) ON DELETE SET NULL
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8 COLLATE=utf8_unicode_ci;
@@ -210,7 +210,7 @@ CREATE TABLE IF NOT EXISTS `revenue_logs` (
   `total_revenue` DECIMAL(14,2) NOT NULL DEFAULT 0.00,
   `total_tickets` INT UNSIGNED NOT NULL DEFAULT 0,
   `occupancy_rate` DECIMAL(5,2) NOT NULL DEFAULT 0.00,
-  `updated_at` DATETIME NULL DEFAULT NULL
+  `updated_at` TIMESTAMP NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8 COLLATE=utf8_unicode_ci;
 
 -- 14. Log hệ thống / audit
@@ -229,7 +229,7 @@ CREATE TABLE IF NOT EXISTS `system_configs` (
   `config_key` VARCHAR(100) NOT NULL UNIQUE,
   `config_value` TEXT NULL,
   `description` VARCHAR(255) NULL,
-  `updated_at` DATETIME NULL DEFAULT NULL
+  `updated_at` TIMESTAMP NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8 COLLATE=utf8_unicode_ci;
 
 -- ========================================================

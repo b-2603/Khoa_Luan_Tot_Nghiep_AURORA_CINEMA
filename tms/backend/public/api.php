@@ -53,7 +53,7 @@ function requireAdmin() {
     $authHeader = isset($headers['X-TMS-User']) ? $headers['X-TMS-User'] : (isset($_SERVER['HTTP_X_TMS_USER']) ? $_SERVER['HTTP_X_TMS_USER'] : (isset($_GET['tms_user']) ? $_GET['tms_user'] : ''));
     if (!empty($authHeader) && $db) {
         $uEsc = $db->real_escape_string($authHeader);
-        $res = $db->query("SELECT id, username, full_name, phone, role, status FROM tms_users WHERE (username = '{$uEsc}' OR phone = '{$uEsc}') AND status = 'active' LIMIT 1");
+        $res = $db->query("SELECT id, username, full_name, phone, role, status FROM users WHERE (username = '{$uEsc}' OR phone = '{$uEsc}') AND status = 'active' LIMIT 1");
         if ($res && ($row = $res->fetch_assoc())) {
             $_SESSION['tms_user'] = $row;
             return $row;
@@ -79,7 +79,9 @@ if ($db->connect_error) {
 $db->set_charset('utf8');
 
 require_once dirname(__FILE__) . '/../app/Http/Controllers/AdminController.php';
+require_once dirname(__FILE__) . '/../app/Http/Controllers/RevenueController.php';
 $controller = new AdminController($db);
+$revenueController = new RevenueController($db);
 $action = isset($_GET['action']) ? $_GET['action'] : 'health';
 
 if ($action === 'movie-media') {
@@ -114,12 +116,31 @@ if ($action === 'movie-media') {
         $limit = $kind === 'trailer' ? '100 MB' : '8 MB';
         jsonResponse(array('success' => false, 'message' => 'Dung lượng tệp phải nhỏ hơn ' . $limit . '.'), 400);
     }
-    if (!function_exists('finfo_open')) {
-        jsonResponse(array('success' => false, 'message' => 'Máy chủ PHP cần bật extension fileinfo để xác thực tệp.'), 500);
+    $mimeType = '';
+    if (function_exists('finfo_open')) {
+        $fileInfo = finfo_open(FILEINFO_MIME_TYPE);
+        $mimeType = $fileInfo ? finfo_file($fileInfo, $file['tmp_name']) : '';
+        if ($fileInfo) finfo_close($fileInfo);
     }
-    $fileInfo = finfo_open(FILEINFO_MIME_TYPE);
-    $mimeType = $fileInfo ? finfo_file($fileInfo, $file['tmp_name']) : '';
-    if ($fileInfo) finfo_close($fileInfo);
+    if ($mimeType === '' && function_exists('mime_content_type')) {
+        $mimeType = mime_content_type($file['tmp_name']);
+    }
+    if ($mimeType === '' && !empty($file['type'])) {
+        $mimeType = strtolower((string)$file['type']);
+    }
+    if ($mimeType === '' && !empty($file['name'])) {
+        $ext = strtolower(pathinfo($file['name'], PATHINFO_EXTENSION));
+        $extensionMap = array(
+            'jpg' => 'image/jpeg',
+            'jpeg' => 'image/jpeg',
+            'png' => 'image/png',
+            'webp' => 'image/webp',
+            'mp4' => 'video/mp4',
+            'webm' => 'video/webm',
+            'mov' => 'video/quicktime'
+        );
+        $mimeType = isset($extensionMap[$ext]) ? $extensionMap[$ext] : '';
+    }
     if (!isset($allowedMimeTypes[$kind][$mimeType])) {
         jsonResponse(array('success' => false, 'message' => $kind === 'trailer' ? 'Trailer phải là MP4, WebM hoặc MOV.' : 'Ảnh phải có định dạng JPG, PNG hoặc WebP.'), 400);
     }
@@ -184,7 +205,7 @@ if ($action === 'login' && $requestMethod === 'POST') {
     }
 
     $escapedUser = $db->real_escape_string($username);
-    $res = $db->query("SELECT id, username, password_hash, full_name, phone, role, status FROM tms_users WHERE username = '{$escapedUser}' LIMIT 1");
+    $res = $db->query("SELECT id, username, password_hash, full_name, phone, role, status FROM users WHERE username = '{$escapedUser}' LIMIT 1");
     $user = $res ? $res->fetch_assoc() : null;
 
     if ($user) {
@@ -196,7 +217,7 @@ if ($action === 'login' && $requestMethod === 'POST') {
             jsonResponse(array('success' => false, 'message' => 'Tài khoản nhân sự TMS đang bị khóa hoặc ngưng hoạt động.'), 403);
         }
 
-        $db->query('UPDATE tms_users SET last_login = NOW() WHERE id = ' . (int)$user['id']);
+        $db->query('UPDATE users SET last_login = NOW() WHERE id = ' . (int)$user['id']);
         unset($user['password_hash']);
 
         $user['role'] = AdminController::normalizeRole($user['role']);
@@ -310,6 +331,10 @@ if ($action === 'dashboard') {
     $controller->dashboard();
 }
 
+if ($action === 'revenue') {
+    $revenueController->index();
+}
+
 if ($action === 'transactions') {
     if ($requestMethod === 'POST') {
         $controller->createTransaction();
@@ -332,7 +357,43 @@ if ($action === 'report' || $action === 'reports') {
     $controller->report();
 }
 
-$resources = array('movies', 'screens', 'schedules', 'staff', 'ticket-types', 'products', 'vouchers', 'customers', 'theaters', 'promotions', 'pos-devices', 'pricing-policies', 'audit-logs', 'system-configs', 'movie-plans', 'movie-allocations', 'tms-transactions');
+if ($action === 'movies-import' && $requestMethod === 'POST') {
+    $user = requireAdmin();
+    if (AdminController::normalizeRole($user['role']) !== 'super_admin') jsonResponse(array('success' => false, 'message' => 'Chỉ Admin Tổng được nhập danh sách phim.'), 403);
+    $input = requestJson(); $rows = isset($input['movies']) && is_array($input['movies']) ? $input['movies'] : array();
+    if (!$rows || count($rows) > 150) jsonResponse(array('success' => false, 'message' => 'File phải có từ 1 đến 150 dòng phim.'), 400);
+    $mode = isset($input['mode']) ? $input['mode'] : 'validate'; $errors = array(); $titles = array(); $codes = array(); $validRows = array();
+    $requiredFields = array('movie_code'=>'Mã phim','title'=>'Tên phim','original_title'=>'Tên phim gốc','genre'=>'Thể loại','duration_minutes'=>'Thời lượng','age_rating'=>'Độ tuổi','director'=>'Đạo diễn','cast'=>'Diễn viên','writer'=>'Biên kịch','producer'=>'Nhà sản xuất','production_country'=>'Quốc gia sản xuất','production_year'=>'Năm sản xuất','description'=>'Tóm tắt phim','plot_details'=>'Nội dung chi tiết','original_language'=>'Ngôn ngữ gốc','localization_versions'=>'Phiên bản phát hành','format'=>'Định dạng','release_date'=>'Ngày khởi chiếu','expected_end_date'=>'Ngày kết thúc dự kiến','distributor'=>'Nhà phát hành','poster_url'=>'Poster URL','banner_url'=>'Banner URL','trailer_url'=>'Trailer URL','status'=>'Trạng thái');
+    foreach ($rows as $index => $row) {
+        $line = $index + 2; $errorCount = count($errors); $title = trim(isset($row['title']) ? $row['title'] : ''); $duration = isset($row['duration_minutes']) ? (int)$row['duration_minutes'] : 0;
+        foreach ($requiredFields as $field => $label) { $value = isset($row[$field]) ? trim((string)$row[$field]) : ''; if ($value === '' || ($field === 'production_year' && (int)$value <= 0)) $errors[] = array('row'=>$line,'field'=>$field,'message'=>'Thiếu dữ liệu: '.$label.'.'); }
+        if ($duration < 1 || $duration > 600) $errors[] = array('row'=>$line,'field'=>'duration_minutes','message'=>'Thời lượng phải từ 1 đến 600 phút.');
+        $year = isset($row['production_year']) ? (int)$row['production_year'] : 0; if ($year && ($year < 1888 || $year > 2100)) $errors[] = array('row'=>$line,'field'=>'production_year','message'=>'Năm sản xuất phải trong khoảng 1888–2100.');
+        $normalizedTitle = strtolower($title); if ($title !== '' && isset($titles[$normalizedTitle])) $errors[] = array('row'=>$line,'field'=>'title','message'=>'Trùng tên phim với dòng '.$titles[$normalizedTitle].'.'); $titles[$normalizedTitle] = $line;
+        $code = trim(isset($row['movie_code']) ? $row['movie_code'] : ''); if ($code !== '' && isset($codes[strtolower($code)])) $errors[] = array('row'=>$line,'field'=>'movie_code','message'=>'Trùng mã phim với dòng '.$codes[strtolower($code)].'.'); $codes[strtolower($code)] = $line;
+        if ($title !== '') { $exists = $db->prepare('SELECT id FROM movies WHERE title=? LIMIT 1'); $exists->bind_param('s', $title); $exists->execute(); $exists->store_result(); if ($exists->num_rows) $errors[] = array('row'=>$line,'field'=>'title','message'=>'Phim này đã có trong kho hệ thống.'); $exists->close(); }
+        if ($code !== '') { $exists = $db->prepare('SELECT id FROM movies WHERE movie_code=? LIMIT 1'); $exists->bind_param('s', $code); $exists->execute(); $exists->store_result(); if ($exists->num_rows) $errors[] = array('row'=>$line,'field'=>'movie_code','message'=>'Mã phim đã có trong kho hệ thống.'); $exists->close(); }
+        $release = trim(isset($row['release_date']) ? $row['release_date'] : ''); $end = trim(isset($row['expected_end_date']) ? $row['expected_end_date'] : '');
+        if (!preg_match('/^\\d{4}-\\d{2}-\\d{2}$/', $release)) $errors[] = array('row'=>$line,'field'=>'release_date','message'=>'Ngày khởi chiếu phải có dạng YYYY-MM-DD.');
+        if (!preg_match('/^\\d{4}-\\d{2}-\\d{2}$/', $end)) $errors[] = array('row'=>$line,'field'=>'expected_end_date','message'=>'Ngày kết thúc phải có dạng YYYY-MM-DD.');
+        if (preg_match('/^\\d{4}-\\d{2}-\\d{2}$/', $release) && preg_match('/^\\d{4}-\\d{2}-\\d{2}$/', $end) && $end < $release) $errors[] = array('row'=>$line,'field'=>'expected_end_date','message'=>'Ngày kết thúc không được trước ngày khởi chiếu.');
+        $status = strtoupper(trim(isset($row['status']) ? $row['status'] : '')); if (!in_array($status, array('COMING_SOON','NOW_SHOWING','SPECIAL_SHOWING','ENDED'))) $errors[] = array('row'=>$line,'field'=>'status','message'=>'Trạng thái phải là COMING_SOON, NOW_SHOWING, SPECIAL_SHOWING hoặc ENDED.');
+        if ($errorCount === count($errors)) $validRows[] = $row;
+    }
+    if ($mode !== 'import' || count($errors)) jsonResponse(array('success' => true, 'message' => count($errors) ? 'File có lỗi cần chỉnh sửa.' : 'File hợp lệ, sẵn sàng tạo phim.', 'data' => array('valid' => !count($errors), 'total' => count($rows), 'valid_count' => count($validRows), 'errors' => $errors)));
+    $added = 0;
+    $stmt = $db->prepare("INSERT INTO movies (movie_code,title,original_title,genre,duration_minutes,age_rating,director,cast,writer,producer,production_country,production_year,description,plot_details,original_language,localization_versions,format,release_date,expected_end_date,distributor,poster_url,banner_url,trailer_url,status,is_hot,created_at,updated_at) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,1,NOW(),NOW())");
+    if (!$stmt) jsonResponse(array('success' => false, 'message' => 'Không thể chuẩn bị nhập phim: '.$db->error), 500);
+    foreach ($validRows as $row) {
+        $movieCode=trim($row['movie_code']); $title=trim($row['title']); $originalTitle=trim($row['original_title']); $genre=trim($row['genre']); $duration=(int)$row['duration_minutes']; $age=trim($row['age_rating']); $director=trim($row['director']); $cast=trim($row['cast']); $writer=trim($row['writer']); $producer=trim($row['producer']); $country=trim($row['production_country']); $year=(int)$row['production_year']; $description=trim($row['description']); $plot=trim($row['plot_details']); $language=trim($row['original_language']); $localization=trim($row['localization_versions']); $format=trim($row['format']); $release=trim($row['release_date']); $end=trim($row['expected_end_date']); $distributor=trim($row['distributor']); $poster=trim($row['poster_url']); $banner=trim($row['banner_url']); $trailer=trim($row['trailer_url']); $status=strtoupper(trim($row['status']));
+        $stmt->bind_param('ssssissssssissssssssssss', $movieCode,$title,$originalTitle,$genre,$duration,$age,$director,$cast,$writer,$producer,$country,$year,$description,$plot,$language,$localization,$format,$release,$end,$distributor,$poster,$banner,$trailer,$status);
+        if ($stmt->execute()) $added++;
+    }
+    $stmt->close();
+    jsonResponse(array('success' => true, 'message' => 'Đã tạo thành công '.$added.' phim vào kho hệ thống.', 'data' => array('added' => $added)));
+}
+
+$resources = array('movies', 'screens', 'schedules', 'staff', 'ticket-types', 'products', 'vouchers', 'customers', 'theaters', 'promotions', 'audit-logs', 'system-configs', 'transactions', 'refunds', 'movie-plans', 'movie-allocations');
 if (in_array($action, $resources, true)) {
     if ($requestMethod === 'GET') {
         $controller->listResource($action);

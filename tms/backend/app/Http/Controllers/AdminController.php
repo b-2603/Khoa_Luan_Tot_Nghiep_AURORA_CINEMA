@@ -4,28 +4,44 @@ class AdminController
 {
     private $db;
     private $resources = array(
-        'movies' => array('table' => 'tms_movies', 'search' => array('title', 'format'), 'fields' => array('title', 'duration_minutes', 'age_rating', 'format', 'status')),
-        'screens' => array('table' => 'tms_screens', 'search' => array('screen_code', 'name'), 'fields' => array('screen_code', 'name', 'screen_type', 'total_seats', 'projector_status', 'sound_system_status', 'hvac_temperature', 'lamp_hours', 'status')),
-        'schedules' => array('table' => 'tms_schedules', 'search' => array(), 'fields' => array('screen_id', 'movie_id', 'start_time', 'end_time', 'show_date', 'booked_seats', 'total_seats', 'status')),
-        'staff' => array('table' => 'tms_staff_shifts', 'search' => array('staff_name', 'position'), 'fields' => array('staff_name', 'position', 'shift_name', 'start_time', 'end_time', 'status', 'work_date')),
-        'ticket-types' => array('table' => 'tms_ticket_types', 'search' => array('name', 'code'), 'fields' => array('name', 'code', 'price', 'description', 'status')),
-        'products' => array('table' => 'tms_products', 'search' => array('name', 'sku'), 'fields' => array('name', 'sku', 'category', 'price', 'stock_quantity', 'status')),
-        'vouchers' => array('table' => 'tms_vouchers', 'search' => array('name', 'code'), 'fields' => array('code', 'name', 'discount_type', 'discount_value', 'starts_at', 'ends_at', 'usage_limit', 'status')),
-        'customers' => array('table' => 'tms_customers', 'search' => array('full_name', 'phone', 'email'), 'fields' => array('full_name', 'phone', 'email', 'membership_level', 'points')),
+        'movies' => array('table' => 'movies', 'search' => array('title', 'format'), 'fields' => array('title', 'duration_minutes', 'age_rating', 'format', 'status')),
+        'screens' => array('table' => 'screens', 'search' => array('screen_code', 'name'), 'fields' => array('screen_code', 'name', 'screen_type', 'total_seats', 'projector_status', 'sound_system_status', 'hvac_temperature', 'lamp_hours', 'status')),
+        'schedules' => array('table' => 'showtimes', 'search' => array(), 'fields' => array('screen_id', 'movie_id', 'start_time', 'end_time', 'show_date', 'booked_seats', 'total_seats', 'status')),
+        'staff' => array('table' => 'staff_shifts', 'search' => array('staff_name', 'position'), 'fields' => array('staff_name', 'position', 'shift_name', 'start_time', 'end_time', 'status', 'work_date')),
+        'ticket-types' => array('table' => 'ticket_types', 'search' => array('name', 'code'), 'fields' => array('name', 'code', 'price', 'description', 'status')),
+        'products' => array('table' => 'products', 'search' => array('name', 'sku'), 'fields' => array('name', 'sku', 'category', 'price', 'stock_quantity', 'status')),
+        'vouchers' => array('table' => 'vouchers', 'search' => array('name', 'code'), 'fields' => array('code', 'name', 'discount_type', 'discount_value', 'starts_at', 'ends_at', 'usage_limit', 'status')),
+        'customers' => array('table' => 'customers', 'search' => array('full_name', 'phone', 'email'), 'fields' => array('full_name', 'phone', 'email', 'membership_level', 'points')),
         'theaters' => array('table' => 'theaters', 'search' => array('name', 'city'), 'fields' => array('name', 'address', 'city', 'phone', 'total_screens', 'status')),
-        'promotions' => array('table' => 'promotions', 'search' => array('title', 'code'), 'fields' => array('title', 'code', 'discount_percent', 'start_date', 'end_date', 'status')),
-        'pos-devices' => array('table' => 'tms_pos_devices', 'search' => array('device_code', 'name'), 'fields' => array('device_code', 'name', 'screen_name', 'ip_address', 'mac_address', 'status', 'approved_by')),
-        'pricing-policies' => array('table' => 'tms_pricing_policies', 'search' => array('ticket_type'), 'fields' => array('ticket_type', 'base_price', 'weekend_surcharge', 'holiday_surcharge', 'imax_surcharge', 'status', 'updated_by')),
-        'audit-logs' => array('table' => 'tms_audit_logs', 'search' => array('username', 'action'), 'fields' => array('username', 'action', 'details', 'ip_address')),
-        'system-configs' => array('table' => 'tms_system_configs', 'search' => array('config_key'), 'fields' => array('config_key', 'config_value', 'description')),
-        'movie-plans' => array('table' => 'tms_movie_plans', 'search' => array('plan_name', 'movie_title'), 'fields' => array('plan_name', 'plan_month', 'plan_year', 'movie_id', 'movie_title', 'format', 'expected_start_date', 'expected_end_date', 'target_revenue', 'target_screenings_per_day', 'priority_level', 'status', 'note', 'created_by')),
-        'movie-allocations' => array('table' => 'tms_movie_allocations', 'search' => array('movie_title', 'theater_name'), 'fields' => array('plan_id', 'movie_id', 'movie_title', 'theater_id', 'theater_name', 'min_screenings_per_day', 'preferred_screen_types', 'allocated_start_date', 'allocated_end_date', 'status', 'confirmed_by', 'confirmed_at', 'note')),
-        'tms-transactions' => array('table' => 'tms_transactions', 'search' => array('transaction_code', 'payment_method'), 'fields' => array('transaction_code', 'customer_id', 'channel', 'amount', 'payment_method', 'status', 'cancel_requested')),
+        'promotions' => array('table' => 'vouchers', 'search' => array('name', 'code'), 'fields' => array('code', 'name', 'discount_type', 'discount_value', 'starts_at', 'ends_at', 'usage_limit', 'status')),
+        'audit-logs' => array('table' => 'audit_logs', 'search' => array('username', 'action'), 'fields' => array('username', 'action', 'details', 'ip_address')),
+        'system-configs' => array('table' => 'system_configs', 'search' => array('config_key'), 'fields' => array('config_key', 'config_value', 'description')),
+        'transactions' => array('table' => 'transactions', 'search' => array('transaction_code', 'payment_method'), 'fields' => array('transaction_code', 'customer_id', 'channel', 'amount', 'payment_method', 'status')),
+        'refunds' => array('table' => 'refunds', 'search' => array('reason', 'status'), 'fields' => array('transaction_id', 'reason', 'amount', 'status', 'requested_by')),
+        'movie-plans' => array('table' => 'movie_plans', 'search' => array('plan_name', 'movie_title'), 'fields' => array('plan_code', 'plan_name', 'plan_month', 'plan_year', 'movie_id', 'movie_title', 'format', 'expected_start_date', 'expected_end_date', 'target_revenue', 'target_screenings_per_day', 'priority_level', 'status', 'note', 'created_by', 'created_at', 'approved_by', 'approved_at', 'updated_by', 'updated_at')),
+        'movie-allocations' => array('table' => 'movie_allocations', 'search' => array('movie_title', 'theater_name'), 'fields' => array('plan_id', 'movie_id', 'movie_title', 'theater_id', 'theater_name', 'min_screenings_per_day', 'preferred_screen_types', 'allocated_start_date', 'allocated_end_date', 'status', 'confirmed_by', 'confirmed_at')),
     );
 
     public function __construct($db)
     {
         $this->db = $db;
+    }
+
+    // WAMP đang dùng PHP 5.2/MySQLi cũ, chưa có begin_transaction(),
+    // commit() và rollback(). Dùng lệnh SQL để các thao tác ghi vẫn nguyên tử.
+    private function beginDbTransaction()
+    {
+        return $this->db->query('START TRANSACTION');
+    }
+
+    private function commitDbTransaction()
+    {
+        return $this->db->query('COMMIT');
+    }
+
+    private function rollbackDbTransaction()
+    {
+        return $this->db->query('ROLLBACK');
     }
 
     public static function getRoleDefinitions()
@@ -226,7 +242,7 @@ class AdminController
     public function dashboard()
     {
         $role = $this->getCurrentRole();
-        $today = $this->db->query("SELECT * FROM tms_revenue_logs WHERE log_date = CURDATE() ORDER BY id DESC LIMIT 1");
+        $today = $this->db->query("SELECT * FROM revenue_logs WHERE log_date = CURDATE() ORDER BY id DESC LIMIT 1");
         $revenue = $today ? $today->fetch_assoc() : null;
         $revenue = $revenue ? $revenue : array('total_revenue' => 0, 'ticket_sales' => 0, 'concession_sales' => 0, 'total_tickets' => 0, 'occupancy_rate' => 0);
 
@@ -238,15 +254,15 @@ class AdminController
             'role' => $role,
             'role_definition' => $roleDef,
             'revenue' => $this->numberFields($revenue, array('total_revenue', 'ticket_sales', 'concession_sales', 'occupancy_rate')),
-            'active_screens' => $this->scalar("SELECT COUNT(*) FROM tms_screens WHERE status = 'active'"),
-            'showtimes' => $this->scalar("SELECT COUNT(*) FROM tms_schedules WHERE show_date = CURDATE() AND status <> 'cancelled'"),
-            'booked_seats' => $this->scalar("SELECT COALESCE(SUM(booked_seats), 0) FROM tms_schedules WHERE show_date = CURDATE()"),
-            'staff_on_duty' => $this->scalar("SELECT COUNT(*) FROM tms_staff_shifts WHERE work_date = CURDATE() AND status IN ('on_duty','checked_in')"),
-            'pending_refunds' => $this->scalar("SELECT COUNT(*) FROM tms_refunds WHERE status = 'pending'"),
-            'revenue_7_days' => $this->rows("SELECT log_date date, ticket_sales, concession_sales, total_revenue, total_tickets, occupancy_rate FROM tms_revenue_logs WHERE log_date >= DATE_SUB(CURDATE(), INTERVAL 6 DAY) ORDER BY log_date"),
-            'top_movies' => $this->rows("SELECT m.id, m.title, COALESCE(SUM(s.booked_seats), 0) booked_seats, COUNT(s.id) showtimes FROM tms_movies m LEFT JOIN tms_schedules s ON s.movie_id = m.id GROUP BY m.id, m.title ORDER BY booked_seats DESC LIMIT 5"),
-            'recent_transactions' => $this->rows("SELECT t.*, c.full_name customer_name FROM tms_transactions t LEFT JOIN tms_customers c ON c.id=t.customer_id ORDER BY t.id DESC LIMIT 5"),
-            'screens_status' => $this->rows("SELECT id, screen_code, name, screen_type, projector_status, sound_system_status, hvac_temperature, lamp_hours, status FROM tms_screens ORDER BY screen_code"),
+            'active_screens' => $this->scalar("SELECT COUNT(*) FROM screens WHERE status = 'active'"),
+            'showtimes' => $this->scalar("SELECT COUNT(*) FROM showtimes WHERE show_date = CURDATE() AND status <> 'cancelled'"),
+            'booked_seats' => $this->scalar("SELECT COALESCE(SUM(booked_seats), 0) FROM showtimes WHERE show_date = CURDATE()"),
+            'staff_on_duty' => $this->scalar("SELECT COUNT(*) FROM staff_shifts WHERE work_date = CURDATE() AND status IN ('on_duty','checked_in')"),
+            'pending_refunds' => $this->scalar("SELECT COUNT(*) FROM refunds WHERE status = 'pending'"),
+            'revenue_7_days' => $this->rows("SELECT log_date date, ticket_sales, concession_sales, total_revenue, total_tickets, occupancy_rate FROM revenue_logs WHERE log_date >= DATE_SUB(CURDATE(), INTERVAL 6 DAY) ORDER BY log_date"),
+            'top_movies' => $this->rows("SELECT m.id, m.title, COALESCE(SUM(s.booked_seats), 0) booked_seats, COUNT(s.id) showtimes FROM movies m LEFT JOIN showtimes s ON s.movie_id = m.id GROUP BY m.id, m.title ORDER BY booked_seats DESC LIMIT 5"),
+            'recent_transactions' => $this->rows("SELECT t.*, c.full_name customer_name FROM transactions t LEFT JOIN customers c ON c.id=t.customer_id ORDER BY t.id DESC LIMIT 5"),
+            'screens_status' => $this->rows("SELECT id, screen_code, name, screen_type, projector_status, sound_system_status, hvac_temperature, lamp_hours, status FROM screens ORDER BY screen_code"),
         );
         jsonResponse(array('success' => true, 'data' => $data));
     }
@@ -260,6 +276,12 @@ class AdminController
             $this->ensureMovieCatalogSchema();
             $this->listMovies();
         }
+        if ($resource === 'movie-plans' || $resource === 'movie-allocations') {
+            $this->ensurePlanningSchema();
+        }
+        if ($resource === 'schedules') {
+            $this->ensureSchedulePublishSchema();
+        }
         $cfg = $this->resources[$resource];
         $where = array('1=1');
 
@@ -272,26 +294,30 @@ class AdminController
             $where[] = '(' . implode(' OR ', $parts) . ')';
         }
         if (!empty($_GET['status'])) {
-            $where[] = "`status` = '" . $this->db->real_escape_string($_GET['status']) . "'";
+            $where[] = ($resource === 'schedules' ? 's.' : '') . "`status` = '" . $this->db->real_escape_string($_GET['status']) . "'";
         }
         if ($resource === 'schedules' && !empty($_GET['date'])) {
-            $where[] = "`show_date` = '" . $this->db->real_escape_string($_GET['date']) . "'";
+            $where[] = "s.`show_date` = '" . $this->db->real_escape_string($_GET['date']) . "'";
         }
         if ($resource === 'movie-plans') {
+            $planTable = $this->db->query("SHOW TABLES LIKE 'movie_plans'");
+            if (!$planTable || $planTable->num_rows === 0) {
+                jsonResponse(array('success' => true, 'data' => array()));
+            }
             if (!empty($_GET['month'])) {
                 $where[] = "`plan_month` = " . (int)$_GET['month'];
             }
             if (!empty($_GET['year'])) {
                 $where[] = "`plan_year` = " . (int)$_GET['year'];
             }
-            $sql = "SELECT * FROM tms_movie_plans WHERE " . implode(' AND ', $where) . " ORDER BY plan_month ASC, expected_start_date ASC, id DESC";
+            $sql = "SELECT * FROM movie_plans WHERE " . implode(' AND ', $where) . " ORDER BY plan_month ASC, expected_start_date ASC, id DESC";
             $plans = $this->rows($sql);
             $totalTheaters = $this->scalar("SELECT COUNT(*) FROM theaters");
             if (!$totalTheaters) $totalTheaters = 5;
             foreach ($plans as &$p) {
                 $pId = (int)$p['id'];
                 $mId = (int)$p['movie_id'];
-                $allocations = $this->rows("SELECT * FROM tms_movie_allocations WHERE plan_id = {$pId} OR (plan_id = 0 AND movie_id = {$mId}) ORDER BY theater_id ASC");
+                $allocations = $this->rows("SELECT * FROM movie_allocations WHERE plan_id = {$pId} OR (plan_id = 0 AND movie_id = {$mId}) ORDER BY theater_id ASC");
                 $p['allocations'] = $allocations;
                 $p['allocated_count'] = count($allocations);
                 $p['total_theaters'] = $totalTheaters;
@@ -308,6 +334,10 @@ class AdminController
         }
 
         if ($resource === 'movie-allocations') {
+            $allocTable = $this->db->query("SHOW TABLES LIKE 'movie_allocations'");
+            if (!$allocTable || $allocTable->num_rows === 0) {
+                jsonResponse(array('success' => true, 'data' => array()));
+            }
             if (!empty($_GET['plan_id'])) {
                 $where[] = "`plan_id` = " . (int)$_GET['plan_id'];
             }
@@ -317,7 +347,7 @@ class AdminController
             if (!empty($_GET['theater_id'])) {
                 $where[] = "`theater_id` = " . (int)$_GET['theater_id'];
             }
-            $sql = "SELECT * FROM tms_movie_allocations WHERE " . implode(' AND ', $where) . " ORDER BY id DESC";
+            $sql = "SELECT * FROM movie_allocations WHERE " . implode(' AND ', $where) . " ORDER BY id DESC";
             $rows = $this->rows($sql);
             jsonResponse(array('success' => true, 'data' => $rows));
         }
@@ -326,9 +356,54 @@ class AdminController
         if ($resource === 'schedules') {
             $select = 's.*, m.title movie_title, sc.name screen_name';
         }
-        $sql = "SELECT {$select} FROM {$cfg['table']}" . ($resource === 'schedules' ? ' s JOIN tms_movies m ON m.id=s.movie_id JOIN tms_screens sc ON sc.id=s.screen_id' : '') . ' WHERE ' . implode(' AND ', $where) . ($resource === 'schedules' ? ' ORDER BY s.id DESC' : ' ORDER BY id DESC');
+        $sql = "SELECT {$select} FROM {$cfg['table']}" . ($resource === 'schedules' ? ' s JOIN movies m ON m.id=s.movie_id JOIN screens sc ON sc.id=s.screen_id' : '') . ' WHERE ' . implode(' AND ', $where) . ($resource === 'schedules' ? ' ORDER BY s.show_date DESC, s.start_time DESC' : ' ORDER BY id DESC');
         $rows = $this->rows($sql);
         jsonResponse(array('success' => true, 'data' => $rows));
+    }
+
+    private function fillMissingValues(array $values, $resource = '')
+    {
+        $filled = array();
+        foreach ($values as $field => $value) {
+            $fieldKey = strtolower((string)$field);
+            $raw = $value;
+            if (is_string($raw)) {
+                $raw = trim($raw);
+            }
+
+            $default = null;
+            if ($raw === null || $raw === '' || $raw === array()) {
+                $lower = strtolower((string)$field);
+                if (strpos($lower, 'name') !== false || strpos($lower, 'title') !== false || strpos($lower, 'label') !== false || strpos($lower, 'movie_title') !== false || strpos($lower, 'plan_name') !== false) {
+                    $default = 'Thông tin đang cập nhật';
+                } elseif (strpos($lower, 'description') !== false || strpos($lower, 'note') !== false || strpos($lower, 'details') !== false || strpos($lower, 'summary') !== false) {
+                    $default = 'Mô tả đang được cập nhật.';
+                } elseif (strpos($lower, 'phone') !== false || strpos($lower, 'address') !== false || strpos($lower, 'city') !== false || strpos($lower, 'location') !== false) {
+                    $default = 'Đang cập nhật';
+                } elseif (strpos($lower, 'code') !== false || strpos($lower, 'id') !== false || strpos($lower, 'sku') !== false || strpos($lower, 'no_') !== false) {
+                    $default = 'AUTO-' . strtoupper(substr(md5((string)microtime(true) . $field), 0, 8));
+                } elseif (strpos($lower, 'status') !== false) {
+                    $default = $resource === 'movies' ? 'coming_soon' : ($resource === 'schedules' ? 'scheduled' : 'active');
+                } elseif (strpos($lower, 'date') !== false || strpos($lower, 'time') !== false || strpos($lower, 'at') !== false) {
+                    $default = date('Y-m-d');
+                } elseif (strpos($lower, 'amount') !== false || strpos($lower, 'price') !== false || strpos($lower, 'cost') !== false || strpos($lower, 'value') !== false || strpos($lower, 'discount') !== false || strpos($lower, 'total') !== false) {
+                    $default = 0;
+                } elseif (strpos($lower, 'url') !== false || strpos($lower, 'image') !== false || strpos($lower, 'media') !== false || strpos($lower, 'file') !== false) {
+                    $default = 'https://placehold.co/600x900/1f2937/ffffff?text=Aurora+Media';
+                } elseif (strpos($lower, 'role') !== false) {
+                    $default = 'cinema_admin';
+                } elseif (strpos($lower, 'email') !== false) {
+                    $default = 'contact@aurora-cinema.vn';
+                } elseif (strpos($lower, 'country') !== false || strpos($lower, 'language') !== false || strpos($lower, 'genre') !== false || strpos($lower, 'format') !== false) {
+                    $default = 'Việt Nam';
+                } else {
+                    $default = 'Thông tin đang cập nhật';
+                }
+            }
+
+            $filled[$field] = $default !== null ? $default : $value;
+        }
+        return $filled;
     }
 
     public function save($resource)
@@ -338,6 +413,12 @@ class AdminController
         }
         if ($resource === 'movies') {
             $this->saveMovie();
+        }
+        if ($resource === 'schedules') {
+            $this->saveSchedule();
+        }
+        if ($resource === 'movie-plans' || $resource === 'movie-allocations') {
+            $this->ensurePlanningSchema();
         }
         requireAdmin();
         $role = $this->getCurrentRole();
@@ -349,14 +430,14 @@ class AdminController
         if ($resource === 'ticket-types' && !in_array($role, array('super_admin', 'accounting'), true)) {
             jsonResponse(array('success' => false, 'message' => 'Chỉ Admin Tổng hoặc Kế Toán mới có quyền chỉnh sửa bảng giá vé.'), 403);
         }
-        if ($resource === 'movies' && !in_array($role, array('super_admin', 'cinema_admin'), true)) {
-            jsonResponse(array('success' => false, 'message' => 'Chỉ Admin Tổng hoặc Admin Rạp mới có quyền chỉnh sửa danh mục phim.'), 403);
+        if ($resource === 'movies' && $role !== 'super_admin') {
+            jsonResponse(array('success' => false, 'message' => 'Chỉ Admin Tổng mới có quyền chỉnh sửa danh mục phim dùng chung.'), 403);
         }
         if ($resource === 'schedules') {
             if ($role === 'supervisor') {
                 // Supervisor chỉ được phép cập nhật trạng thái suất chiếu
                 if (isset($input['status']) && count($input) <= 2) {
-                    $this->execute("UPDATE tms_schedules SET status = ? WHERE id = ?", 'si', array($input['status'], $id));
+                    $this->execute("UPDATE showtimes SET status = ? WHERE id = ?", 'si', array($input['status'], $id));
                     jsonResponse(array('success' => true, 'message' => 'Đã cập nhật trạng thái suất chiếu.'));
                 }
                 jsonResponse(array('success' => false, 'message' => 'Giám sát ca chỉ được phép cập nhật trạng thái vận hành của suất chiếu.'), 403);
@@ -378,7 +459,7 @@ class AdminController
                 }
                 if ($sets && $id > 0) {
                     $params[] = $id; $types .= 'i';
-                    $this->execute("UPDATE tms_screens SET " . implode(',', $sets) . " WHERE id = ?", $types, $params);
+                    $this->execute("UPDATE screens SET " . implode(',', $sets) . " WHERE id = ?", $types, $params);
                     jsonResponse(array('success' => true, 'message' => 'Đã cập nhật trạng thái thiết bị phòng chiếu.'));
                 }
                 jsonResponse(array('success' => false, 'message' => 'Giám sát ca chỉ được phép điều chỉnh trạng thái thiết bị và nhiệt độ phòng.'), 403);
@@ -404,6 +485,7 @@ class AdminController
                 $values[$field] = $input[$field];
             }
         }
+        $values = $this->fillMissingValues($values, $resource);
         if (!$values) {
             jsonResponse(array('success' => false, 'message' => 'Không có dữ liệu hợp lệ.'), 400);
         }
@@ -429,20 +511,23 @@ class AdminController
 
         // Tự động phân bổ cho các rạp được chọn (nếu có)
         if ($resource === 'movie-plans' && !empty($input['theaters']) && is_array($input['theaters'])) {
-            $planRes = $this->rows("SELECT * FROM tms_movie_plans WHERE id = " . $id);
-            if (!empty($planRes[0])) {
-                $plan = $planRes[0];
-                foreach ($input['theaters'] as $tId) {
-                    $tId = (int)$tId;
-                    if ($tId <= 0) continue;
-                    $tRow = $this->rows("SELECT name FROM theaters WHERE id = " . $tId);
-                    $tName = !empty($tRow[0]['name']) ? $tRow[0]['name'] : 'Rạp #' . $tId;
-                    $exists = $this->rows("SELECT id FROM tms_movie_allocations WHERE plan_id = {$id} AND theater_id = {$tId}");
-                    if (empty($exists)) {
-                        $minScreen = !empty($input['min_screenings_per_day']) ? (int)$input['min_screenings_per_day'] : (int)$plan['target_screenings_per_day'];
-                        $mTitleEsc = $this->db->real_escape_string($plan['movie_title']);
-                        $tNameEsc = $this->db->real_escape_string($tName);
-                        $this->db->query("INSERT INTO tms_movie_allocations (`plan_id`, `movie_id`, `movie_title`, `theater_id`, `theater_name`, `min_screenings_per_day`, `preferred_screen_types`, `allocated_start_date`, `allocated_end_date`, `status`) VALUES ({$id}, {$plan['movie_id']}, '{$mTitleEsc}', {$tId}, '{$tNameEsc}', {$minScreen}, 'Standard / IMAX', '{$plan['expected_start_date']}', '{$plan['expected_end_date']}', 'pending')");
+            $allocTable = $this->db->query("SHOW TABLES LIKE 'movie_allocations'");
+            if ($allocTable && $allocTable->num_rows > 0) {
+                $planRes = $this->rows("SELECT * FROM movie_plans WHERE id = " . $id);
+                if (!empty($planRes[0])) {
+                    $plan = $planRes[0];
+                    foreach ($input['theaters'] as $tId) {
+                        $tId = (int)$tId;
+                        if ($tId <= 0) continue;
+                        $tRow = $this->rows("SELECT name FROM theaters WHERE id = " . $tId);
+                        $tName = !empty($tRow[0]['name']) ? $tRow[0]['name'] : 'Rạp #' . $tId;
+                        $exists = $this->rows("SELECT id FROM movie_allocations WHERE plan_id = {$id} AND theater_id = {$tId}");
+                        if (empty($exists)) {
+                            $minScreen = !empty($input['min_screenings_per_day']) ? (int)$input['min_screenings_per_day'] : (int)$plan['target_screenings_per_day'];
+                            $mTitleEsc = $this->db->real_escape_string($plan['movie_title']);
+                            $tNameEsc = $this->db->real_escape_string($tName);
+                            $this->db->query("INSERT INTO movie_allocations (`plan_id`, `movie_id`, `movie_title`, `theater_id`, `theater_name`, `min_screenings_per_day`, `preferred_screen_types`, `allocated_start_date`, `allocated_end_date`, `status`) VALUES ({$id}, {$plan['movie_id']}, '{$mTitleEsc}', {$tId}, '{$tNameEsc}', {$minScreen}, 'Standard / IMAX', '{$plan['expected_start_date']}', '{$plan['expected_end_date']}', 'pending')");
+                        }
                     }
                 }
             }
@@ -457,58 +542,26 @@ class AdminController
         if (!$masterTable || !$masterTable->num_rows) {
             jsonResponse(array('success' => false, 'message' => 'Không tìm thấy bảng movies trong aurora_db.'), 500);
         }
+    }
 
-        $masterColumns = array(
-            'movie_code' => 'VARCHAR(50) NULL', 'original_title' => 'VARCHAR(180) NULL',
-            'director' => 'VARCHAR(180) NULL', 'cast' => 'TEXT NULL', 'writer' => 'VARCHAR(180) NULL',
-            'producer' => 'VARCHAR(180) NULL', 'production_country' => 'VARCHAR(100) NULL',
-            'production_year' => 'SMALLINT UNSIGNED NULL', 'plot_details' => 'MEDIUMTEXT NULL',
-            'original_language' => 'VARCHAR(80) NULL', 'localization_versions' => 'VARCHAR(255) NULL',
-            'expected_end_date' => 'DATE NULL', 'distributor' => 'VARCHAR(180) NULL', 'banner_url' => 'VARCHAR(500) NULL'
-        );
-        $columnResult = $this->db->query('SHOW COLUMNS FROM movies');
-        if (!$columnResult) {
-            jsonResponse(array('success' => false, 'message' => 'Không thể đọc cấu trúc movies: ' . $this->db->error), 500);
-        }
-        $existingColumns = array();
-        while ($column = $columnResult->fetch_assoc()) $existingColumns[$column['Field']] = true;
-        foreach ($masterColumns as $column => $definition) {
-            if (!isset($existingColumns[$column]) && !$this->db->query("ALTER TABLE movies ADD COLUMN `{$column}` {$definition}")) {
-                jsonResponse(array('success' => false, 'message' => 'Không thể nâng cấp movies: ' . $this->db->error), 500);
-            }
-        }
-
-        $formatResult = $this->db->query("SHOW COLUMNS FROM movies LIKE 'format'");
-        if ($formatResult && ($format = $formatResult->fetch_assoc()) && preg_match('/varchar\((\d+)\)/i', $format['Type'], $match) && (int)$match[1] < 100) {
-            if (!$this->db->query("ALTER TABLE movies MODIFY format VARCHAR(100) NOT NULL DEFAULT '2D Digital'")) {
-                jsonResponse(array('success' => false, 'message' => 'Không thể mở rộng định dạng movies: ' . $this->db->error), 500);
-            }
-        }
-
-        $codeIndex = $this->db->query("SHOW INDEX FROM movies WHERE Column_name = 'movie_code'");
-        if ($codeIndex && !$codeIndex->num_rows && !$this->db->query('ALTER TABLE movies ADD UNIQUE KEY uq_movies_movie_code (movie_code)')) {
-            jsonResponse(array('success' => false, 'message' => 'Không thể tạo chỉ mục mã phim: ' . $this->db->error), 500);
-        }
-
-        $tmsResult = $this->db->query('SHOW COLUMNS FROM tms_movies');
-        if (!$tmsResult) {
-            jsonResponse(array('success' => false, 'message' => 'Không tìm thấy bảng tms_movies trong aurora_db: ' . $this->db->error), 500);
-        }
-        $tmsColumns = array();
-        while ($column = $tmsResult->fetch_assoc()) $tmsColumns[$column['Field']] = $column;
-        if (!$this->db->query('CREATE TABLE IF NOT EXISTS tms_movie_catalog_links (tms_movie_id BIGINT UNSIGNED NOT NULL PRIMARY KEY, catalog_movie_id BIGINT UNSIGNED NOT NULL UNIQUE, created_at TIMESTAMP NULL DEFAULT CURRENT_TIMESTAMP, CONSTRAINT fk_tms_movie_catalog_tms FOREIGN KEY (tms_movie_id) REFERENCES tms_movies(id) ON DELETE CASCADE, CONSTRAINT fk_tms_movie_catalog_master FOREIGN KEY (catalog_movie_id) REFERENCES movies(id) ON DELETE CASCADE) ENGINE=InnoDB DEFAULT CHARSET=utf8 COLLATE=utf8_unicode_ci')) {
-            jsonResponse(array('success' => false, 'message' => 'Không thể tạo liên kết catalog phim: ' . $this->db->error), 500);
-        }
-        if (isset($tmsColumns['format']) && preg_match('/varchar\((\d+)\)/i', $tmsColumns['format']['Type'], $match) && (int)$match[1] < 100) {
-            if (!$this->db->query("ALTER TABLE tms_movies MODIFY format VARCHAR(100) NOT NULL DEFAULT '2D Digital / 3D'")) {
-                jsonResponse(array('success' => false, 'message' => 'Không thể mở rộng định dạng TMS: ' . $this->db->error), 500);
-            }
-        }
-        if (isset($tmsColumns['status']) && stripos($tmsColumns['status']['Type'], 'enum(') === 0) {
-            if (!$this->db->query("ALTER TABLE tms_movies MODIFY status VARCHAR(40) NOT NULL DEFAULT 'now_showing'")) {
-                jsonResponse(array('success' => false, 'message' => 'Không thể mở rộng trạng thái TMS: ' . $this->db->error), 500);
-            }
-        }
+    private function ensurePlanningSchema()
+    {
+        $this->db->query("CREATE TABLE IF NOT EXISTS movie_plans (
+            id BIGINT UNSIGNED NOT NULL AUTO_INCREMENT PRIMARY KEY, plan_code VARCHAR(50) NOT NULL, plan_name VARCHAR(255) NOT NULL,
+            plan_month INT NOT NULL, plan_year INT NOT NULL, movie_id BIGINT UNSIGNED NOT NULL, movie_title VARCHAR(200) NOT NULL,
+            format VARCHAR(100) NOT NULL, expected_start_date DATE NOT NULL, expected_end_date DATE NOT NULL,
+            target_revenue DECIMAL(14,2) NOT NULL DEFAULT 0, target_screenings_per_day INT NOT NULL DEFAULT 0,
+            priority_level VARCHAR(20) NOT NULL DEFAULT 'medium', status VARCHAR(30) NOT NULL DEFAULT 'draft', note TEXT NOT NULL,
+            created_by VARCHAR(120) NOT NULL, created_at DATETIME NOT NULL, approved_by VARCHAR(120) NOT NULL, approved_at DATETIME NOT NULL,
+            updated_by VARCHAR(120) NOT NULL, updated_at DATETIME NOT NULL
+        ) ENGINE=InnoDB DEFAULT CHARSET=utf8");
+        $this->db->query("CREATE TABLE IF NOT EXISTS movie_allocations (
+            id BIGINT UNSIGNED NOT NULL AUTO_INCREMENT PRIMARY KEY, plan_id BIGINT UNSIGNED NOT NULL, movie_id BIGINT UNSIGNED NOT NULL,
+            movie_title VARCHAR(200) NOT NULL, theater_id BIGINT UNSIGNED NOT NULL, theater_name VARCHAR(150) NOT NULL,
+            min_screenings_per_day INT NOT NULL DEFAULT 0, preferred_screen_types VARCHAR(120) NOT NULL,
+            allocated_start_date DATE NOT NULL, allocated_end_date DATE NOT NULL, status VARCHAR(30) NOT NULL DEFAULT 'pending',
+            confirmed_by VARCHAR(120) NOT NULL, confirmed_at DATETIME NOT NULL
+        ) ENGINE=InnoDB DEFAULT CHARSET=utf8");
     }
 
     private function listMovies()
@@ -516,26 +569,13 @@ class AdminController
         $where = array('1=1');
         if (!empty($_GET['q'])) {
             $query = $this->db->real_escape_string($_GET['q']);
-            $where[] = "(tm.title LIKE '%{$query}%' OR tm.format LIKE '%{$query}%' OR m.movie_code LIKE '%{$query}%')";
+            $where[] = "(title LIKE '%{$query}%' OR format LIKE '%{$query}%' OR movie_code LIKE '%{$query}%')";
         }
         if (!empty($_GET['status'])) {
             $status = $this->db->real_escape_string(strtolower($_GET['status']));
-            $where[] = "tm.status = '{$status}'";
+            $where[] = "LOWER(status) = '{$status}'";
         }
-        $sql = "SELECT tm.id, l.catalog_movie_id, COALESCE(m.movie_code, '') movie_code,
-            COALESCE(m.title, tm.title) title, COALESCE(m.original_title, '') original_title,
-            COALESCE(m.genre, '') genre, tm.duration_minutes, tm.age_rating,
-            COALESCE(m.director, '') director, COALESCE(m.`cast`, '') `cast`,
-            COALESCE(m.writer, '') writer, COALESCE(m.producer, '') producer,
-            COALESCE(m.production_country, '') production_country, m.production_year,
-            COALESCE(m.description, '') description, COALESCE(m.plot_details, '') plot_details,
-            COALESCE(m.original_language, '') original_language, COALESCE(m.localization_versions, '') localization_versions,
-            COALESCE(m.format, tm.format) format, COALESCE(m.release_date, '') release_date,
-            COALESCE(m.expected_end_date, '') expected_end_date, COALESCE(m.distributor, '') distributor,
-            COALESCE(m.poster_url, '') poster_url, COALESCE(m.banner_url, '') banner_url,
-            COALESCE(m.trailer_url, '') trailer_url, LOWER(COALESCE(m.status, tm.status)) status
-            FROM tms_movies tm LEFT JOIN tms_movie_catalog_links l ON l.tms_movie_id = tm.id LEFT JOIN movies m ON m.id = l.catalog_movie_id
-            WHERE " . implode(' AND ', $where) . ' ORDER BY tm.id DESC';
+        $sql = "SELECT * FROM movies WHERE " . implode(' AND ', $where) . ' ORDER BY id DESC';
         jsonResponse(array('success' => true, 'data' => $this->rows($sql)));
     }
 
@@ -543,93 +583,151 @@ class AdminController
     {
         requireAdmin();
         $role = $this->getCurrentRole();
-        if (!in_array($role, array('super_admin', 'cinema_admin'), true)) {
-            jsonResponse(array('success' => false, 'message' => 'Chỉ Admin Tổng hoặc Admin Rạp mới có quyền chỉnh sửa danh mục phim.'), 403);
+        if ($role !== 'super_admin') {
+            jsonResponse(array('success' => false, 'message' => 'Chỉ Admin Tổng mới có quyền quản lý kho phim dùng chung.'), 403);
         }
         $this->ensureMovieCatalogSchema();
         $input = requestJson();
         $id = isset($_GET['id']) ? (int)$_GET['id'] : (isset($input['id']) ? (int)$input['id'] : 0);
-        $fields = array(
+
+        $fieldMap = array(
             'movie_code', 'title', 'original_title', 'genre', 'age_rating', 'director', 'cast', 'writer',
             'producer', 'production_country', 'description', 'plot_details', 'original_language',
             'localization_versions', 'format', 'release_date', 'expected_end_date', 'distributor',
-            'poster_url', 'banner_url', 'trailer_url'
+            'poster_url', 'banner_url', 'trailer_url', 'status'
         );
         $movie = array();
-        foreach ($fields as $field) $movie[$field] = isset($input[$field]) ? trim((string)$input[$field]) : '';
-        foreach (array('movie_code', 'title', 'genre', 'age_rating', 'director', 'cast', 'production_country', 'description', 'original_language', 'format', 'release_date', 'poster_url') as $required) {
-            if ($movie[$required] === '') jsonResponse(array('success' => false, 'message' => 'Vui lòng nhập đầy đủ các trường bắt buộc.'), 400);
+        foreach ($fieldMap as $field) {
+            $movie[$field] = isset($input[$field]) ? trim((string)$input[$field]) : '';
         }
-        if (!preg_match('/^[A-Za-z0-9][A-Za-z0-9._-]{0,49}$/', $movie['movie_code'])) {
-            jsonResponse(array('success' => false, 'message' => 'Mã phim chỉ được gồm chữ không dấu, số, dấu chấm, gạch ngang hoặc gạch dưới.'), 400);
-        }
+
+        if ($movie['title'] === '') jsonResponse(array('success' => false, 'message' => 'Vui lòng nhập tiêu đề phim.'), 400);
+        if ($movie['original_title'] === '') $movie['original_title'] = $movie['title'];
+        if ($movie['genre'] === '') $movie['genre'] = 'Khác';
+        if ($movie['director'] === '') $movie['director'] = 'Đang cập nhật';
+        if ($movie['cast'] === '') $movie['cast'] = 'Đang cập nhật';
+        if ($movie['writer'] === '') $movie['writer'] = 'Đang cập nhật';
+        if ($movie['producer'] === '') $movie['producer'] = 'Aurora Pictures Việt Nam';
+        if ($movie['production_country'] === '') $movie['production_country'] = 'Việt Nam';
+        if ($movie['description'] === '') $movie['description'] = 'Mô tả phim đang được cập nhật.';
+        if ($movie['plot_details'] === '') $movie['plot_details'] = $movie['description'];
+        if ($movie['original_language'] === '') $movie['original_language'] = 'Tiếng Việt';
+        if ($movie['localization_versions'] === '') $movie['localization_versions'] = 'Phụ đề Việt / Lồng tiếng Việt';
+        if ($movie['distributor'] === '') $movie['distributor'] = 'Aurora Pictures Việt Nam';
+        if ($movie['expected_end_date'] === '') $movie['expected_end_date'] = $movie['release_date'];
+        if ($movie['status'] === '') $movie['status'] = 'coming_soon';
+
         $duration = isset($input['duration_minutes']) ? filter_var($input['duration_minutes'], FILTER_VALIDATE_INT) : false;
         if ($duration === false || $duration < 1 || $duration > 600) jsonResponse(array('success' => false, 'message' => 'Thời lượng phim phải từ 1 đến 600 phút.'), 400);
+
         $year = isset($input['production_year']) && $input['production_year'] !== '' ? filter_var($input['production_year'], FILTER_VALIDATE_INT) : null;
         if ($year === false || ($year !== null && ($year < 1888 || $year > 2100))) jsonResponse(array('success' => false, 'message' => 'Năm sản xuất không hợp lệ.'), 400);
+
         $movie['duration_minutes'] = $duration;
         $movie['production_year'] = $year;
+        $movie['status'] = strtolower($movie['status']);
 
-        foreach (array('release_date' => true, 'expected_end_date' => false) as $field => $required) {
-            if ($movie[$field] === '' && !$required) { $movie[$field] = null; continue; }
-            if (!preg_match('/^(\d{4})-(\d{2})-(\d{2})$/', $movie[$field], $parts) || !checkdate((int)$parts[2], (int)$parts[3], (int)$parts[1])) {
-                jsonResponse(array('success' => false, 'message' => 'Ngày khởi chiếu hoặc ngày kết thúc không hợp lệ.'), 400);
+        if (!in_array($movie['status'], array('now_showing', 'coming_soon', 'special_showing', 'ended'), true)) {
+            jsonResponse(array('success' => false, 'message' => 'Trạng thái phim không hợp lệ.'), 400);
+        }
+
+        $this->beginDbTransaction();
+        try {
+            if ($id > 0) {
+                $existing = $this->rows('SELECT id FROM movies WHERE id = ' . $id . ' FOR UPDATE');
+                if (!$existing) throw new Exception('Không tìm thấy phim cần cập nhật.');
+                $cols = array();
+                $params = array();
+                $types = '';
+                foreach (array('movie_code','title','original_title','genre','duration_minutes','age_rating','director','cast','writer','producer','production_country','production_year','description','plot_details','original_language','localization_versions','format','release_date','expected_end_date','distributor','poster_url','banner_url','trailer_url','status') as $field) {
+                    $cols[] = "`{$field}` = ?";
+                    $params[] = isset($movie[$field]) ? $movie[$field] : null;
+                    $types .= in_array($field, array('duration_minutes','production_year'), true) ? 'i' : 's';
+                }
+                $params[] = $id;
+                $types .= 'i';
+                $this->executeMovieStatement('UPDATE movies SET ' . implode(', ', $cols) . ' WHERE id = ?', $types, $params);
+                $message = 'Cập nhật thông tin phim thành công.';
+            } else {
+                $cols = array();
+                $values = array();
+                $types = '';
+                foreach (array('movie_code','title','original_title','genre','duration_minutes','age_rating','director','cast','writer','producer','production_country','production_year','description','plot_details','original_language','localization_versions','format','release_date','expected_end_date','distributor','poster_url','banner_url','trailer_url','status') as $field) {
+                    $cols[] = "`{$field}`";
+                    $values[] = isset($movie[$field]) ? $movie[$field] : null;
+                    $types .= in_array($field, array('duration_minutes','production_year'), true) ? 'i' : 's';
+                }
+                $this->executeMovieStatement('INSERT INTO movies (' . implode(', ', $cols) . ') VALUES (' . implode(', ', array_fill(0, count($cols), '?')) . ')', $types, $values);
+                $id = (int)$this->db->insert_id;
+                $message = 'Đã lưu đầy đủ thông tin phim vào aurora_db.';
             }
+                $this->commitDbTransaction();
+            jsonResponse(array('success' => true, 'message' => $message, 'data' => array('id' => $id)), 200);
+        } catch (Exception $e) {
+            $this->rollbackDbTransaction();
+            jsonResponse(array('success' => false, 'message' => $e->getMessage()), 400);
         }
-        if ($movie['expected_end_date'] !== null && $movie['expected_end_date'] < $movie['release_date']) jsonResponse(array('success' => false, 'message' => 'Ngày kết thúc phải bằng hoặc sau ngày khởi chiếu.'), 400);
-        if (!$this->isMovieMediaReference($movie['poster_url'], 'poster')) jsonResponse(array('success' => false, 'message' => 'Poster tải lên không hợp lệ.'), 400);
-        foreach (array('banner_url' => 'banner', 'trailer_url' => 'trailer') as $urlField => $kind) {
-            if ($movie[$urlField] !== '' && !$this->isMovieMediaReference($movie[$urlField], $kind)) jsonResponse(array('success' => false, 'message' => 'Tệp banner hoặc trailer không hợp lệ.'), 400);
-            if ($movie[$urlField] === '') $movie[$urlField] = null;
-        }
-        if (!in_array($movie['age_rating'], array('P', 'K', 'T13', 'T16', 'T18'), true)) jsonResponse(array('success' => false, 'message' => 'Độ tuổi không hợp lệ.'), 400);
-        $status = isset($input['status']) ? strtolower(trim((string)$input['status'])) : '';
-        if (!in_array($status, array('now_showing', 'coming_soon', 'special_showing', 'ended'), true)) jsonResponse(array('success' => false, 'message' => 'Trạng thái phim không hợp lệ.'), 400);
-        $movie['status'] = strtoupper($status);
+    }
 
-        $this->db->begin_transaction();
-        $catalogId = 0;
-        if ($id > 0) {
-            $existing = $this->rows('SELECT l.catalog_movie_id FROM tms_movies tm LEFT JOIN tms_movie_catalog_links l ON l.tms_movie_id = tm.id WHERE tm.id = ' . $id . ' FOR UPDATE');
-            if (!$existing) { $this->db->rollback(); jsonResponse(array('success' => false, 'message' => 'Không tìm thấy phim cần cập nhật.'), 404); }
-            $catalogId = (int)$existing[0]['catalog_movie_id'];
+    /**
+     * A TMS schedule is the source of truth for a cinema manager.  The link
+     * table lets us publish that schedule to the customer-facing showtimes
+     * table without assuming that IDs in the two screen tables are identical.
+     */
+    private function saveSchedule()
+    {
+        requireAdmin();
+        $role = $this->getCurrentRole();
+        if (!in_array($role, array('super_admin', 'cinema_admin'), true)) {
+            jsonResponse(array('success' => false, 'message' => 'Chỉ Admin Tổng hoặc Admin Rạp mới có quyền lập suất chiếu.'), 403);
         }
+        $input = requestJson();
+        $id = isset($_GET['id']) ? (int)$_GET['id'] : (isset($input['id']) ? (int)$input['id'] : 0);
+        $screenId = isset($input['screen_id']) ? (int)$input['screen_id'] : 0;
+        $movieId = isset($input['movie_id']) ? (int)$input['movie_id'] : 0;
+        $showDate = isset($input['show_date']) ? trim((string)$input['show_date']) : '';
+        $start = isset($input['start_time']) ? trim((string)$input['start_time']) : '';
+        $end = isset($input['end_time']) ? trim((string)$input['end_time']) : '';
+        $status = isset($input['status']) ? strtolower(trim((string)$input['status'])) : 'scheduled';
+        $price = isset($input['ticket_price']) ? (float)$input['ticket_price'] : 0;
+        if (!$screenId || !$movieId || !preg_match('/^\d{4}-\d{2}-\d{2}$/', $showDate) || !preg_match('/^\d{2}:\d{2}(:\d{2})?$/', $start) || !preg_match('/^\d{2}:\d{2}(:\d{2})?$/', $end)) {
+            jsonResponse(array('success' => false, 'message' => 'Vui lòng nhập đủ phim, phòng, ngày và giờ chiếu hợp lệ.'), 400);
+        }
+        if ($end <= $start || $price < 0 || !in_array($status, array('scheduled', 'running', 'finished', 'cancelled'), true)) {
+            jsonResponse(array('success' => false, 'message' => 'Khoảng thời gian, giá vé hoặc trạng thái suất chiếu không hợp lệ.'), 400);
+        }
+        $screen = $this->rows('SELECT id, name, total_seats FROM screens WHERE id=' . $screenId);
+        $movie = $this->rows('SELECT id FROM movies WHERE id=' . $movieId);
+        if (!$screen || !$movie) jsonResponse(array('success' => false, 'message' => 'Phim hoặc phòng chiếu không tồn tại trong aurora_db.'), 400);
 
-        $masterFields = array(
-            'movie_code', 'title', 'original_title', 'genre', 'duration_minutes', 'age_rating', 'director', 'cast',
-            'writer', 'producer', 'production_country', 'production_year', 'description', 'plot_details',
-            'original_language', 'localization_versions', 'format', 'release_date', 'expected_end_date',
-            'distributor', 'poster_url', 'banner_url', 'trailer_url', 'status'
-        );
-        $values = array();
-        $types = '';
-        foreach ($masterFields as $field) {
-            $values[] = isset($movie[$field]) ? $movie[$field] : null;
-            $types .= in_array($field, array('duration_minutes', 'production_year'), true) ? 'i' : 's';
+        $this->beginDbTransaction();
+        try {
+            if ($id > 0) {
+                $old = $this->rows('SELECT id FROM showtimes WHERE id=' . $id . ' FOR UPDATE');
+                if (!$old) throw new Exception('Không tìm thấy suất chiếu cần cập nhật.');
+                $this->executeMovieStatement('UPDATE showtimes SET screen_id=?, movie_id=?, start_time=?, end_time=?, show_date=?, total_seats=?, status=? WHERE id=?', 'iisssisi', array($screenId, $movieId, $start, $end, $showDate, (int)$screen[0]['total_seats'], $status, $id));
+            } else {
+                $this->executeMovieStatement('INSERT INTO showtimes (screen_id, movie_id, start_time, end_time, show_date, booked_seats, total_seats, status) VALUES (?, ?, ?, ?, ?, 0, ?, ?)', 'iisssis', array($screenId, $movieId, $start, $end, $showDate, (int)$screen[0]['total_seats'], $status));
+                $id = (int)$this->db->insert_id;
+            }
+            $this->commitDbTransaction();
+        } catch (Exception $e) {
+            $this->rollbackDbTransaction();
+            jsonResponse(array('success' => false, 'message' => $e->getMessage()), 400);
         }
-        if ($catalogId > 0) {
-            $sets = array();
-            foreach ($masterFields as $field) $sets[] = "`{$field}` = ?";
-            $values[] = $catalogId;
-            $this->executeMovieStatement('UPDATE movies SET ' . implode(', ', $sets) . ' WHERE id = ?', $types . 'i', $values);
-        } else {
-            $columns = array();
-            foreach ($masterFields as $field) $columns[] = '`' . $field . '`';
-            $this->executeMovieStatement('INSERT INTO movies (' . implode(', ', $columns) . ') VALUES (' . implode(', ', array_fill(0, count($masterFields), '?')) . ')', $types, $values);
-            $catalogId = (int)$this->db->insert_id;
-        }
-        if ($id > 0) {
-            $this->executeMovieStatement('UPDATE tms_movies SET title = ?, duration_minutes = ?, age_rating = ?, format = ?, status = ? WHERE id = ?', 'sisssi', array($movie['title'], $duration, $movie['age_rating'], $movie['format'], $status, $id));
-            $this->executeMovieStatement('INSERT INTO tms_movie_catalog_links (tms_movie_id, catalog_movie_id) VALUES (?, ?) ON DUPLICATE KEY UPDATE catalog_movie_id = VALUES(catalog_movie_id)', 'ii', array($id, $catalogId));
-            $message = 'Cập nhật thông tin phim thành công.';
-        } else {
-            $this->executeMovieStatement('INSERT INTO tms_movies (title, duration_minutes, age_rating, format, status) VALUES (?, ?, ?, ?, ?)', 'sisss', array($movie['title'], $duration, $movie['age_rating'], $movie['format'], $status));
-            $id = (int)$this->db->insert_id;
-            $this->executeMovieStatement('INSERT INTO tms_movie_catalog_links (tms_movie_id, catalog_movie_id) VALUES (?, ?)', 'ii', array($id, $catalogId));
-            $message = 'Đã lưu đầy đủ thông tin phim vào aurora_db.';
-        }
-        $this->db->commit();
-        jsonResponse(array('success' => true, 'message' => $message, 'data' => array('id' => $id, 'catalog_movie_id' => $catalogId)), 200);
+        jsonResponse(array('success' => true, 'message' => 'Đã lưu suất chiếu vào aurora_db.', 'data' => array('id' => $id)), $id ? 200 : 201);
+    }
+
+    private function ensureSchedulePublishSchema()
+    {
+        $this->ensureMovieCatalogSchema();
+    }
+
+    private function customerScreenForTmsScreen($tmsScreenId, $tmsScreenName)
+    {
+        $escaped = $this->db->real_escape_string($tmsScreenName);
+        $candidate = $this->rows("SELECT id FROM screens WHERE name='{$escaped}' ORDER BY id LIMIT 1");
+        return $candidate ? (int)$candidate[0]['id'] : (int)$tmsScreenId;
     }
 
     private function isMovieMediaReference($value, $kind)
@@ -646,7 +744,7 @@ class AdminController
         if (!$stmt->execute()) {
             $error = $stmt->error;
             $duplicate = $stmt->errno === 1062;
-            $this->db->rollback();
+            $this->rollbackDbTransaction();
             jsonResponse(array('success' => false, 'message' => $duplicate ? 'Mã phim đã tồn tại trong kho hệ thống.' : $error), $duplicate ? 400 : 500);
         }
         return $stmt;
@@ -672,28 +770,38 @@ class AdminController
         if (!$id) {
             jsonResponse(array('success' => false, 'message' => 'Thiếu id.'), 400);
         }
+        if ($resource === 'schedules') {
+            if (!in_array($role, array('super_admin', 'cinema_admin'), true)) {
+                jsonResponse(array('success' => false, 'message' => 'Chỉ Admin Tổng hoặc Admin Rạp mới có quyền hủy suất chiếu.'), 403);
+            }
+            $this->beginDbTransaction();
+            if (!$this->db->query('DELETE FROM showtimes WHERE id=' . $id)) {
+                $this->rollbackDbTransaction(); jsonResponse(array('success' => false, 'message' => $this->db->error), 500);
+            }
+            $this->commitDbTransaction();
+            jsonResponse(array('success' => true, 'message' => 'Đã hủy suất chiếu khỏi aurora_db.'));
+        }
         if ($resource === 'movies') {
             $this->ensureMovieCatalogSchema();
-            $linked = $this->rows('SELECT catalog_movie_id FROM tms_movie_catalog_links WHERE tms_movie_id = ' . $id);
-            if (!empty($linked[0]['catalog_movie_id'])) {
-                $catalogId = (int)$linked[0]['catalog_movie_id'];
-                $showtimesTable = $this->db->query("SHOW TABLES LIKE 'showtimes'");
-                $hasCustomerShowtimes = $showtimesTable && $showtimesTable->num_rows && $this->scalar('SELECT COUNT(*) FROM showtimes WHERE movie_id = ' . $catalogId) > 0;
-                if ($this->scalar('SELECT COUNT(*) FROM tms_schedules WHERE movie_id = ' . $id) > 0 || $hasCustomerShowtimes) {
-                    jsonResponse(array('success' => false, 'message' => 'Không thể xóa phim đã có lịch chiếu hoặc suất chiếu được mở bán.'), 400);
-                }
-                $this->db->begin_transaction();
-                if (!$this->db->query('DELETE FROM tms_movies WHERE id = ' . $id) || !$this->db->query('DELETE FROM movies WHERE id = ' . $catalogId)) {
-                    $error = $this->db->error;
-                    $this->db->rollback();
-                    jsonResponse(array('success' => false, 'message' => $error), 500);
-                }
-                $this->db->commit();
-                jsonResponse(array('success' => true, 'message' => 'Đã xóa phim khỏi kho hệ thống.'));
+            $showtimesTable = $this->db->query("SHOW TABLES LIKE 'showtimes'");
+            $hasShowtimes = $showtimesTable && $showtimesTable->num_rows && $this->scalar('SELECT COUNT(*) FROM showtimes WHERE movie_id = ' . $id) > 0;
+            if ($hasShowtimes) {
+                jsonResponse(array('success' => false, 'message' => 'Không thể xóa phim đã có lịch chiếu hoặc suất chiếu được mở bán.'), 400);
             }
+            $this->beginDbTransaction();
+            if (!$this->db->query('DELETE FROM movies WHERE id = ' . $id)) {
+                $error = $this->db->error;
+                $this->rollbackDbTransaction();
+                jsonResponse(array('success' => false, 'message' => $error), 500);
+            }
+            $this->commitDbTransaction();
+            jsonResponse(array('success' => true, 'message' => 'Đã xóa phim khỏi kho hệ thống.'));
         }
         if ($resource === 'movie-plans') {
-            $this->db->query("DELETE FROM tms_movie_allocations WHERE plan_id = " . $id);
+            $allocTable = $this->db->query("SHOW TABLES LIKE 'movie_allocations'");
+            if ($allocTable && $allocTable->num_rows > 0) {
+                $this->db->query("DELETE FROM movie_allocations WHERE plan_id = " . $id);
+            }
         }
         $this->db->query("DELETE FROM {$this->resources[$resource]['table']} WHERE id = " . $id);
         jsonResponse(array('success' => true, 'message' => 'Đã xóa dữ liệu thành công.'));
@@ -711,7 +819,7 @@ class AdminController
             jsonResponse(array('success' => false, 'message' => 'Chỉ Admin Tổng hoặc Admin Rạp mới có quyền xem danh sách nhân sự TMS.'), 403);
         }
 
-        $users = $this->rows("SELECT id, username, full_name, phone, role, status, last_login, created_at FROM tms_users ORDER BY id ASC");
+        $users = $this->rows("SELECT id, username, full_name, phone, role, status, last_login, created_at FROM users ORDER BY id ASC");
         $rolesDef = self::getRoleDefinitions();
 
         foreach ($users as &$u) {
@@ -746,6 +854,12 @@ class AdminController
         $status = isset($input['status']) && in_array($input['status'], array('active', 'inactive', 'locked'), true) ? $input['status'] : 'active';
         $password = isset($input['password']) ? trim((string)$input['password']) : '';
 
+        if ($phone === '') $phone = '0900000000';
+        if ($userRole === '') $userRole = 'cinema_admin';
+        if ($status === '') $status = 'active';
+        if ($username === '') $username = 'user_' . date('YmdHis');
+        if ($fullName === '') $fullName = 'Người dùng mới';
+
         if (!$id && ($username === '' || $fullName === '')) {
             jsonResponse(array('success' => false, 'message' => 'Vui lòng nhập tên đăng nhập và họ tên người dùng.'), 400);
         }
@@ -759,22 +873,22 @@ class AdminController
             if ($password !== '') {
                 $hash = function_exists('password_hash') ? password_hash($password, PASSWORD_BCRYPT) : crypt($password);
                 $hashEsc = $this->db->real_escape_string($hash);
-                $this->db->query("UPDATE tms_users SET full_name = '{$fnEsc}', phone = '{$phEsc}', role = '{$rlEsc}', status = '{$stEsc}', password_hash = '{$hashEsc}' WHERE id = " . $id);
+                $this->db->query("UPDATE users SET full_name = '{$fnEsc}', phone = '{$phEsc}', role = '{$rlEsc}', status = '{$stEsc}', password_hash = '{$hashEsc}' WHERE id = " . $id);
             } else {
-                $this->db->query("UPDATE tms_users SET full_name = '{$fnEsc}', phone = '{$phEsc}', role = '{$rlEsc}', status = '{$stEsc}' WHERE id = " . $id);
+                $this->db->query("UPDATE users SET full_name = '{$fnEsc}', phone = '{$phEsc}', role = '{$rlEsc}', status = '{$stEsc}' WHERE id = " . $id);
             }
             jsonResponse(array('success' => true, 'message' => 'Cập nhật thông tin và phân quyền người dùng thành công.'));
         } else {
             // Check username unique
             $uEsc = $this->db->real_escape_string($username);
-            $check = $this->rows("SELECT id FROM tms_users WHERE username = '{$uEsc}'");
+            $check = $this->rows("SELECT id FROM users WHERE username = '{$uEsc}'");
             if ($check) {
                 jsonResponse(array('success' => false, 'message' => 'Tên đăng nhập đã tồn tại trong hệ thống.'), 400);
             }
             $pwdToUse = $password !== '' ? $password : '8888';
             $hash = function_exists('password_hash') ? password_hash($pwdToUse, PASSWORD_BCRYPT) : crypt($pwdToUse);
             $hashEsc = $this->db->real_escape_string($hash);
-            $this->db->query("INSERT INTO tms_users (username, password_hash, full_name, phone, role, status) VALUES ('{$uEsc}', '{$hashEsc}', '{$fnEsc}', '{$phEsc}', '{$rlEsc}', '{$stEsc}')");
+            $this->db->query("INSERT INTO users (username, password_hash, full_name, phone, role, status) VALUES ('{$uEsc}', '{$hashEsc}', '{$fnEsc}', '{$phEsc}', '{$rlEsc}', '{$stEsc}')");
             jsonResponse(array('success' => true, 'message' => 'Tạo tài khoản người dùng và gán quyền thành công.', 'data' => array('id' => $this->db->insert_id)), 201);
         }
     }
@@ -794,7 +908,7 @@ class AdminController
         if (!empty($_SESSION['tms_user']['id']) && (int)$_SESSION['tms_user']['id'] === $id) {
             jsonResponse(array('success' => false, 'message' => 'Không thể xóa tài khoản của chính bạn đang đăng nhập.'), 400);
         }
-        $this->db->query("DELETE FROM tms_users WHERE id = " . $id);
+        $this->db->query("DELETE FROM users WHERE id = " . $id);
         jsonResponse(array('success' => true, 'message' => 'Đã xóa tài khoản người dùng khỏi hệ thống.'));
     }
 
@@ -804,8 +918,8 @@ class AdminController
 
     public function transactions()
     {
-        $rows = $this->rows("SELECT t.*, c.full_name customer_name, c.phone customer_phone FROM tms_transactions t LEFT JOIN tms_customers c ON c.id=t.customer_id ORDER BY t.id DESC LIMIT 100");
-        // Nếu bảng tms_transactions chưa có dữ liệu, thử từ tms_orders (fallback)
+        $rows = $this->rows("SELECT t.*, c.full_name customer_name, c.phone customer_phone FROM transactions t LEFT JOIN customers c ON c.id=t.customer_id ORDER BY t.id DESC LIMIT 100");
+        // Nếu bảng transactions chưa có dữ liệu, hệ thống trả về danh sách trống.
         if (empty($rows)) {
             $rows = array();
         }
@@ -826,7 +940,7 @@ class AdminController
         }
         // Kiểm tra code trùng
         $codeEsc = $this->db->real_escape_string($code);
-        $exist = $this->rows("SELECT id FROM tms_transactions WHERE transaction_code = '{$codeEsc}'");
+        $exist = $this->rows("SELECT id FROM transactions WHERE transaction_code = '{$codeEsc}'");
         if ($exist) {
             $code = $code . '-' . rand(100, 999);
             $codeEsc = $this->db->real_escape_string($code);
@@ -834,7 +948,7 @@ class AdminController
         $custVal = $customer ? $customer : 'NULL';
         $channelEsc = $this->db->real_escape_string($channel);
         $methodEsc = $this->db->real_escape_string($method);
-        $this->db->query("INSERT INTO tms_transactions (transaction_code, customer_id, channel, amount, payment_method, status, cancel_requested) VALUES ('{$codeEsc}', {$custVal}, '{$channelEsc}', {$amount}, '{$methodEsc}', 'paid', 0)");
+        $this->db->query("INSERT INTO transactions (transaction_code, customer_id, channel, amount, payment_method, status) VALUES ('{$codeEsc}', {$custVal}, '{$channelEsc}', {$amount}, '{$methodEsc}', 'paid')");
         if ($this->db->error) {
             jsonResponse(array('success' => false, 'message' => 'Lỗi tạo giao dịch: ' . $this->db->error), 500);
         }
@@ -843,13 +957,13 @@ class AdminController
         $uname = isset($userInfo['username']) ? $this->db->real_escape_string($userInfo['username']) : 'system';
         $ip = isset($_SERVER['REMOTE_ADDR']) ? $_SERVER['REMOTE_ADDR'] : '127.0.0.1';
         $ipEsc = $this->db->real_escape_string($ip);
-        $this->db->query("INSERT INTO tms_audit_logs (username, action, details, ip_address) VALUES ('{$uname}', 'CREATE_TRANSACTION', 'Tạo giao dịch {$codeEsc} - {$amount} VND', '{$ipEsc}')");
+        $this->db->query("INSERT INTO audit_logs (username, action, details, ip_address) VALUES ('{$uname}', 'CREATE_TRANSACTION', 'Tạo giao dịch {$codeEsc} - {$amount} VND', '{$ipEsc}')");
         jsonResponse(array('success' => true, 'message' => 'Đã tạo giao dịch.', 'data' => array('id' => $this->db->insert_id, 'transaction_code' => $code)), 201);
     }
 
     public function refunds()
     {
-        $rows = $this->rows("SELECT * FROM tms_refunds ORDER BY id DESC LIMIT 100");
+        $rows = $this->rows("SELECT * FROM refunds ORDER BY id DESC LIMIT 100");
         jsonResponse(array('success' => true, 'data' => $rows));
     }
 
@@ -861,33 +975,21 @@ class AdminController
         $id = isset($_GET['id']) ? (int)$_GET['id'] : (isset($input['id']) ? (int)$input['id'] : 0);
         $status = isset($input['status']) ? $input['status'] : '';
 
-        // Tạo yêu cầu hoàn vé mới
         if ($id <= 0) {
-            $txnCode = isset($input['transaction_code']) ? trim($input['transaction_code']) : ('TXN-' . time());
-            $custName = isset($input['customer_name']) ? trim($input['customer_name']) : 'Khách vãng lai';
-            $custPhone = isset($input['customer_phone']) ? trim($input['customer_phone']) : '';
-            $amount = isset($input['amount']) ? (float)$input['amount'] : 0.00;
-            $reason = isset($input['reason']) ? trim($input['reason']) : 'Yêu cầu hoàn trả vé';
-            $paymentMethod = isset($input['payment_method']) ? trim($input['payment_method']) : 'cash';
-            $requestedBy = !empty($_SESSION['tms_user']['full_name']) ? $_SESSION['tms_user']['full_name'] : 'Nhân sự TMS';
-
-            $stmt = $this->db->prepare("INSERT INTO tms_refunds (transaction_code, customer_name, customer_phone, amount, reason, payment_method, status, requested_by, requested_at) VALUES (?, ?, ?, ?, ?, ?, 'pending', ?, NOW())");
-            if ($stmt) {
-                $stmt->bind_param('sssdsds', $txnCode, $custName, $custPhone, $amount, $reason, $paymentMethod, $requestedBy);
-                $stmt->execute();
-                $newId = $stmt->insert_id;
-                $stmt->close();
-                jsonResponse(array('success' => true, 'message' => 'Đã tạo yêu cầu hoàn vé thành công.', 'id' => $newId));
-            } else {
-                jsonResponse(array('success' => false, 'message' => 'Lỗi tạo yêu cầu hoàn vé: ' . $this->db->error), 500);
+            $transactionCode = isset($input['transaction_code']) ? trim((string)$input['transaction_code']) : ('TXN-' . time());
+            $transaction = $this->rows("SELECT id, customer_id, amount FROM transactions WHERE transaction_code = '{$this->db->real_escape_string($transactionCode)}' LIMIT 1");
+            if (!$transaction) {
+                jsonResponse(array('success' => false, 'message' => 'Không tìm thấy giao dịch để hoàn trả.'), 400);
             }
+            $amount = isset($input['amount']) ? (float)$input['amount'] : (float)$transaction[0]['amount'];
+            $reason = isset($input['reason']) ? trim((string)$input['reason']) : 'Yêu cầu hoàn trả vé';
+            $requestedBy = !empty($_SESSION['tms_user']['id']) ? (int)$_SESSION['tms_user']['id'] : null;
+            $this->db->query("INSERT INTO refunds (transaction_id, reason, amount, status, requested_by, processed_at) VALUES ({$transaction[0]['id']}, '{$this->db->real_escape_string($reason)}', {$amount}, 'pending', " . ($requestedBy ? $requestedBy : 'NULL') . ", NOW())");
+            jsonResponse(array('success' => true, 'message' => 'Đã tạo yêu cầu hoàn vé thành công.'));
         }
 
-        // Quyền phê duyệt duyệt (approved, rejected, completed) dành cho: supervisor, cinema_admin, super_admin
-        if (in_array($status, array('approved', 'rejected', 'completed'), true)) {
-            if (!in_array($role, array('super_admin', 'supervisor', 'cinema_admin'), true)) {
-                jsonResponse(array('success' => false, 'message' => 'Chỉ Giám sát ca hoặc Ban quản lý rạp mới có quyền phê duyệt hoàn vé.'), 403);
-            }
+        if (in_array($status, array('approved', 'rejected', 'completed'), true) && !in_array($role, array('super_admin', 'supervisor', 'cinema_admin'), true)) {
+            jsonResponse(array('success' => false, 'message' => 'Chỉ Giám sát ca hoặc Ban quản lý rạp mới có quyền phê duyệt hoàn vé.'), 403);
         }
 
         if (!$id || !in_array($status, array('approved', 'rejected', 'completed', 'pending'), true)) {
@@ -895,7 +997,7 @@ class AdminController
         }
 
         $approver = !empty($_SESSION['tms_user']['full_name']) ? $_SESSION['tms_user']['full_name'] : 'Quản trị viên';
-        $this->execute("UPDATE tms_refunds SET status=?, approved_by=?, processed_at=NOW() WHERE id=?", 'ssi', array($status, $approver, $id));
+        $this->execute("UPDATE refunds SET status=?, processed_at=NOW() WHERE id=?", 'si', array($status, $id));
         jsonResponse(array('success' => true, 'message' => 'Đã cập nhật yêu cầu hoàn tiền thành công.'));
     }
 
@@ -905,7 +1007,7 @@ class AdminController
         if (!$screen) {
             jsonResponse(array('success' => false, 'message' => 'Thiếu screen_id.'), 400);
         }
-        $rows = $this->rows('SELECT * FROM tms_seats WHERE screen_id=' . $screen . ' ORDER BY seat_code');
+        $rows = $this->rows('SELECT * FROM seats WHERE screen_id=' . $screen . ' ORDER BY seat_code');
         jsonResponse(array('success' => true, 'data' => $rows));
     }
 
@@ -917,13 +1019,13 @@ class AdminController
         $from = $this->db->real_escape_string($from);
         $to = $this->db->real_escape_string($to);
 
-        $daily = $this->rows("SELECT * FROM tms_revenue_logs WHERE log_date BETWEEN '{$from}' AND '{$to}' ORDER BY log_date");
-        $summary = $this->rows("SELECT COALESCE(SUM(total_revenue),0) total_revenue, COALESCE(SUM(ticket_sales),0) ticket_sales, COALESCE(SUM(concession_sales),0) concession_sales, COALESCE(SUM(total_tickets),0) total_tickets, COALESCE(AVG(occupancy_rate),0) occupancy_rate FROM tms_revenue_logs WHERE log_date BETWEEN '{$from}' AND '{$to}'");
+        $daily = $this->rows("SELECT * FROM revenue_logs WHERE log_date BETWEEN '{$from}' AND '{$to}' ORDER BY log_date");
+        $summary = $this->rows("SELECT COALESCE(SUM(total_revenue),0) total_revenue, COALESCE(SUM(ticket_sales),0) ticket_sales, COALESCE(SUM(concession_sales),0) concession_sales, COALESCE(SUM(total_tickets),0) total_tickets, COALESCE(AVG(occupancy_rate),0) occupancy_rate FROM revenue_logs WHERE log_date BETWEEN '{$from}' AND '{$to}'");
         $summaryRow = isset($summary[0]) ? $summary[0] : array();
 
         // Thống kê theo phương thức và kênh bán (hữu ích cho Kế toán & Super Admin)
-        $byChannel = $this->rows("SELECT channel, COUNT(*) count, COALESCE(SUM(amount), 0) total FROM tms_transactions WHERE status = 'paid' GROUP BY channel");
-        $byMethod = $this->rows("SELECT payment_method, COUNT(*) count, COALESCE(SUM(amount), 0) total FROM tms_transactions WHERE status = 'paid' GROUP BY payment_method");
+        $byChannel = $this->rows("SELECT channel, COUNT(*) count, COALESCE(SUM(amount), 0) total FROM transactions WHERE status = 'paid' GROUP BY channel");
+        $byMethod = $this->rows("SELECT payment_method, COUNT(*) count, COALESCE(SUM(amount), 0) total FROM transactions WHERE status = 'paid' GROUP BY payment_method");
 
         jsonResponse(array(
             'success' => true,

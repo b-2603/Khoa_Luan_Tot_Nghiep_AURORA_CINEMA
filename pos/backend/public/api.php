@@ -51,15 +51,13 @@ function passwordMatches($password, $hash) {
     return crypt($password, $hash) === $hash;
 }
 
-function findPosUser($db, $table, $username) {
-    $fields = $table === 'pos_users' ? 'id, username, password_hash, full_name, role, status, theater_id' : 'id, username, password_hash, full_name, role, status';
-    $stmt = $db->prepare('SELECT ' . $fields . ' FROM ' . $table . ' WHERE username = ? LIMIT 1');
+function findPosUser($db, $username) {
+    $stmt = $db->prepare('SELECT id, username, password_hash, full_name, role, status, theater_id FROM users WHERE username = ? LIMIT 1');
     if (!$stmt) return null;
     $stmt->bind_param('s', $username);
     $stmt->execute();
     $id = null; $foundUsername = null; $passwordHash = null; $fullName = null; $role = null; $status = null; $assignedTheaterId = 1;
-    if ($table === 'pos_users') $stmt->bind_result($id, $foundUsername, $passwordHash, $fullName, $role, $status, $assignedTheaterId);
-    else $stmt->bind_result($id, $foundUsername, $passwordHash, $fullName, $role, $status);
+    $stmt->bind_result($id, $foundUsername, $passwordHash, $fullName, $role, $status, $assignedTheaterId);
     $found = $stmt->fetch();
     $stmt->close();
     if (!$found) return null;
@@ -67,14 +65,6 @@ function findPosUser($db, $table, $username) {
     return array('id' => (int)$id, 'username' => $foundUsername, 'password_hash' => $passwordHash, 'full_name' => $fullName, 'role' => $role, 'status' => $status, 'theater_id' => $assignedTheaterId);
 }
 
-function ensurePosTheaterAssignment($db) {
-    $columns = $db->query("SHOW COLUMNS FROM pos_users LIKE 'theater_id'");
-    if ($columns && $columns->num_rows === 0) {
-        if (!$db->query('ALTER TABLE pos_users ADD theater_id BIGINT UNSIGNED NULL')) return false;
-        $db->query('UPDATE pos_users SET theater_id = 1 WHERE theater_id IS NULL');
-    }
-    return true;
-}
 
 function getPosTheater($db, $theaterId) {
     $stmt = $db->prepare('SELECT id, name, address, city FROM theaters WHERE id = ? LIMIT 1');
@@ -102,8 +92,21 @@ function requirePosUser() {
 }
 
 function ensurePosSalesTables($db) {
+    // Schema is deployed centrally; POS must never create a divergent local schema.
+    foreach (array('products', 'orders', 'order_items', 'payments') as $table) {
+        if (!$db->query("SELECT 1 FROM `{$table}` LIMIT 1")) return false;
+    }
+    return true;
+
     $queries = array(
-        "CREATE TABLE IF NOT EXISTS pos_orders (
+        "CREATE TABLE IF NOT EXISTS products (
+            id BIGINT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
+            name VARCHAR(150) NOT NULL, sku VARCHAR(50) NOT NULL UNIQUE,
+            category VARCHAR(80) NOT NULL DEFAULT 'Concession', price DECIMAL(12,2) NOT NULL DEFAULT 0,
+            stock_quantity INT UNSIGNED NOT NULL DEFAULT 0, status VARCHAR(20) NOT NULL DEFAULT 'active',
+            created_at TIMESTAMP NULL DEFAULT CURRENT_TIMESTAMP
+        ) ENGINE=InnoDB DEFAULT CHARSET=utf8",
+        "CREATE TABLE IF NOT EXISTS orders (
             id BIGINT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
             booking_id BIGINT UNSIGNED NULL,
             cashier_id INT UNSIGNED NOT NULL,
@@ -116,10 +119,10 @@ function ensurePosSalesTables($db) {
             change_amount DECIMAL(12,2) NOT NULL DEFAULT 0,
             status ENUM('PAID','CANCELLED') NOT NULL DEFAULT 'PAID',
             created_at TIMESTAMP NULL DEFAULT CURRENT_TIMESTAMP,
-            INDEX idx_pos_orders_created (created_at),
-            INDEX idx_pos_orders_cashier (cashier_id)
+            INDEX idx_orders_created (created_at),
+            INDEX idx_orders_cashier (cashier_id)
         ) ENGINE=InnoDB DEFAULT CHARSET=utf8",
-        "CREATE TABLE IF NOT EXISTS pos_order_items (
+        "CREATE TABLE IF NOT EXISTS order_items (
             id BIGINT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
             order_id BIGINT UNSIGNED NOT NULL,
             item_type ENUM('TICKET','COMBO') NOT NULL,
@@ -129,33 +132,18 @@ function ensurePosSalesTables($db) {
             unit_price DECIMAL(12,2) NOT NULL,
             seat_id BIGINT UNSIGNED NULL,
             created_at TIMESTAMP NULL DEFAULT CURRENT_TIMESTAMP,
-            FOREIGN KEY (order_id) REFERENCES pos_orders(id) ON DELETE CASCADE,
-            INDEX idx_pos_order_items_order (order_id)
+            FOREIGN KEY (order_id) REFERENCES orders(id) ON DELETE CASCADE,
+            INDEX idx_order_items_order (order_id)
         ) ENGINE=InnoDB DEFAULT CHARSET=utf8",
-        "CREATE TABLE IF NOT EXISTS pos_payments (
+        "CREATE TABLE IF NOT EXISTS payments (
             id BIGINT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
             order_id BIGINT UNSIGNED NOT NULL,
             method ENUM('CASH','CARD','TRANSFER') NOT NULL,
             amount DECIMAL(12,2) NOT NULL,
             reference_code VARCHAR(80) NULL,
             created_at TIMESTAMP NULL DEFAULT CURRENT_TIMESTAMP,
-            FOREIGN KEY (order_id) REFERENCES pos_orders(id) ON DELETE CASCADE
+            FOREIGN KEY (order_id) REFERENCES orders(id) ON DELETE CASCADE
         ) ENGINE=InnoDB DEFAULT CHARSET=utf8",
-        "CREATE TABLE IF NOT EXISTS sales_orders (
-            id BIGINT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
-            order_code VARCHAR(30) NOT NULL UNIQUE,
-            channel VARCHAR(10) NOT NULL,
-            booking_id BIGINT UNSIGNED NULL,
-            customer_id BIGINT UNSIGNED NULL,
-            cashier_id INT UNSIGNED NULL,
-            total_amount DECIMAL(12,2) NOT NULL DEFAULT 0,
-            payment_method VARCHAR(30) NOT NULL DEFAULT 'UNKNOWN',
-            status VARCHAR(20) NOT NULL DEFAULT 'PAID',
-            created_at TIMESTAMP NULL DEFAULT CURRENT_TIMESTAMP,
-            INDEX idx_sales_orders_channel (channel),
-            INDEX idx_sales_orders_created (created_at),
-            INDEX idx_sales_orders_customer (customer_id)
-        ) ENGINE=InnoDB DEFAULT CHARSET=utf8"
     );
     foreach ($queries as $query) {
         if (!$db->query($query)) return false;
@@ -163,12 +151,14 @@ function ensurePosSalesTables($db) {
     return true;
 }
 
-function posComboCatalog() {
-    return array(
-        'popcorn_cola' => array('name' => 'Combo Bắp + Nước', 'price' => 79000),
-        'cheese_pair' => array('name' => 'Combo Đôi', 'price' => 129000),
-        'family_feast' => array('name' => 'Combo Gia đình', 'price' => 189000)
-    );
+function posComboCatalog($db) {
+    $catalog = array();
+    $result = $db->query("SELECT sku, name, price FROM products WHERE status='active' AND stock_quantity > 0 ORDER BY name");
+    if (!$result) return $catalog;
+    while ($row = $result->fetch_assoc()) {
+        $catalog[$row['sku']] = array('name' => $row['name'], 'price' => (float)$row['price']);
+    }
+    return $catalog;
 }
 
 function posHasBookingShowtimeColumn($db) {
@@ -207,12 +197,7 @@ if ($action === 'login' && $requestMethod === 'POST') {
         jsonResponse(array('success' => false, 'message' => 'Vui lòng nhập đầy đủ tên đăng nhập và mật khẩu.'), 400);
     }
 
-    $user = findPosUser($db, 'pos_users', $username);
-
-    // Nếu không tìm thấy trong pos_users, tìm tiếp trong tms_users
-    if (!$user) {
-        $user = findPosUser($db, 'tms_users', $username);
-    }
+    $user = findPosUser($db, $username);
 
     $matched = false;
     if ($user) {
@@ -356,7 +341,7 @@ if ($action === 'sales_catalog' && $requestMethod === 'GET') {
     }
 
     $combos = array();
-    foreach (posComboCatalog() as $code => $combo) $combos[] = array('code' => $code, 'name' => $combo['name'], 'price' => $combo['price']);
+    foreach (posComboCatalog($db) as $code => $combo) $combos[] = array('code' => $code, 'name' => $combo['name'], 'price' => $combo['price']);
     $theater = getPosTheater($db, $theaterId);
     jsonResponse(array('success' => true, 'data' => array('theater' => $theater, 'dates' => $dates, 'selected_date' => $requestedDate, 'showtimes' => $showtimes, 'combos' => $combos)));
 }
@@ -402,7 +387,7 @@ if ($action === 'sales_order' && $requestMethod === 'POST') {
     if ($showtimeId < 1 || count($seatIds) < 1 || count($seatIds) > 12) jsonResponse(array('success' => false, 'message' => 'Vui lòng chọn suất chiếu và từ 1 đến 12 ghế.'), 422);
     if (!in_array($paymentMethod, array('CASH', 'CARD', 'TRANSFER'), true)) jsonResponse(array('success' => false, 'message' => 'Phương thức thanh toán không hợp lệ.'), 422);
 
-    $catalog = posComboCatalog(); $combos = array();
+    $catalog = posComboCatalog($db); $combos = array();
     foreach ($combosInput as $item) {
         $code = is_array($item) && isset($item['code']) ? (string)$item['code'] : '';
         $quantity = is_array($item) && isset($item['quantity']) ? (int)$item['quantity'] : 0;
@@ -452,15 +437,10 @@ if ($action === 'sales_order' && $requestMethod === 'POST') {
         foreach ($seatIds as $seatId) { $price = 0 + $ticketPrice; if ($seatInfo[$seatId]['type'] === 'VIP') $price += 20000; else if ($seatInfo[$seatId]['type'] === 'COUPLE') $price *= 2; if ($hasShowtimeColumn) { $seatStmt->bind_param('iiid', $bookingId, $showtimeId, $seatId, $price); } else { $seatStmt->bind_param('iid', $bookingId, $seatId, $price); } if (!$seatStmt->execute()) throw new Exception('Không thể giữ ghế.'); }
         $seatStmt->close();
 
-        $cashier = posUser(); $cashierId = (int)$cashier['id']; $stmt = $db->prepare('INSERT INTO pos_orders (booking_id, cashier_id, order_code, subtotal, discount_amount, total_amount, payment_method, amount_received, change_amount, status) VALUES (?, ?, ?, ?, 0, ?, ?, ?, ?, \'PAID\')'); $stmt->bind_param('iisddsdd', $bookingId, $cashierId, $code, $total, $total, $paymentMethod, $amountReceived, $change); if (!$stmt->execute()) throw new Exception('Không thể lưu đơn hàng.'); $orderId = (int)$stmt->insert_id; $stmt->close();
-        $itemStmt = $db->prepare('INSERT INTO pos_order_items (order_id, item_type, item_code, item_name, quantity, unit_price, seat_id) VALUES (?, ?, ?, ?, ?, ?, ?)');
+        $cashier = posUser(); $cashierId = (int)$cashier['id']; $stmt = $db->prepare("INSERT INTO orders (booking_id, customer_id, cashier_id, order_code, channel, subtotal, discount_amount, total_amount, payment_method, amount_received, change_amount, status) VALUES (?, ?, ?, ?, 'POS', ?, 0, ?, ?, ?, ?, 'PAID')"); $stmt->bind_param('iiisddsdd', $bookingId, $customerId, $cashierId, $code, $total, $total, $paymentMethod, $amountReceived, $change); if (!$stmt->execute()) throw new Exception('Không thể lưu đơn hàng.'); $orderId = (int)$stmt->insert_id; $stmt->close();
+        $itemStmt = $db->prepare('INSERT INTO order_items (order_id, item_type, item_code, item_name, quantity, unit_price, seat_id) VALUES (?, ?, ?, ?, ?, ?, ?)');
         foreach ($items as $item) { $itemStmt->bind_param('isssidi', $orderId, $item['type'], $item['code'], $item['name'], $item['quantity'], $item['price'], $item['seat_id']); if (!$itemStmt->execute()) throw new Exception('Không thể lưu chi tiết đơn hàng.'); }
-        $itemStmt->close(); $reference = $code; $stmt = $db->prepare('INSERT INTO pos_payments (order_id, method, amount, reference_code) VALUES (?, ?, ?, ?)'); $stmt->bind_param('isds', $orderId, $paymentMethod, $total, $reference); if (!$stmt->execute()) throw new Exception('Không thể lưu thanh toán.'); $stmt->close();
-        $stmt = $db->prepare("INSERT INTO sales_orders (order_code, channel, booking_id, customer_id, cashier_id, total_amount, payment_method, status) VALUES (?, 'POS', ?, ?, ?, ?, ?, 'PAID')");
-        if (!$stmt) throw new Exception('Không thể lưu đơn hàng tổng.');
-        $stmt->bind_param('siiids', $code, $bookingId, $customerId, $cashierId, $total, $paymentMethod);
-        if (!$stmt->execute()) throw new Exception('Không thể lưu đơn hàng tổng.');
-        $stmt->close();
+        $itemStmt->close(); $reference = $code; $stmt = $db->prepare('INSERT INTO payments (order_id, method, amount, reference_code) VALUES (?, ?, ?, ?)'); $stmt->bind_param('isds', $orderId, $paymentMethod, $total, $reference); if (!$stmt->execute()) throw new Exception('Không thể lưu thanh toán.'); $stmt->close();
         $db->commit(); $db->autocommit(true);
         jsonResponse(array('success' => true, 'data' => array('order_id' => $orderId, 'booking_id' => $bookingId, 'code' => $code, 'total' => $total, 'amount_received' => $amountReceived, 'change' => $change, 'payment_method' => $paymentMethod, 'items' => $items)), 201);
     } catch (Exception $exception) { $db->rollback(); $db->autocommit(true); $errorMessage = $exception->getMessage(); if (!$errorMessage) $errorMessage = 'Không thể hoàn tất giao dịch.'; jsonResponse(array('success' => false, 'message' => $errorMessage), 409); }

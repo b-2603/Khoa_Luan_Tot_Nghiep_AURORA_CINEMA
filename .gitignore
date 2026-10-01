@@ -17,3 +17,4 @@ Thumbs.db
 
 # Local MySQL data folder
 data/
+aurora_db/

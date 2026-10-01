@@ -31,12 +31,6 @@ type Showtime = {
 type PayMethod = 'cash' | 'qr_vnpay' | 'qr_momo' | 'qr_zalopay' | 'card';
 type Combo = { id: string; name: string; price: number; description: string };
 
-const COMBOS: Combo[] = [
-  { id: 'popcorn_cola', name: 'Combo Bắp nước', price: 79000, description: '1 bắp ngọt lớn + 1 Coca-Cola 22oz' },
-  { id: 'cheese_pair', name: 'Combo Đôi', price: 129000, description: '1 bắp phô mai lớn + 2 nước 22oz' },
-  { id: 'family_feast', name: 'Combo Gia đình', price: 189000, description: '1 bắp caramel lớn + 3 nước 22oz + 2 xúc xích' },
-];
-
 type Props = {
   movie: any;
   showtime?: any;      // nếu truyền vào sẵn → bỏ qua bước 1
@@ -485,6 +479,7 @@ export default function BookingPage({ movie, showtime: initShowtime, theater: in
   const [voucherError, setVoucherError] = useState('');
   const [voucherLoading, setVoucherLoading] = useState(false);
   const [comboQuantities, setComboQuantities] = useState<Record<string, number>>({});
+  const [combos, setCombos] = useState<Combo[]>([]);
   const [payMethod, setPayMethod] = useState<PayMethod>('cash');
   const [bookingResult, setBookingResult] = useState<any>(null);
   const [submitting, setSubmitting] = useState(false);
@@ -497,10 +492,14 @@ export default function BookingPage({ movie, showtime: initShowtime, theater: in
   const selectedSeats = seats.filter(s => selectedSeatIds.includes(s.id));
   const ticketPrice = Number(selectedShowtime?.ticket_price || 0);
   const subtotal = selectedSeats.reduce((s, seat) => s + getSeatPrice(seat, ticketPrice), 0);
-  const comboItems = COMBOS.flatMap(combo => comboQuantities[combo.id] ? [{ combo, quantity: comboQuantities[combo.id] }] : []);
+  const comboItems = combos.flatMap(combo => comboQuantities[combo.id] ? [{ combo, quantity: comboQuantities[combo.id] }] : []);
   const comboTotal = comboItems.reduce((sum, item) => sum + item.combo.price * item.quantity, 0);
   const discount = voucherInfo?.discount || 0;
   const totalFinal = Math.max(0, subtotal + comboTotal - discount);
+
+  useEffect(() => {
+    fetch(`${API}?action=concessions`).then(r => r.json()).then(res => setCombos(Array.isArray(res.concessions) ? res.concessions : [])).catch(() => setCombos([]));
+  }, []);
 
   /* ── Load suất chiếu theo phim ── */
   useEffect(() => {
@@ -794,6 +793,7 @@ export default function BookingPage({ movie, showtime: initShowtime, theater: in
               lang={lang} movie={movie} showtime={selectedShowtime!} theater={selectedTheater}
               selectedSeats={selectedSeats} subtotal={subtotal} discount={discount} totalFinal={totalFinal}
               comboItems={comboItems} comboTotal={comboTotal} comboQuantities={comboQuantities}
+              combos={combos}
               onChangeCombo={(id: string, delta: number) => setComboQuantities(current => ({ ...current, [id]: Math.max(0, Math.min(10, (current[id] || 0) + delta)) }))}
               voucherCode={voucherCode} setVoucherCode={setVoucherCode}
               voucherInfo={voucherInfo} voucherError={voucherError} voucherLoading={voucherLoading}
@@ -1176,7 +1176,7 @@ function SeatStep({ lang, movie, showtime, theater, seats, seatsLoading, seatRow
 /* ═══════════════════════════════ STEP 3: THANH TOÁN ═══════════════════════════════ */
 function PaymentStep({
   lang, movie, showtime, theater, selectedSeats, subtotal, discount, totalFinal,
-  comboItems, comboTotal, comboQuantities, onChangeCombo,
+  comboItems, comboTotal, comboQuantities, combos, onChangeCombo,
   voucherCode, setVoucherCode, voucherInfo, voucherError, voucherLoading,
   onApplyVoucher, onRemoveVoucher, payMethod, setPayMethod, user, error, onBack, VIP_SURCHARGE
 }: any) {
@@ -1359,7 +1359,7 @@ function PaymentStep({
           </p>
 
           <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
-            {COMBOS.map(combo => {
+            {combos.map((combo: Combo) => {
               const quantity = comboQuantities[combo.id] || 0;
               const hasQty = quantity > 0;
               return (
