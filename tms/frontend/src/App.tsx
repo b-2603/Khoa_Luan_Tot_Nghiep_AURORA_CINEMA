@@ -125,6 +125,22 @@ interface MovieImportRow extends Omit<MovieForm, 'id'> {
   fieldHeaders: Record<string, string>;
 }
 interface MovieImportError { row: number; field?: string; message: string; }
+
+function getMovieImportErrorHint(error: MovieImportError) {
+  const hints: Record<string, string> = {
+    movie_code: 'Nhập mã phim riêng biệt, ví dụ: AUR-2026-001. Mã này không được trùng với phim đã có hoặc dòng khác trong file.',
+    title: 'Nhập tên phim đầy đủ. Tên phim không được để trống hoặc trùng với phim đã tồn tại trong kho.',
+    duration_minutes: 'Nhập thời lượng bằng số phút, từ 1 đến 600. Ví dụ: 128.',
+    production_year: 'Nhập năm sản xuất gồm 4 chữ số, trong khoảng 1888 đến 2100. Ví dụ: 2026.',
+    release_date: 'Nhập ngày theo định dạng YYYY-MM-DD. Ví dụ: 2026-10-02.',
+    expected_end_date: 'Nhập ngày theo định dạng YYYY-MM-DD và không được sớm hơn ngày khởi chiếu.',
+    status: 'Chỉ dùng một trong các trạng thái: COMING_SOON, NOW_SHOWING, SPECIAL_SHOWING hoặc ENDED.',
+    poster_url: 'Nhập đường dẫn ảnh poster hợp lệ, bắt đầu bằng http:// hoặc https://.',
+    banner_url: 'Nhập đường dẫn ảnh banner hợp lệ, bắt đầu bằng http:// hoặc https://.',
+    trailer_url: 'Nhập đường dẫn trailer hợp lệ, bắt đầu bằng http:// hoặc https://.'
+  };
+  return hints[error.field || ''] || 'Kiểm tra lại giá trị của trường này theo biểu mẫu Excel và sửa đúng định dạng trước khi xác nhận.';
+}
 interface MovieForm {
   id: number;
   movie_code: string;
@@ -158,6 +174,23 @@ const MOVIE_COUNTRIES = ['Việt Nam', 'Hoa Kỳ', 'Hàn Quốc', 'Nhật Bản'
 const MOVIE_LANGUAGES = ['Tiếng Anh', 'Tiếng Việt', 'Tiếng Nhật', 'Tiếng Hàn', 'Tiếng Trung', 'Tiếng Thái', 'Tiếng Pháp', 'Tiếng Tây Ban Nha', 'Tiếng Nga'];
 const MOVIE_LOCALIZATION_OPTIONS = ['Phụ đề Việt / Lồng tiếng Việt', 'Phụ đề Việt / Lồng tiếng Anh', 'Phụ đề Việt', 'Lồng tiếng Việt', 'Phụ đề Anh / Lồng tiếng Việt', 'Phụ đề Việt / Lồng tiếng Hàn'];
 const MOVIE_FORMAT_OPTIONS = ['2D Digital', '3D Digital', 'IMAX 2D', 'IMAX 3D', '4DX', 'Dolby Atmos', 'VIP', 'ScreenX'];
+
+function withCurrentOption(options: string[], value: string) {
+  return value && !options.includes(value) ? [value, ...options] : options;
+}
+
+function normalizeAgeRating(value: unknown) {
+  const text = String(value || '').trim().toUpperCase();
+  const matched = text.match(/T(?:13|16|18)/);
+  if (matched) return matched[0];
+  if (text.startsWith('K')) return 'K';
+  if (text.startsWith('P')) return 'P';
+  return text || 'P';
+}
+
+function formatFileSize(bytes: number) {
+  return `${(bytes / (1024 * 1024)).toFixed(bytes >= 10 * 1024 * 1024 ? 0 : 1)} MB`;
+}
 
 const EMPTY_MOVIE_FORM: MovieForm = {
   id: 0,
@@ -279,6 +312,7 @@ export default function App() {
   const [errorMsg, setErrorMsg] = useState('');
   const [isLoading, setIsLoading] = useState(false);
   const [currentUser, setCurrentUser] = useState<TMSUser | null>(null);
+  const [isRestoringSession, setIsRestoringSession] = useState(true);
 
   // NAVIGATION
   const [active, setActive] = useState('dashboard');
@@ -372,8 +406,12 @@ export default function App() {
 
   // MOVIE MODAL
   const [showMovieModal, setShowMovieModal] = useState(false);
+  const [showGenrePicker, setShowGenrePicker] = useState(false);
+  const [showFormatPicker, setShowFormatPicker] = useState(false);
   const [movieForm, setMovieForm] = useState<MovieForm>({ ...EMPTY_MOVIE_FORM });
   const [movieFiles, setMovieFiles] = useState<{ poster: File | null; banner: File | null; trailer: File | null }>({ poster: null, banner: null, trailer: null });
+  const [movieMediaErrors, setMovieMediaErrors] = useState<Partial<Record<'poster' | 'banner' | 'trailer', string>>>({});
+  const [moviePreviewUrls, setMoviePreviewUrls] = useState<{ poster: string; banner: string; trailer: string }>({ poster: '', banner: '', trailer: '' });
   const movieImportRef = useRef<HTMLInputElement>(null);
   const [showMovieImportModal, setShowMovieImportModal] = useState(false);
   const [movieImportFileName, setMovieImportFileName] = useState('');
@@ -381,6 +419,7 @@ export default function App() {
   const [movieImportColumns, setMovieImportColumns] = useState<string[]>([]);
   const [movieImportErrors, setMovieImportErrors] = useState<MovieImportError[]>([]);
   const [movieImportStatus, setMovieImportStatus] = useState<'preview' | 'validated' | 'errors' | 'importing'>('preview');
+  const [expandedImportFields, setExpandedImportFields] = useState<Record<string, boolean>>({});
   const [movieFormError, setMovieFormError] = useState('');
   const [schedulesList, setSchedulesList] = useState<ScheduleItem[]>([]);
   const [showScheduleModal, setShowScheduleModal] = useState(false);
@@ -403,6 +442,36 @@ export default function App() {
     const nativeAlert = window.alert;
     window.alert = (message?: any) => showSystemNotice(String(message || ''));
     return () => { window.alert = nativeAlert; };
+  }, []);
+
+  // Tạo ảnh/video xem trước cục bộ ngay khi người dùng chọn media, trước khi lưu lên máy chủ.
+  useEffect(() => {
+    const poster = movieFiles.poster ? URL.createObjectURL(movieFiles.poster) : '';
+    const banner = movieFiles.banner ? URL.createObjectURL(movieFiles.banner) : '';
+    const trailer = movieFiles.trailer ? URL.createObjectURL(movieFiles.trailer) : '';
+    setMoviePreviewUrls({ poster, banner, trailer });
+    return () => { [poster, banner, trailer].filter(Boolean).forEach(url => URL.revokeObjectURL(url)); };
+  }, [movieFiles.poster, movieFiles.banner, movieFiles.trailer]);
+
+  // Khôi phục phiên PHP khi người dùng tải lại trang. Phiên chỉ bị xóa khi
+  // người dùng chủ động chọn Đăng xuất hoặc khi PHP hết hạn phiên.
+  useEffect(() => {
+    let isMounted = true;
+    fetch(`${API_BASE}?action=me`, { credentials: 'include' })
+      .then(async response => {
+        const result = await response.json();
+        if (!response.ok || !result.success || !result.data) throw new Error('Không có phiên đăng nhập.');
+        return result.data;
+      })
+      .then(user => {
+        if (!isMounted) return;
+        const role: TMSRole = user.role === 'director' || user.role === 'super_admin' ? 'super_admin' : user.role === 'supervisor' || user.role === 'technician' ? 'supervisor' : user.role === 'accounting' ? 'accounting' : 'cinema_admin';
+        setCurrentUser({ id: user.id, username: user.username, full_name: user.full_name, role, phone: user.phone, status: user.status });
+        setIsLoggedIn(true);
+      })
+      .catch(() => { /* Không có phiên hợp lệ: hiển thị trang đăng nhập. */ })
+      .finally(() => { if (isMounted) setIsRestoringSession(false); });
+    return () => { isMounted = false; };
   }, []);
 
   useEffect(() => {
@@ -649,22 +718,54 @@ export default function App() {
   };
 
   const handleMovieMediaSelection = (key: 'poster' | 'banner' | 'trailer', file: File | null) => {
+    setMovieMediaErrors(previous => ({ ...previous, [key]: '' }));
     if (!file) {
       setMovieFiles(prev => ({ ...prev, [key]: null }));
       setMovieFormError('');
       return;
     }
 
-    const maxSize = key === 'trailer' ? 100 * 1024 * 1024 : 8 * 1024 * 1024;
+    const maxSize = key === 'trailer' ? 250 * 1024 * 1024 : 15 * 1024 * 1024;
     if (file.size > maxSize) {
-      const sizeLabel = key === 'trailer' ? '100MB' : '8MB';
-      setMovieFormError(`Tệp ${key === 'poster' ? 'poster' : key === 'banner' ? 'banner' : 'trailer'} vượt quá kích thước cho phép (${sizeLabel}). Hãy chọn file nhỏ hơn ${sizeLabel}.`);
+      const sizeLabel = key === 'trailer' ? '250MB' : '15MB';
+      setMovieMediaErrors(previous => ({ ...previous, [key]: `${file.name} (${formatFileSize(file.size)}) vượt giới hạn ${sizeLabel}.` }));
       setMovieFiles(prev => ({ ...prev, [key]: null }));
       return;
     }
 
     setMovieFiles(prev => ({ ...prev, [key]: file }));
     setMovieFormError('');
+  };
+
+  const uploadMovieMediaInChunks = async (key: 'poster' | 'banner' | 'trailer', file: File) => {
+    // Must stay below the server's current 2 MB PHP limit, including multipart overhead.
+    const chunkSize = 1024 * 1024;
+    const totalChunks = Math.ceil(file.size / chunkSize);
+    const uploadId = typeof crypto.randomUUID === 'function'
+      ? crypto.randomUUID().replace(/-/g, '')
+      : `${Date.now()}${Math.random().toString(36).slice(2)}`;
+    let result: { success?: boolean; data?: { url?: string }; message?: string } | null = null;
+
+    for (let index = 0; index < totalChunks; index += 1) {
+      const formData = new FormData();
+      formData.append('chunk', file.slice(index * chunkSize, Math.min(file.size, (index + 1) * chunkSize)), file.name);
+      formData.append('kind', key);
+      formData.append('upload_id', uploadId);
+      formData.append('chunk_index', String(index));
+      formData.append('chunk_total', String(totalChunks));
+      formData.append('file_size', String(file.size));
+      const response = await fetch(`${API_BASE}?action=movie-media-chunk`, {
+        method: 'POST',
+        credentials: 'include',
+        headers: { 'X-TMS-User': currentUser?.username || 'admin_tong' },
+        body: formData
+      });
+      result = await response.json();
+      if (!response.ok || !result?.success) throw new Error(result?.message || 'Không thể tải tệp lên.');
+    }
+
+    if (!result?.data?.url) throw new Error('Máy chủ chưa trả về địa chỉ tệp đã tải lên.');
+    return result.data.url;
   };
 
   const handleMovieImport = async (file?: File) => {
@@ -675,7 +776,7 @@ export default function App() {
       const columns = Array.from(new Set(rows.flatMap(row => Object.keys(row))));
       const cell = (row: Record<string, unknown>, keys: string[]) => { for (const key of keys) if (row[key] !== undefined && String(row[key]).trim() !== '') return row[key]; return ''; };
       const headerFor = (row: Record<string, unknown>, keys: string[]) => keys.find(key => row[key] !== undefined) || keys[0];
-      const excelDate = (value: unknown) => { if (typeof value === 'number' && value > 20000) return XLSX.SSF.format('yyyy-mm-dd', value); const text = String(value || '').trim(); return /^\d{4}-\d{2}-\d{2}$/.test(text) ? text : (text || '1970-01-01'); };
+      const excelDate = (value: unknown) => { if (typeof value === 'number' && value > 20000) return XLSX.SSF.format('yyyy-mm-dd', value); return String(value || '').trim(); };
       const fields: Record<string, string[]> = {
         movie_code: ['movie_code', 'Mã phim', 'Mã Phim'], title: ['title', 'Tên phim', 'Tên Phim', 'Tên phim*'], original_title: ['original_title', 'Tên phim gốc'],
         genre: ['genre', 'Thể loại'], duration_minutes: ['duration_minutes', 'Thời lượng', 'Thời lượng (phút)', 'Thời lượng phim', 'Duration'], age_rating: ['age_rating', 'Độ tuổi', 'Phân loại độ tuổi'],
@@ -691,7 +792,7 @@ export default function App() {
         const fieldHeaders: Record<string, string> = {};
         Object.entries(fields).forEach(([field, aliases]) => {
           const value = cell(row, aliases);
-          normalized[field] = dateFields.includes(field) ? excelDate(value) : String(value || '').trim();
+          normalized[field] = dateFields.includes(field) ? excelDate(value) : field === 'age_rating' ? normalizeAgeRating(value) : String(value || '').trim();
           fieldHeaders[field] = headerFor(row, aliases);
         });
         normalized.duration_minutes = Number(normalized.duration_minutes) || 0;
@@ -703,7 +804,7 @@ export default function App() {
       if (!movies.length) throw new Error('File không có dòng dữ liệu phim.');
       const previewErrors: MovieImportError[] = [];
       movies.forEach((movie, index) => { if (!movie.title) previewErrors.push({ row: index + 2, field: 'title', message: 'Thiếu giá trị Tên phim.' }); if (!movie.duration_minutes) previewErrors.push({ row: index + 2, field: 'duration_minutes', message: 'Thời lượng phải là số phút lớn hơn 0.' }); });
-      setMovieImportFileName(file.name); setMovieImportColumns(columns); setMovieImportRows(movies); setMovieImportErrors(previewErrors); setMovieImportStatus('preview'); setShowMovieImportModal(true);
+      setMovieImportFileName(file.name); setMovieImportColumns(columns); setMovieImportRows(movies); setMovieImportErrors(previewErrors); setExpandedImportFields({}); setMovieImportStatus('preview'); setShowMovieImportModal(true);
     } catch (error) { alert(error instanceof Error ? error.message : 'Không thể đọc file Excel.'); }
     finally { if (movieImportRef.current) movieImportRef.current.value = ''; }
   };
@@ -730,6 +831,17 @@ export default function App() {
   const handleSaveMovie = async (e: FormEvent) => {
     e.preventDefault();
     setMovieFormError('');
+    setMovieMediaErrors({});
+
+    if (!movieForm.genre.trim()) {
+      setMovieFormError('Vui lòng chọn ít nhất một thể loại.');
+      return;
+    }
+
+    if (!movieForm.format.trim()) {
+      setMovieFormError('Vui lòng chọn ít nhất một định dạng chiếu.');
+      return;
+    }
 
     if (!movieForm.release_date) {
       setMovieFormError('Ngày khởi chiếu không được để trống.');
@@ -751,17 +863,14 @@ export default function App() {
       for (const { key, field } of uploadFields) {
         const file = movieFiles[key];
         if (!file) continue;
-        const formData = new FormData();
-        formData.append('media', file);
-        const uploadResponse = await fetch(`${API_BASE}?action=movie-media&kind=${key}`, {
-          method: 'POST',
-          credentials: 'include',
-          headers: { 'X-TMS-User': currentUser?.username || 'admin_tong' },
-          body: formData
-        });
-        const uploadData = await uploadResponse.json();
-        if (!uploadResponse.ok || !uploadData.success) throw new Error(uploadData.message || `Không thể tải ${key} lên.`);
-        moviePayload[field] = uploadData.data.url;
+        try {
+          moviePayload[field] = await uploadMovieMediaInChunks(key, file);
+        } catch (error) {
+          const label = key === 'poster' ? 'Poster' : key === 'banner' ? 'Banner' : 'Trailer';
+          const message = error instanceof Error ? error.message : 'Không thể tải tệp lên.';
+          setMovieMediaErrors(previous => ({ ...previous, [key]: `${label} “${file.name}” (${formatFileSize(file.size)}): ${message}` }));
+          throw error;
+        }
       }
 
       const url = movieForm.id > 0 ? `${API_BASE}?action=movies&id=${movieForm.id}` : `${API_BASE}?action=movies`;
@@ -891,7 +1000,7 @@ export default function App() {
   };
 
   const handleLogout = async () => {
-    try { await fetch(`${API_BASE}?action=logout`); } catch { /* ignore */ }
+    try { await fetch(`${API_BASE}?action=logout`, { method: 'POST', credentials: 'include' }); } catch { /* ignore */ }
     setIsLoggedIn(false); setPassword(''); setCurrentUser(null); setUserDropdownOpen(false);
   };
 
@@ -956,6 +1065,15 @@ export default function App() {
   // DERIVED STATE
   // ============================================================
   const role = currentUser?.role;
+  // Bổ sung các cột đang thiếu vào bản xem trước khi backend phát hiện lỗi,
+  // để người dùng luôn thấy chính xác ô nào cần sửa dù file Excel không có cột đó.
+  const movieImportPreviewColumns = Array.from(new Set([
+    ...movieImportColumns,
+    ...movieImportErrors
+      .filter(error => Boolean(error.field) && error.row > 0)
+      .map(error => movieImportRows[error.row - 2]?.fieldHeaders[error.field || ''] || error.field || '')
+      .filter(Boolean)
+  ]));
   const rc = role ? ROLE_CONFIGS[role] : ROLE_CONFIGS.super_admin;
   const navItems = role ? getRoleNavItems(role) : [];
   const pendingRefunds = refundsList.filter(r => r.status === 'pending').length;
@@ -965,6 +1083,10 @@ export default function App() {
   // ============================================================
   // LOGIN PAGE
   // ============================================================
+  if (isRestoringSession) {
+    return <div className="tms-page-container" style={{ display: 'grid', placeItems: 'center', minHeight: '100vh', color: '#475569', fontSize: '0.9rem' }}>Đang khôi phục phiên đăng nhập…</div>;
+  }
+
   if (!isLoggedIn) {
     return (
       <div className="tms-page-container">
@@ -1903,6 +2025,7 @@ export default function App() {
                 onClick={() => {
                   setMovieForm({ ...EMPTY_MOVIE_FORM });
                   setMovieFiles({ poster: null, banner: null, trailer: null });
+                  setMovieMediaErrors({});
                   setShowMovieModal(true);
                 }}
               >
@@ -1932,7 +2055,7 @@ export default function App() {
                   <td>{m.duration_minutes} phút</td>
                   <td>
                     <span style={{ background: '#fee2e2', color: '#991b1b', padding: '2px 6px', borderRadius: 4, fontWeight: 700, fontSize: '0.74rem' }}>
-                      {m.age_rating}
+                      {normalizeAgeRating(m.age_rating)}
                     </span>
                   </td>
                   <td>{m.format}</td>
@@ -1958,11 +2081,13 @@ export default function App() {
                             ...EMPTY_MOVIE_FORM,
                             ...m,
                             id: Number(m.id),
+                            age_rating: normalizeAgeRating(m.age_rating),
                             production_year: m.production_year ? Number(m.production_year) : '',
                             expected_end_date: m.expected_end_date || '',
                             status: String(m.status || 'coming_soon').toLowerCase()
                           });
                           setMovieFiles({ poster: null, banner: null, trailer: null });
+                          setMovieMediaErrors({});
                           setShowMovieModal(true);
                         }}
                       >
@@ -2702,7 +2827,7 @@ export default function App() {
                     <div><small>Tên phim</small><strong>{moviesList.find(m => m.id === planForm.movie_id)?.title || planForm.movie_title}</strong></div>
                     <div><small>Thể loại</small><strong>{moviesList.find(m => m.id === planForm.movie_id)?.genre || 'Chưa cập nhật'}</strong></div>
                     <div><small>Thời lượng</small><strong>{moviesList.find(m => m.id === planForm.movie_id)?.duration_minutes || '-'} phút</strong></div>
-                    <div><small>Độ tuổi</small><strong>{moviesList.find(m => m.id === planForm.movie_id)?.age_rating || '-'}</strong></div>
+                    <div><small>Độ tuổi</small><strong>{normalizeAgeRating(moviesList.find(m => m.id === planForm.movie_id)?.age_rating)}</strong></div>
                     <div><small>Định dạng / Ngôn ngữ</small><strong>{planForm.format} / {moviesList.find(m => m.id === planForm.movie_id)?.original_language || '-'}</strong></div>
                     <div><small>Quốc gia sản xuất</small><strong>{moviesList.find(m => m.id === planForm.movie_id)?.production_country || 'Chưa cập nhật'}</strong></div>
                   </div>
@@ -2965,30 +3090,24 @@ export default function App() {
 
       {showMovieImportModal && (
         <div className="tms-modal-overlay" onClick={() => movieImportStatus !== 'importing' && setShowMovieImportModal(false)}>
-          <div className="tms-modal-box" style={{ maxWidth: 1050 }} onClick={e => e.stopPropagation()}>
-            <div className="tms-modal-header"><div className="tms-modal-title">Nhập danh sách phim từ Excel</div><button type="button" className="temp-btn" onClick={() => setShowMovieImportModal(false)}><X size={16}/></button></div>
-            <div className="tms-modal-body">
-              <p style={{ marginTop: 0, color: '#475569' }}><strong>Tệp đã chọn:</strong> {movieImportFileName} — {movieImportRows.length} dòng phim. Hãy kiểm tra danh sách trước khi xác nhận.</p>
-              {movieImportStatus === 'preview' && <div className="tms-alert-error" style={{ background:'#eff6ff', color:'#1d4ed8', borderColor:'#bfdbfe' }}>Bước 1/3: File mới chỉ được xem trước, chưa có dữ liệu nào được tạo trong kho phim.</div>}
-              {movieImportStatus === 'validated' && <div className="tms-alert-error" style={{ background:'#ecfdf5', color:'#047857', borderColor:'#a7f3d0' }}>Bước 2/3: Kiểm tra hoàn tất. File hợp lệ, bạn có thể xác nhận tạo {movieImportRows.length} phim.</div>}
-              {movieImportStatus === 'errors' && <div className="tms-alert-error">Bước 2/3: Phát hiện {movieImportErrors.length} lỗi. Chưa tạo phim nào. Hãy sửa file Excel và chọn lại tệp.</div>}
-              <div style={{ maxHeight: 300, overflow: 'auto', border: '1px solid #e2e8f0', borderRadius: 8, marginTop: 14 }}>
-                <table className="tms-data-table" style={{ minWidth: Math.max(900, movieImportColumns.length * 150) }}><thead><tr><th>Dòng</th>{movieImportColumns.map(column => <th key={column}>{column}</th>)}<th>Lỗi tại dòng</th></tr></thead><tbody>
-                  {movieImportRows.map((movie, index) => {
-                    const rowErrors = movieImportErrors.filter(error => error.row === index + 2);
-                    const cellErrors = (column: string) => rowErrors.filter(error => error.field && movie.fieldHeaders[error.field] === column);
-                    return <tr key={`${movie.title}-${index}`} style={{ background: rowErrors.length ? '#fffafa' : undefined }}>
-                      <td style={{ fontWeight: 700 }}>{index + 2}</td>
-                      {movieImportColumns.map(column => {
-                        const errors = cellErrors(column); const value = movie.raw[column];
-                        return <td key={column} style={{ minWidth: 130, maxWidth: 260, whiteSpace: 'pre-wrap', color: errors.length ? '#b91c1c' : undefined, background: errors.length ? '#fee2e2' : undefined, verticalAlign: 'top' }}>{value || <em style={{ color: '#dc2626' }}>Trống</em>}{errors.map((error, errorIndex) => <small key={errorIndex} style={{ display:'block', marginTop:4, color:'#b91c1c', fontWeight:700 }}>⚠ {error.message}</small>)}</td>;
-                      })}
-                      <td style={{ minWidth: 220, color: '#b91c1c', verticalAlign: 'top' }}>{rowErrors.length ? rowErrors.map((error, errorIndex) => <div key={errorIndex} style={{ marginBottom: 4 }}>{error.field && movie.fieldHeaders[error.field] ? `${movie.fieldHeaders[error.field]}: ` : ''}{error.message}</div>) : <span style={{ color: '#047857', fontWeight: 700 }}>Không có lỗi</span>}</td>
-                    </tr>;
-                  })}
-                </tbody></table>
+          <div className="tms-modal-box tms-import-modal" onClick={e => e.stopPropagation()}>
+            <div className="tms-modal-header tms-import-header"><div><div className="tms-modal-title">Nhập danh sách phim</div><p>Kiểm tra dữ liệu Excel trước khi thêm vào kho phim.</p></div><button type="button" className="temp-btn" aria-label="Đóng" onClick={() => setShowMovieImportModal(false)}><X size={17}/></button></div>
+            <div className="tms-modal-body tms-import-body">
+              <div className={`tms-import-status tms-import-status-${movieImportStatus}`}>
+                <span className="tms-import-status-step">{movieImportStatus === 'validated' ? 'Bước 2/3' : movieImportStatus === 'errors' ? 'Cần xử lý' : movieImportStatus === 'importing' ? 'Đang xử lý' : 'Bước 1/3'}</span>
+                <span>{movieImportStatus === 'preview' && 'Đây là bản xem trước; chưa có phim nào được tạo.'}{movieImportStatus === 'validated' && `Dữ liệu hợp lệ. Bạn có thể tạo ${movieImportRows.length} phim.`}{movieImportStatus === 'errors' && `Phát hiện ${movieImportErrors.length} lỗi. Chưa có phim nào được tạo.`}{movieImportStatus === 'importing' && 'Hệ thống đang kiểm tra dữ liệu, vui lòng chờ.'}</span>
               </div>
-              {movieImportErrors.length > 0 && <div style={{ marginTop: 14, maxHeight: 130, overflow: 'auto' }}><strong style={{color:'#b91c1c'}}>Chi tiết lỗi:</strong>{movieImportErrors.map((error, index) => <div key={`${error.row}-${error.field || ''}-${index}`} style={{ color:'#b91c1c', fontSize:'0.84rem', marginTop:4 }}>{error.row ? `Dòng ${error.row}${error.field ? ` — ${error.field}: ` : ': '}` : ''}{error.message}</div>)}</div>}
+              <div className="tms-import-preview-heading"><div><strong>Xem trước dữ liệu</strong><span>Cuộn dọc để xem toàn bộ thông tin của từng phim.</span></div></div>
+              <div className="tms-import-preview">
+                {movieImportRows.map((movie, index) => {
+                  const rowErrors = movieImportErrors.filter(error => error.row === index + 2);
+                  const cellErrors = (column: string) => rowErrors.filter(error => error.field && movie.fieldHeaders[error.field] === column);
+                  return <article className={`tms-import-row${rowErrors.length ? ' has-errors' : ''}`} key={`${movie.title}-${index}`}>
+                    <div className="tms-import-row-head"><div><span className="tms-import-row-number">Dòng {index + 2}</span><strong>{movie.title || 'Chưa có tên phim'}</strong></div><span className={rowErrors.length ? 'tms-import-result error' : 'tms-import-result'}>{rowErrors.length ? `${rowErrors.length} lỗi` : 'Sẵn sàng'}</span></div>
+                    <div className="tms-import-fields">{movieImportPreviewColumns.map(column => { const errors = cellErrors(column); const value = movie.raw[column] || ''; const fieldKey = `${index}-${column}`; const canExpand = value.length > 120; const isExpanded = Boolean(expandedImportFields[fieldKey]); return <div className={`tms-import-field${errors.length ? ' has-error' : ''}${isExpanded ? ' is-expanded' : ''}`} key={column}><span>{column}</span><div className="tms-import-field-value"><span className="tms-import-value-text">{value || <em>Chưa nhập</em>}</span>{canExpand && <button type="button" className="tms-import-expand" onClick={() => setExpandedImportFields(prev => ({ ...prev, [fieldKey]: !isExpanded }))}>{isExpanded ? 'Thu gọn' : 'Xem thêm'}</button>}{errors.map((error, errorIndex) => <small className="tms-import-field-error" key={errorIndex}><span>⚠ {error.message}</span><span className="tms-import-info" tabIndex={0} aria-label={`Gợi ý sửa lỗi: ${getMovieImportErrorHint(error)}`}>i<span role="tooltip">{getMovieImportErrorHint(error)}</span></span></small>)}</div></div>; })}</div>
+                  </article>;
+                })}
+              </div>
             </div>
             <div className="tms-modal-footer">
               <button type="button" className="tms-btn tms-btn-outline" onClick={() => movieImportRef.current?.click()} disabled={movieImportStatus === 'importing'}>Chọn lại file</button>
@@ -3029,12 +3148,29 @@ export default function App() {
                     </div>
                     <div className="tms-form-group">
                       <label className="tms-form-label">Thể loại *</label>
-                      <select className="tms-form-select" value={movieForm.genre} onChange={e => setMovieForm({ ...movieForm, genre: e.target.value })} required>
-                        <option value="">-- Chọn thể loại --</option>
-                        {MOVIE_GENRES.map(item => (
-                          <option key={item} value={item}>{item}</option>
-                        ))}
-                      </select>
+                      {(() => {
+                        const selectedGenres = movieForm.genre.split(',').map(item => item.trim()).filter(Boolean);
+                        const genreOptions = Array.from(new Set([...MOVIE_GENRES, ...selectedGenres]));
+                        const toggleGenre = (genre: string) => {
+                          const next = selectedGenres.includes(genre) ? selectedGenres.filter(item => item !== genre) : [...selectedGenres, genre];
+                          setMovieForm({ ...movieForm, genre: next.join(', ') });
+                        };
+                        return <div style={{ position: 'relative' }}>
+                          <button type="button" className="tms-form-select" onClick={() => setShowGenrePicker(open => !open)} aria-haspopup="listbox" aria-expanded={showGenrePicker} style={{ width: '100%', minHeight: 42, display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 10, textAlign: 'left', cursor: 'pointer' }}>
+                            <span style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', color: selectedGenres.length ? '#0f172a' : '#64748b' }}>{selectedGenres.length ? selectedGenres.join(', ') : '-- Chọn một hoặc nhiều thể loại --'}</span>
+                            <ChevronDown size={16} style={{ flexShrink: 0, transform: showGenrePicker ? 'rotate(180deg)' : undefined, transition: 'transform .15s' }} />
+                          </button>
+                          {showGenrePicker && <div role="listbox" aria-multiselectable="true" style={{ position: 'absolute', zIndex: 30, top: 'calc(100% + 5px)', left: 0, width: '100%', maxHeight: 236, overflowY: 'auto', padding: 6, border: '1px solid #cbd5e1', borderRadius: 9, background: '#fff', boxShadow: '0 12px 24px rgba(15,23,42,.16)' }}>
+                            {genreOptions.map(genre => {
+                              const selected = selectedGenres.includes(genre);
+                              return <button key={genre} type="button" role="option" aria-selected={selected} onClick={() => toggleGenre(genre)} style={{ width: '100%', display: 'flex', alignItems: 'center', gap: 8, padding: '8px 9px', border: 0, borderRadius: 6, background: selected ? '#eff6ff' : 'transparent', color: '#334155', cursor: 'pointer', textAlign: 'left', fontSize: '0.83rem' }}>
+                                <span style={{ width: 17, height: 17, display: 'grid', placeItems: 'center', border: selected ? '1px solid #2563eb' : '1px solid #cbd5e1', borderRadius: 4, background: selected ? '#2563eb' : '#fff', color: '#fff', flexShrink: 0 }}>{selected && <Check size={12} strokeWidth={3} />}</span>{genre}
+                              </button>;
+                            })}
+                          </div>}
+                        </div>;
+                      })()}
+                      {movieForm.genre && <div style={{ display: 'flex', flexWrap: 'wrap', gap: 5, marginTop: 2 }}>{movieForm.genre.split(',').map(item => item.trim()).filter(Boolean).map(genre => <span key={genre} style={{ display: 'inline-flex', alignItems: 'center', gap: 4, padding: '3px 7px', borderRadius: 99, background: '#eff6ff', color: '#1d4ed8', fontSize: '0.7rem', fontWeight: 700 }}>{genre}<button type="button" onClick={() => setMovieForm({ ...movieForm, genre: movieForm.genre.split(',').map(item => item.trim()).filter(item => item && item !== genre).join(', ') })} aria-label={`Bỏ ${genre}`} style={{ border: 0, padding: 0, background: 'transparent', color: '#2563eb', cursor: 'pointer', display: 'grid', placeItems: 'center' }}><X size={12} /></button></span>)}</div>}
                     </div>
                     <div className="tms-form-group">
                       <label className="tms-form-label">Thời lượng (phút) *</label>
@@ -3043,11 +3179,12 @@ export default function App() {
                     <div className="tms-form-group">
                       <label className="tms-form-label">Độ tuổi *</label>
                       <select className="tms-form-select" value={movieForm.age_rating} onChange={e => setMovieForm({ ...movieForm, age_rating: e.target.value })} required>
-                        <option value="P">P - Phổ biến mọi lứa tuổi</option>
-                        <option value="K">K - Dưới 13 tuổi có bảo trợ</option>
-                        <option value="T13">T13 - Từ 13 tuổi trở lên</option>
-                        <option value="T16">T16 - Từ 16 tuổi trở lên</option>
-                        <option value="T18">T18 - Từ 18 tuổi trở lên</option>
+                        {!['P', 'K', 'T13', 'T16', 'T18'].includes(movieForm.age_rating) && movieForm.age_rating && <option value={movieForm.age_rating}>{movieForm.age_rating}</option>}
+                        <option value="P">P</option>
+                        <option value="K">K</option>
+                        <option value="T13">T13</option>
+                        <option value="T16">T16</option>
+                        <option value="T18">T18</option>
                       </select>
                     </div>
                   </div>
@@ -3076,7 +3213,7 @@ export default function App() {
                       <label className="tms-form-label">Quốc gia sản xuất *</label>
                       <select className="tms-form-select" value={movieForm.production_country} onChange={e => setMovieForm({ ...movieForm, production_country: e.target.value })} required>
                         <option value="">-- Chọn quốc gia --</option>
-                        {MOVIE_COUNTRIES.map(item => (
+                        {withCurrentOption(MOVIE_COUNTRIES, movieForm.production_country).map(item => (
                           <option key={item} value={item}>{item}</option>
                         ))}
                       </select>
@@ -3107,7 +3244,7 @@ export default function App() {
                       <label className="tms-form-label">Ngôn ngữ gốc *</label>
                       <select className="tms-form-select" value={movieForm.original_language} onChange={e => setMovieForm({ ...movieForm, original_language: e.target.value })} required>
                         <option value="">-- Chọn ngôn ngữ --</option>
-                        {MOVIE_LANGUAGES.map(item => (
+                        {withCurrentOption(MOVIE_LANGUAGES, movieForm.original_language).map(item => (
                           <option key={item} value={item}>{item}</option>
                         ))}
                       </select>
@@ -3116,19 +3253,31 @@ export default function App() {
                       <label className="tms-form-label">Phiên bản phụ đề / lồng tiếng</label>
                       <select className="tms-form-select" value={movieForm.localization_versions} onChange={e => setMovieForm({ ...movieForm, localization_versions: e.target.value })}>
                         <option value="">-- Chọn phiên bản --</option>
-                        {MOVIE_LOCALIZATION_OPTIONS.map(item => (
+                        {withCurrentOption(MOVIE_LOCALIZATION_OPTIONS, movieForm.localization_versions).map(item => (
                           <option key={item} value={item}>{item}</option>
                         ))}
                       </select>
                     </div>
                     <div className="tms-form-group tms-movie-form-full">
                       <label className="tms-form-label">Định dạng chiếu *</label>
-                      <select className="tms-form-select" value={movieForm.format} onChange={e => setMovieForm({ ...movieForm, format: e.target.value })} required>
-                        <option value="">-- Chọn định dạng --</option>
-                        {MOVIE_FORMAT_OPTIONS.map(item => (
-                          <option key={item} value={item}>{item}</option>
-                        ))}
-                      </select>
+                      {(() => {
+                        const selectedFormats = movieForm.format.split('/').map(item => item.trim()).filter(Boolean);
+                        const formatOptions = Array.from(new Set([...MOVIE_FORMAT_OPTIONS, ...selectedFormats]));
+                        const toggleFormat = (format: string) => {
+                          const next = selectedFormats.includes(format) ? selectedFormats.filter(item => item !== format) : [...selectedFormats, format];
+                          setMovieForm({ ...movieForm, format: next.join(' / ') });
+                        };
+                        return <div style={{ position: 'relative' }}>
+                          <button type="button" className="tms-form-select" onClick={() => setShowFormatPicker(open => !open)} aria-haspopup="listbox" aria-expanded={showFormatPicker} style={{ width: '100%', minHeight: 42, display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 10, textAlign: 'left', cursor: 'pointer' }}>
+                            <span style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', color: selectedFormats.length ? '#0f172a' : '#64748b' }}>{selectedFormats.length ? selectedFormats.join(' / ') : '-- Chọn một hoặc nhiều định dạng --'}</span>
+                            <ChevronDown size={16} style={{ flexShrink: 0, transform: showFormatPicker ? 'rotate(180deg)' : undefined, transition: 'transform .15s' }} />
+                          </button>
+                          {showFormatPicker && <div role="listbox" aria-multiselectable="true" style={{ position: 'absolute', zIndex: 30, top: 'calc(100% + 5px)', left: 0, width: '100%', maxHeight: 236, overflowY: 'auto', padding: 6, border: '1px solid #cbd5e1', borderRadius: 9, background: '#fff', boxShadow: '0 12px 24px rgba(15,23,42,.16)' }}>
+                            {formatOptions.map(format => { const selected = selectedFormats.includes(format); return <button key={format} type="button" role="option" aria-selected={selected} onClick={() => toggleFormat(format)} style={{ width: '100%', display: 'flex', alignItems: 'center', gap: 8, padding: '8px 9px', border: 0, borderRadius: 6, background: selected ? '#eff6ff' : 'transparent', color: '#334155', cursor: 'pointer', textAlign: 'left', fontSize: '0.83rem' }}><span style={{ width: 17, height: 17, display: 'grid', placeItems: 'center', border: selected ? '1px solid #2563eb' : '1px solid #cbd5e1', borderRadius: 4, background: selected ? '#2563eb' : '#fff', color: '#fff', flexShrink: 0 }}>{selected && <Check size={12} strokeWidth={3} />}</span>{format}</button>; })}
+                          </div>}
+                        </div>;
+                      })()}
+                      {movieForm.format && <div style={{ display: 'flex', flexWrap: 'wrap', gap: 5, marginTop: 2 }}>{movieForm.format.split('/').map(item => item.trim()).filter(Boolean).map(format => <span key={format} style={{ display: 'inline-flex', alignItems: 'center', gap: 4, padding: '3px 7px', borderRadius: 99, background: '#eff6ff', color: '#1d4ed8', fontSize: '0.7rem', fontWeight: 700 }}>{format}<button type="button" onClick={() => setMovieForm({ ...movieForm, format: movieForm.format.split('/').map(item => item.trim()).filter(item => item && item !== format).join(' / ') })} aria-label={`Bỏ ${format}`} style={{ border: 0, padding: 0, background: 'transparent', color: '#2563eb', cursor: 'pointer', display: 'grid', placeItems: 'center' }}><X size={12} /></button></span>)}</div>}
                     </div>
                   </div>
                 </section>
@@ -3149,19 +3298,22 @@ export default function App() {
                       <input className="tms-form-input" value={movieForm.distributor} onChange={e => setMovieForm({ ...movieForm, distributor: e.target.value })} maxLength={180} />
                     </div>
                     <div className="tms-form-group tms-movie-form-full">
-                      <label className="tms-form-label">Poster *</label>
+                      <label className="tms-form-label">Poster * <small style={{ color: '#64748b', fontWeight: 500 }}>(JPG, PNG, WebP · tối đa 15 MB)</small></label>
                       <input type="file" className="tms-form-input tms-movie-file-input" accept="image/jpeg,image/png,image/webp" onChange={e => handleMovieMediaSelection('poster', e.target.files?.[0] || null)} required={!movieForm.poster_url && !movieFiles.poster} />
-                      {movieFiles.poster ? <span className="tms-movie-file-name">{movieFiles.poster.name}</span> : movieForm.poster_url && <img className="tms-movie-media-preview" src={movieForm.poster_url} alt="Poster hiện tại" />}
+                      {movieFiles.poster ? <><span className="tms-movie-file-name">{movieFiles.poster.name} · {formatFileSize(movieFiles.poster.size)} / 15 MB</span><img className="tms-movie-media-preview" src={moviePreviewUrls.poster} alt="Xem trước poster" /></> : movieForm.poster_url && <img className="tms-movie-media-preview" src={movieForm.poster_url} alt="Poster hiện tại" />}
+                      {movieMediaErrors.poster && <div className="tms-movie-media-error">{movieMediaErrors.poster}</div>}
                     </div>
                     <div className="tms-form-group tms-movie-form-full">
-                      <label className="tms-form-label">Banner</label>
+                      <label className="tms-form-label">Banner <small style={{ color: '#64748b', fontWeight: 500 }}>(JPG, PNG, WebP · tối đa 15 MB)</small></label>
                       <input type="file" className="tms-form-input tms-movie-file-input" accept="image/jpeg,image/png,image/webp" onChange={e => handleMovieMediaSelection('banner', e.target.files?.[0] || null)} />
-                      {movieFiles.banner ? <span className="tms-movie-file-name">{movieFiles.banner.name}</span> : movieForm.banner_url && <img className="tms-movie-media-preview tms-movie-banner-preview" src={movieForm.banner_url} alt="Banner hiện tại" />}
+                      {movieFiles.banner ? <><span className="tms-movie-file-name">{movieFiles.banner.name} · {formatFileSize(movieFiles.banner.size)} / 15 MB</span><img className="tms-movie-media-preview tms-movie-banner-preview" src={moviePreviewUrls.banner} alt="Xem trước banner" /></> : movieForm.banner_url && <img className="tms-movie-media-preview tms-movie-banner-preview" src={movieForm.banner_url} alt="Banner hiện tại" />}
+                      {movieMediaErrors.banner && <div className="tms-movie-media-error">{movieMediaErrors.banner}</div>}
                     </div>
                     <div className="tms-form-group tms-movie-form-full">
-                      <label className="tms-form-label">Trailer video</label>
+                      <label className="tms-form-label">Trailer video <small style={{ color: '#64748b', fontWeight: 500 }}>(MP4, WebM, MOV · tối đa 250 MB)</small></label>
                       <input type="file" className="tms-form-input tms-movie-file-input" accept="video/mp4,video/webm,video/quicktime" onChange={e => handleMovieMediaSelection('trailer', e.target.files?.[0] || null)} />
-                      {movieFiles.trailer ? <span className="tms-movie-file-name">{movieFiles.trailer.name}</span> : movieForm.trailer_url && <span className="tms-movie-file-name">Đã có trailer: {movieForm.trailer_url.split('/').pop()}</span>}
+                      {movieFiles.trailer ? <><span className="tms-movie-file-name">{movieFiles.trailer.name} · {formatFileSize(movieFiles.trailer.size)} / 250 MB</span><video className="tms-movie-video-preview" src={moviePreviewUrls.trailer} controls preload="metadata" /></> : movieForm.trailer_url && <span className="tms-movie-file-name">Đã có trailer: {movieForm.trailer_url.split('/').pop()}</span>}
+                      {movieMediaErrors.trailer && <div className="tms-movie-media-error">{movieMediaErrors.trailer}</div>}
                     </div>
                   </div>
                 </section>

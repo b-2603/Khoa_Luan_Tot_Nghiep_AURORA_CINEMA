@@ -84,6 +84,66 @@ $controller = new AdminController($db);
 $revenueController = new RevenueController($db);
 $action = isset($_GET['action']) ? $_GET['action'] : 'health';
 
+// PHP trên một số máy WAMP có upload_max_filesize rất thấp. Endpoint này nhận
+// từng phần nhỏ (1 MB từ frontend), ghép lại an toàn rồi mới kiểm tra tệp hoàn chỉnh.
+if ($action === 'movie-media-chunk') {
+    if ($requestMethod !== 'POST') jsonResponse(array('success' => false, 'message' => 'Phương thức không được hỗ trợ.'), 400);
+    $user = requireAdmin();
+    $role = AdminController::normalizeRole($user['role']);
+    if (!in_array($role, array('super_admin', 'cinema_admin'), true)) jsonResponse(array('success' => false, 'message' => 'Bạn không có quyền tải media phim lên.'), 403);
+
+    $kind = isset($_POST['kind']) ? $_POST['kind'] : '';
+    $allowedMimeTypes = array(
+        'poster' => array('image/jpeg' => 'jpg', 'image/png' => 'png', 'image/webp' => 'webp'),
+        'banner' => array('image/jpeg' => 'jpg', 'image/png' => 'png', 'image/webp' => 'webp'),
+        'trailer' => array('video/mp4' => 'mp4', 'video/webm' => 'webm', 'video/quicktime' => 'mov')
+    );
+    $uploadId = isset($_POST['upload_id']) ? (string)$_POST['upload_id'] : '';
+    $chunkIndex = isset($_POST['chunk_index']) ? (int)$_POST['chunk_index'] : -1;
+    $chunkTotal = isset($_POST['chunk_total']) ? (int)$_POST['chunk_total'] : 0;
+    $declaredSize = isset($_POST['file_size']) ? (int)$_POST['file_size'] : 0;
+    if (!isset($allowedMimeTypes[$kind]) || !preg_match('/^[a-zA-Z0-9_-]{16,80}$/', $uploadId) || $chunkIndex < 0 || $chunkIndex >= $chunkTotal || $chunkTotal < 1 || $chunkTotal > 300 || $declaredSize < 1 || !isset($_FILES['chunk'])) {
+        jsonResponse(array('success' => false, 'message' => 'Dữ liệu tải tệp không hợp lệ.'), 400);
+    }
+    $chunk = $_FILES['chunk'];
+    if ($chunk['error'] !== UPLOAD_ERR_OK || !is_uploaded_file($chunk['tmp_name'])) jsonResponse(array('success' => false, 'message' => 'Không thể nhận một phần của tệp. Vui lòng thử lại.'), 400);
+    $maxBytes = $kind === 'trailer' ? 250 * 1024 * 1024 : 15 * 1024 * 1024;
+    if ($declaredSize > $maxBytes) jsonResponse(array('success' => false, 'message' => 'Dung lượng tệp phải không vượt quá ' . ($kind === 'trailer' ? '250 MB.' : '15 MB.')), 400);
+
+    $baseDirectory = dirname(__FILE__) . DIRECTORY_SEPARATOR . 'uploads' . DIRECTORY_SEPARATOR . 'movies';
+    $tempDirectory = $baseDirectory . DIRECTORY_SEPARATOR . '.chunks' . DIRECTORY_SEPARATOR . $uploadId;
+    if (!is_dir($tempDirectory) && !mkdir($tempDirectory, 0755, true) && !is_dir($tempDirectory)) jsonResponse(array('success' => false, 'message' => 'Không thể chuẩn bị bộ nhớ tải tệp.'), 500);
+    if (!move_uploaded_file($chunk['tmp_name'], $tempDirectory . DIRECTORY_SEPARATOR . $chunkIndex . '.part')) jsonResponse(array('success' => false, 'message' => 'Không thể lưu một phần của tệp.'), 500);
+    if ($chunkIndex < $chunkTotal - 1) jsonResponse(array('success' => true, 'data' => array('complete' => false)));
+
+    $assembledPath = $tempDirectory . DIRECTORY_SEPARATOR . 'assembled';
+    $assembled = @fopen($assembledPath, 'wb');
+    if (!$assembled) jsonResponse(array('success' => false, 'message' => 'Không thể ghép các phần của tệp.'), 500);
+    for ($i = 0; $i < $chunkTotal; $i++) {
+        $partPath = $tempDirectory . DIRECTORY_SEPARATOR . $i . '.part';
+        if (!is_file($partPath)) { fclose($assembled); jsonResponse(array('success' => false, 'message' => 'Thiếu một phần của tệp. Vui lòng tải lại.'), 400); }
+        $part = @fopen($partPath, 'rb');
+        if (!$part) { fclose($assembled); jsonResponse(array('success' => false, 'message' => 'Không thể đọc một phần của tệp.'), 500); }
+        stream_copy_to_stream($part, $assembled); fclose($part);
+    }
+    fclose($assembled);
+    if ((int)filesize($assembledPath) !== $declaredSize) jsonResponse(array('success' => false, 'message' => 'Tệp tải lên không đầy đủ. Vui lòng thử lại.'), 400);
+    $mimeInfo = function_exists('finfo_open') ? finfo_open(FILEINFO_MIME_TYPE) : false;
+    $mimeType = $mimeInfo ? finfo_file($mimeInfo, $assembledPath) : '';
+    if ($mimeInfo) finfo_close($mimeInfo);
+    if (!isset($allowedMimeTypes[$kind][$mimeType])) jsonResponse(array('success' => false, 'message' => $kind === 'trailer' ? 'Trailer phải là MP4, WebM hoặc MOV.' : 'Ảnh phải có định dạng JPG, PNG hoặc WebP.'), 400);
+    $extension = $allowedMimeTypes[$kind][$mimeType];
+    $fileName = 'movie-' . $kind . '-' . sha1(uniqid((string)mt_rand(), true)) . '.' . $extension;
+    $targetPath = $baseDirectory . DIRECTORY_SEPARATOR . $fileName;
+    if (!rename($assembledPath, $targetPath)) jsonResponse(array('success' => false, 'message' => 'Không thể lưu tệp vào thư viện media.'), 500);
+    foreach (glob($tempDirectory . DIRECTORY_SEPARATOR . '*.part') ?: array() as $partPath) @unlink($partPath);
+    @rmdir($tempDirectory);
+    $publicDirectory = str_replace('\\', '/', dirname($_SERVER['SCRIPT_NAME']));
+    $host = isset($_SERVER['HTTP_HOST']) && preg_match('/^[A-Za-z0-9.-]+(?::[0-9]{1,5})?$/', $_SERVER['HTTP_HOST']) ? $_SERVER['HTTP_HOST'] : 'localhost';
+    $scheme = !empty($_SERVER['HTTPS']) && strtolower($_SERVER['HTTPS']) !== 'off' ? 'https' : 'http';
+    jsonResponse(array('success' => true, 'data' => array('complete' => true, 'url' => $scheme . '://' . $host . rtrim($publicDirectory, '/') . '/uploads/movies/' . rawurlencode($fileName), 'name' => $fileName)), 201);
+}
+
 if ($action === 'movie-media') {
     if ($requestMethod !== 'POST') {
         jsonResponse(array('success' => false, 'message' => 'Phương thức không được hỗ trợ.'), 400);
@@ -109,12 +169,15 @@ if ($action === 'movie-media') {
 
     $file = $_FILES['media'];
     if ($file['error'] !== UPLOAD_ERR_OK || !is_uploaded_file($file['tmp_name'])) {
-        jsonResponse(array('success' => false, 'message' => 'Tải tệp lên thất bại. Hãy thử tệp nhỏ hơn hoặc kiểm tra cấu hình upload của PHP.'), 400);
+        if ((int)$file['error'] === UPLOAD_ERR_INI_SIZE || (int)$file['error'] === UPLOAD_ERR_FORM_SIZE) {
+            jsonResponse(array('success' => false, 'message' => 'Tệp vượt quá giới hạn upload của máy chủ. Poster/banner tối đa 15 MB; trailer tối đa 250 MB.'), 400);
+        }
+        jsonResponse(array('success' => false, 'message' => 'Tải tệp lên thất bại. Hãy thử lại hoặc chọn một tệp hợp lệ.'), 400);
     }
-    $maxBytes = $kind === 'trailer' ? 100 * 1024 * 1024 : 8 * 1024 * 1024;
+    $maxBytes = $kind === 'trailer' ? 250 * 1024 * 1024 : 15 * 1024 * 1024;
     if ((int)$file['size'] <= 0 || (int)$file['size'] > $maxBytes) {
-        $limit = $kind === 'trailer' ? '100 MB' : '8 MB';
-        jsonResponse(array('success' => false, 'message' => 'Dung lượng tệp phải nhỏ hơn ' . $limit . '.'), 400);
+        $limit = $kind === 'trailer' ? '250 MB' : '15 MB';
+        jsonResponse(array('success' => false, 'message' => 'Dung lượng tệp phải không vượt quá ' . $limit . '.'), 400);
     }
     $mimeType = '';
     if (function_exists('finfo_open')) {

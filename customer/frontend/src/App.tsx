@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from 'react';
 import {
   MapPin, Search, Bell, Trophy, ChevronDown,
-  PlayCircle, Gift, Ticket, Film, Send, ExternalLink, Smartphone,
+  PlayCircle, Gift, Ticket, Film, Send, ExternalLink, Smartphone, ChevronLeft, ChevronRight,
   CreditCard, Percent, Phone, Check
 } from 'lucide-react';
 import AuthModal from './components/customer/AuthModal';
@@ -95,10 +95,12 @@ export default function App() {
   const [language, setLanguage] = useState<Language>(() => localStorage.getItem('aurora-language') === 'en' ? 'en' : 'vi');
   const [movieTab, setMovieTab] = useState<'NOW_SHOWING' | 'COMING_SOON' | 'SPECIAL_SHOWING'>('NOW_SHOWING');
   const [heroSlide, setHeroSlide] = useState(0);
+  const [heroPaused, setHeroPaused] = useState(false);
   const [chatMsg, setChatMsg] = useState('');
   const [authMode, setAuthMode] = useState<'login' | 'register' | null>(null);
   const [authUser, setAuthUser] = useState<{ fullName: string; email: string } | null>(null);
   const [moviesList, setMoviesList] = useState<any[]>([]);
+  const [promotionsList, setPromotionsList] = useState<any[]>([]);
   const [theatersList, setTheatersList] = useState<any[]>([]);
   const [selectedTheater, setSelectedTheater] = useState<string>('Aurora Q1');
   const [selectedTheaterId, setSelectedTheaterId] = useState<number | null>(null);
@@ -138,28 +140,30 @@ export default function App() {
     setPendingBooking(null);
   }
 
-  const nowShowingMovie = moviesList.find((movie: any) => movie.status === 'NOW_SHOWING');
-  const comingSoonMovie = moviesList.find((movie: any) => movie.status === 'COMING_SOON');
+  const featuredMovies = moviesList
+    .filter((movie: any) => movie.status === 'NOW_SHOWING' || movie.status === 'COMING_SOON')
+    .sort((a: any, b: any) => Number(Boolean(b.isHot)) - Number(Boolean(a.isHot)) || String(a.releaseDate || '').localeCompare(String(b.releaseDate || '')))
+    .slice(0, 4);
   const heroSlides = [
-    nowShowingMovie && {
+    ...featuredMovies.map((movie: any) => ({
       type: 'movie' as const,
-      label: t('PHIM ĐANG CHIẾU', 'NOW SHOWING'),
-      title: nowShowingMovie.title,
-      description: nowShowingMovie.description || t(`Khởi chiếu tại Aurora • ${nowShowingMovie.format || '2D Digital'} • ${nowShowingMovie.duration || 0} phút`, `Now playing at Aurora • ${nowShowingMovie.format || '2D Digital'} • ${nowShowingMovie.duration || 0} minutes`),
-      poster: nowShowingMovie.posterUrl || nowShowingMovie.poster,
-      movie: nowShowingMovie,
-      primaryLabel: t('ĐẶT VÉ NGAY', 'BOOK NOW'),
-    },
-    comingSoonMovie && {
-      type: 'movie' as const,
-      label: t('PHIM SẮP CHIẾU', 'COMING SOON'),
-      title: comingSoonMovie.title,
-      description: comingSoonMovie.description || t(`Sắp khởi chiếu ${comingSoonMovie.releaseDate ? formatScheduleDate(comingSoonMovie.releaseDate, language) : 'tại Aurora'} • ${comingSoonMovie.format || '2D Digital'}`, `Coming soon ${comingSoonMovie.releaseDate ? formatScheduleDate(comingSoonMovie.releaseDate, language) : 'at Aurora'} • ${comingSoonMovie.format || '2D Digital'}`),
-      poster: comingSoonMovie.posterUrl || comingSoonMovie.poster,
-      movie: comingSoonMovie,
-      primaryLabel: t('XEM THÔNG TIN', 'VIEW DETAILS'),
-    },
-    {
+      label: movie.status === 'NOW_SHOWING' ? t('PHIM ĐANG CHIẾU', 'NOW SHOWING') : t('PHIM SẮP CHIẾU', 'COMING SOON'),
+      title: movie.title,
+      description: movie.description || t(`${movie.status === 'NOW_SHOWING' ? 'Khởi chiếu tại Aurora' : 'Sắp khởi chiếu'} • ${movie.format || '2D Digital'} • ${movie.duration || 0} phút`, `${movie.status === 'NOW_SHOWING' ? 'Now playing at Aurora' : 'Coming soon'} • ${movie.format || '2D Digital'} • ${movie.duration || 0} minutes`),
+      poster: movie.posterUrl || movie.poster,
+      banner: movie.bannerUrl || movie.posterUrl || movie.poster,
+      movie,
+      primaryLabel: movie.status === 'NOW_SHOWING' ? t('ĐẶT VÉ NGAY', 'BOOK NOW') : t('XEM THÔNG TIN', 'VIEW DETAILS'),
+    })),
+    ...promotionsList.map((promotion: any) => ({
+      type: 'promotion' as const,
+      label: t('ƯU ĐÃI AURORA', 'AURORA OFFER'),
+      title: promotion.name,
+      description: promotion.description || t(`Nhập mã ${promotion.code} để nhận ưu đãi khi đặt vé tại Aurora.`, `Use code ${promotion.code} to enjoy this Aurora offer.`),
+      promotion,
+      primaryLabel: t('KHÁM PHÁ ƯU ĐÃI', 'EXPLORE OFFERS'),
+    })),
+    promotionsList.length === 0 && {
       type: 'promotion' as const,
       label: t('ƯU ĐÃI AURORA', 'AURORA OFFER'),
       title: t('ĐẶT VÉ HÔM NAY, NHẬN ƯU ĐÃI NGAY', 'BOOK TODAY, ENJOY MORE'),
@@ -169,10 +173,10 @@ export default function App() {
   ].filter(Boolean) as Array<any>;
 
   useEffect(() => {
-    if (heroSlides.length < 2) return;
+    if (heroSlides.length < 2 || heroPaused) return;
     const timer = window.setInterval(() => setHeroSlide(current => (current + 1) % heroSlides.length), 6000);
     return () => window.clearInterval(timer);
-  }, [heroSlides.length]);
+  }, [heroSlides.length, heroPaused]);
 
   useEffect(() => {
     if (heroSlide >= heroSlides.length) setHeroSlide(0);
@@ -199,6 +203,7 @@ export default function App() {
             genre: m.genre,
             poster: m.posterUrl,
             posterUrl: m.posterUrl,
+            bannerUrl: m.bannerUrl,
             trailerUrl: m.trailerUrl,
             duration: m.durationMinutes,
             durationMinutes: m.durationMinutes,
@@ -209,6 +214,11 @@ export default function App() {
         }
       })
       .catch(() => {});
+
+    fetch(`${API_URL}?action=promotions`)
+      .then(response => response.json())
+      .then(result => setPromotionsList(result && result.promotions ? result.promotions : []))
+      .catch(() => setPromotionsList([]));
 
     // Lấy dữ liệu cụm rạp trực tiếp từ MySQL Database aurora_db
     fetch(`${API_URL}?action=theaters`)
@@ -430,9 +440,9 @@ export default function App() {
                 }}
               >
                 <div style={{ padding: '10px 14px', background: '#0d1b2e', color: '#fff', fontSize: 12, fontWeight: 800, display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-                  <span>{t('HỆ THỐNG CỤM RẠP AURORA', 'AURORA CINEMA LOCATIONS')}</span>
+                  <span>{t('HỆ THỐNG RẠP AURORA', 'AURORA CINEMAS')}</span>
                   <span style={{ fontSize: 10, background: '#f4c04a', color: '#0d1b2e', padding: '2px 7px', borderRadius: 4, fontWeight: 900 }}>
-                    {theatersList.length} {t('CỤM RẠP', 'LOCATIONS')}
+                    {theatersList.length} {t('RẠP', 'CINEMAS')}
                   </span>
                 </div>
                 <div style={{ maxHeight: 360, overflowY: 'auto' }}>
@@ -837,15 +847,16 @@ export default function App() {
                       scrollContentToTop();
                     }
                   };
-                  return <div style={{ borderRadius: 16, overflow: 'hidden', background: 'linear-gradient(110deg,#071628 0%,#0d2849 58%,#123455 100%)', position: 'relative', minHeight: 220, padding: '28px 32px', display: 'flex', alignItems: 'center', isolation: 'isolate' }}>
-                    {slide.poster && <div style={{ position: 'absolute', inset: 0, backgroundImage: `linear-gradient(90deg, #071628 0%, rgba(7,22,40,.93) 43%, rgba(7,22,40,.35) 100%), url(${slide.poster})`, backgroundSize: 'cover', backgroundPosition: 'center 28%', opacity: .92, zIndex: -1 }} />}
+                  const goToSlide = (direction: number) => setHeroSlide(current => (current + direction + heroSlides.length) % heroSlides.length);
+                  return <div onMouseEnter={() => setHeroPaused(true)} onMouseLeave={() => setHeroPaused(false)} style={{ boxSizing: 'border-box', height: 300, borderRadius: 16, overflow: 'hidden', background: slide.type === 'promotion' ? 'linear-gradient(110deg,#0f2742 0%,#71501b 62%,#d09016 100%)' : 'linear-gradient(110deg,#071628 0%,#0d2849 58%,#123455 100%)', position: 'relative', padding: '28px 32px', display: 'flex', alignItems: 'center', isolation: 'isolate' }}>
+                    {slide.banner && <div style={{ position: 'absolute', inset: 0, backgroundImage: `linear-gradient(90deg, #071628 0%, rgba(7,22,40,.93) 43%, rgba(7,22,40,.35) 100%), url(${slide.banner})`, backgroundSize: 'cover', backgroundPosition: 'center 28%', opacity: .92, zIndex: -1 }} />}
                     <div style={{ position: 'absolute', top: -50, right: '16%', width: 260, height: 260, background: 'radial-gradient(circle,rgba(244,192,74,.18) 0%,transparent 66%)', pointerEvents: 'none' }} />
                     <div style={{ zIndex: 1, flex: 1, maxWidth: '62%' }}>
                       <div style={{ display: 'inline-flex', alignItems: 'center', gap: 6, padding: '5px 10px', marginBottom: 9, background: 'rgba(244,192,74,.15)', border: '1px solid rgba(244,192,74,.42)', borderRadius: 99, fontSize: 10.5, fontWeight: 900, letterSpacing: .5, color: '#f8cf6c' }}>
                         {slide.type === 'promotion' ? <Gift size={13} /> : <Film size={13} />}{slide.label}
                       </div>
-                      <div style={{ fontSize: 26, fontWeight: 900, color: '#fff', textTransform: 'uppercase', lineHeight: 1.14, marginBottom: 9, maxWidth: 480 }}>{slide.title}</div>
-                      <div style={{ fontSize: 12.5, color: '#c2d5e7', marginBottom: 18, lineHeight: 1.65, maxWidth: 460 }}>{slide.description}</div>
+                      <div style={{ fontSize: 26, fontWeight: 900, color: '#fff', textTransform: 'uppercase', lineHeight: 1.14, marginBottom: 9, maxWidth: 480, display: '-webkit-box', WebkitBoxOrient: 'vertical', WebkitLineClamp: 2, overflow: 'hidden' }}>{slide.title}</div>
+                      <div style={{ fontSize: 12.5, color: '#c2d5e7', marginBottom: 18, lineHeight: 1.65, maxWidth: 460, display: '-webkit-box', WebkitBoxOrient: 'vertical', WebkitLineClamp: 2, overflow: 'hidden' }}>{slide.description}</div>
                       <div style={{ display: 'flex', gap: 10 }}>
                         <button type="button" onClick={openSlide} style={{ padding: '9px 18px', background: '#f4c04a', border: 'none', borderRadius: 9, fontWeight: 800, fontSize: 12, color: '#0d1b2e', cursor: 'pointer' }}>{slide.primaryLabel}</button>
                         {isMovie && <button type="button" onClick={() => slide.movie.trailerUrl ? setTrailerMovie(slide.movie) : setDetailMovie(slide.movie)} style={{ padding: '9px 16px', background: 'rgba(255,255,255,.08)', border: '1px solid rgba(255,255,255,.28)', borderRadius: 9, fontWeight: 700, fontSize: 12, color: '#fff', cursor: 'pointer', display: 'flex', alignItems: 'center', gap: 6 }}>
@@ -859,6 +870,10 @@ export default function App() {
                     <div style={{ position: 'absolute', bottom: 13, left: 32, display: 'flex', gap: 7 }}>
                       {heroSlides.map((_: any, index: number) => <button key={index} type="button" aria-label={`${t('Xem quảng cáo', 'View slide')} ${index + 1}`} onClick={() => setHeroSlide(index)} style={{ width: index === heroSlide ? 22 : 7, height: 7, padding: 0, border: 'none', borderRadius: 99, background: index === heroSlide ? '#f4c04a' : 'rgba(255,255,255,.38)', cursor: 'pointer', transition: 'all .2s' }} />)}
                     </div>
+                    {heroSlides.length > 1 && <div style={{ position: 'absolute', right: 15, bottom: 12, display: 'flex', gap: 6 }}>
+                      <button type="button" aria-label={t('Quảng cáo trước', 'Previous slide')} onClick={() => goToSlide(-1)} style={{ width: 27, height: 27, padding: 0, border: '1px solid rgba(255,255,255,.3)', borderRadius: '50%', background: 'rgba(7,22,40,.48)', color: '#fff', cursor: 'pointer', display: 'grid', placeItems: 'center' }}><ChevronLeft size={16} /></button>
+                      <button type="button" aria-label={t('Quảng cáo tiếp theo', 'Next slide')} onClick={() => goToSlide(1)} style={{ width: 27, height: 27, padding: 0, border: '1px solid rgba(255,255,255,.3)', borderRadius: '50%', background: 'rgba(7,22,40,.48)', color: '#fff', cursor: 'pointer', display: 'grid', placeItems: 'center' }}><ChevronRight size={16} /></button>
+                    </div>}
                   </div>;
                 })()}
 
@@ -1215,8 +1230,8 @@ export default function App() {
             </div>
           </main>
       )}
-      </div>
       <SiteFooter language={language} onNavigate={openFooterPage} />
+      </div>
       {pendingBooking && <BookingConfirmationModal
         movie={pendingBooking.movie}
         showtime={pendingBooking.showtime}
@@ -1233,26 +1248,26 @@ export default function App() {
 function SiteFooter({ language, onNavigate }: { language: Language; onNavigate: (page: 'faq' | 'booking-guide' | 'privacy' | 'terms') => void }) {
   const t = (vi: string, en: string) => language === 'en' ? en : vi;
   return (
-    <footer style={{ flexShrink: 0, background: '#071526', color: '#e2e8f0', borderTop: '4px solid #f4c04a', padding: '30px 20px 16px', marginTop: 'auto' }}>
-      <div style={{ maxWidth: 1320, margin: '0 auto', display: 'grid', gridTemplateColumns: '1.5fr 1fr 1fr 1.2fr', gap: 28 }}>
+    <footer style={{ background: '#071526', color: '#e2e8f0', borderTop: '3px solid #f4c04a', padding: '16px 20px 10px' }}>
+      <div style={{ maxWidth: 1320, margin: '0 auto', display: 'grid', gridTemplateColumns: '1.45fr .9fr 1.1fr .9fr', gap: 20, alignItems: 'start' }}>
         <div>
-          <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 10 }}>
-            <div style={{ width: 214, height: 58, display: 'flex', alignItems: 'center', padding: '5px 12px', boxSizing: 'border-box', borderRadius: 12, background: '#fff' }}>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 6 }}>
+            <div style={{ width: 150, height: 40, display: 'flex', alignItems: 'center', padding: '4px 9px', boxSizing: 'border-box', borderRadius: 8, background: '#fff' }}>
               <img src="/aurora-logo.svg" alt="Aurora Cinema" style={{ width: '100%', height: '100%', objectFit: 'contain' }} />
             </div>
           </div>
-          <p style={{ margin: 0, color: '#94a3b8', fontSize: 12, lineHeight: 1.6 }}>{t('Trải nghiệm điện ảnh đỉnh cao cùng Aurora Cinema.', 'Enjoy the ultimate movie experience with Aurora Cinema.')}</p>
+          <p style={{ margin: 0, color: '#94a3b8', fontSize: 10.5, lineHeight: 1.4 }}>{t('Trải nghiệm điện ảnh đỉnh cao cùng Aurora Cinema.', 'Enjoy the ultimate movie experience with Aurora Cinema.')}</p>
         </div>
-        <div><h4 style={{ margin: '0 0 12px', fontSize: 12.5, color: '#fff' }}>{t('VỀ AURORA CINEMA', 'ABOUT AURORA CINEMA')}</h4><div style={{ display: 'grid', gap: 7, fontSize: 12, color: '#94a3b8' }}><span>{t('Giới thiệu', 'About us')}</span><span>{t('Tin tức', 'News')}</span><span>{t('Liên hệ', 'Contact')}</span></div></div>
-        <div><h4 style={{ margin: '0 0 12px', fontSize: 12.5, color: '#fff' }}>{t('HỖ TRỢ KHÁCH HÀNG', 'CUSTOMER SUPPORT')}</h4><div style={{ display: 'grid', gap: 7, fontSize: 12, color: '#94a3b8' }}>
+        <div><h4 style={{ margin: '0 0 7px', fontSize: 10.5, color: '#fff' }}>{t('VỀ AURORA CINEMA', 'ABOUT AURORA CINEMA')}</h4><div style={{ display: 'grid', gap: 4, fontSize: 10.5, color: '#94a3b8' }}><span>{t('Giới thiệu', 'About us')}</span><span>{t('Tin tức', 'News')}</span><span>{t('Liên hệ', 'Contact')}</span></div></div>
+        <div><h4 style={{ margin: '0 0 7px', fontSize: 10.5, color: '#fff' }}>{t('HỖ TRỢ KHÁCH HÀNG', 'CUSTOMER SUPPORT')}</h4><div style={{ display: 'grid', gap: 4, fontSize: 10.5, color: '#94a3b8' }}>
           <button onClick={() => onNavigate('faq')} style={footerLinkStyle}>{t('Câu hỏi thường gặp', 'Frequently asked questions')}</button>
           <button onClick={() => onNavigate('booking-guide')} style={footerLinkStyle}>{t('Hướng dẫn đặt vé', 'Booking guide')}</button>
           <button onClick={() => onNavigate('privacy')} style={footerLinkStyle}>{t('Chính sách bảo mật', 'Privacy policy')}</button>
           <button onClick={() => onNavigate('terms')} style={footerLinkStyle}>{t('Điều khoản sử dụng', 'Terms of use')}</button>
         </div></div>
-        <div><h4 style={{ margin: '0 0 12px', fontSize: 12.5, color: '#fff' }}>{t('LIÊN HỆ', 'CONTACT')}</h4><div style={{ display: 'grid', gap: 7, fontSize: 12, color: '#94a3b8' }}><div>Hotline: <strong style={{ color: '#fff' }}>1900 1234</strong></div><div>Email: <strong style={{ color: '#fff' }}>support@auroracinema.vn</strong></div><div>{t('TP. Hồ Chí Minh', 'Ho Chi Minh City')}</div></div></div>
+        <div><h4 style={{ margin: '0 0 7px', fontSize: 10.5, color: '#fff' }}>{t('LIÊN HỆ', 'CONTACT')}</h4><div style={{ display: 'grid', gap: 4, fontSize: 10.5, color: '#94a3b8' }}><div>Hotline: <strong style={{ color: '#fff' }}>1900 1234</strong></div><div>Email: <strong style={{ color: '#fff' }}>support@auroracinema.vn</strong></div><div>{t('TP. Hồ Chí Minh', 'Ho Chi Minh City')}</div></div></div>
       </div>
-      <div style={{ maxWidth: 1320, margin: '24px auto 0', borderTop: '1px solid rgba(255,255,255,.08)', paddingTop: 14, textAlign: 'center', color: '#64748b', fontSize: 11.5 }}>© 2026 Aurora Cinema. All rights reserved.</div>
+      <div style={{ maxWidth: 1320, margin: '12px auto 0', borderTop: '1px solid rgba(255,255,255,.08)', paddingTop: 8, textAlign: 'center', color: '#64748b', fontSize: 10 }}>© 2026 Aurora Cinema. All rights reserved.</div>
     </footer>
   );
 }
@@ -1264,7 +1279,7 @@ const footerLinkStyle: React.CSSProperties = {
   color: '#94a3b8',
   textAlign: 'left',
   cursor: 'pointer',
-  fontSize: 12,
+  fontSize: 10.5,
 };
 
 function FooterInfoPage({ page, onBack }: { page: 'faq' | 'booking-guide' | 'privacy' | 'terms'; onBack: () => void }) {

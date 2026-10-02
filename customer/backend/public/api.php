@@ -124,7 +124,7 @@ if ($resource === 'health') {
 if ($resource === 'movies') {
     $status = isset($_GET['status']) ? strtoupper(trim((string)$_GET['status'])) : '';
     $allowedStatuses = array('COMING_SOON', 'NOW_SHOWING', 'SPECIAL_SHOWING', 'ENDED');
-    $sql = 'SELECT id, title, description, duration_minutes, age_rating, format, genre, poster_url, trailer_url, status, release_date, is_hot FROM movies';
+    $sql = 'SELECT id, title, description, duration_minutes, age_rating, format, genre, poster_url, banner_url, trailer_url, status, release_date, is_hot FROM movies';
     if (in_array($status, $allowedStatuses, true)) $sql .= " WHERE status = '" . $db->real_escape_string($status) . "'";
     $sql .= ' ORDER BY release_date IS NULL, release_date, title';
     $result = $db->query($sql);
@@ -140,6 +140,7 @@ if ($resource === 'movies') {
             'format' => $row['format'],
             'genre' => isset($row['genre']) ? $row['genre'] : '',
             'posterUrl' => $row['poster_url'],
+            'bannerUrl' => $row['banner_url'],
             'trailerUrl' => $row['trailer_url'],
             'status' => $row['status'],
             'releaseDate' => $row['release_date'],
@@ -147,6 +148,26 @@ if ($resource === 'movies') {
         );
     }
     aurora_response(array('movies' => $movies), 200);
+}
+
+// Promotions shown on the customer home-page banner. Only currently valid
+// campaigns are exposed, so expired or disabled promotions never rotate here.
+if ($resource === 'promotions') {
+    $sql = "SELECT id, name, code, description, discount_percent, discount_amount, starts_at, ends_at
+            FROM promotions
+            WHERE status = 'ACTIVE' AND starts_at <= NOW() AND ends_at >= NOW()
+            ORDER BY ends_at ASC, id DESC";
+    $result = $db->query($sql);
+    if (!$result) aurora_response(array('message' => $db->error), 500);
+    $promotions = array();
+    while ($row = $result->fetch_assoc()) {
+        $promotions[] = array(
+            'id' => (int)$row['id'], 'name' => $row['name'], 'code' => $row['code'],
+            'description' => $row['description'], 'discountPercent' => $row['discount_percent'],
+            'discountAmount' => $row['discount_amount'], 'startsAt' => $row['starts_at'], 'endsAt' => $row['ends_at']
+        );
+    }
+    aurora_response(array('promotions' => $promotions), 200);
 }
 
 if ($resource === 'concessions') {

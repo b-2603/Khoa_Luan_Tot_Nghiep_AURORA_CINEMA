@@ -16,28 +16,50 @@ const toDateItem = (value: string) => {
   return { key: value, day: String(date.getDate()).padStart(2, '0'), month: `/${String(date.getMonth() + 1).padStart(2, '0')}`, weekDay: ['CN', 'T2', 'T3', 'T4', 'T5', 'T6', 'T7'][date.getDay()] };
 };
 
+function getVietnamToday() {
+  const parts = new Intl.DateTimeFormat('en-CA', { timeZone: 'Asia/Ho_Chi_Minh', year: 'numeric', month: '2-digit', day: '2-digit' }).formatToParts(new Date());
+  const value = (type: Intl.DateTimeFormatPartTypes) => parts.find(part => part.type === type)?.value || '';
+  return `${value('year')}-${value('month')}-${value('day')}`;
+}
+
+function nextSevenDays(today: string) {
+  const start = new Date(`${today}T00:00:00`);
+  return Array.from({ length: 7 }, (_, index) => {
+    const date = new Date(start);
+    date.setDate(start.getDate() + index);
+    const key = `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, '0')}-${String(date.getDate()).padStart(2, '0')}`;
+    return toDateItem(key);
+  });
+}
+
+function formatScheduleDate(value: string) {
+  const [year, month, day] = value.split('-');
+  return `${day}/${month}/${year}`;
+}
+
 function timeOf(value: string) {
   return new Date(value.replace(' ', 'T')).toLocaleTimeString('vi-VN', { hour: '2-digit', minute: '2-digit' });
 }
 
 export default function TheaterSchedulePage({ theaters, movies, selectedTheaterId, onSelectTheater, onBook }: Props) {
-  const [dates, setDates] = useState<ReturnType<typeof toDateItem>[]>([]);
-  const [date, setDate] = useState('');
+  const [today, setToday] = useState(getVietnamToday);
+  const dates = useMemo(() => nextSevenDays(today), [today]);
+  const [date, setDate] = useState(getVietnamToday);
   const [showtimes, setShowtimes] = useState<any[]>([]);
   const [loading, setLoading] = useState(false);
   const theater = theaters.find(item => item.id === selectedTheaterId) || theaters[0];
 
   useEffect(() => {
-    if (!theater?.id) return;
-    fetch(`${API_URL}?action=showtime_dates&theater_id=${theater.id}`)
-      .then(response => response.json())
-      .then(data => {
-        const nextDates: ReturnType<typeof toDateItem>[] = (data.dates || []).map(toDateItem);
-        setDates(nextDates);
-        setDate(current => nextDates.some(item => item.key === current) ? current : (nextDates[0]?.key || ''));
-      })
-      .catch(() => { setDates([]); setDate(''); });
-  }, [theater?.id]);
+    const timer = window.setInterval(() => {
+      const nextToday = getVietnamToday();
+      setToday(current => current === nextToday ? current : nextToday);
+    }, 60_000);
+    return () => window.clearInterval(timer);
+  }, []);
+
+  useEffect(() => {
+    setDate(current => dates.some(item => item.key === current) ? current : today);
+  }, [dates, today]);
 
   useEffect(() => {
     if (!theater?.id || !date) return;
@@ -80,8 +102,8 @@ export default function TheaterSchedulePage({ theaters, movies, selectedTheaterI
       </section>
 
       <section style={{ borderRadius: 16, background: '#fff', border: '1px solid #e2e8f0', overflow: 'hidden' }}>
-        <div style={{ padding: '17px 20px', borderBottom: '1px solid #e8edf4', display: 'flex', justifyContent: 'space-between', gap: 10, alignItems: 'center' }}><div><b style={{ color: '#0d1b2e', fontSize: 16 }}>{theater?.name || 'Cụm rạp Aurora'}</b><div style={{ color: '#64748b', fontSize: 12, marginTop: 3 }}>{dates.find(item => item.key === date)?.day}{dates.find(item => item.key === date)?.month}/2026 · {moviesWithShowtimes.length} phim đang có suất chiếu</div></div><span style={{ color: '#9a6700', background: '#fff7dd', padding: '5px 9px', borderRadius: 20, fontSize: 11, fontWeight: 800 }}>SUẤT ĐANG MỞ</span></div>
-        {loading ? <div style={{ padding: 60, textAlign: 'center', color: '#64748b' }}><Clock3 size={28} /><div style={{ marginTop: 8 }}>Đang tải lịch chiếu...</div></div> : moviesWithShowtimes.length === 0 ? <div style={{ padding: 60, textAlign: 'center', color: '#64748b' }}><div style={{ fontSize: 38 }}>🎬</div><b style={{ display: 'block', color: '#334155', margin: '10px 0 5px' }}>Chưa có lịch chiếu</b>Vui lòng chọn ngày hoặc cụm rạp khác.</div> : <div>{moviesWithShowtimes.map((movie, index) => {
+        <div style={{ padding: '17px 20px', borderBottom: '1px solid #e8edf4', display: 'flex', justifyContent: 'space-between', gap: 10, alignItems: 'center' }}><div><b style={{ color: '#0d1b2e', fontSize: 16 }}>{theater?.name || 'Cụm rạp Aurora'}</b><div style={{ color: '#64748b', fontSize: 12, marginTop: 3 }}>{date ? formatScheduleDate(date) : '—'} · {moviesWithShowtimes.length} phim đang có suất chiếu</div></div><span style={{ color: '#9a6700', background: '#fff7dd', padding: '5px 9px', borderRadius: 20, fontSize: 11, fontWeight: 800 }}>SUẤT ĐANG MỞ</span></div>
+        {loading ? <div style={{ padding: 60, textAlign: 'center', color: '#64748b' }}><Clock3 size={28} /><div style={{ marginTop: 8 }}>Đang tải lịch chiếu...</div></div> : moviesWithShowtimes.length === 0 ? <div style={{ padding: 60, textAlign: 'center', color: '#64748b' }}><div style={{ fontSize: 38 }}>🎬</div><b style={{ display: 'block', color: '#334155', margin: '10px 0 5px' }}>Chưa có lịch chiếu</b>Vui lòng chọn ngày hoặc rạp khác.</div> : <div>{moviesWithShowtimes.map((movie, index) => {
           const movieShowtimes = showtimes.filter(item => item.movie_id === movie.id);
           return <article key={movie.id} style={{ display: 'grid', gridTemplateColumns: '118px 1fr', gap: 18, padding: 20, borderBottom: index < moviesWithShowtimes.length - 1 ? '1px solid #e8edf4' : 'none' }}>
             <img src={movie.posterUrl || movie.poster} alt={movie.title} style={{ width: 118, height: 166, borderRadius: 10, objectFit: 'cover', background: '#e2e8f0' }} />
