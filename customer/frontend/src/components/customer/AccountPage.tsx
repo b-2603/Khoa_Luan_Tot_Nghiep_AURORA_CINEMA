@@ -62,11 +62,11 @@ const VN_CITIES = [
 
 function InputField({
   label, value, onChange, type = 'text', placeholder = '', required = false,
-  icon: Icon, disabled = false, hint
+  icon: Icon, disabled = false, hint, lang
 }: {
   label: string; value: string; onChange: (v: string) => void;
   type?: string; placeholder?: string; required?: boolean;
-  icon?: any; disabled?: boolean; hint?: string;
+  icon?: any; disabled?: boolean; hint?: string; lang?: string;
 }) {
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
@@ -82,6 +82,7 @@ function InputField({
         )}
         <input
           type={type}
+          lang={lang}
           value={value}
           onChange={e => onChange(e.target.value)}
           placeholder={placeholder}
@@ -308,7 +309,7 @@ export default function AccountPage({ authUser, onUserUpdate, initialTab = 'info
                   {/* Section: Bổ sung */}
                   <SectionTitle>THÔNG TIN BỔ SUNG</SectionTitle>
                   <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 16, marginBottom: 28 }}>
-                    <InputField label="Ngày sinh" value={birthday} onChange={setBirthday} type="date" icon={Calendar} />
+                    <InputField label="Ngày sinh" value={birthday} onChange={setBirthday} type="date" lang="vi" icon={Calendar} />
                     <SelectField label="Giới tính" value={gender} onChange={setGender} options={[{ value: 'male', label: 'Nam' }, { value: 'female', label: 'Nữ' }, { value: 'other', label: 'Khác' }]} placeholder="Chọn giới tính" />
                   </div>
 

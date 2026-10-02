@@ -13,6 +13,10 @@ if (session_id() === '') {
 }
 
 header('Content-Type: application/json; charset=utf-8');
+// Danh mục phim được TMS cập nhật thường xuyên; không để trình duyệt/proxy trả
+// về danh sách cũ sau khi Admin Tổng vừa thêm hoặc sửa phim.
+header('Cache-Control: no-store, no-cache, must-revalidate, max-age=0');
+header('Pragma: no-cache');
 header('Access-Control-Allow-Origin: ' . (isset($_SERVER['HTTP_ORIGIN']) && in_array($_SERVER['HTTP_ORIGIN'], array('http://localhost:3000', 'http://localhost:5173', 'http://127.0.0.1:5173'), true) ? $_SERVER['HTTP_ORIGIN'] : 'http://localhost:3000'));
 header('Access-Control-Allow-Credentials: true');
 header('Access-Control-Allow-Headers: Content-Type');
@@ -58,6 +62,22 @@ function aurora_valid_date($value) {
     if (!is_string($value) || !preg_match('/^\\d{4}-\\d{2}-\\d{2}$/', $value)) return false;
     $parts = explode('-', $value);
     return checkdate((int)$parts[1], (int)$parts[2], (int)$parts[0]);
+}
+
+function aurora_json_list($value) {
+    $decoded = json_decode((string)$value, true);
+    return is_array($decoded) ? array_values($decoded) : array();
+}
+
+// The database stores the classification code only. Older records may contain
+// a descriptive string (for example "T13 - Từ 13 tuổi"), so normalize it at
+// the API boundary before it reaches every customer screen.
+function aurora_age_rating($value) {
+    $rating = strtoupper(trim((string)$value));
+    if (preg_match('/T(?:13|16|18)/', $rating, $matches)) return $matches[0];
+    if (strpos($rating, 'K') === 0) return 'K';
+    if (strpos($rating, 'P') === 0) return 'P';
+    return 'P';
 }
 
 function aurora_db() {
@@ -125,7 +145,7 @@ if ($resource === 'movies') {
     $status = isset($_GET['status']) ? strtoupper(trim((string)$_GET['status'])) : '';
     $allowedStatuses = array('COMING_SOON', 'NOW_SHOWING', 'SPECIAL_SHOWING', 'ENDED');
     $sql = 'SELECT id, title, description, duration_minutes, age_rating, format, genre, poster_url, banner_url, trailer_url, status, release_date, is_hot FROM movies';
-    if (in_array($status, $allowedStatuses, true)) $sql .= " WHERE status = '" . $db->real_escape_string($status) . "'";
+    if (in_array($status, $allowedStatuses, true)) $sql .= " WHERE UPPER(status) = '" . $db->real_escape_string($status) . "'";
     $sql .= ' ORDER BY release_date IS NULL, release_date, title';
     $result = $db->query($sql);
     if (!$result) aurora_response(array('message' => $db->error), 500);
@@ -136,13 +156,15 @@ if ($resource === 'movies') {
             'title' => $row['title'],
             'description' => $row['description'],
             'durationMinutes' => (int) $row['duration_minutes'],
-            'ageRating' => $row['age_rating'],
+            'ageRating' => aurora_age_rating($row['age_rating']),
             'format' => $row['format'],
             'genre' => isset($row['genre']) ? $row['genre'] : '',
             'posterUrl' => $row['poster_url'],
             'bannerUrl' => $row['banner_url'],
             'trailerUrl' => $row['trailer_url'],
-            'status' => $row['status'],
+            // TMS dùng mã lowercase, các màn hình Customer dùng UPPERCASE.
+            // Chuẩn hóa ở API để cả dữ liệu cũ và phim mới đều xuất hiện đúng tab.
+            'status' => strtoupper(trim((string)$row['status'])),
             'releaseDate' => $row['release_date'],
             'isHot' => isset($row['is_hot']) ? (bool)$row['is_hot'] : true
         );
@@ -188,12 +210,12 @@ if ($resource === 'movie') {
         'title' => $title,
         'description' => $description,
         'durationMinutes' => (int)$duration,
-        'ageRating' => $rating,
+        'ageRating' => aurora_age_rating($rating),
         'format' => $format,
         'genre' => $genre,
         'posterUrl' => $poster,
         'trailerUrl' => $trailer,
-        'status' => $status,
+        'status' => strtoupper(trim((string)$status)),
         'releaseDate' => $releaseDate,
         'isHot' => (bool)$isHot
     )), 200);
@@ -212,6 +234,38 @@ if ($resource === 'theaters') {
         unset($theater);
     }
     aurora_response(array('theaters' => $theaters), 200);
+}
+
+// Detailed, theatre-specific editorial content for the customer "Rạp" page.
+if ($resource === 'theater_detail') {
+    $theaterId = isset($_GET['theater_id']) ? (int) $_GET['theater_id'] : 0;
+    if ($theaterId < 1) aurora_response(array('message' => 'Rạp không hợp lệ.'), 422);
+
+    $sql = "SELECT t.id, t.name, t.address, t.city,
+        p.hero_image_url, p.short_description, p.short_description_en,
+        p.description, p.description_en, p.highlights_json, p.highlights_en_json,
+        p.facilities_json, p.facilities_en_json, p.opening_hours, p.contact_phone, p.map_url,
+        COUNT(s.id) AS screen_count, COALESCE(SUM(s.total_seats), 0) AS total_seats
+        FROM theaters t
+        LEFT JOIN theater_profiles p ON p.theater_id = t.id
+        LEFT JOIN screens s ON s.theater_id = t.id
+        WHERE t.id = ".(int)$theaterId." GROUP BY t.id";
+    $result = $db->query($sql);
+    if (!$result) aurora_response(array('message' => 'Không thể tải thông tin rạp: '.$db->error), 500);
+    $row = $result->fetch_assoc();
+    $result->free();
+    if (!$row) aurora_response(array('message' => 'Không tìm thấy rạp.'), 404);
+
+    aurora_response(array('theater' => array(
+        'id' => (int)$row['id'], 'name' => $row['name'], 'address' => $row['address'], 'city' => $row['city'],
+        'heroImageUrl' => $row['hero_image_url'], 'shortDescription' => $row['short_description'],
+        'shortDescriptionEn' => $row['short_description_en'], 'description' => $row['description'],
+        'descriptionEn' => $row['description_en'], 'highlights' => aurora_json_list($row['highlights_json']),
+        'highlightsEn' => aurora_json_list($row['highlights_en_json']), 'facilities' => aurora_json_list($row['facilities_json']),
+        'facilitiesEn' => aurora_json_list($row['facilities_en_json']), 'openingHours' => $row['opening_hours'],
+        'contactPhone' => $row['contact_phone'], 'mapUrl' => $row['map_url'],
+        'screenCount' => (int)$row['screen_count'], 'totalSeats' => (int)$row['total_seats'],
+    )), 200);
 }
 
 if ($resource === 'showtime_dates') {

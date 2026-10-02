@@ -94,6 +94,25 @@ CREATE TABLE IF NOT EXISTS bookings (
   INDEX idx_booking_seats_booking (booking_id)
 ) ENGINE=InnoDB;
 
+-- Nội dung hiển thị cho trang giới thiệu từng cụm rạp customer.
+CREATE TABLE IF NOT EXISTS theater_profiles (
+  theater_id BIGINT UNSIGNED NOT NULL PRIMARY KEY,
+  hero_image_url VARCHAR(500) NULL,
+  short_description TEXT NULL,
+  short_description_en TEXT NULL,
+  description TEXT NULL,
+  description_en TEXT NULL,
+  highlights_json TEXT NULL,
+  highlights_en_json TEXT NULL,
+  facilities_json TEXT NULL,
+  facilities_en_json TEXT NULL,
+  opening_hours VARCHAR(120) NULL,
+  contact_phone VARCHAR(30) NULL,
+  map_url VARCHAR(500) NULL,
+  updated_at TIMESTAMP NULL,
+  CONSTRAINT fk_theater_profiles_theater FOREIGN KEY (theater_id) REFERENCES theaters(id) ON DELETE CASCADE
+) ENGINE=InnoDB;
+
 CREATE TABLE IF NOT EXISTS booking_seats (
   id BIGINT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
   booking_id BIGINT UNSIGNED NOT NULL,

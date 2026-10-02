@@ -22,8 +22,8 @@ class AuthController
             ), 400);
         }
 
-        // Truy vấn trực tiếp từ bảng users trong database MySQL aurora_db
-        $stmt = $this->db->prepare("SELECT id, username, password_hash, full_name, phone, role, status FROM users WHERE username = ? LIMIT 1");
+        // Truy vấn trực tiếp từ bảng tms_users trong database MySQL aurora_db
+        $stmt = $this->db->prepare("SELECT id, username, password_hash, full_name, phone, role, status FROM tms_users WHERE username = ? LIMIT 1");
         if (!$stmt) {
             jsonResponse(array(
                 'success' => false,
@@ -69,7 +69,7 @@ class AuthController
         }
 
         // Cập nhật last_login trong database
-        $this->db->query("UPDATE users SET last_login = NOW() WHERE id = " . (int)$user['id']);
+        $this->db->query("UPDATE tms_users SET last_login = NOW() WHERE id = " . (int)$user['id']);
 
         $userData = array(
             'id' => (int) $user['id'],
@@ -123,7 +123,7 @@ class AuthController
     public function sso()
     {
         // SSO giả lập tự động với tài khoản Quản lý
-        $stmt = $this->db->query("SELECT id, username, full_name, phone, role, status FROM users WHERE username = '0328754062' OR username = 'admin' LIMIT 1");
+        $stmt = $this->db->query("SELECT id, username, full_name, phone, role, status FROM tms_users WHERE username = '0328754062' OR username = 'admin' LIMIT 1");
         $user = $stmt ? $stmt->fetch_assoc() : array(
             'id' => 1,
             'username' => '0328754062',

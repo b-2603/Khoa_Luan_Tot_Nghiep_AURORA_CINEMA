@@ -11,6 +11,7 @@ import BookingConfirmationModal from './components/customer/BookingConfirmationM
 import TrailerModal from './components/customer/TrailerModal';
 import AccountPage from './components/customer/AccountPage';
 import TheaterSchedulePage from './components/customer/TheaterSchedulePage';
+import TheaterDetailPage from './components/customer/TheaterDetailPage';
 import MoviesPage from './components/customer/MoviesPage';
 
 const API_URL = 'http://localhost/AURORA%20CINEMA/customer/backend/public/api.php';
@@ -69,6 +70,15 @@ function ratingBg(r: string) {
   return '#555';
 }
 
+function normalizeAgeRating(value: unknown) {
+  const rating = String(value || '').trim().toUpperCase();
+  const match = rating.match(/T(?:13|16|18)/);
+  if (match) return match[0];
+  if (rating.startsWith('K')) return 'K';
+  if (rating.startsWith('P')) return 'P';
+  return 'P';
+}
+
 function getVietnamDate() {
   const parts = new Intl.DateTimeFormat('en-CA', {
     timeZone: 'Asia/Ho_Chi_Minh',
@@ -87,6 +97,12 @@ function formatScheduleDate(date: string, language: Language) {
     month: '2-digit',
     year: 'numeric',
   }).format(new Date(`${date}T00:00:00+07:00`));
+}
+
+// URL media do WAMP trả về có thể chứa khoảng trắng trong đường dẫn dự án.
+// Mã hóa URL trước khi dùng cho thẻ img, video hoặc CSS background-image.
+function normalizeMediaUrl(value: unknown) {
+  return value ? encodeURI(String(value).trim()) : '';
 }
 
 /* ─── COMPONENT ─────────────────────────────────────────────── */
@@ -114,7 +130,7 @@ export default function App() {
   const [showUserMenu, setShowUserMenu] = useState<boolean>(false);
   const [showAccount, setShowAccount] = useState<boolean>(false);
   const [accountTab, setAccountTab] = useState('info');
-  const [currentPage, setCurrentPage] = useState<'home' | 'schedule' | 'movies'>('home');
+  const [currentPage, setCurrentPage] = useState<'home' | 'schedule' | 'movies' | 'theaters'>('home');
   const [footerPage, setFooterPage] = useState<'faq' | 'booking-guide' | 'privacy' | 'terms' | null>(null);
   const copy = COPY[language];
   const t = (vi: string, en: string) => language === 'en' ? en : vi;
@@ -189,7 +205,7 @@ export default function App() {
       .catch(() => setAuthUser(null));
 
     // Lấy dữ liệu phim trực tiếp từ MySQL Database aurora_db
-    fetch(`${API_URL}?action=movies`)
+    fetch(`${API_URL}?action=movies&_=${Date.now()}`, { cache: 'no-store' })
       .then(response => response.json())
       .then(result => {
         if (result && result.movies && result.movies.length > 0) {
@@ -197,17 +213,17 @@ export default function App() {
             id: m.id,
             title: m.title,
             description: m.description,
-            rating: m.ageRating || 'T13',
-            ageRating: m.ageRating,
+            rating: normalizeAgeRating(m.ageRating),
+            ageRating: normalizeAgeRating(m.ageRating),
             format: m.format || '2D Digital',
             genre: m.genre,
-            poster: m.posterUrl,
-            posterUrl: m.posterUrl,
-            bannerUrl: m.bannerUrl,
-            trailerUrl: m.trailerUrl,
+            poster: normalizeMediaUrl(m.posterUrl),
+            posterUrl: normalizeMediaUrl(m.posterUrl),
+            bannerUrl: normalizeMediaUrl(m.bannerUrl),
+            trailerUrl: normalizeMediaUrl(m.trailerUrl),
             duration: m.durationMinutes,
             durationMinutes: m.durationMinutes,
-            status: m.status || 'NOW_SHOWING',
+            status: String(m.status || 'NOW_SHOWING').toUpperCase(),
             releaseDate: m.releaseDate,
             isHot: m.isHot !== undefined ? m.isHot : true
           })));
@@ -280,6 +296,17 @@ export default function App() {
     setShowTheaterMenu(false);
     setShowUserMenu(false);
     setCurrentPage('movies');
+    setFooterPage(null);
+    scrollContentToTop();
+  }
+
+  function handleGoTheaters() {
+    setAuthMode(null);
+    setShowAccount(false);
+    setDetailMovie(null);
+    setShowTheaterMenu(false);
+    setShowUserMenu(false);
+    setCurrentPage('theaters');
     setFooterPage(null);
     scrollContentToTop();
   }
@@ -488,12 +515,14 @@ export default function App() {
               const isSelected =
                 (i === 0 && currentPage === 'home' && !authMode && !footerPage && !showAccount && !detailMovie) ||
                 (i === 1 && currentPage === 'schedule' && !authMode && !footerPage && !showAccount && !detailMovie) ||
-                (i === 2 && currentPage === 'movies' && !authMode && !footerPage && !showAccount && !detailMovie);
+                (i === 2 && currentPage === 'movies' && !authMode && !footerPage && !showAccount && !detailMovie) ||
+                (i === 3 && currentPage === 'theaters' && !authMode && !footerPage && !showAccount && !detailMovie);
 
               const handleClick =
                 i === 0 ? handleGoHome :
                 i === 1 ? handleGoSchedule :
-                i === 2 ? handleGoMovies : undefined;
+                i === 2 ? handleGoMovies :
+                i === 3 ? handleGoTheaters : undefined;
 
               return (
                 <button
@@ -776,6 +805,14 @@ export default function App() {
           onSelectTheater={theater => { setSelectedTheater(theater.name); setSelectedTheaterId(theater.id); setShowTheaterMenu(false); }}
           onBook={(movie, showtime) => requestBooking(movie, showtime, theatersList.find(theater => theater.id === showtime.theater_id)?.name || selectedTheater)}
         />
+      ) : currentPage === 'theaters' ? (
+        <TheaterDetailPage
+          theaters={theatersList}
+          selectedTheaterId={selectedTheaterId}
+          language={language}
+          onSelectTheater={theater => { setSelectedTheater(theater.name); setSelectedTheaterId(theater.id); setShowTheaterMenu(false); }}
+          onViewSchedule={handleGoSchedule}
+        />
       ) : currentPage === 'movies' ? (
         <MoviesPage
           movies={moviesList}
@@ -849,7 +886,7 @@ export default function App() {
                   };
                   const goToSlide = (direction: number) => setHeroSlide(current => (current + direction + heroSlides.length) % heroSlides.length);
                   return <div onMouseEnter={() => setHeroPaused(true)} onMouseLeave={() => setHeroPaused(false)} style={{ boxSizing: 'border-box', height: 300, borderRadius: 16, overflow: 'hidden', background: slide.type === 'promotion' ? 'linear-gradient(110deg,#0f2742 0%,#71501b 62%,#d09016 100%)' : 'linear-gradient(110deg,#071628 0%,#0d2849 58%,#123455 100%)', position: 'relative', padding: '28px 32px', display: 'flex', alignItems: 'center', isolation: 'isolate' }}>
-                    {slide.banner && <div style={{ position: 'absolute', inset: 0, backgroundImage: `linear-gradient(90deg, #071628 0%, rgba(7,22,40,.93) 43%, rgba(7,22,40,.35) 100%), url(${slide.banner})`, backgroundSize: 'cover', backgroundPosition: 'center 28%', opacity: .92, zIndex: -1 }} />}
+                    {slide.banner && <div style={{ position: 'absolute', inset: 0, backgroundImage: `linear-gradient(90deg, #071628 0%, rgba(7,22,40,.93) 43%, rgba(7,22,40,.35) 100%), url("${slide.banner}")`, backgroundSize: 'cover', backgroundPosition: 'center 28%', opacity: .92, zIndex: -1 }} />}
                     <div style={{ position: 'absolute', top: -50, right: '16%', width: 260, height: 260, background: 'radial-gradient(circle,rgba(244,192,74,.18) 0%,transparent 66%)', pointerEvents: 'none' }} />
                     <div style={{ zIndex: 1, flex: 1, maxWidth: '62%' }}>
                       <div style={{ display: 'inline-flex', alignItems: 'center', gap: 6, padding: '5px 10px', marginBottom: 9, background: 'rgba(244,192,74,.15)', border: '1px solid rgba(244,192,74,.42)', borderRadius: 99, fontSize: 10.5, fontWeight: 900, letterSpacing: .5, color: '#f8cf6c' }}>
@@ -996,7 +1033,7 @@ export default function App() {
                               {/* Poster phim */}
                               <div style={{
                                 position: 'relative',
-                                background: m.poster ? `url(${m.poster}) center/cover no-repeat` : 'linear-gradient(160deg,#1e293b 0%,#0f172a 100%)',
+                                background: m.poster ? `url("${m.poster}") center/cover no-repeat` : 'linear-gradient(160deg,#1e293b 0%,#0f172a 100%)',
                                 height: 210,
                                 display: 'flex',
                                 alignItems: 'center',

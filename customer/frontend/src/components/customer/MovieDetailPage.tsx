@@ -33,7 +33,7 @@ export default function MovieDetailPage({ movie, theaters, theater, showtimes, d
     <button onClick={onBack} style={backButton}><ArrowLeft size={16} /> VỀ TRANG CHỦ</button>
     <div style={{ color: '#64748b', fontSize: 12, margin: '18px 0 14px' }}>Trang chủ <span style={{ color: '#c08a13' }}>›</span> Chi tiết phim <span style={{ color: '#c08a13' }}>›</span> {movie.title}</div>
     <section style={hero}>
-      <div style={{ width: 250, minHeight: 365, borderRadius: 14, background: movie.posterUrl ? `url(${movie.posterUrl}) center/cover` : 'linear-gradient(145deg,#142945,#071526)', display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 }}>
+      <div style={{ width: 250, minHeight: 365, borderRadius: 14, background: movie.posterUrl ? `url("${movie.posterUrl}") center/cover` : 'linear-gradient(145deg,#142945,#071526)', display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 }}>
         {!movie.posterUrl && <Film size={54} color="#f4c04a" />}
       </div>
       <div style={{ flex: 1 }}>

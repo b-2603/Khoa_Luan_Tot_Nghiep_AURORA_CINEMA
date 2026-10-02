@@ -242,9 +242,40 @@ class AdminController
     public function dashboard()
     {
         $role = $this->getCurrentRole();
-        $today = $this->db->query("SELECT * FROM revenue_logs WHERE log_date = CURDATE() ORDER BY id DESC LIMIT 1");
-        $revenue = $today ? $today->fetch_assoc() : null;
-        $revenue = $revenue ? $revenue : array('total_revenue' => 0, 'ticket_sales' => 0, 'concession_sales' => 0, 'total_tickets' => 0, 'occupancy_rate' => 0);
+        // Transactions are the source of truth when they exist. Revenue logs
+        // remain a read-only historical fallback for installations importing
+        // legacy data before the POS/customer systems were connected.
+        $transactionToday = $this->rows("SELECT
+            COALESCE(SUM(CASE WHEN status = 'paid' THEN amount ELSE 0 END), 0) AS total_revenue,
+            COALESCE(SUM(CASE WHEN status = 'paid' AND channel = 'pos' THEN amount ELSE 0 END), 0) AS pos_revenue,
+            COALESCE(SUM(CASE WHEN status = 'paid' AND channel = 'website' THEN amount ELSE 0 END), 0) AS website_revenue,
+            COALESCE(SUM(CASE WHEN status = 'paid' AND channel = 'ota' THEN amount ELSE 0 END), 0) AS ota_revenue,
+            SUM(CASE WHEN status = 'paid' THEN 1 ELSE 0 END) AS transaction_count
+            FROM transactions WHERE DATE(created_at) = CURDATE()");
+        $transactionToday = !empty($transactionToday) ? $transactionToday[0] : array();
+        $hasTransactionData = !empty($transactionToday['transaction_count']);
+        $today = $this->rows("SELECT total_revenue, ticket_sales, concession_sales, total_tickets, occupancy_rate
+            FROM revenue_logs WHERE log_date = CURDATE() ORDER BY id DESC LIMIT 1");
+        $legacyRevenue = !empty($today) ? $today[0] : array('total_revenue' => 0, 'ticket_sales' => 0, 'concession_sales' => 0, 'total_tickets' => 0, 'occupancy_rate' => 0);
+        $revenue = $hasTransactionData ? array(
+            'total_revenue' => $transactionToday['total_revenue'],
+            'ticket_sales' => $transactionToday['total_revenue'],
+            'concession_sales' => 0,
+            'total_tickets' => $this->scalar("SELECT COALESCE(SUM(booked_seats), 0) FROM showtimes WHERE show_date = CURDATE() AND status <> 'cancelled'"),
+            'occupancy_rate' => $this->scalar("SELECT COALESCE(AVG(CASE WHEN total_seats > 0 THEN booked_seats * 100 / total_seats ELSE 0 END), 0) FROM showtimes WHERE show_date = CURDATE() AND status <> 'cancelled'")
+        ) : $legacyRevenue;
+
+        $dailyRows = $this->rows("SELECT DATE(created_at) AS date, COALESCE(SUM(amount), 0) AS total_revenue
+            FROM transactions WHERE status = 'paid' AND created_at >= DATE_SUB(CURDATE(), INTERVAL 6 DAY)
+            GROUP BY DATE(created_at) ORDER BY date");
+        if (empty($dailyRows)) {
+            $dailyRows = $this->rows("SELECT log_date AS date, ticket_sales, concession_sales, total_revenue, total_tickets, occupancy_rate
+                FROM revenue_logs WHERE log_date >= DATE_SUB(CURDATE(), INTERVAL 6 DAY) ORDER BY log_date");
+        }
+        $normalizedDailyRows = array();
+        foreach ($dailyRows as $dailyRow) {
+            $normalizedDailyRows[] = $this->numberFields($dailyRow, array('ticket_sales', 'concession_sales', 'total_revenue', 'total_tickets', 'occupancy_rate'));
+        }
 
         $roleDefs = self::getRoleDefinitions();
         $roleDef = isset($roleDefs[$role]) ? $roleDefs[$role] : null;
@@ -254,12 +285,22 @@ class AdminController
             'role' => $role,
             'role_definition' => $roleDef,
             'revenue' => $this->numberFields($revenue, array('total_revenue', 'ticket_sales', 'concession_sales', 'occupancy_rate')),
+            'revenue_source' => $hasTransactionData ? 'transactions' : 'revenue_logs',
+            'previous_day_revenue' => (float)$this->scalar("SELECT COALESCE(SUM(amount), 0) FROM transactions WHERE status = 'paid' AND DATE(created_at) = DATE_SUB(CURDATE(), INTERVAL 1 DAY)"),
+            'transaction_count' => (int)$transactionToday['transaction_count'],
+            'channels' => array(
+                array('code' => 'pos', 'name' => 'Quầy vé (POS)', 'amount' => (float)$transactionToday['pos_revenue']),
+                array('code' => 'website', 'name' => 'Website / Ứng dụng', 'amount' => (float)$transactionToday['website_revenue']),
+                array('code' => 'ota', 'name' => 'Đối tác OTA', 'amount' => (float)$transactionToday['ota_revenue'])
+            ),
+            'active_theaters' => $this->scalar("SELECT COUNT(*) FROM theaters WHERE status = 'active'"),
+            'active_users' => $this->scalar("SELECT COUNT(*) FROM users WHERE status = 'active'"),
             'active_screens' => $this->scalar("SELECT COUNT(*) FROM screens WHERE status = 'active'"),
             'showtimes' => $this->scalar("SELECT COUNT(*) FROM showtimes WHERE show_date = CURDATE() AND status <> 'cancelled'"),
             'booked_seats' => $this->scalar("SELECT COALESCE(SUM(booked_seats), 0) FROM showtimes WHERE show_date = CURDATE()"),
             'staff_on_duty' => $this->scalar("SELECT COUNT(*) FROM staff_shifts WHERE work_date = CURDATE() AND status IN ('on_duty','checked_in')"),
             'pending_refunds' => $this->scalar("SELECT COUNT(*) FROM refunds WHERE status = 'pending'"),
-            'revenue_7_days' => $this->rows("SELECT log_date date, ticket_sales, concession_sales, total_revenue, total_tickets, occupancy_rate FROM revenue_logs WHERE log_date >= DATE_SUB(CURDATE(), INTERVAL 6 DAY) ORDER BY log_date"),
+            'revenue_7_days' => $normalizedDailyRows,
             'top_movies' => $this->rows("SELECT m.id, m.title, COALESCE(SUM(s.booked_seats), 0) booked_seats, COUNT(s.id) showtimes FROM movies m LEFT JOIN showtimes s ON s.movie_id = m.id GROUP BY m.id, m.title ORDER BY booked_seats DESC LIMIT 5"),
             'recent_transactions' => $this->rows("SELECT t.*, c.full_name customer_name FROM transactions t LEFT JOIN customers c ON c.id=t.customer_id ORDER BY t.id DESC LIMIT 5"),
             'screens_status' => $this->rows("SELECT id, screen_code, name, screen_type, projector_status, sound_system_status, hvac_temperature, lamp_hours, status FROM screens ORDER BY screen_code"),
@@ -1045,7 +1086,12 @@ class AdminController
     {
         $result = $this->db->query($sql);
         $row = $result ? $result->fetch_row() : array(0);
-        return isset($row[0]) ? (int)$row[0] : 0;
+        if (!isset($row[0]) || $row[0] === null) {
+            return 0;
+        }
+        // Preserve decimal aggregates such as occupancy/revenue while keeping
+        // count queries as integers for API consumers.
+        return strpos((string)$row[0], '.') !== false ? (float)$row[0] : (int)$row[0];
     }
 
     private function rows($sql)

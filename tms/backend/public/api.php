@@ -1,7 +1,25 @@
 <?php
-if (!isset($_SESSION)) {
+// Keep the TMS server-side session across page reloads for eight hours.
+// This project also supports legacy WAMP/PHP installations where
+// session_status() and the array cookie API are not available.
+$sessionActive = function_exists('session_status') ? session_status() === 2 : isset($_SESSION);
+if (!$sessionActive) {
+    $isHttps = !empty($_SERVER['HTTPS']) && strtolower($_SERVER['HTTPS']) !== 'off';
+    // Use a new cookie name to isolate the corrected TMS session from the
+    // legacy cookie that may still point at a different account in browsers.
+    session_name('aurora_tms_session_v2');
+    if (version_compare(PHP_VERSION, '7.3.0', '>=')) {
+        session_set_cookie_params(array('lifetime' => 28800, 'path' => '/', 'secure' => $isHttps, 'httponly' => true, 'samesite' => 'Lax'));
+    } else {
+        ini_set('session.cookie_httponly', '1');
+        session_set_cookie_params(28800, '/', '', $isHttps, true);
+    }
+    ini_set('session.gc_maxlifetime', '28800');
     session_start();
 }
+// The old name is never read again. Expire its root-scoped copy so it cannot
+// participate in any later request to the TMS API.
+setcookie('aurora_tms_session', '', time() - 3600, '/');
 header('Content-Type: application/json; charset=utf-8');
 
 $origin = isset($_SERVER['HTTP_ORIGIN']) ? $_SERVER['HTTP_ORIGIN'] : '';
@@ -12,8 +30,6 @@ $allowed = array(
 
 if (in_array($origin, $allowed, true)) {
     header('Access-Control-Allow-Origin: ' . $origin);
-} else {
-    header('Access-Control-Allow-Origin: *');
 }
 
 header('Access-Control-Allow-Credentials: true');
@@ -44,22 +60,35 @@ function requestJson() {
     return is_array($data) ? $data : (!empty($_POST) ? $_POST : array());
 }
 
+// Movie codes are system-generated at import time. The random suffix avoids
+// sequence collisions while the database lookup guarantees uniqueness in
+// aurora_db before the record is inserted.
+function generateImportedMovieCode($db) {
+    $year = date('Y');
+    for ($attempt = 0; $attempt < 20; $attempt++) {
+        $code = 'AUR-' . $year . '-' . strtoupper(substr(sha1(uniqid((string)mt_rand(), true)), 0, 7));
+        $escaped = $db->real_escape_string($code);
+        $exists = $db->query("SELECT id FROM movies WHERE movie_code = '{$escaped}' LIMIT 1");
+        if (!$exists || !$exists->num_rows) return $code;
+    }
+    return 'AUR-' . $year . '-' . strtoupper(uniqid());
+}
+
 function requireAdmin() {
-    global $db;
     if (!empty($_SESSION['tms_user'])) {
         return $_SESSION['tms_user'];
     }
-    $headers = function_exists('getallheaders') ? getallheaders() : array();
-    $authHeader = isset($headers['X-TMS-User']) ? $headers['X-TMS-User'] : (isset($_SERVER['HTTP_X_TMS_USER']) ? $_SERVER['HTTP_X_TMS_USER'] : (isset($_GET['tms_user']) ? $_GET['tms_user'] : ''));
-    if (!empty($authHeader) && $db) {
-        $uEsc = $db->real_escape_string($authHeader);
-        $res = $db->query("SELECT id, username, full_name, phone, role, status FROM users WHERE (username = '{$uEsc}' OR phone = '{$uEsc}') AND status = 'active' LIMIT 1");
-        if ($res && ($row = $res->fetch_assoc())) {
-            $_SESSION['tms_user'] = $row;
-            return $row;
-        }
-    }
     jsonResponse(array('success' => false, 'message' => 'Vui lòng đăng nhập tài khoản quản trị TMS.'), 401);
+}
+
+// PHP 5.2/WAMP sends a second Set-Cookie when the session id is regenerated.
+// That races the original cookie in browsers, so keep the same id on legacy
+// PHP after clearing its data. Newer PHP versions still get session fixation
+// protection through regeneration.
+function regenerateTmsSession() {
+    if (version_compare(PHP_VERSION, '5.3.0', '>=')) {
+        session_regenerate_id(true);
+    }
 }
 
 function passwordMatches($password, $hash) {
@@ -78,14 +107,49 @@ if ($db->connect_error) {
 
 $db->set_charset('utf8');
 
+// PHP 5.2 on WAMP can occasionally reuse an old session id. Keep a separate,
+// signed TMS identity cookie so a reload always restores the account that most
+// recently completed a TMS login. The cookie only contains an id and expiry;
+// the active account is always re-read from aurora_db.
+$tmsIdentitySecret = 'aurora-tms-identity-v1-9a3c71e5f2b4d8c6';
+function setTmsIdentity($user) {
+    global $tmsIdentitySecret;
+    $id = isset($user['id']) ? (int)$user['id'] : 0;
+    if ($id <= 0) return;
+    $expires = time() + 28800;
+    $payload = $id . '.' . $expires;
+    $signature = hash_hmac('sha256', $payload, $tmsIdentitySecret);
+    setcookie('aurora_tms_identity', $payload . '.' . $signature, $expires, '/', '', !empty($_SERVER['HTTPS']) && strtolower($_SERVER['HTTPS']) !== 'off', true);
+}
+function clearTmsIdentity() {
+    setcookie('aurora_tms_identity', '', time() - 3600, '/');
+}
+function restoreTmsIdentity() {
+    global $db, $tmsIdentitySecret;
+    if (empty($_COOKIE['aurora_tms_identity'])) return;
+    $parts = explode('.', $_COOKIE['aurora_tms_identity']);
+    if (count($parts) !== 3 || !ctype_digit($parts[0]) || !ctype_digit($parts[1])) return;
+    $payload = $parts[0] . '.' . $parts[1];
+    $expected = hash_hmac('sha256', $payload, $tmsIdentitySecret);
+    if ($parts[2] !== $expected || (int)$parts[1] < time()) { clearTmsIdentity(); return; }
+    $userId = (int)$parts[0];
+    $result = $db->query("SELECT id, username, full_name, phone, role, status FROM users WHERE id = {$userId} AND status = 'active' LIMIT 1");
+    if (!$result || !($user = $result->fetch_assoc())) { clearTmsIdentity(); return; }
+    // The signed identity is intentionally authoritative over a stale PHP
+    // session. It is only issued after a successful credential check.
+    $_SESSION['tms_user'] = $user;
+}
+restoreTmsIdentity();
+
 require_once dirname(__FILE__) . '/../app/Http/Controllers/AdminController.php';
 require_once dirname(__FILE__) . '/../app/Http/Controllers/RevenueController.php';
 $controller = new AdminController($db);
 $revenueController = new RevenueController($db);
 $action = isset($_GET['action']) ? $_GET['action'] : 'health';
 
-// PHP trên một số máy WAMP có upload_max_filesize rất thấp. Endpoint này nhận
-// từng phần nhỏ (1 MB từ frontend), ghép lại an toàn rồi mới kiểm tra tệp hoàn chỉnh.
+// Accept media in small pieces so WAMP's upload_max_filesize never rejects a
+// large trailer before PHP can handle it. The final file is validated again
+// after all pieces are assembled.
 if ($action === 'movie-media-chunk') {
     if ($requestMethod !== 'POST') jsonResponse(array('success' => false, 'message' => 'Phương thức không được hỗ trợ.'), 400);
     $user = requireAdmin();
@@ -102,13 +166,12 @@ if ($action === 'movie-media-chunk') {
     $chunkIndex = isset($_POST['chunk_index']) ? (int)$_POST['chunk_index'] : -1;
     $chunkTotal = isset($_POST['chunk_total']) ? (int)$_POST['chunk_total'] : 0;
     $declaredSize = isset($_POST['file_size']) ? (int)$_POST['file_size'] : 0;
-    if (!isset($allowedMimeTypes[$kind]) || !preg_match('/^[a-zA-Z0-9_-]{16,80}$/', $uploadId) || $chunkIndex < 0 || $chunkIndex >= $chunkTotal || $chunkTotal < 1 || $chunkTotal > 300 || $declaredSize < 1 || !isset($_FILES['chunk'])) {
-        jsonResponse(array('success' => false, 'message' => 'Dữ liệu tải tệp không hợp lệ.'), 400);
-    }
+    if (!isset($allowedMimeTypes[$kind]) || !preg_match('/^[a-zA-Z0-9_-]{16,80}$/', $uploadId) || $chunkIndex < 0 || $chunkIndex >= $chunkTotal || $chunkTotal < 1 || $chunkTotal > 300 || $declaredSize < 1 || !isset($_FILES['chunk'])) jsonResponse(array('success' => false, 'message' => 'Dữ liệu tải tệp không hợp lệ.'), 400);
+
     $chunk = $_FILES['chunk'];
     if ($chunk['error'] !== UPLOAD_ERR_OK || !is_uploaded_file($chunk['tmp_name'])) jsonResponse(array('success' => false, 'message' => 'Không thể nhận một phần của tệp. Vui lòng thử lại.'), 400);
     $maxBytes = $kind === 'trailer' ? 250 * 1024 * 1024 : 15 * 1024 * 1024;
-    if ($declaredSize > $maxBytes) jsonResponse(array('success' => false, 'message' => 'Dung lượng tệp phải không vượt quá ' . ($kind === 'trailer' ? '250 MB.' : '15 MB.')), 400);
+    if ($declaredSize > $maxBytes) jsonResponse(array('success' => false, 'message' => 'Dung lượng tệp vượt quá giới hạn cho phép.'), 400);
 
     $baseDirectory = dirname(__FILE__) . DIRECTORY_SEPARATOR . 'uploads' . DIRECTORY_SEPARATOR . 'movies';
     $tempDirectory = $baseDirectory . DIRECTORY_SEPARATOR . '.chunks' . DIRECTORY_SEPARATOR . $uploadId;
@@ -131,12 +194,26 @@ if ($action === 'movie-media-chunk') {
     $mimeInfo = function_exists('finfo_open') ? finfo_open(FILEINFO_MIME_TYPE) : false;
     $mimeType = $mimeInfo ? finfo_file($mimeInfo, $assembledPath) : '';
     if ($mimeInfo) finfo_close($mimeInfo);
-    if (!isset($allowedMimeTypes[$kind][$mimeType])) jsonResponse(array('success' => false, 'message' => $kind === 'trailer' ? 'Trailer phải là MP4, WebM hoặc MOV.' : 'Ảnh phải có định dạng JPG, PNG hoặc WebP.'), 400);
+    // Older WAMP installations may report application/octet-stream for a
+    // perfectly valid image after chunk assembly. Inspect image content first
+    // and fall back to the original allowed extension only when necessary.
+    if (($kind === 'poster' || $kind === 'banner') && function_exists('getimagesize')) {
+        $imageInfo = @getimagesize($assembledPath);
+        if (is_array($imageInfo) && !empty($imageInfo['mime'])) $mimeType = $imageInfo['mime'];
+    }
+    if (!isset($allowedMimeTypes[$kind][$mimeType])) {
+        $originalExtension = strtolower(pathinfo(isset($chunk['name']) ? $chunk['name'] : '', PATHINFO_EXTENSION));
+        $extensionMimeTypes = array('jpg' => 'image/jpeg', 'jpeg' => 'image/jpeg', 'png' => 'image/png', 'webp' => 'image/webp', 'mp4' => 'video/mp4', 'webm' => 'video/webm', 'mov' => 'video/quicktime');
+        if (isset($extensionMimeTypes[$originalExtension]) && isset($allowedMimeTypes[$kind][$extensionMimeTypes[$originalExtension]])) $mimeType = $extensionMimeTypes[$originalExtension];
+    }
+    if (!isset($allowedMimeTypes[$kind][$mimeType])) jsonResponse(array('success' => false, 'message' => $kind === 'trailer' ? 'Trailer phải là MP4, WebM hoặc MOV.' : 'Ảnh phải là JPG, PNG hoặc WebP.'), 400);
     $extension = $allowedMimeTypes[$kind][$mimeType];
     $fileName = 'movie-' . $kind . '-' . sha1(uniqid((string)mt_rand(), true)) . '.' . $extension;
     $targetPath = $baseDirectory . DIRECTORY_SEPARATOR . $fileName;
     if (!rename($assembledPath, $targetPath)) jsonResponse(array('success' => false, 'message' => 'Không thể lưu tệp vào thư viện media.'), 500);
-    foreach (glob($tempDirectory . DIRECTORY_SEPARATOR . '*.part') ?: array() as $partPath) @unlink($partPath);
+    $chunkFiles = glob($tempDirectory . DIRECTORY_SEPARATOR . '*.part');
+    if (!is_array($chunkFiles)) $chunkFiles = array();
+    foreach ($chunkFiles as $partPath) @unlink($partPath);
     @rmdir($tempDirectory);
     $publicDirectory = str_replace('\\', '/', dirname($_SERVER['SCRIPT_NAME']));
     $host = isset($_SERVER['HTTP_HOST']) && preg_match('/^[A-Za-z0-9.-]+(?::[0-9]{1,5})?$/', $_SERVER['HTTP_HOST']) ? $_SERVER['HTTP_HOST'] : 'localhost';
@@ -169,15 +246,12 @@ if ($action === 'movie-media') {
 
     $file = $_FILES['media'];
     if ($file['error'] !== UPLOAD_ERR_OK || !is_uploaded_file($file['tmp_name'])) {
-        if ((int)$file['error'] === UPLOAD_ERR_INI_SIZE || (int)$file['error'] === UPLOAD_ERR_FORM_SIZE) {
-            jsonResponse(array('success' => false, 'message' => 'Tệp vượt quá giới hạn upload của máy chủ. Poster/banner tối đa 15 MB; trailer tối đa 250 MB.'), 400);
-        }
-        jsonResponse(array('success' => false, 'message' => 'Tải tệp lên thất bại. Hãy thử lại hoặc chọn một tệp hợp lệ.'), 400);
+        jsonResponse(array('success' => false, 'message' => 'Tải tệp lên thất bại. Hãy thử tệp nhỏ hơn hoặc kiểm tra cấu hình upload của PHP.'), 400);
     }
-    $maxBytes = $kind === 'trailer' ? 250 * 1024 * 1024 : 15 * 1024 * 1024;
+    $maxBytes = $kind === 'trailer' ? 100 * 1024 * 1024 : 8 * 1024 * 1024;
     if ((int)$file['size'] <= 0 || (int)$file['size'] > $maxBytes) {
-        $limit = $kind === 'trailer' ? '250 MB' : '15 MB';
-        jsonResponse(array('success' => false, 'message' => 'Dung lượng tệp phải không vượt quá ' . $limit . '.'), 400);
+        $limit = $kind === 'trailer' ? '100 MB' : '8 MB';
+        jsonResponse(array('success' => false, 'message' => 'Dung lượng tệp phải nhỏ hơn ' . $limit . '.'), 400);
     }
     $mimeType = '';
     if (function_exists('finfo_open')) {
@@ -268,7 +342,14 @@ if ($action === 'login' && $requestMethod === 'POST') {
     }
 
     $escapedUser = $db->real_escape_string($username);
-    $res = $db->query("SELECT id, username, password_hash, full_name, phone, role, status FROM users WHERE username = '{$escapedUser}' LIMIT 1");
+    // TMS accepts either the account username or the registered phone number.
+    // Both values are resolved to the same row in aurora_db so the durable
+    // session always carries the real database identity.
+    // A legacy seed currently contains the same phone on a POS account and
+    // on admin_tong. Prefer an exact username match; for phone-only login,
+    // choose the highest-privilege account deterministically instead of
+    // letting MySQL return whichever duplicate happens to be encountered.
+    $res = $db->query("SELECT id, username, password_hash, full_name, phone, role, status FROM users WHERE username = '{$escapedUser}' OR phone = '{$escapedUser}' ORDER BY (username = '{$escapedUser}') DESC, (role = 'super_admin') DESC, id DESC LIMIT 1");
     $user = $res ? $res->fetch_assoc() : null;
 
     if ($user) {
@@ -293,62 +374,21 @@ if ($action === 'login' && $requestMethod === 'POST') {
             'bg' => '#dbeafe'
         );
 
+        $_SESSION = array();
+        regenerateTmsSession();
         $_SESSION['tms_user'] = $user;
+        setTmsIdentity($user);
         jsonResponse(array(
             'success' => true,
             'message' => 'Đăng nhập thành công với vai trò ' . $user['role_info']['name'],
             'data' => array('user' => $user)
         ));
-    } else {
-        // Fallback kiểm tra trực tiếp cho 4 vai trò TMS
-        $user = null;
-        if (($username === '0328754062' || $username === 'admin_tong') && in_array($password, array('8888', 'admin123'), true)) {
-            $user = array(
-                'id' => 1,
-                'username' => $username,
-                'full_name' => 'Nguyễn Trần Thái Bảo',
-                'phone' => '0328754062',
-                'role' => 'super_admin',
-                'status' => 'active'
-            );
-        } elseif (($username === 'admin' || $username === 'admin_rap') && in_array($password, array('8888', 'admin123'), true)) {
-            $user = array(
-                'id' => 2,
-                'username' => $username,
-                'full_name' => 'Lê Hoàng Nam (Quản Lý Rạp)',
-                'phone' => '0901234567',
-                'role' => 'cinema_admin',
-                'status' => 'active'
-            );
-        } elseif ($username === 'supervisor' && in_array($password, array('8888', 'admin123'), true)) {
-            $user = array(
-                'id' => 5,
-                'username' => 'supervisor',
-                'full_name' => 'Trần Thị Mai (Giám Sát Ca Trực)',
-                'phone' => '0912345678',
-                'role' => 'supervisor',
-                'status' => 'active'
-            );
-        } elseif (($username === 'accounting' || $username === 'ketoan') && in_array($password, array('8888', 'admin123'), true)) {
-            $user = array(
-                'id' => 6,
-                'username' => $username,
-                'full_name' => 'Phạm Minh Trang (Kế Toán Trưởng)',
-                'phone' => '0923456789',
-                'role' => 'accounting',
-                'status' => 'active'
-            );
-        }
-
-        if ($user) {
-            $roleDefs = AdminController::getRoleDefinitions();
-            $user['role_info'] = isset($roleDefs[$user['role']]) ? $roleDefs[$user['role']] : array('code' => $user['role'], 'name' => $user['role']);
-            $_SESSION['tms_user'] = $user;
-            jsonResponse(array('success' => true, 'data' => array('user' => $user)));
-        } else {
-            jsonResponse(array('success' => false, 'message' => 'Tên đăng nhập hoặc mật khẩu không chính xác.'), 401);
-        }
     }
+
+    // Every authenticated TMS account must exist in aurora_db. Creating a
+    // temporary fallback user here used to leave the browser with no durable
+    // server identity, allowing an old account session to reappear on F5.
+    jsonResponse(array('success' => false, 'message' => 'Tên đăng nhập hoặc mật khẩu không chính xác.'), 401);
 }
 
 if ($action === 'logout') {
@@ -356,6 +396,8 @@ if ($action === 'logout') {
     if (session_id()) {
         session_destroy();
     }
+    setcookie(session_name(), '', time() - 3600, '/');
+    clearTmsIdentity();
     jsonResponse(array('success' => true, 'message' => 'Đã đăng xuất thành công khỏi TMS.'));
 }
 
@@ -364,6 +406,20 @@ if ($action === 'me') {
         jsonResponse(array('success' => false, 'message' => 'Chưa đăng nhập.'), 401);
     }
     $user = $_SESSION['tms_user'];
+    // Re-check the database account before restoring an existing session.
+    if (isset($user['id']) && (int)$user['id'] > 0) {
+        $userId = (int)$user['id'];
+        $result = $db->query("SELECT id, username, full_name, phone, role, status FROM users WHERE id = {$userId} LIMIT 1");
+        if ($result && ($currentUser = $result->fetch_assoc())) {
+            if ($currentUser['status'] !== 'active') {
+                unset($_SESSION['tms_user']);
+                jsonResponse(array('success' => false, 'message' => 'Tài khoản TMS không còn hoạt động.'), 401);
+            }
+            $currentUser['role'] = AdminController::normalizeRole($currentUser['role']);
+            $_SESSION['tms_user'] = $currentUser;
+            $user = $currentUser;
+        }
+    }
     $roleDefs = AdminController::getRoleDefinitions();
     $user['role_info'] = isset($roleDefs[$user['role']]) ? $roleDefs[$user['role']] : null;
     jsonResponse(array('success' => true, 'data' => $user));
@@ -391,6 +447,7 @@ if ($action === 'users') {
 }
 
 if ($action === 'dashboard') {
+    requireAdmin();
     $controller->dashboard();
 }
 
@@ -425,17 +482,15 @@ if ($action === 'movies-import' && $requestMethod === 'POST') {
     if (AdminController::normalizeRole($user['role']) !== 'super_admin') jsonResponse(array('success' => false, 'message' => 'Chỉ Admin Tổng được nhập danh sách phim.'), 403);
     $input = requestJson(); $rows = isset($input['movies']) && is_array($input['movies']) ? $input['movies'] : array();
     if (!$rows || count($rows) > 150) jsonResponse(array('success' => false, 'message' => 'File phải có từ 1 đến 150 dòng phim.'), 400);
-    $mode = isset($input['mode']) ? $input['mode'] : 'validate'; $errors = array(); $titles = array(); $codes = array(); $validRows = array();
-    $requiredFields = array('movie_code'=>'Mã phim','title'=>'Tên phim','original_title'=>'Tên phim gốc','genre'=>'Thể loại','duration_minutes'=>'Thời lượng','age_rating'=>'Độ tuổi','director'=>'Đạo diễn','cast'=>'Diễn viên','writer'=>'Biên kịch','producer'=>'Nhà sản xuất','production_country'=>'Quốc gia sản xuất','production_year'=>'Năm sản xuất','description'=>'Tóm tắt phim','plot_details'=>'Nội dung chi tiết','original_language'=>'Ngôn ngữ gốc','localization_versions'=>'Phiên bản phát hành','format'=>'Định dạng','release_date'=>'Ngày khởi chiếu','expected_end_date'=>'Ngày kết thúc dự kiến','distributor'=>'Nhà phát hành','poster_url'=>'Poster URL','banner_url'=>'Banner URL','trailer_url'=>'Trailer URL','status'=>'Trạng thái');
+    $mode = isset($input['mode']) ? $input['mode'] : 'validate'; $errors = array(); $titles = array(); $validRows = array();
+    $requiredFields = array('title'=>'Tên phim','original_title'=>'Tên phim gốc','genre'=>'Thể loại','duration_minutes'=>'Thời lượng','age_rating'=>'Độ tuổi','director'=>'Đạo diễn','cast'=>'Diễn viên','writer'=>'Biên kịch','producer'=>'Nhà sản xuất','production_country'=>'Quốc gia sản xuất','production_year'=>'Năm sản xuất','description'=>'Tóm tắt phim','plot_details'=>'Nội dung chi tiết','original_language'=>'Ngôn ngữ gốc','localization_versions'=>'Phiên bản phát hành','format'=>'Định dạng','release_date'=>'Ngày khởi chiếu','expected_end_date'=>'Ngày kết thúc dự kiến','distributor'=>'Nhà phát hành','poster_url'=>'Poster URL','banner_url'=>'Banner URL','trailer_url'=>'Trailer URL','status'=>'Trạng thái');
     foreach ($rows as $index => $row) {
         $line = $index + 2; $errorCount = count($errors); $title = trim(isset($row['title']) ? $row['title'] : ''); $duration = isset($row['duration_minutes']) ? (int)$row['duration_minutes'] : 0;
         foreach ($requiredFields as $field => $label) { $value = isset($row[$field]) ? trim((string)$row[$field]) : ''; if ($value === '' || ($field === 'production_year' && (int)$value <= 0)) $errors[] = array('row'=>$line,'field'=>$field,'message'=>'Thiếu dữ liệu: '.$label.'.'); }
         if ($duration < 1 || $duration > 600) $errors[] = array('row'=>$line,'field'=>'duration_minutes','message'=>'Thời lượng phải từ 1 đến 600 phút.');
         $year = isset($row['production_year']) ? (int)$row['production_year'] : 0; if ($year && ($year < 1888 || $year > 2100)) $errors[] = array('row'=>$line,'field'=>'production_year','message'=>'Năm sản xuất phải trong khoảng 1888–2100.');
         $normalizedTitle = strtolower($title); if ($title !== '' && isset($titles[$normalizedTitle])) $errors[] = array('row'=>$line,'field'=>'title','message'=>'Trùng tên phim với dòng '.$titles[$normalizedTitle].'.'); $titles[$normalizedTitle] = $line;
-        $code = trim(isset($row['movie_code']) ? $row['movie_code'] : ''); if ($code !== '' && isset($codes[strtolower($code)])) $errors[] = array('row'=>$line,'field'=>'movie_code','message'=>'Trùng mã phim với dòng '.$codes[strtolower($code)].'.'); $codes[strtolower($code)] = $line;
         if ($title !== '') { $exists = $db->prepare('SELECT id FROM movies WHERE title=? LIMIT 1'); $exists->bind_param('s', $title); $exists->execute(); $exists->store_result(); if ($exists->num_rows) $errors[] = array('row'=>$line,'field'=>'title','message'=>'Phim này đã có trong kho hệ thống.'); $exists->close(); }
-        if ($code !== '') { $exists = $db->prepare('SELECT id FROM movies WHERE movie_code=? LIMIT 1'); $exists->bind_param('s', $code); $exists->execute(); $exists->store_result(); if ($exists->num_rows) $errors[] = array('row'=>$line,'field'=>'movie_code','message'=>'Mã phim đã có trong kho hệ thống.'); $exists->close(); }
         $release = trim(isset($row['release_date']) ? $row['release_date'] : ''); $end = trim(isset($row['expected_end_date']) ? $row['expected_end_date'] : '');
         if (!preg_match('/^\\d{4}-\\d{2}-\\d{2}$/', $release)) $errors[] = array('row'=>$line,'field'=>'release_date','message'=>'Ngày khởi chiếu phải có dạng YYYY-MM-DD.');
         if (!preg_match('/^\\d{4}-\\d{2}-\\d{2}$/', $end)) $errors[] = array('row'=>$line,'field'=>'expected_end_date','message'=>'Ngày kết thúc phải có dạng YYYY-MM-DD.');
@@ -444,15 +499,26 @@ if ($action === 'movies-import' && $requestMethod === 'POST') {
         if ($errorCount === count($errors)) $validRows[] = $row;
     }
     if ($mode !== 'import' || count($errors)) jsonResponse(array('success' => true, 'message' => count($errors) ? 'File có lỗi cần chỉnh sửa.' : 'File hợp lệ, sẵn sàng tạo phim.', 'data' => array('valid' => !count($errors), 'total' => count($rows), 'valid_count' => count($validRows), 'errors' => $errors)));
+    // Revalidation above and this transaction make the import all-or-nothing:
+    // a concurrent duplicate or database error can never leave a partial list.
+    if (!$db->query('START TRANSACTION')) jsonResponse(array('success' => false, 'message' => 'Không thể bắt đầu phiên nhập dữ liệu.'), 500);
     $added = 0;
     $stmt = $db->prepare("INSERT INTO movies (movie_code,title,original_title,genre,duration_minutes,age_rating,director,cast,writer,producer,production_country,production_year,description,plot_details,original_language,localization_versions,format,release_date,expected_end_date,distributor,poster_url,banner_url,trailer_url,status,is_hot,created_at,updated_at) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,1,NOW(),NOW())");
-    if (!$stmt) jsonResponse(array('success' => false, 'message' => 'Không thể chuẩn bị nhập phim: '.$db->error), 500);
-    foreach ($validRows as $row) {
-        $movieCode=trim($row['movie_code']); $title=trim($row['title']); $originalTitle=trim($row['original_title']); $genre=trim($row['genre']); $duration=(int)$row['duration_minutes']; $age=trim($row['age_rating']); $director=trim($row['director']); $cast=trim($row['cast']); $writer=trim($row['writer']); $producer=trim($row['producer']); $country=trim($row['production_country']); $year=(int)$row['production_year']; $description=trim($row['description']); $plot=trim($row['plot_details']); $language=trim($row['original_language']); $localization=trim($row['localization_versions']); $format=trim($row['format']); $release=trim($row['release_date']); $end=trim($row['expected_end_date']); $distributor=trim($row['distributor']); $poster=trim($row['poster_url']); $banner=trim($row['banner_url']); $trailer=trim($row['trailer_url']); $status=strtoupper(trim($row['status']));
-        $stmt->bind_param('ssssissssssissssssssssss', $movieCode,$title,$originalTitle,$genre,$duration,$age,$director,$cast,$writer,$producer,$country,$year,$description,$plot,$language,$localization,$format,$release,$end,$distributor,$poster,$banner,$trailer,$status);
-        if ($stmt->execute()) $added++;
+    if (!$stmt) { $db->query('ROLLBACK'); jsonResponse(array('success' => false, 'message' => 'Không thể chuẩn bị nhập phim: '.$db->error), 500); }
+    try {
+        foreach ($validRows as $row) {
+            $movieCode=generateImportedMovieCode($db); $title=trim($row['title']); $originalTitle=trim($row['original_title']); $genre=trim($row['genre']); $duration=(int)$row['duration_minutes']; $age=trim($row['age_rating']); $director=trim($row['director']); $cast=trim($row['cast']); $writer=trim($row['writer']); $producer=trim($row['producer']); $country=trim($row['production_country']); $year=(int)$row['production_year']; $description=trim($row['description']); $plot=trim($row['plot_details']); $language=trim($row['original_language']); $localization=trim($row['localization_versions']); $format=trim($row['format']); $release=trim($row['release_date']); $end=trim($row['expected_end_date']); $distributor=trim($row['distributor']); $poster=trim($row['poster_url']); $banner=trim($row['banner_url']); $trailer=trim($row['trailer_url']); $status=strtolower(trim($row['status']));
+            $stmt->bind_param('ssssissssssissssssssssss', $movieCode,$title,$originalTitle,$genre,$duration,$age,$director,$cast,$writer,$producer,$country,$year,$description,$plot,$language,$localization,$format,$release,$end,$distributor,$poster,$banner,$trailer,$status);
+            if (!$stmt->execute()) throw new Exception($stmt->errno === 1062 ? 'Mã phim hoặc tên phim đã tồn tại. Hãy kiểm tra lại tệp.' : $stmt->error);
+            $added++;
+        }
+        $stmt->close();
+        if (!$db->query('COMMIT')) throw new Exception('Không thể hoàn tất việc ghi dữ liệu vào aurora_db.');
+    } catch (Exception $e) {
+        if ($stmt) $stmt->close();
+        $db->query('ROLLBACK');
+        jsonResponse(array('success' => false, 'message' => 'Chưa có phim nào được tạo: '.$e->getMessage()), 400);
     }
-    $stmt->close();
     jsonResponse(array('success' => true, 'message' => 'Đã tạo thành công '.$added.' phim vào kho hệ thống.', 'data' => array('added' => $added)));
 }
 

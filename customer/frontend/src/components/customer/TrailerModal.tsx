@@ -3,14 +3,18 @@ import { PlayCircle, X } from 'lucide-react';
 type Props = { movie: any; onClose: () => void };
 
 export default function TrailerModal({ movie, onClose }: Props) {
-  const match = movie.trailerUrl && (movie.trailerUrl.match(/[?&]v=([^&]+)/) || movie.trailerUrl.match(/youtu\.be\/([^?]+)/));
+  // Media URLs are normalized once when loaded from aurora_db. Encoding them
+  // again turns "%20" in the project path into "%2520", producing a 404.
+  const trailerUrl = movie.trailerUrl ? String(movie.trailerUrl).trim() : '';
+  const match = trailerUrl && (trailerUrl.match(/[?&]v=([^&]+)/) || trailerUrl.match(/youtu\.be\/([^?]+)/));
+  const isDirectVideo = /\.(mp4|webm|mov)(?:[?#].*)?$/i.test(trailerUrl);
 
   return <div style={overlay} onClick={onClose}>
     <section style={modal} onClick={event => event.stopPropagation()}>
       <button onClick={onClose} style={close} aria-label="Đóng trailer"><X size={19} /></button>
       <div style={{ display: 'flex', alignItems: 'center', gap: 8, color: '#f4c04a', fontSize: 12, fontWeight: 900, letterSpacing: .8, marginBottom: 14 }}><PlayCircle size={17} /> TRAILER · AURORA CINEMA</div>
       <h2 style={{ color: '#fff', fontSize: 22, margin: '0 0 16px' }}>{movie.title}</h2>
-      {match ? <div style={frame}><iframe title={`Trailer ${movie.title}`} src={`https://www.youtube.com/embed/${match[1]}?autoplay=1`} style={video} allow="autoplay; encrypted-media; picture-in-picture" allowFullScreen /></div> : <div style={empty}>Trailer của phim này chưa được cập nhật trong hệ thống.</div>}
+      {match ? <div style={frame}><iframe title={`Trailer ${movie.title}`} src={`https://www.youtube.com/embed/${match[1]}?autoplay=1`} style={video} allow="autoplay; encrypted-media; picture-in-picture" allowFullScreen /></div> : isDirectVideo ? <div style={frame}><video src={trailerUrl} style={video} controls autoPlay preload="metadata">Trình duyệt không hỗ trợ phát video này.</video></div> : <div style={empty}>Trailer của phim này chưa được cập nhật trong hệ thống.</div>}
     </section>
   </div>;
 }

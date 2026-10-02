@@ -18,3 +18,7 @@ Thumbs.db
 # Local MySQL data folder
 data/
 aurora_db/
+
+# Local recovery snapshots and incomplete chunked uploads
+.recovery/
+tms/backend/public/uploads/movies/.chunks/
