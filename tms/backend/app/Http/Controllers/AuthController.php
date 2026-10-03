@@ -9,8 +9,17 @@ class AuthController
         $this->db = $database;
     }
 
+    private function ensureTheaterScopeSchema()
+    {
+        $column = $this->db->query("SHOW COLUMNS FROM tms_users LIKE 'theater_id'");
+        if (!$column || $column->num_rows === 0) {
+            $this->db->query("ALTER TABLE tms_users ADD COLUMN theater_id BIGINT UNSIGNED NULL AFTER phone");
+        }
+    }
+
     public function login()
     {
+        $this->ensureTheaterScopeSchema();
         $input = requestJson();
         $username = isset($input['username']) ? trim($input['username']) : '';
         $password = isset($input['password']) ? trim($input['password']) : '';
@@ -23,7 +32,7 @@ class AuthController
         }
 
         // Truy vấn trực tiếp từ bảng tms_users trong database MySQL aurora_db
-        $stmt = $this->db->prepare("SELECT id, username, password_hash, full_name, phone, role, status FROM tms_users WHERE username = ? LIMIT 1");
+        $stmt = $this->db->prepare("SELECT tu.id, tu.username, tu.password_hash, tu.full_name, tu.phone, tu.role, tu.status, COALESCE(tu.theater_id, u.theater_id) AS theater_id FROM tms_users tu LEFT JOIN users u ON u.username=tu.username WHERE tu.username = ? LIMIT 1");
         if (!$stmt) {
             jsonResponse(array(
                 'success' => false,
@@ -77,6 +86,7 @@ class AuthController
             'full_name' => $user['full_name'],
             'phone' => $user['phone'],
             'role' => $user['role'],
+            'theater_id' => !empty($user['theater_id']) ? (int)$user['theater_id'] : 0,
             'system' => 'TMS - Theater Management System',
             'cinema' => 'AURORA CINEMA'
         );

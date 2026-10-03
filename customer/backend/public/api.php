@@ -236,10 +236,15 @@ if ($resource === 'theaters') {
     aurora_response(array('theaters' => $theaters), 200);
 }
 
-// Detailed, theatre-specific editorial content for the customer "Rạp" page.
+// Detailed, theatre-specific content for the customer "Rạp" page.
+// All operational figures below are read directly from aurora_db.  The selected
+// date is intentionally returned as part of the payload so the client never has
+// to infer availability from decorative/sample data.
 if ($resource === 'theater_detail') {
     $theaterId = isset($_GET['theater_id']) ? (int) $_GET['theater_id'] : 0;
     if ($theaterId < 1) aurora_response(array('message' => 'Rạp không hợp lệ.'), 422);
+    $requestedDate = isset($_GET['date']) ? trim((string) $_GET['date']) : '';
+    if ($requestedDate !== '' && !aurora_valid_date($requestedDate)) aurora_response(array('message' => 'Ngày xem lịch không hợp lệ.'), 422);
 
     $sql = "SELECT t.id, t.name, t.address, t.city,
         p.hero_image_url, p.short_description, p.short_description_en,
@@ -256,6 +261,58 @@ if ($resource === 'theater_detail') {
     $result->free();
     if (!$row) aurora_response(array('message' => 'Không tìm thấy rạp.'), 404);
 
+    $dateSql = "SELECT DISTINCT DATE(st.starts_at) AS show_date
+        FROM showtimes st INNER JOIN screens s ON s.id = st.screen_id
+        WHERE s.theater_id = ".(int)$theaterId." AND st.status = 'OPEN'
+        ORDER BY show_date LIMIT 7";
+    $dateResult = $db->query($dateSql);
+    if (!$dateResult) aurora_response(array('message' => 'Không thể tải lịch chiếu: '.$db->error), 500);
+    $availableDates = array();
+    while ($dateRow = $dateResult->fetch_assoc()) $availableDates[] = $dateRow['show_date'];
+    $dateResult->free();
+    $scheduleDate = $requestedDate !== '' ? $requestedDate : (count($availableDates) ? $availableDates[0] : date('Y-m-d'));
+    $dateEscaped = $db->real_escape_string($scheduleDate);
+
+    $roomsSql = "SELECT s.id, s.name, s.total_seats,
+        COUNT(st.id) AS showtime_count,
+        MIN(st.starts_at) AS first_showtime,
+        MAX(st.ends_at) AS last_showtime
+        FROM screens s
+        LEFT JOIN showtimes st ON st.screen_id = s.id AND st.status = 'OPEN' AND DATE(st.starts_at) = '".$dateEscaped."'
+        WHERE s.theater_id = ".(int)$theaterId.
+        " GROUP BY s.id, s.name, s.total_seats ORDER BY s.name";
+    $roomsResult = $db->query($roomsSql);
+    if (!$roomsResult) aurora_response(array('message' => 'Không thể tải phòng chiếu: '.$db->error), 500);
+    $rooms = array(); $activeRooms = 0;
+    while ($room = $roomsResult->fetch_assoc()) {
+        $room['id'] = (int)$room['id']; $room['total_seats'] = (int)$room['total_seats']; $room['showtime_count'] = (int)$room['showtime_count'];
+        if ($room['showtime_count'] > 0) $activeRooms++;
+        $rooms[] = $room;
+    }
+    $roomsResult->free();
+
+    $showtimesSql = "SELECT st.id, st.movie_id, s.id AS screen_id, s.name AS screen_name, s.total_seats,
+        m.title AS movie_title, m.poster_url, m.duration_minutes, m.age_rating, m.format,
+        st.starts_at, st.ends_at, st.ticket_price, COUNT(b.id) AS booked_seats
+        FROM showtimes st
+        INNER JOIN screens s ON s.id = st.screen_id
+        INNER JOIN movies m ON m.id = st.movie_id
+        LEFT JOIN bookings b ON b.showtime_id = st.id AND b.status IN ('PENDING','PAID')
+        LEFT JOIN booking_seats bs ON bs.booking_id = b.id
+        WHERE s.theater_id = ".(int)$theaterId." AND st.status = 'OPEN' AND DATE(st.starts_at) = '".$dateEscaped."'
+        GROUP BY st.id, st.movie_id, s.id, s.name, s.total_seats, m.title, m.poster_url, m.duration_minutes, m.age_rating, m.format, st.starts_at, st.ends_at, st.ticket_price
+        ORDER BY st.starts_at LIMIT 12";
+    $showtimesResult = $db->query($showtimesSql);
+    if (!$showtimesResult) aurora_response(array('message' => 'Không thể tải suất chiếu: '.$db->error), 500);
+    $showtimes = array();
+    while ($showtime = $showtimesResult->fetch_assoc()) {
+        $showtime['id'] = (int)$showtime['id']; $showtime['movie_id'] = (int)$showtime['movie_id'];
+        $showtime['screen_id'] = (int)$showtime['screen_id']; $showtime['total_seats'] = (int)$showtime['total_seats'];
+        $showtime['duration_minutes'] = (int)$showtime['duration_minutes']; $showtime['booked_seats'] = (int)$showtime['booked_seats'];
+        $showtimes[] = $showtime;
+    }
+    $showtimesResult->free();
+
     aurora_response(array('theater' => array(
         'id' => (int)$row['id'], 'name' => $row['name'], 'address' => $row['address'], 'city' => $row['city'],
         'heroImageUrl' => $row['hero_image_url'], 'shortDescription' => $row['short_description'],
@@ -265,6 +322,9 @@ if ($resource === 'theater_detail') {
         'facilitiesEn' => aurora_json_list($row['facilities_en_json']), 'openingHours' => $row['opening_hours'],
         'contactPhone' => $row['contact_phone'], 'mapUrl' => $row['map_url'],
         'screenCount' => (int)$row['screen_count'], 'totalSeats' => (int)$row['total_seats'],
+        'scheduleDate' => $scheduleDate, 'availableDates' => $availableDates,
+        'operation' => array('showtimeCount' => count($showtimes), 'activeRoomCount' => $activeRooms),
+        'rooms' => $rooms, 'showtimes' => $showtimes,
     )), 200);
 }
 

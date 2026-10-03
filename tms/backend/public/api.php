@@ -107,6 +107,14 @@ if ($db->connect_error) {
 
 $db->set_charset('utf8');
 
+// Scope every cinema operator to one cinema.  This migration is intentionally
+// here (before session restoration) so both a fresh login and an existing
+// signed session receive the same theater_id from aurora_db.
+$userTheaterColumn = $db->query("SHOW COLUMNS FROM users LIKE 'theater_id'");
+if (!$userTheaterColumn || $userTheaterColumn->num_rows === 0) {
+    $db->query("ALTER TABLE users ADD COLUMN theater_id BIGINT UNSIGNED NULL");
+}
+
 // PHP 5.2 on WAMP can occasionally reuse an old session id. Keep a separate,
 // signed TMS identity cookie so a reload always restores the account that most
 // recently completed a TMS login. The cookie only contains an id and expiry;
@@ -133,7 +141,7 @@ function restoreTmsIdentity() {
     $expected = hash_hmac('sha256', $payload, $tmsIdentitySecret);
     if ($parts[2] !== $expected || (int)$parts[1] < time()) { clearTmsIdentity(); return; }
     $userId = (int)$parts[0];
-    $result = $db->query("SELECT id, username, full_name, phone, role, status FROM users WHERE id = {$userId} AND status = 'active' LIMIT 1");
+    $result = $db->query("SELECT id, username, full_name, phone, theater_id, role, status FROM users WHERE id = {$userId} AND status = 'active' LIMIT 1");
     if (!$result || !($user = $result->fetch_assoc())) { clearTmsIdentity(); return; }
     // The signed identity is intentionally authoritative over a stale PHP
     // session. It is only issued after a successful credential check.
@@ -146,6 +154,15 @@ require_once dirname(__FILE__) . '/../app/Http/Controllers/RevenueController.php
 $controller = new AdminController($db);
 $revenueController = new RevenueController($db);
 $action = isset($_GET['action']) ? $_GET['action'] : 'health';
+
+// Pricing is a dedicated, audited matrix rather than a generic CRUD list.
+// Every consumer (TMS/POS/customer website) can therefore read the same
+// day-type and time-slot price from aurora_db.
+if ($action === 'ticket-pricing-policies') {
+    if ($requestMethod === 'GET') $controller->ticketPricingPolicies();
+    if ($requestMethod === 'POST' || $requestMethod === 'PUT') $controller->saveTicketPricingPolicy();
+    jsonResponse(array('success' => false, 'message' => 'Phương thức không được hỗ trợ.'), 405);
+}
 
 // Accept media in small pieces so WAMP's upload_max_filesize never rejects a
 // large trailer before PHP can handle it. The final file is validated again
@@ -349,7 +366,7 @@ if ($action === 'login' && $requestMethod === 'POST') {
     // on admin_tong. Prefer an exact username match; for phone-only login,
     // choose the highest-privilege account deterministically instead of
     // letting MySQL return whichever duplicate happens to be encountered.
-    $res = $db->query("SELECT id, username, password_hash, full_name, phone, role, status FROM users WHERE username = '{$escapedUser}' OR phone = '{$escapedUser}' ORDER BY (username = '{$escapedUser}') DESC, (role = 'super_admin') DESC, id DESC LIMIT 1");
+    $res = $db->query("SELECT id, username, password_hash, full_name, phone, theater_id, role, status FROM users WHERE username = '{$escapedUser}' OR phone = '{$escapedUser}' ORDER BY (username = '{$escapedUser}') DESC, (role = 'super_admin') DESC, id DESC LIMIT 1");
     $user = $res ? $res->fetch_assoc() : null;
 
     if ($user) {
@@ -409,7 +426,7 @@ if ($action === 'me') {
     // Re-check the database account before restoring an existing session.
     if (isset($user['id']) && (int)$user['id'] > 0) {
         $userId = (int)$user['id'];
-        $result = $db->query("SELECT id, username, full_name, phone, role, status FROM users WHERE id = {$userId} LIMIT 1");
+        $result = $db->query("SELECT id, username, full_name, phone, theater_id, role, status FROM users WHERE id = {$userId} LIMIT 1");
         if ($result && ($currentUser = $result->fetch_assoc())) {
             if ($currentUser['status'] !== 'active') {
                 unset($_SESSION['tms_user']);
@@ -449,6 +466,27 @@ if ($action === 'users') {
 if ($action === 'dashboard') {
     requireAdmin();
     $controller->dashboard();
+}
+
+if ($action === 'cinema-schedule-board') {
+    if ($requestMethod === 'GET') $controller->cinemaScheduleBoard();
+    jsonResponse(array('success' => false, 'message' => 'Phương thức không được hỗ trợ cho bảng điều phối lịch chiếu.'), 405);
+}
+
+if ($action === 'movie-plan-detail') {
+    if ($requestMethod === 'GET') $controller->moviePlanDetail();
+    if ($requestMethod === 'POST' || $requestMethod === 'PUT') $controller->updateMoviePlanTask();
+    jsonResponse(array('success' => false, 'message' => 'Phương thức không được hỗ trợ cho chi tiết kế hoạch.'), 405);
+}
+
+if ($action === 'movie-plan-action') {
+    if ($requestMethod === 'POST') $controller->executeMoviePlanAction();
+    jsonResponse(array('success' => false, 'message' => 'Phương thức không được hỗ trợ cho thao tác triển khai.'), 405);
+}
+
+if ($action === 'movie-plan-screen-preparation') {
+    if ($requestMethod === 'GET' || $requestMethod === 'POST') $controller->moviePlanScreenPreparation();
+    jsonResponse(array('success' => false, 'message' => 'Phương thức không được hỗ trợ cho chuẩn bị phòng chiếu.'), 405);
 }
 
 if ($action === 'revenue') {

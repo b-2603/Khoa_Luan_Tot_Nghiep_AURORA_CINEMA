@@ -1,84 +1,45 @@
-import { useEffect, useState } from 'react';
-import { ArrowRight, CalendarDays, CheckCircle2, Clock3, Film, MapPin, Phone, Sparkles, Ticket, Users } from 'lucide-react';
+import { useEffect, useMemo, useState } from 'react';
+import { ArrowRight, CalendarDays, CheckCircle2, ChevronRight, Clock3, Film, MapPin, Phone, Play, Sparkles, Ticket, Users } from 'lucide-react';
 
 const API_URL = 'http://localhost/AURORA%20CINEMA/customer/backend/public/api.php';
-
-type Props = {
-  theaters: any[];
-  selectedTheaterId: number | null;
-  language: 'vi' | 'en';
-  onSelectTheater: (theater: any) => void;
-  onViewSchedule: () => void;
-};
+type Props = { theaters: any[]; selectedTheaterId: number | null; language: 'vi' | 'en'; onSelectTheater: (theater: any) => void; onViewSchedule: () => void; };
+const formatDate = (value: string, language: 'vi' | 'en') => new Intl.DateTimeFormat(language === 'en' ? 'en-GB' : 'vi-VN', { weekday: 'short', day: '2-digit', month: '2-digit' }).format(new Date(`${value}T00:00:00`));
+const timeOf = (value: string) => value ? new Date(value.replace(' ', 'T')).toLocaleTimeString('vi-VN', { hour: '2-digit', minute: '2-digit' }) : '—';
 
 export default function TheaterDetailPage({ theaters, selectedTheaterId, language, onSelectTheater, onViewSchedule }: Props) {
   const [theater, setTheater] = useState<any | null>(null);
   const [loading, setLoading] = useState(false);
+  const [selectedDate, setSelectedDate] = useState('');
   const selected = theaters.find(item => item.id === selectedTheaterId) || theaters[0];
   const isEn = language === 'en';
   const t = (vi: string, en: string) => isEn ? en : vi;
 
+  useEffect(() => { setSelectedDate(''); }, [selected?.id]);
   useEffect(() => {
     if (!selected?.id) return;
     setLoading(true);
-    setTheater(null);
-    fetch(`${API_URL}?action=theater_detail&theater_id=${selected.id}`)
-      .then(response => response.json())
-      .then(result => setTheater(result?.theater || null))
-      .catch(() => setTheater(null))
-      .finally(() => setLoading(false));
-  }, [selected?.id]);
+    fetch(`${API_URL}?action=theater_detail&theater_id=${selected.id}${selectedDate ? `&date=${encodeURIComponent(selectedDate)}` : ''}`)
+      .then(response => response.json()).then(result => setTheater(result?.theater || null)).catch(() => setTheater(null)).finally(() => setLoading(false));
+  }, [selected?.id, selectedDate]);
 
   const current = theater || selected;
   const highlights = (isEn ? current?.highlightsEn : current?.highlights) || [];
   const facilities = (isEn ? current?.facilitiesEn : current?.facilities) || [];
+  const rooms = current?.rooms || [], showtimes = current?.showtimes || [], dates = current?.availableDates || [];
+  const scheduleDate = current?.scheduleDate || selectedDate;
+  const occupancy = useMemo(() => {
+    const seats = showtimes.reduce((total: number, item: any) => total + (Number(item.total_seats) || 0), 0);
+    return seats ? Math.round(showtimes.reduce((total: number, item: any) => total + (Number(item.booked_seats) || 0), 0) * 100 / seats) : 0;
+  }, [showtimes]);
 
-  return <main className="theater-detail-page">
-    <section className="theater-detail-heading">
-      <div>
-        <div className="theater-kicker">AURORA CINEMA · {t('HỆ THỐNG RẠP', 'CINEMA NETWORK')}</div>
-        <h1>{t('Khám phá rạp Aurora', 'Discover Aurora Cinemas')}</h1>
-        <p>{t('Chọn một cụm rạp để xem không gian, công nghệ và tiện ích riêng biệt.', 'Choose a cinema to explore its unique space, technology and amenities.')}</p>
-      </div>
-      <div className="theater-picker" aria-label={t('Chọn rạp', 'Select cinema')}>
-        {theaters.map(item => <button key={item.id} onClick={() => onSelectTheater(item)} className={item.id === selected?.id ? 'active' : ''}>{item.name}</button>)}
-      </div>
-    </section>
-
+  return <main className="theater-discovery-page">
+    <section className="theater-discovery-heading"><div><div className="theater-kicker">AURORA CINEMA <span /> {t('HỆ THỐNG RẠP', 'CINEMA NETWORK')}</div><h1>{t('Khám phá rạp Aurora', 'Discover Aurora Cinemas')}</h1><p>{t('Không gian, lịch chiếu và thông tin vận hành được cập nhật trực tiếp từ hệ thống Aurora.', 'Space, showtimes and operational information are updated directly from Aurora systems.')}</p></div><div className="theater-picker" aria-label={t('Chọn rạp', 'Select cinema')}>{theaters.map(item => <button type="button" key={item.id} onClick={() => onSelectTheater(item)} className={item.id === selected?.id ? 'active' : ''}>{item.name}</button>)}</div></section>
     {!current ? <div className="theater-empty">{t('Chưa có thông tin rạp.', 'No cinema information available.')}</div> : <>
-      <section className="theater-hero" style={{ backgroundImage: `linear-gradient(90deg, rgba(7,18,35,.94) 0%, rgba(7,18,35,.72) 48%, rgba(7,18,35,.28) 100%), url("${current.heroImageUrl || ''}")` }}>
-        <div className="theater-hero-content">
-          <div className="theater-eyebrow"><Sparkles size={15} /> {current.city}</div>
-          <h2>{current.name}</h2>
-          <p>{isEn ? current.shortDescriptionEn : current.shortDescription}</p>
-          <div className="theater-address"><MapPin size={16} /> {current.address}</div>
-          <button onClick={onViewSchedule} className="theater-primary-btn"><CalendarDays size={16} /> {t('Xem lịch chiếu tại rạp', 'View cinema showtimes')} <ArrowRight size={15} /></button>
-        </div>
-      </section>
-
-      {loading ? <div className="theater-loading">{t('Đang tải thông tin rạp...', 'Loading cinema details...')}</div> : <div className="theater-content-grid">
-        <section className="theater-main-card">
-          <div className="theater-section-label"><Film size={17} /> {t('CÂU CHUYỆN CỦA RẠP', 'THE CINEMA STORY')}</div>
-          <h3>{t('Một trải nghiệm được thiết kế riêng cho bạn', 'An experience designed for you')}</h3>
-          <p>{isEn ? current.descriptionEn : current.description}</p>
-          <div className="theater-feature-grid">
-            {highlights.map((item: string) => <div key={item} className="theater-feature"><CheckCircle2 size={17} />{item}</div>)}
-          </div>
-        </section>
-        <aside className="theater-info-card">
-          <div className="theater-section-label"><Ticket size={17} /> {t('THÔNG TIN RẠP', 'CINEMA INFO')}</div>
-          <div className="theater-stat"><Film /><span><b>{current.screenCount || selected?.screens?.length || 0}</b>{t(' phòng chiếu', ' auditoriums')}</span></div>
-          <div className="theater-stat"><Users /><span><b>{Number(current.totalSeats || 0).toLocaleString('vi-VN')}</b>{t(' ghế phục vụ', ' seats')}</span></div>
-          <div className="theater-stat"><Clock3 /><span><small>{t('Giờ hoạt động', 'Opening hours')}</small><b>{current.openingHours || '09:00 - 23:00'}</b></span></div>
-          <div className="theater-stat"><Phone /><span><small>{t('Hotline', 'Hotline')}</small><b>{current.contactPhone || '1900 2088'}</b></span></div>
-          {current.mapUrl && <a className="theater-map-link" href={current.mapUrl} target="_blank" rel="noreferrer"><MapPin size={15} /> {t('Chỉ đường đến rạp', 'Get directions')}</a>}
-        </aside>
-      </div>}
-
-      <section className="theater-facilities">
-        <div><div className="theater-section-label"><Sparkles size={17} /> {t('TIỆN ÍCH', 'AMENITIES')}</div><h3>{t('Thoải mái từ lúc đến rạp đến khi phim khép lại', 'Comfort from arrival until the final credits')}</h3></div>
-        <div className="theater-facility-list">{facilities.map((item: string) => <div key={item}><CheckCircle2 size={16} />{item}</div>)}</div>
-      </section>
+      <section className="theater-hero-new" style={{ backgroundImage: `linear-gradient(90deg, rgba(5,14,29,.96) 0%, rgba(5,14,29,.82) 44%, rgba(5,14,29,.25) 100%), url("${current.heroImageUrl || ''}")` }}><div className="theater-hero-content-new"><div className="theater-live-label"><i /> {t('DỮ LIỆU RẠP ĐANG HOẠT ĐỘNG', 'LIVE CINEMA DATA')}</div><div className="theater-eyebrow"><MapPin size={14} /> {current.city || t('Hệ thống Aurora', 'Aurora network')}</div><h2>{current.name}</h2><p>{(isEn ? current.shortDescriptionEn : current.shortDescription) || t('Điểm hẹn điện ảnh với lịch chiếu linh hoạt mỗi ngày.', 'Your movie destination with flexible daily showtimes.')}</p><div className="theater-address"><MapPin size={16} /> {current.address}</div><div className="theater-hero-actions"><button type="button" onClick={onViewSchedule} className="theater-primary-btn"><CalendarDays size={16} /> {t('Xem lịch & đặt vé', 'View showtimes & book')} <ArrowRight size={15} /></button>{current.mapUrl && <a href={current.mapUrl} target="_blank" rel="noreferrer" className="theater-secondary-btn"><MapPin size={15} /> {t('Chỉ đường', 'Directions')}</a>}</div></div><div className="theater-hero-facts"><span><Film size={16} /><b>{current.screenCount || 0}</b>{t(' phòng chiếu', ' screens')}</span><span><Users size={16} /><b>{Number(current.totalSeats || 0).toLocaleString('vi-VN')}</b>{t(' ghế', ' seats')}</span><span><Clock3 size={16} /><b>{current.openingHours || '—'}</b>{t(' hoạt động', ' operating')}</span></div></section>
+      <section className="theater-operation-strip" aria-live="polite"><div><CalendarDays /><span>{t('Suất chiếu trong ngày', 'Today’s showtimes')}<b>{loading ? '—' : current.operation?.showtimeCount || 0}</b></span></div><div><Film /><span>{t('Phòng đang có lịch', 'Rooms scheduled')}<b>{loading ? '—' : `${current.operation?.activeRoomCount || 0}/${current.screenCount || 0}`}</b></span></div><div><Users /><span>{t('Sức chứa đã đặt', 'Booked capacity')}<b>{loading ? '—' : `${occupancy}%`}</b></span></div><div><Phone /><span>{t('Hỗ trợ tại rạp', 'Cinema support')}<b>{current.contactPhone || '1900 2088'}</b></span></div></section>
+      <section className="theater-schedule-panel"><div className="theater-panel-heading"><div><div className="theater-section-label"><CalendarDays size={16} /> {t('LỊCH CHIẾU TẠI RẠP', 'CINEMA SHOWTIMES')}</div><h3>{t('Chọn suất chiếu phù hợp với bạn', 'Choose a showtime that suits you')}</h3><p>{scheduleDate ? `${t('Lịch ngày', 'Schedule for')} ${formatDate(scheduleDate, language)}` : t('Chưa có lịch chiếu được mở.', 'No showtimes are open yet.')}</p></div><button type="button" onClick={onViewSchedule} className="theater-text-action">{t('Xem toàn bộ lịch', 'View full schedule')} <ChevronRight size={16} /></button></div>{dates.length > 0 && <div className="theater-date-tabs">{dates.map((date: string) => <button type="button" key={date} className={date === scheduleDate ? 'active' : ''} onClick={() => setSelectedDate(date)}><small>{formatDate(date, language).split(',')[0]}</small><b>{formatDate(date, language).split(',').slice(1).join(',').trim()}</b></button>)}</div>}{loading ? <div className="theater-state"><span className="theater-spinner" />{t('Đang đồng bộ lịch chiếu từ Aurora DB...', 'Synchronising showtimes from Aurora DB...')}</div> : showtimes.length > 0 ? <div className="theater-showtime-grid">{showtimes.map((item: any) => <article key={item.id} className="theater-showtime-card"><div className="theater-showtime-time"><b>{timeOf(item.starts_at)}</b><span>{timeOf(item.ends_at)}</span></div><div className="theater-showtime-poster">{item.poster_url ? <img src={item.poster_url} alt="" /> : <Film size={18} />}</div><div className="theater-showtime-copy"><h4>{item.movie_title}</h4><p>{item.screen_name} · {item.format || '2D Digital'} · {item.age_rating || 'P'}</p><span><Users size={13} /> {item.booked_seats}/{item.total_seats} {t('ghế đã đặt', 'seats booked')}</span></div><button type="button" className="theater-book-mini" onClick={onViewSchedule}><Play size={14} /> {t('Đặt vé', 'Book')}</button></article>)}</div> : <div className="theater-state"><Film size={25} /><b>{t('Chưa có suất chiếu cho ngày này', 'No showtimes for this date')}</b><span>{t('Hãy chọn ngày khác hoặc xem lịch chiếu mới nhất.', 'Choose another date or view the latest schedule.')}</span></div>}</section>
+      <section className="theater-detail-grid"><article className="theater-story-card"><div className="theater-section-label"><Sparkles size={16} /> {t('TRẢI NGHIỆM TẠI RẠP', 'CINEMA EXPERIENCE')}</div><h3>{t('Một điểm hẹn được thiết kế cho điện ảnh', 'A destination designed for cinema')}</h3><p>{(isEn ? current.descriptionEn : current.description) || t('Thông tin trải nghiệm đang được cập nhật bởi rạp.', 'Experience information is being updated by the cinema.')}</p><div className="theater-feature-grid">{highlights.map((item: string) => <div key={item}><CheckCircle2 size={17} />{item}</div>)}</div></article><article className="theater-rooms-card"><div className="theater-section-label"><Ticket size={16} /> {t('PHÒNG CHIẾU', 'AUDITORIUMS')}</div><h3>{t('Tình trạng phòng theo lịch đã chọn', 'Room status for the selected date')}</h3><div className="theater-room-list">{rooms.length ? rooms.map((room: any) => <div key={room.id}><span className={room.showtime_count > 0 ? 'busy' : ''} /><section><b>{room.name}</b><small>{Number(room.total_seats || 0).toLocaleString('vi-VN')} {t('ghế', 'seats')}</small></section><em>{room.showtime_count > 0 ? `${room.showtime_count} ${t('suất', 'shows')}` : t('Chưa lên lịch', 'No schedule')}</em></div>) : <p className="theater-muted">{t('Chưa có phòng chiếu trong dữ liệu.', 'No auditoriums in the data yet.')}</p>}</div></article></section>
+      {facilities.length > 0 && <section className="theater-amenities"><div><div className="theater-section-label"><Sparkles size={16} /> {t('TIỆN ÍCH', 'AMENITIES')}</div><h3>{t('Sẵn sàng cho một buổi xem phim trọn vẹn', 'Ready for a complete movie outing')}</h3></div><div>{facilities.map((item: string) => <span key={item}><CheckCircle2 size={16} />{item}</span>)}</div></section>}
     </>}
   </main>;
 }

@@ -233,6 +233,13 @@ ALTER TABLE `tms_movie_plans`
     ADD COLUMN IF NOT EXISTS `updated_by` VARCHAR(100) NULL AFTER `approved_at`,
     ADD COLUMN IF NOT EXISTS `updated_at` DATETIME NULL AFTER `updated_by`;
 
-ALTER TABLE `tms_movie_plans`
-    MODIFY COLUMN `status` ENUM('draft', 'pending_approval', 'approved', 'published', 'in_progress', 'completed', 'cancelled') NOT NULL DEFAULT 'draft';
+UPDATE `tms_movie_plans`
+SET `status` = CASE
+    WHEN `status` = 'pending_approval' THEN 'draft'
+    WHEN `status` = 'approved' THEN 'published'
+    ELSE `status`
+END
+WHERE `status` IN ('pending_approval', 'approved');
 
+ALTER TABLE `tms_movie_plans`
+    MODIFY COLUMN `status` ENUM('draft', 'published', 'in_progress', 'completed', 'cancelled') NOT NULL DEFAULT 'draft';

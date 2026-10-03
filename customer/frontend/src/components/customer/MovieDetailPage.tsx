@@ -18,7 +18,9 @@ export default function MovieDetailPage({ movie, theaters, theater, showtimes, d
   const [theaterId, setTheaterId] = useState<number | null>(firstTheater ? firstTheater.id : null);
   const [currentShowtimes, setCurrentShowtimes] = useState<any[]>(showtimes);
   const selectedTheater = theaters.find(item => item.id === theaterId);
-  const trailerId = movie.trailerUrl && (movie.trailerUrl.match(/[?&]v=([^&]+)/) || movie.trailerUrl.match(/youtu\.be\/([^?]+)/));
+  const trailerUrl = String(movie.trailerUrl || '').trim();
+  const trailerId = trailerUrl && (trailerUrl.match(/[?&]v=([^&]+)/) || trailerUrl.match(/youtu\.be\/([^?]+)/) || trailerUrl.match(/youtube\.com\/embed\/([^?&/]+)/));
+  const isDirectTrailer = /\.(mp4|webm|mov)(?:[?#].*)?$/i.test(trailerUrl);
   const formattedDate = new Intl.DateTimeFormat('vi-VN', { timeZone: 'Asia/Ho_Chi_Minh', day: '2-digit', month: '2-digit', year: 'numeric' }).format(new Date(`${date}T00:00:00+07:00`));
 
   useEffect(() => {
@@ -52,7 +54,7 @@ export default function MovieDetailPage({ movie, theaters, theater, showtimes, d
       {currentShowtimes.length ? <div style={{ display: 'flex', flexWrap: 'wrap', gap: 12 }}>{currentShowtimes.map(item => <button key={item.id} onClick={() => onBook(item, selectedTheater?.name || theater)} style={showtimeButton}><strong>{new Date(item.starts_at.replace(' ', 'T')).toLocaleTimeString('vi-VN', { hour: '2-digit', minute: '2-digit' })}</strong><small>{item.screen_name || 'Phòng chiếu'} · {Number(item.ticket_price).toLocaleString('vi-VN')}đ</small></button>)}</div> : <div style={{ color: '#94a3b8', fontSize: 13 }}>Chưa có suất chiếu trong database cho cụm rạp và ngày này.</div>}
     </section>
 
-    {trailerId && <section style={trailerCard}><div style={sectionTitle}>TRAILER PHIM</div><div style={trailerFrame}><iframe title={`Trailer ${movie.title}`} src={`https://www.youtube.com/embed/${trailerId[1]}`} style={videoFrame} allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture" allowFullScreen /></div></section>}
+    {(trailerId || isDirectTrailer) && <section style={trailerCard}><div style={{ ...sectionTitle, color: '#fff' }}><Film size={18} color="#f4c04a" /> TRAILER PHIM</div><div style={trailerFrame}>{trailerId ? <iframe title={`Trailer ${movie.title}`} src={`https://www.youtube.com/embed/${trailerId[1]}`} style={videoFrame} allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture" allowFullScreen /> : <video src={trailerUrl} style={videoFrame} controls preload="metadata">Trình duyệt không hỗ trợ phát video này.</video>}</div></section>}
   </main>;
 }
 
