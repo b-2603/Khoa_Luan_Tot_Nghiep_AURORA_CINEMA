@@ -13,6 +13,8 @@ import AccountPage from './components/customer/AccountPage';
 import TheaterSchedulePage from './components/customer/TheaterSchedulePage';
 import TheaterDetailPage from './components/customer/TheaterDetailPage';
 import MoviesPage from './components/customer/MoviesPage';
+import TicketPricingPage from './components/customer/TicketPricingPage';
+import CustomerHome from './components/customer/CustomerHome';
 
 const API_URL = 'http://localhost/AURORA%20CINEMA/customer/backend/public/api.php';
 
@@ -108,13 +110,14 @@ function normalizeMediaUrl(value: unknown) {
 /* ─── COMPONENT ─────────────────────────────────────────────── */
 export default function App() {
   const contentRef = useRef<HTMLDivElement>(null);
+  const searchInputRef = useRef<HTMLInputElement>(null);
   const [language, setLanguage] = useState<Language>(() => localStorage.getItem('aurora-language') === 'en' ? 'en' : 'vi');
   const [movieTab, setMovieTab] = useState<'NOW_SHOWING' | 'COMING_SOON' | 'SPECIAL_SHOWING'>('NOW_SHOWING');
   const [heroSlide, setHeroSlide] = useState(0);
   const [heroPaused, setHeroPaused] = useState(false);
   const [chatMsg, setChatMsg] = useState('');
   const [authMode, setAuthMode] = useState<'login' | 'register' | null>(null);
-  const [authUser, setAuthUser] = useState<{ fullName: string; email: string } | null>(null);
+  const [authUser, setAuthUser] = useState<{ fullName: string; email: string; membershipLevel?: string; points?: number } | null>(null);
   const [moviesList, setMoviesList] = useState<any[]>([]);
   const [promotionsList, setPromotionsList] = useState<any[]>([]);
   const [theatersList, setTheatersList] = useState<any[]>([]);
@@ -122,6 +125,11 @@ export default function App() {
   const [selectedTheaterId, setSelectedTheaterId] = useState<number | null>(null);
   const [showtimesList, setShowtimesList] = useState<any[]>([]);
   const [detailMovie, setDetailMovie] = useState<any | null>(null);
+  const [isSearchOpen, setIsSearchOpen] = useState(false);
+  const [searchQuery, setSearchQuery] = useState('');
+  const [searchResults, setSearchResults] = useState<any[]>([]);
+  const [searchLoading, setSearchLoading] = useState(false);
+  const [searchError, setSearchError] = useState('');
   const [booking, setBooking] = useState<{ movie: any; showtime: any } | null>(null);
   const [pendingBooking, setPendingBooking] = useState<{ movie: any; showtime: any; theater: string } | null>(null);
   const [trailerMovie, setTrailerMovie] = useState<any | null>(null);
@@ -130,10 +138,43 @@ export default function App() {
   const [showUserMenu, setShowUserMenu] = useState<boolean>(false);
   const [showAccount, setShowAccount] = useState<boolean>(false);
   const [accountTab, setAccountTab] = useState('info');
-  const [currentPage, setCurrentPage] = useState<'home' | 'schedule' | 'movies' | 'theaters'>('home');
+  const [currentPage, setCurrentPage] = useState<'home' | 'schedule' | 'movies' | 'theaters' | 'ticket-prices'>('home');
   const [footerPage, setFooterPage] = useState<'faq' | 'booking-guide' | 'privacy' | 'terms' | null>(null);
   const copy = COPY[language];
   const t = (vi: string, en: string) => language === 'en' ? en : vi;
+
+  function closeMovieSearch() {
+    setIsSearchOpen(false);
+    setSearchQuery('');
+    setSearchResults([]);
+    setSearchError('');
+  }
+
+  function mapApiMovie(movie: any) {
+    return {
+      id: movie.id, title: movie.title, description: movie.description,
+      rating: normalizeAgeRating(movie.ageRating), ageRating: normalizeAgeRating(movie.ageRating),
+      format: movie.format || '2D Digital', genre: movie.genre,
+      poster: normalizeMediaUrl(movie.posterUrl), posterUrl: normalizeMediaUrl(movie.posterUrl),
+      bannerUrl: normalizeMediaUrl(movie.bannerUrl), trailerUrl: normalizeMediaUrl(movie.trailerUrl),
+      duration: movie.durationMinutes, durationMinutes: movie.durationMinutes,
+      status: String(movie.status || 'NOW_SHOWING').toUpperCase(), releaseDate: movie.releaseDate,
+      isHot: Boolean(movie.isHot), upcomingShowtimeCount: Number(movie.upcomingShowtimeCount || 0),
+      nextShowtime: movie.nextShowtime || null, minTicketPrice: movie.minTicketPrice ?? null,
+      theaterCount: Number(movie.theaterCount || 0)
+    };
+  }
+
+  function selectSearchMovie(movie: any) {
+    fetch(`${API_URL}?action=movie_search_event`, {
+      method: 'POST', credentials: 'include', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ movieId: movie.id, query: searchQuery.trim() })
+    }).catch(() => {});
+    setDetailMovie(mapApiMovie(movie));
+    setCurrentPage('movies');
+    closeMovieSearch();
+    scrollContentToTop();
+  }
 
   function scrollContentToTop() {
     contentRef.current?.scrollTo({ top: 0, behavior: 'smooth' });
@@ -199,6 +240,30 @@ export default function App() {
   }, [heroSlide, heroSlides.length]);
 
   useEffect(() => {
+    if (!isSearchOpen) return;
+    const timeout = window.setTimeout(() => searchInputRef.current?.focus(), 50);
+    return () => window.clearTimeout(timeout);
+  }, [isSearchOpen]);
+
+  useEffect(() => {
+    const query = searchQuery.trim();
+    if (!isSearchOpen || query.length < 2) {
+      setSearchResults([]); setSearchLoading(false); setSearchError('');
+      return;
+    }
+    const controller = new AbortController();
+    const timeout = window.setTimeout(() => {
+      setSearchLoading(true); setSearchError('');
+      fetch(`${API_URL}?action=movie_search&q=${encodeURIComponent(query)}`, { signal: controller.signal, credentials: 'include' })
+        .then(response => response.ok ? response.json() : Promise.reject(new Error('search failed')))
+        .then(result => setSearchResults(Array.isArray(result.movies) ? result.movies : []))
+        .catch(error => { if (error.name !== 'AbortError') { setSearchResults([]); setSearchError(t('Không thể tải kết quả. Vui lòng thử lại.', 'Unable to load results. Please try again.')); } })
+        .finally(() => { if (!controller.signal.aborted) setSearchLoading(false); });
+    }, 260);
+    return () => { controller.abort(); window.clearTimeout(timeout); };
+  }, [searchQuery, isSearchOpen, language]);
+
+  useEffect(() => {
     fetch(`${API_URL}?action=me`, { credentials: 'include' })
       .then(response => response.json())
       .then(result => setAuthUser(result.user))
@@ -225,7 +290,11 @@ export default function App() {
             durationMinutes: m.durationMinutes,
             status: String(m.status || 'NOW_SHOWING').toUpperCase(),
             releaseDate: m.releaseDate,
-            isHot: m.isHot !== undefined ? m.isHot : true
+            isHot: m.isHot !== undefined ? m.isHot : true,
+            upcomingShowtimeCount: Number(m.upcomingShowtimeCount || 0),
+            nextShowtime: m.nextShowtime || null,
+            minTicketPrice: m.minTicketPrice ?? null,
+            theaterCount: Number(m.theaterCount || 0)
           })));
         }
       })
@@ -307,6 +376,17 @@ export default function App() {
     setShowTheaterMenu(false);
     setShowUserMenu(false);
     setCurrentPage('theaters');
+    setFooterPage(null);
+    scrollContentToTop();
+  }
+
+  function handleGoTicketPrices() {
+    setAuthMode(null);
+    setShowAccount(false);
+    setDetailMovie(null);
+    setShowTheaterMenu(false);
+    setShowUserMenu(false);
+    setCurrentPage('ticket-prices');
     setFooterPage(null);
     scrollContentToTop();
   }
@@ -403,9 +483,9 @@ export default function App() {
               <>
                 <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
                   <Trophy size={13} color="#f4c04a" />
-                  <span>{copy.member} <strong style={{ color: '#f4c04a' }}>GOLD</strong></span>
+                  <span>{copy.member} <strong style={{ color: '#f4c04a' }}>{authUser?.membershipLevel || 'STANDARD'}</strong></span>
                   <span style={{ color: '#8aa0b8' }}>|</span>
-                  <strong style={{ color: '#f4c04a' }}>1,250 {copy.points}</strong>
+                  <strong style={{ color: '#f4c04a' }}>{Number(authUser?.points || 0).toLocaleString('vi-VN')} {copy.points}</strong>
                 </div>
                 <div style={{ display: 'flex', alignItems: 'center', gap: 14 }}>
                   <div style={{ position: 'relative', cursor: 'pointer' }}>
@@ -516,13 +596,15 @@ export default function App() {
                 (i === 0 && currentPage === 'home' && !authMode && !footerPage && !showAccount && !detailMovie) ||
                 (i === 1 && currentPage === 'schedule' && !authMode && !footerPage && !showAccount && !detailMovie) ||
                 (i === 2 && currentPage === 'movies' && !authMode && !footerPage && !showAccount && !detailMovie) ||
-                (i === 3 && currentPage === 'theaters' && !authMode && !footerPage && !showAccount && !detailMovie);
+                (i === 3 && currentPage === 'theaters' && !authMode && !footerPage && !showAccount && !detailMovie) ||
+                (i === 4 && currentPage === 'ticket-prices' && !authMode && !footerPage && !showAccount && !detailMovie);
 
               const handleClick =
                 i === 0 ? handleGoHome :
                 i === 1 ? handleGoSchedule :
                 i === 2 ? handleGoMovies :
-                i === 3 ? handleGoTheaters : undefined;
+                i === 3 ? handleGoTheaters :
+                i === 4 ? handleGoTicketPrices : undefined;
 
               return (
                 <button
@@ -547,7 +629,12 @@ export default function App() {
             })}
           </nav>
           <div style={{ display: 'flex', alignItems: 'center', gap: 10, flexShrink: 0 }}>
-            <button style={{ width: 36, height: 36, borderRadius: '50%', border: '1px solid #d5dee9', background: '#f3f6fa', display: 'flex', alignItems: 'center', justifyContent: 'center', cursor: 'pointer' }}>
+            <button
+              type="button"
+              aria-label={t('Tìm kiếm phim', 'Search movies')}
+              title={t('Tìm kiếm phim', 'Search movies')}
+              onClick={() => { setShowUserMenu(false); setIsSearchOpen(true); }}
+              style={{ width: 36, height: 36, borderRadius: '50%', border: isSearchOpen ? '1px solid #e8a020' : '1px solid #d5dee9', background: isSearchOpen ? '#fff8e7' : '#f3f6fa', display: 'flex', alignItems: 'center', justifyContent: 'center', cursor: 'pointer', boxShadow: isSearchOpen ? '0 0 0 3px rgba(244,192,74,.18)' : 'none', transition: 'all .18s ease' }}>
               <Search size={16} color="#4a637a" />
             </button>
             {authUser ? (
@@ -698,7 +785,7 @@ export default function App() {
                             </svg>
                           </span>
                           {t('Thẻ thành viên', 'Membership card')}
-                          <span style={{ marginLeft: 'auto', fontSize: 10, fontWeight: 700, padding: '2px 7px', borderRadius: 10, background: 'linear-gradient(135deg,#f4c04a,#e8a020)', color: '#0d1b2e' }}>STANDARD</span>
+                          <span style={{ marginLeft: 'auto', fontSize: 10, fontWeight: 700, padding: '2px 7px', borderRadius: 10, background: 'linear-gradient(135deg,#f4c04a,#e8a020)', color: '#0d1b2e' }}>{authUser.membershipLevel || 'STANDARD'}</span>
                         </button>
 
                         <button className="aurora-menu-item" onClick={() => openAccountTab('history')}>
@@ -721,7 +808,7 @@ export default function App() {
                             </svg>
                           </span>
                           {t('Điểm thưởng Aurora', 'Aurora reward points')}
-                          <span style={{ marginLeft: 'auto', fontSize: 11, fontWeight: 700, color: '#f59e0b' }}>0 {copy.points}</span>
+                          <span style={{ marginLeft: 'auto', fontSize: 11, fontWeight: 700, color: '#f59e0b' }}>{Number(authUser.points || 0).toLocaleString('vi-VN')} {copy.points}</span>
                         </button>
 
                         <button className="aurora-menu-item" onClick={() => openAccountTab('voucher')}>
@@ -765,6 +852,72 @@ export default function App() {
         </div>
       </header>
 
+      {isSearchOpen && (
+        <div
+          role="dialog"
+          aria-modal="true"
+          aria-label={t('Tìm kiếm phim', 'Movie search')}
+          onMouseDown={event => { if (event.target === event.currentTarget) closeMovieSearch(); }}
+          style={{ position: 'fixed', inset: 0, zIndex: 250, background: 'rgba(8, 23, 42, .52)', backdropFilter: 'blur(5px)', padding: 'clamp(84px, 13vh, 132px) 18px 24px', overflowY: 'auto' }}
+        >
+          <section style={{ width: 'min(720px, 100%)', margin: '0 auto', borderRadius: 20, overflow: 'hidden', background: '#fff', boxShadow: '0 28px 75px rgba(3,16,34,.32)', border: '1px solid rgba(255,255,255,.7)' }}>
+            <div style={{ padding: '20px 22px 16px', background: 'linear-gradient(135deg, #0d1b2e 0%, #17355b 100%)', color: '#fff' }}>
+              <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 16, marginBottom: 14 }}>
+                <div>
+                  <div style={{ fontSize: 11, letterSpacing: 1.1, fontWeight: 800, color: '#f4c04a' }}>AURORA CINEMA</div>
+                  <div style={{ fontSize: 20, fontWeight: 800, marginTop: 2 }}>{t('Tìm phim bạn muốn xem', 'Find your next movie')}</div>
+                </div>
+                <button type="button" onClick={closeMovieSearch} aria-label={t('Đóng', 'Close')} style={{ width: 32, height: 32, border: '1px solid rgba(255,255,255,.24)', borderRadius: 9, background: 'rgba(255,255,255,.1)', color: '#fff', fontSize: 22, lineHeight: 1, cursor: 'pointer' }}>×</button>
+              </div>
+              <div style={{ display: 'flex', alignItems: 'center', gap: 10, padding: '0 13px', height: 48, borderRadius: 12, background: '#fff', boxShadow: '0 5px 16px rgba(0,0,0,.17)' }}>
+                <Search size={19} color="#52708d" />
+                <input
+                  ref={searchInputRef}
+                  value={searchQuery}
+                  onChange={event => setSearchQuery(event.target.value)}
+                  onKeyDown={event => { if (event.key === 'Escape') closeMovieSearch(); if (event.key === 'Enter' && searchResults.length === 1) selectSearchMovie(searchResults[0]); }}
+                  placeholder={t('Nhập tên phim, thể loại hoặc nội dung...', 'Type a movie title, genre, or keyword...')}
+                  style={{ minWidth: 0, flex: 1, height: '100%', border: 'none', outline: 'none', color: '#10233e', fontSize: 14, background: 'transparent' }}
+                />
+                {searchLoading && <span style={{ color: '#e8a020', fontSize: 12, fontWeight: 700 }}>{t('Đang tìm...', 'Searching...')}</span>}
+              </div>
+            </div>
+            <div style={{ minHeight: 210, maxHeight: 'min(55vh, 470px)', overflowY: 'auto', padding: 10, background: '#f7f9fc' }}>
+              {searchQuery.trim().length < 2 ? (
+                <div style={{ padding: '38px 22px 34px', textAlign: 'center', color: '#70849a' }}>
+                  <div style={{ width: 52, height: 52, margin: '0 auto 13px', borderRadius: 16, display: 'flex', alignItems: 'center', justifyContent: 'center', background: 'linear-gradient(135deg, #fff1c7, #ffe19a)', boxShadow: '0 8px 20px rgba(219,153,20,.16)' }}><Film size={25} color="#b97708" /></div>
+                  <div style={{ fontSize: 16, fontWeight: 800, color: '#193653' }}>{t('Bạn muốn xem phim gì hôm nay?', 'What would you like to watch today?')}</div>
+                  <div style={{ marginTop: 6, fontSize: 12.5, lineHeight: 1.55 }}>{t('Nhập tên phim hoặc thể loại để xem suất chiếu phù hợp.', 'Search by movie title or genre to find a suitable showtime.')}</div>
+                  <div style={{ display: 'flex', justifyContent: 'center', flexWrap: 'wrap', gap: 7, marginTop: 17 }}>
+                    {['Avatar', 'Hành động', 'Tình cảm'].map(keyword => <button key={keyword} type="button" onClick={() => setSearchQuery(keyword)} style={{ border: '1px solid #d8e2ec', borderRadius: 99, padding: '6px 11px', color: '#42627e', background: '#fff', fontSize: 11.5, fontWeight: 700, cursor: 'pointer' }}>{keyword}</button>)}
+                  </div>
+                </div>
+              ) : searchError ? (
+                <div style={{ padding: '52px 22px', textAlign: 'center', fontSize: 13, color: '#c2410c' }}>{searchError}</div>
+              ) : !searchLoading && searchResults.length === 0 ? (
+                <div style={{ padding: '52px 22px', textAlign: 'center', color: '#70849a' }}>
+                  <div style={{ fontSize: 14, fontWeight: 700, color: '#425a73' }}>{t('Chưa tìm thấy phim phù hợp', 'No matching movies found')}</div>
+                  <div style={{ marginTop: 5, fontSize: 12 }}>{t('Thử thay đổi từ khóa hoặc tên phim.', 'Try another keyword or movie title.')}</div>
+                </div>
+              ) : searchResults.map(movie => (
+                <button key={movie.id} type="button" onClick={() => selectSearchMovie(movie)} style={{ display: 'flex', width: '100%', alignItems: 'center', gap: 14, padding: 12, border: '1px solid transparent', borderRadius: 12, background: '#fff', cursor: 'pointer', textAlign: 'left', marginBottom: 8, boxShadow: '0 1px 2px rgba(14,38,66,.05)', transition: 'border-color .15s, transform .15s' }}>
+                  <div style={{ width: 48, height: 64, flexShrink: 0, borderRadius: 7, overflow: 'hidden', background: '#e7edf4' }}>
+                    {movie.posterUrl ? <img src={normalizeMediaUrl(movie.posterUrl)} alt="" style={{ width: '100%', height: '100%', objectFit: 'cover' }} /> : <Film size={22} color="#7890a8" style={{ margin: '21px 13px' }} />}
+                  </div>
+                  <div style={{ minWidth: 0, flex: 1 }}>
+                    <div style={{ display: 'flex', alignItems: 'center', gap: 7, minWidth: 0 }}><span style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', color: '#132a45', fontSize: 15, fontWeight: 800 }}>{movie.title}</span><span style={{ flexShrink: 0, padding: '2px 6px', borderRadius: 5, background: '#fff0c5', color: '#995d00', fontSize: 10, fontWeight: 800 }}>{normalizeAgeRating(movie.ageRating)}</span></div>
+                    <div style={{ marginTop: 5, color: '#71859a', fontSize: 12 }}>{movie.genre || movie.format || '2D Digital'} · {movie.durationMinutes} {t('phút', 'min')}</div>
+                    <div style={{ marginTop: 6, color: movie.upcomingShowtimeCount > 0 ? '#15803d' : '#8090a1', fontSize: 11, fontWeight: 700 }}>{movie.upcomingShowtimeCount > 0 ? `${movie.upcomingShowtimeCount} ${t('suất sắp chiếu', 'upcoming sessions')}` : t('Chưa có suất đang mở bán', 'No session currently on sale')}</div>
+                  </div>
+                  <span style={{ color: '#d38a0a', fontSize: 20, fontWeight: 400 }}>›</span>
+                </button>
+              ))}
+            </div>
+            <div style={{ padding: '11px 20px', background: '#fff', color: '#71859a', fontSize: 11.5, textAlign: 'center' }}>{t('Chọn phim để xem thông tin và đặt vé nhanh.', 'Select a movie to view details and book quickly.')}</div>
+          </section>
+        </div>
+      )}
+
       <div ref={contentRef} style={{ flex: 1, minHeight: 0, overflowY: 'auto', overscrollBehavior: 'contain' }}>
       {/* CONTENT: AUTH, ACCOUNT, OR HOMEPAGE */}
       {footerPage ? (
@@ -802,22 +955,26 @@ export default function App() {
           theaters={theatersList}
           movies={moviesList}
           selectedTheaterId={selectedTheaterId}
+          language={language}
           onSelectTheater={theater => { setSelectedTheater(theater.name); setSelectedTheaterId(theater.id); setShowTheaterMenu(false); }}
           onBook={(movie, showtime) => requestBooking(movie, showtime, theatersList.find(theater => theater.id === showtime.theater_id)?.name || selectedTheater)}
         />
       ) : currentPage === 'theaters' ? (
         <TheaterDetailPage
           theaters={theatersList}
+          movies={moviesList}
           selectedTheaterId={selectedTheaterId}
           language={language}
           onSelectTheater={theater => { setSelectedTheater(theater.name); setSelectedTheaterId(theater.id); setShowTheaterMenu(false); }}
           onViewSchedule={handleGoSchedule}
+          onBook={(movie, showtime, theaterName) => requestBooking(movie, showtime, theaterName)}
         />
       ) : currentPage === 'movies' ? (
         <MoviesPage
           movies={moviesList}
           theaters={theatersList}
           selectedTheater={selectedTheater}
+          language={language}
           onSelectMovie={(movie) => {
             setDetailMovie(movie);
             scrollContentToTop();
@@ -830,6 +987,27 @@ export default function App() {
             setTrailerMovie(movie);
           }}
         />
+      ) : currentPage === 'home' ? (
+        <CustomerHome
+          language={language}
+          user={authUser}
+          movies={moviesList}
+          promotions={promotionsList}
+          theaters={theatersList}
+          selectedTheaterId={selectedTheaterId}
+          selectedTheaterName={selectedTheater}
+          onSelectTheater={theater => { setSelectedTheater(theater.name); setSelectedTheaterId(theater.id); setShowTheaterMenu(false); }}
+          onOpenMovie={movie => { setDetailMovie(movie); scrollContentToTop(); }}
+          onWatchTrailer={movie => setTrailerMovie(movie)}
+          onBook={(movie, showtime, theaterName) => requestBooking(movie, showtime, theaterName)}
+          onOpenSchedule={handleGoSchedule}
+          onOpenMovies={handleGoMovies}
+          onOpenPrices={handleGoTicketPrices}
+          onOpenAccount={() => openAccountTab('member')}
+          onRegister={() => setAuthMode('register')}
+        />
+      ) : currentPage === 'ticket-prices' ? (
+        <TicketPricingPage language={language} onViewSchedule={handleGoSchedule} />
       ) : (
         <main style={{ maxWidth: 1320, margin: '0 auto', padding: '14px 16px 20px' }}>
             <div style={{ display: 'grid', gridTemplateColumns: '230px 1fr 280px', gap: 14 }}>

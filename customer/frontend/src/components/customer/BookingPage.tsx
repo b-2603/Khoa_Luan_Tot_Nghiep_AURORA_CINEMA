@@ -22,7 +22,7 @@ const HOLD_SECONDS = 600; // 10 phút giữ ghế
 /* ─────────────────────────────── Types ─────────────────────────────── */
 type Lang = 'vi' | 'en';
 type Step = 1 | 2 | 3 | 4;
-type Seat = { id: number; seat_row: string; seat_number: number; seat_type: 'STANDARD' | 'VIP' | 'COUPLE' | 'DOUBLE'; is_available: number };
+type Seat = { id: number; seat_row: string; seat_number: number; seat_type: 'STANDARD' | 'VIP' | 'COUPLE' | 'DOUBLE'; price?: number; is_available: number; held_by_you?: number };
 type Showtime = {
   id: number; screen_id: number; screen_name: string; total_seats: number; seats_left: number;
   theater_id: number; theater_name: string; theater_address: string; city: string;
@@ -71,10 +71,8 @@ function ratingColor(r: string) {
   return m[r] || '#64748b';
 }
 function getSeatPrice(seat: Seat, basePrice: number): number {
-  const numBase = Number(basePrice || 0);
-  if (seat.seat_type === 'VIP') return numBase + 20000;
-  if (seat.seat_type === 'COUPLE' || seat.seat_type === 'DOUBLE') return numBase * 2;
-  return numBase;
+  if (seat.price !== undefined && Number.isFinite(Number(seat.price))) return Number(seat.price);
+  return Number(basePrice || 0);
 }
 function seatColor(seat: Seat, selected: boolean): { bg: string; border: string; color: string } {
   if (!seat.is_available) return { bg: '#e2e8f0', border: '#cbd5e1', color: '#94a3b8' };
@@ -171,11 +169,11 @@ function StepBar({ step, lang, onGoStep }: { step: Step; lang: Lang; onGoStep?: 
 
 /** Panel thông tin bên phải */
 function SummaryPanel({
-  movie, showtime, theater, seats, selectedSeats, vipSurcharge,
+  movie, showtime, theater, seats, selectedSeats, seatPricing,
   discount, comboItems, comboTotal, totalAfterDiscount, timeLeft, step, lang, onContinue, continueLabel, continueDisabled,
 }: {
   movie: any; showtime: any; theater: string; seats: Seat[]; selectedSeats: Seat[];
-  vipSurcharge: number; discount: number; comboItems: { combo: Combo; quantity: number }[]; comboTotal: number; totalAfterDiscount: number;
+  seatPricing: Record<string, number>; discount: number; comboItems: { combo: Combo; quantity: number }[]; comboTotal: number; totalAfterDiscount: number;
   timeLeft: number; step: Step; lang: Lang;
   onContinue: () => void; continueLabel: string; continueDisabled: boolean;
 }) {
@@ -416,15 +414,15 @@ function SummaryPanel({
             </div>
             <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: 4 }}>
               <span style={{ color: '#64748b' }}>{t('Ghế thường', 'Standard', lang)}</span>
-              <strong>{fmtMoney(ticketPrice)}</strong>
+                <strong>{fmtMoney(Number(seatPricing.STANDARD ?? ticketPrice))}</strong>
             </div>
             <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: 4 }}>
-              <span style={{ color: '#64748b' }}>Ghế VIP (+20k)</span>
-              <strong style={{ color: '#92400e' }}>{fmtMoney(ticketPrice + 20000)}</strong>
+                <span style={{ color: '#64748b' }}>Ghế VIP</span>
+                <strong style={{ color: '#92400e' }}>{fmtMoney(Number(seatPricing.VIP ?? ticketPrice))}</strong>
             </div>
             <div style={{ display: 'flex', justifyContent: 'space-between' }}>
               <span style={{ color: '#64748b' }}>{t('Ghế đôi (Couple)', 'Couple seat', lang)}</span>
-              <strong style={{ color: '#9d174d' }}>{fmtMoney(ticketPrice * 2)}</strong>
+                <strong style={{ color: '#9d174d' }}>{fmtMoney(Number(seatPricing.COUPLE ?? ticketPrice))}</strong>
             </div>
           </div>
         )}
@@ -472,6 +470,7 @@ export default function BookingPage({ movie, showtime: initShowtime, theater: in
   const [selectedShowtime, setSelectedShowtime] = useState<Showtime | null>(initShowtime || null);
   const [selectedTheater, setSelectedTheater] = useState(initTheater || initShowtime?.theater_name || '');
   const [seats, setSeats] = useState<Seat[]>([]);
+  const [seatPricing, setSeatPricing] = useState<Record<string, number>>({});
   const [selectedSeatIds, setSelectedSeatIds] = useState<number[]>([]);
   const [seatsLoading, setSeatsLoading] = useState(false);
   const [voucherCode, setVoucherCode] = useState('');
@@ -488,7 +487,6 @@ export default function BookingPage({ movie, showtime: initShowtime, theater: in
   const timerRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const loadedShowtimeIdRef = useRef<number | null>(null);
 
-  const VIP_SURCHARGE = 20000;
   const selectedSeats = seats.filter(s => selectedSeatIds.includes(s.id));
   const ticketPrice = Number(selectedShowtime?.ticket_price || 0);
   const subtotal = selectedSeats.reduce((s, seat) => s + getSeatPrice(seat, ticketPrice), 0);
@@ -527,7 +525,14 @@ export default function BookingPage({ movie, showtime: initShowtime, theater: in
     setSeatsLoading(true);
     fetch(`${API}?action=showtime_seats&showtime_id=${selectedShowtime.id}`, { credentials:'include' })
       .then(r => r.json())
-      .then(res => setSeats(res.seats || []))
+      .then(res => {
+        const liveSeats = res.seats || [];
+        setSeats(liveSeats);
+        setSeatPricing(res.pricing || {});
+        const heldIds = liveSeats.filter((seat: Seat) => seat.held_by_you).map((seat: Seat) => seat.id);
+        if (heldIds.length) setSelectedSeatIds(heldIds);
+        if (res.hold_seconds) setTimeLeft(Number(res.hold_seconds));
+      })
       .catch(() => setError(t('Không thể tải sơ đồ ghế.','Failed to load seat map.',lang)))
       .finally(() => setSeatsLoading(false));
   }, [step, selectedShowtime]);
@@ -579,12 +584,22 @@ export default function BookingPage({ movie, showtime: initShowtime, theater: in
     window.scrollTo({ top: 0, behavior:'smooth' });
   }
 
-  function toggleSeat(seat: Seat) {
+  async function toggleSeat(seat: Seat) {
     if (!seat.is_available) return;
-    setSelectedSeatIds(prev =>
-      prev.includes(seat.id) ? prev.filter(id => id !== seat.id) : [...prev, seat.id]
-    );
+    const nextSeatIds = selectedSeatIds.includes(seat.id) ? selectedSeatIds.filter(id => id !== seat.id) : [...selectedSeatIds, seat.id];
+    setSelectedSeatIds(nextSeatIds);
     setError('');
+    try {
+      const response = await fetch(`${API}?action=seat_hold`, { method:'POST', credentials:'include', headers:{'Content-Type':'application/json'}, body:JSON.stringify({ showtimeId:selectedShowtime?.id, seatIds:nextSeatIds }) });
+      const result = await response.json();
+      if (!response.ok) throw new Error(result.message || t('Không thể giữ ghế đã chọn.','Unable to hold selected seats.',lang));
+      setSelectedSeatIds(result.seat_ids || nextSeatIds);
+      if (result.hold_seconds) setTimeLeft(Number(result.hold_seconds));
+    } catch (holdError) {
+      setSelectedSeatIds(selectedSeatIds);
+      setError(holdError instanceof Error ? holdError.message : t('Không thể giữ ghế đã chọn.','Unable to hold selected seats.',lang));
+      if (selectedShowtime) fetch(`${API}?action=showtime_seats&showtime_id=${selectedShowtime.id}`, { credentials:'include' }).then(r => r.json()).then(result => { setSeats(result.seats || []); setSeatPricing(result.pricing || {}); }).catch(() => {});
+    }
   }
 
   async function applyVoucher() {
@@ -799,7 +814,7 @@ export default function BookingPage({ movie, showtime: initShowtime, theater: in
               voucherInfo={voucherInfo} voucherError={voucherError} voucherLoading={voucherLoading}
               onApplyVoucher={applyVoucher} onRemoveVoucher={() => { setVoucherInfo(null); setVoucherCode(''); }}
               payMethod={payMethod} setPayMethod={setPayMethod}
-              user={user} error={error} onBack={() => goStep(2)} VIP_SURCHARGE={VIP_SURCHARGE}
+              user={user} error={error} onBack={() => goStep(2)}
             />
           )}
 
@@ -810,7 +825,7 @@ export default function BookingPage({ movie, showtime: initShowtime, theater: in
               seats={seats} seatsLoading={seatsLoading}
               seatRows={seatRows} sortedRows={sortedRows}
               selectedSeatIds={selectedSeatIds} onToggleSeat={toggleSeat}
-              error={error} onBack={() => goStep(1)} VIP_SURCHARGE={VIP_SURCHARGE}
+              error={error} onBack={() => goStep(1)} seatPricing={seatPricing}
             />
           )}
 
@@ -835,7 +850,7 @@ export default function BookingPage({ movie, showtime: initShowtime, theater: in
           <SummaryPanel
             movie={movie} showtime={selectedShowtime} theater={selectedTheater}
             seats={seats} selectedSeats={selectedSeats}
-            vipSurcharge={VIP_SURCHARGE} discount={discount} comboItems={comboItems} comboTotal={comboTotal} totalAfterDiscount={totalFinal}
+            seatPricing={seatPricing} discount={discount} comboItems={comboItems} comboTotal={comboTotal} totalAfterDiscount={totalFinal}
             timeLeft={timeLeft} step={step} lang={lang}
             onContinue={handleCTA} continueLabel={ctaLabel} continueDisabled={ctaDisabled}
           />
@@ -1012,7 +1027,9 @@ function ShowtimeCard({ st, selected, lang, onClick }: { st:Showtime; selected:b
 }
 
 /* ═══════════════════════════════ STEP 2 ═══════════════════════════════ */
-function SeatStep({ lang, movie, showtime, theater, seats, seatsLoading, seatRows, sortedRows, selectedSeatIds, onToggleSeat, error, onBack, VIP_SURCHARGE }: any) {
+function SeatStep({ lang, movie, showtime, theater, seats, seatsLoading, seatRows, sortedRows, selectedSeatIds, onToggleSeat, error, onBack, seatPricing }: any) {
+  const availableSeatCount = seats.filter((seat: Seat) => seat.is_available).length;
+  const selectedSeatCount = selectedSeatIds.length;
   return (
     <div style={{ maxWidth: 960, margin: '0 auto' }}>
       {/* Back button */}
@@ -1062,11 +1079,21 @@ function SeatStep({ lang, movie, showtime, theater, seats, seatsLoading, seatRow
         </div>
       </div>
 
+      {/* Live availability strip — values come from aurora_db.showtime_seats */}
+      <div style={{ display:'grid', gridTemplateColumns:'minmax(0,1fr) auto auto', gap:10, alignItems:'center', marginBottom:16, padding:'13px 16px', borderRadius:14, background:'linear-gradient(135deg,#0d1b2e,#19385e)', boxShadow:'0 9px 24px rgba(13,27,46,.13)' }}>
+        <div style={{ minWidth:0 }}>
+          <div style={{ display:'flex', alignItems:'center', gap:7, color:'#f4c04a', fontSize:11, fontWeight:900, letterSpacing:.7 }}><span style={{ width:8, height:8, borderRadius:'50%', background:'#2dd47b', boxShadow:'0 0 0 4px rgba(45,212,123,.16)' }} /> {t('SƠ ĐỒ GHẾ TRỰC TUYẾN', 'LIVE SEAT MAP', lang)}</div>
+          <div style={{ color:'#c7d6e8', fontSize:11.5, marginTop:5 }}>{t('Ghế được đồng bộ và giữ tạm thời trên hệ thống Aurora.', 'Seats sync and are temporarily held by Aurora.', lang)}</div>
+        </div>
+        <div style={{ borderLeft:'1px solid rgba(255,255,255,.15)', paddingLeft:14, textAlign:'right' }}><b style={{ display:'block', color:'#fff', fontSize:17 }}>{availableSeatCount}</b><span style={{ color:'#a8c0d9', fontSize:10 }}>{t('ghế còn trống','available',lang)}</span></div>
+        <div style={{ borderLeft:'1px solid rgba(255,255,255,.15)', paddingLeft:14, textAlign:'right' }}><b style={{ display:'block', color:'#f4c04a', fontSize:17 }}>{selectedSeatCount}</b><span style={{ color:'#a8c0d9', fontSize:10 }}>{t('đang giữ','held',lang)}</span></div>
+      </div>
+
       {/* Legend */}
       <div className="aurora-booking-card" style={{ padding: '12px 18px', marginBottom: 24, display: 'flex', gap: 18, flexWrap: 'wrap', justifyContent: 'center' }}>
         {[
           { bg: '#f8fafc', border: '#cbd5e1', color: '#475569', label: t('Ghế thường', 'Standard', lang) },
-          { bg: '#fef3c7', border: '#f59e0b', color: '#92400e', label: `Ghế VIP (+${VIP_SURCHARGE.toLocaleString('vi-VN')}đ)` },
+          { bg: '#fef3c7', border: '#f59e0b', color: '#92400e', label: `Ghế VIP · ${fmtMoney(Number(seatPricing?.VIP || 0))}` },
           { bg: '#fce7f3', border: '#f472b6', color: '#9d174d', label: t('Ghế đôi (Couple - x2)', 'Couple seat (x2)', lang) },
           { bg: '#1e3a5f', border: '#f4c04a', color: '#f4c04a', label: t('Đang chọn', 'Selected', lang) },
           { bg: '#e2e8f0', border: '#cbd5e1', color: '#94a3b8', label: t('Đã bán', 'Taken', lang) },
@@ -1162,9 +1189,9 @@ function SeatStep({ lang, movie, showtime, theater, seats, seatsLoading, seatRow
           )}
         </div>
         <div style={{ fontSize: 12, color: '#64748b' }}>
-          {t('Thường:', 'Standard:', lang)} <strong style={{ color: '#0d1b2e' }}>{fmtMoney(Number(showtime.ticket_price))}</strong>
-          {' · '}VIP: <strong style={{ color: '#92400e' }}>{fmtMoney(Number(showtime.ticket_price) + VIP_SURCHARGE)}</strong>
-          {' · '}{t('Đôi:', 'Couple:', lang)} <strong style={{ color: '#9d174d' }}>{fmtMoney(Number(showtime.ticket_price) * 2)}</strong>
+          {t('Thường:', 'Standard:', lang)} <strong style={{ color: '#0d1b2e' }}>{fmtMoney(Number(seatPricing?.STANDARD ?? showtime.ticket_price))}</strong>
+          {' · '}VIP: <strong style={{ color: '#92400e' }}>{fmtMoney(Number(seatPricing?.VIP ?? showtime.ticket_price))}</strong>
+          {' · '}{t('Đôi:', 'Couple:', lang)} <strong style={{ color: '#9d174d' }}>{fmtMoney(Number(seatPricing?.COUPLE ?? showtime.ticket_price))}</strong>
         </div>
       </div>
 
@@ -1178,7 +1205,7 @@ function PaymentStep({
   lang, movie, showtime, theater, selectedSeats, subtotal, discount, totalFinal,
   comboItems, comboTotal, comboQuantities, combos, onChangeCombo,
   voucherCode, setVoucherCode, voucherInfo, voucherError, voucherLoading,
-  onApplyVoucher, onRemoveVoucher, payMethod, setPayMethod, user, error, onBack, VIP_SURCHARGE
+  onApplyVoucher, onRemoveVoucher, payMethod, setPayMethod, user, error, onBack
 }: any) {
   const ticketPrice = showtime.ticket_price;
   const PAY_METHODS = [
@@ -1668,7 +1695,7 @@ function PaymentStep({
                 {t('Vé ghế', 'Seat ticket', lang)} {s.seat_row}{s.seat_number} ({s.seat_type === 'VIP' ? 'VIP' : s.seat_type === 'DOUBLE' ? t('Đôi', 'Double', lang) : t('Thường', 'Std', lang)})
               </span>
               <span style={{ fontWeight: 700, color: '#0d1b2e' }}>
-                {fmtMoney(ticketPrice + (s.seat_type === 'VIP' ? VIP_SURCHARGE : 0))}
+                {fmtMoney(getSeatPrice(s, Number(ticketPrice)))}
               </span>
             </div>
           ))}

@@ -10,6 +10,8 @@ type AuthMode = 'login' | 'register';
 type AuthenticatedAccount = {
   fullName: string;
   email: string;
+  membershipLevel?: string;
+  points?: number;
 };
 
 type AuthModalProps = {

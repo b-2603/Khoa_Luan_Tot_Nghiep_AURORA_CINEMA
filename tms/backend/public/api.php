@@ -473,6 +473,11 @@ if ($action === 'cinema-schedule-board') {
     jsonResponse(array('success' => false, 'message' => 'Phương thức không được hỗ trợ cho bảng điều phối lịch chiếu.'), 405);
 }
 
+if ($action === 'schedule-movies') {
+    if ($requestMethod === 'GET') $controller->scheduleMovies();
+    jsonResponse(array('success' => false, 'message' => 'Phương thức không được hỗ trợ cho danh sách phim lập lịch.'), 405);
+}
+
 if ($action === 'movie-plan-detail') {
     if ($requestMethod === 'GET') $controller->moviePlanDetail();
     if ($requestMethod === 'POST' || $requestMethod === 'PUT') $controller->updateMoviePlanTask();

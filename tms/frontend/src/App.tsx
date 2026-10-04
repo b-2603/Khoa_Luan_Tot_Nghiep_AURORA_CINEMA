@@ -136,7 +136,7 @@ function getRoleNavItems(role: TMSRole): NavItem[] {
 // DATA TYPES
 // ============================================================
 interface TMSUser { id?: number; username: string; full_name: string; role: TMSRole; phone?: string; email?: string; theater_id?: number; theater_name?: string; status?: string; last_login?: string; }
-interface ScreenData { id: number; screen_code: string; name: string; screen_type: string; total_seats: number; projector_status: 'online'|'standby'|'maintenance'|'error'; sound_system_status: 'online'|'standby'|'error'; hvac_temperature: number; lamp_hours: number; status: 'active'|'paused'|'cleaning'|'closed'; }
+interface ScreenData { id: number; theater_id?: number; screen_code: string; name: string; screen_type: string; total_seats: number; projector_status: 'online'|'standby'|'maintenance'|'error'; sound_system_status: 'online'|'standby'|'error'; hvac_temperature: number; lamp_hours: number; status: 'active'|'paused'|'cleaning'|'closed'; }
 interface RefundItem { id: number; transaction_code: string; customer_name: string; reason: string; amount: number; payment_method: string; status: 'pending'|'approved'|'rejected'|'completed'; created_at?: string; requested_by?: string; }
 interface TxnItem { id: number; transaction_code: string; customer_name?: string; customer_phone?: string; channel: 'pos'|'website'|'ota'; amount: number; payment_method: string; status: 'paid'|'pending'|'cancelled'|'refunded'; created_at?: string; cancel_requested?: boolean; }
 interface StaffShift { id: number; name: string; position: string; shift: string; time: string; status: 'on_duty'|'checked_in'|'absent'; checkin: string; }
@@ -311,6 +311,21 @@ export interface MovieItem {
   status: string;
 }
 
+interface ScheduleMovieItem extends MovieItem {
+  allocation_id: number;
+  theater_id: number;
+  theater_name: string;
+  allocated_start_date: string;
+  allocated_end_date: string;
+  min_screenings_per_day: number;
+  preferred_screen_types: string;
+  allocation_status: 'confirmed' | 'deploying';
+  plan_id: number;
+  plan_code: string;
+  plan_name: string;
+  plan_status: 'published' | 'in_progress';
+}
+
 export interface TheaterItem {
   id: number;
   name: string;
@@ -397,6 +412,7 @@ export default function App() {
   const [moviePlans, setMoviePlans] = useState<MoviePlan[]>([]);
   const [movieAllocations, setMovieAllocations] = useState<MovieAllocation[]>([]);
   const [moviesList, setMoviesList] = useState<MovieItem[]>([]);
+  const [scheduleMoviesList, setScheduleMoviesList] = useState<ScheduleMovieItem[]>([]);
   const [theatersList, setTheatersList] = useState<TheaterItem[]>([]);
   const [planMonth, setPlanMonth] = useState<number>(10);
   const [planYear, setPlanYear] = useState<number>(2026);
@@ -478,7 +494,7 @@ export default function App() {
   const [scheduleStatusFilter, setScheduleStatusFilter] = useState<'all' | ScheduleItem['status']>('all');
   const [scheduleSearch, setScheduleSearch] = useState('');
   const [showScheduleModal, setShowScheduleModal] = useState(false);
-  const [scheduleForm, setScheduleForm] = useState({ id: 0, movie_id: 0, screen_ids: [] as number[], ticket_type_ids: [] as number[], show_date: new Date().toISOString().slice(0, 10), start_time: '09:00', end_time: '11:00', time_slots: [{ key: 'slot-1', start_time: '09:00', end_time: '11:00' }], ticket_price: 0, operational_note: '', status: 'scheduled' });
+  const [scheduleForm, setScheduleForm] = useState({ id: 0, movie_id: 0, screen_ids: [] as number[], ticket_type_ids: [] as number[], show_date: new Date().toISOString().slice(0, 10), start_time: '09:00', end_time: '11:00', time_slots: [{ key: 'slot-1', screen_id: 0, start_time: '09:00', end_time: '11:00' }], ticket_price: 0, operational_note: '', status: 'scheduled' });
   const [showDeploymentDetailModal, setShowDeploymentDetailModal] = useState(false);
   const [deploymentDetail, setDeploymentDetail] = useState<any>(null);
   const [deploymentDetailLoading, setDeploymentDetailLoading] = useState(false);
@@ -524,7 +540,7 @@ export default function App() {
           // Do not turn a recoverable session mismatch into an automatic
           // logout; the account returned by the authenticated API is restored.
           window.sessionStorage.setItem('aurora_tms_username', user.username);
-          setCurrentUser({ id: user.id, username: user.username, full_name: user.full_name, role: toTmsRole(user.role), phone: user.phone, status: user.status });
+          setCurrentUser({ id: user.id, username: user.username, full_name: user.full_name, role: toTmsRole(user.role), phone: user.phone, theater_id: Number(user.theater_id || 0), status: user.status });
           setIsLoggedIn(true);
         }
       } catch {
@@ -629,6 +645,18 @@ export default function App() {
       }
     } catch (e) {
       console.error('Error loading movies:', e);
+    }
+  };
+
+  const loadScheduleMovies = async () => {
+    try {
+      const res = await fetch(`${API_BASE}?action=schedule-movies`, { credentials: 'include', cache: 'no-store' });
+      const data = await res.json();
+      if (!res.ok || !data.success) throw new Error(data.message || 'Không thể tải phim đã phân bổ.');
+      setScheduleMoviesList(Array.isArray(data.data) ? data.data : []);
+    } catch (error) {
+      setScheduleMoviesList([]);
+      console.error('Error loading allocated schedule movies:', error);
     }
   };
 
@@ -769,6 +797,7 @@ export default function App() {
       loadMoviePlans();
       loadMovieAllocations();
       loadMovies();
+      loadScheduleMovies();
       loadTheaters();
       loadSchedules();
       loadTicketTypes();
@@ -932,6 +961,7 @@ export default function App() {
         alert('Admin Rạp đã xác nhận tiếp nhận kế hoạch phim thành công!');
         loadMovieAllocations();
         loadMoviePlans();
+        loadScheduleMovies();
       } else {
         alert(data.message);
       }
@@ -1192,23 +1222,39 @@ export default function App() {
   };
 
   const calculateScheduleEndTime = (startTime: string, movieId: number) => {
-    const duration = Math.max(1, Number(moviesList.find(movie => Number(movie.id) === Number(movieId))?.duration_minutes || 120));
+    const movie = scheduleMoviesList.find(item => Number(item.id) === Number(movieId)) || moviesList.find(item => Number(item.id) === Number(movieId));
+    const duration = Math.max(1, Number(movie?.duration_minutes || 120));
     const date = new Date(`2000-01-01T${startTime}:00`);
     date.setMinutes(date.getMinutes() + duration);
     return date.toTimeString().slice(0, 5);
   };
 
+  const getScheduleMovieOptions = (showDate: string) => {
+    const unique = new Map<number, ScheduleMovieItem>();
+    scheduleMoviesList.forEach(movie => {
+      if (!showDate || (showDate >= movie.allocated_start_date && showDate <= movie.allocated_end_date)) {
+        if (!unique.has(Number(movie.id))) unique.set(Number(movie.id), movie);
+      }
+    });
+    return Array.from(unique.values()).sort((left, right) => left.title.localeCompare(right.title, 'vi'));
+  };
+
   const openNewSchedule = () => {
-    if (!moviesList.length || !screensList.length) {
-      alert('Chưa có dữ liệu phim hoặc phòng chiếu từ aurora_db.');
+    const scheduleDate = new Date().toISOString().slice(0, 10);
+    const availableMovies = getScheduleMovieOptions(scheduleDate);
+    if (!screensList.length) {
+      alert('Chưa có phòng chiếu thuộc rạp của bạn trong aurora_db.');
       return;
     }
-    const firstMovie = moviesList[0];
+    if (!availableMovies.length) {
+      alert('Không có phim đã xác nhận phân bổ cho rạp trong ngày hiện tại. Hãy kiểm tra kế hoạch phim trong aurora_db.');
+      return;
+    }
+    const firstMovie = availableMovies[0];
     const defaultStart = '09:00';
     const endTime = calculateScheduleEndTime(defaultStart, firstMovie.id);
     const initialTicketIds = ticketTypesList.length ? [ticketTypesList[0].id] : [];
-    const scheduleDate = new Date().toISOString().slice(0, 10);
-    setScheduleForm({ id: 0, movie_id: firstMovie.id, screen_ids: [screensList[0].id], ticket_type_ids: initialTicketIds, show_date: scheduleDate, start_time: defaultStart, end_time: endTime, time_slots: [{ key: 'slot-1', start_time: defaultStart, end_time: endTime }], ticket_price: getEffectiveTicketPrice(ticketTypesList[0], scheduleDate, defaultStart), operational_note: '', status: 'scheduled' });
+    setScheduleForm({ id: 0, movie_id: firstMovie.id, screen_ids: [screensList[0].id], ticket_type_ids: initialTicketIds, show_date: scheduleDate, start_time: defaultStart, end_time: endTime, time_slots: [{ key: 'slot-1', screen_id: screensList[0].id, start_time: defaultStart, end_time: endTime }], ticket_price: getEffectiveTicketPrice(ticketTypesList[0], scheduleDate, defaultStart), operational_note: '', status: 'scheduled' });
     setShowScheduleModal(true);
   };
 
@@ -1260,7 +1306,7 @@ export default function App() {
         const user = result.data.user;
         const role = toTmsRole(user.role);
         window.sessionStorage.setItem('aurora_tms_username', user.username);
-        setCurrentUser({ id: user.id, username: user.username, full_name: user.full_name, role, phone: user.phone, status: user.status });
+        setCurrentUser({ id: user.id, username: user.username, full_name: user.full_name, role, phone: user.phone, theater_id: Number(user.theater_id || 0), status: user.status });
         setIsLoggedIn(true); setActive('dashboard');
       } else { setErrorMsg(result.message || 'Tên đăng nhập hoặc mật khẩu không chính xác.'); }
     } catch {
@@ -1517,7 +1563,7 @@ export default function App() {
         <section className="cinema-board-kpis"><article><span className="cinema-kpi-icon blue"><CalendarDays size={20} /></span><div><small>Suất chiếu ngày chọn</small><b>{boardShowtimes.length}</b><span>{scheduledCount} suất đã mở lịch</span></div></article><article><span className="cinema-kpi-icon green"><Monitor size={20} /></span><div><small>Phòng đang vận hành</small><b>{boardScreens.length}</b><span>{runningCount} suất đang chiếu</span></div></article><article><span className="cinema-kpi-icon violet"><Users size={20} /></span><div><small>Ghế đã đặt</small><b>{boardShowtimes.reduce((sum: number, showtime: any) => sum + Number(showtime.booked_seats || 0), 0)}</b><span>Toàn bộ các suất trong ngày</span></div></article><article><span className="cinema-kpi-icon amber"><Target size={20} /></span><div><small>Công suất trung bình</small><b>{boardShowtimes.length ? Math.round(boardShowtimes.reduce((sum: number, showtime: any) => sum + (Number(showtime.total_seats) ? Number(showtime.booked_seats) * 100 / Number(showtime.total_seats) : 0), 0) / boardShowtimes.length) : 0}%</b><span>Theo số ghế đã bán</span></div></article></section>
         <section className="cinema-schedule-board-card">
           <header className="cinema-board-header"><div><div className="cinema-board-title"><CalendarCheck size={18} /><h3>Sơ đồ lịch chiếu theo phòng</h3></div><p>{formatBoardDate} · Nhấp vào suất chiếu để xem hoặc cập nhật lịch.</p></div><div className="cinema-board-actions"><button type="button" onClick={() => changeBoardDate(-1)}>‹ Ngày trước</button><button type="button" onClick={() => setReportDate(new Date().toISOString().slice(0, 10))}>Hôm nay</button><button type="button" onClick={() => changeBoardDate(1)}>Ngày sau ›</button></div></header>
-          {cinemaScheduleBoardLoading ? <div className="cinema-board-loading"><div className="dashboard-loading-mark" /><span>Đang đồng bộ lịch chiếu từ Aurora DB…</span></div> : board ? <div className="cinema-board-scroll"><div className="cinema-board" style={{ minWidth: 1240 }}><div className="cinema-board-head"><div>PHÒNG CHIẾU</div><div className="cinema-board-hours">{boardHours.map(hour => <span key={hour}>{hour === 24 ? '00:00' : `${String(hour).padStart(2, '0')}:00`}</span>)}</div></div>{boardScreens.length ? boardScreens.map((screen: any) => { const screenShowtimes = boardShowtimes.filter((showtime: any) => Number(showtime.screen_id) === Number(screen.id)); return <div className="cinema-board-row" key={screen.id}><div className="cinema-board-screen"><b>{screen.name}</b><span>{screen.screen_type || 'Phòng chiếu'} · {screen.total_seats || 0} ghế</span><em className={screen.status === 'active' ? 'ready' : ''}>{screen.status === 'active' ? 'Sẵn sàng' : screen.status}</em></div><div className="cinema-board-lane">{boardHours.slice(0, -1).map(hour => <i key={hour} />)}{screenShowtimes.map((showtime: any) => { const start = toMinutes(showtime.start_time); const end = Math.max(toMinutes(showtime.end_time), start + 30); const left = Math.max(0, Math.min(100, ((start - boardStartHour * 60) / boardMinutes) * 100)); const width = Math.max(7, Math.min(100 - left, ((end - start) / boardMinutes) * 100)); const state = showtime.status === 'running' ? 'running' : showtime.status === 'finished' ? 'finished' : showtime.status === 'cancelled' ? 'cancelled' : 'scheduled'; return <button type="button" key={showtime.id} className={`cinema-showtime-block ${state}`} style={{ left: `${left}%`, width: `${width}%` }} title={`${showtime.movie_title} · ${String(showtime.start_time).slice(0, 5)}–${String(showtime.end_time).slice(0, 5)}`} onClick={() => { const startTime=String(showtime.start_time).slice(0,5), endTime=String(showtime.end_time).slice(0,5); setScheduleForm({ id: Number(showtime.id), movie_id: Number(showtime.movie_id), screen_ids: [Number(showtime.screen_id)], ticket_type_ids: String(showtime.ticket_type_ids || '').split(',').filter(Boolean).map(Number), show_date: showtime.show_date, start_time:startTime, end_time:endTime, time_slots:[{key:'slot-1',start_time:startTime,end_time:endTime}], ticket_price: Number(showtime.ticket_price || 0), operational_note: String(showtime.operational_note || ''), status: showtime.status }); setShowScheduleModal(true); }}><b>{String(showtime.start_time).slice(0, 5)} · {showtime.movie_title || 'Phim đang cập nhật'}</b><span>{showtime.booked_seats}/{showtime.total_seats} ghế · {showtime.age_rating || 'P'}</span></button>; })}</div></div>; }) : <div className="cinema-board-empty"><Film size={28} /><b>Chưa có phòng chiếu khả dụng</b><span>Kiểm tra cấu hình phòng chiếu trong Aurora DB.</span></div>}</div></div> : <div className="cinema-board-empty"><AlertTriangle size={28} /><b>Chưa tải được lịch chiếu</b><span>Vui lòng kiểm tra kết nối Aurora DB và thử lại.</span></div>}
+          {cinemaScheduleBoardLoading ? <div className="cinema-board-loading"><div className="dashboard-loading-mark" /><span>Đang đồng bộ lịch chiếu từ Aurora DB…</span></div> : board ? <div className="cinema-board-scroll"><div className="cinema-board" style={{ minWidth: 1240 }}><div className="cinema-board-head"><div>PHÒNG CHIẾU</div><div className="cinema-board-hours">{boardHours.map(hour => <span key={hour}>{hour === 24 ? '00:00' : `${String(hour).padStart(2, '0')}:00`}</span>)}</div></div>{boardScreens.length ? boardScreens.map((screen: any) => { const screenShowtimes = boardShowtimes.filter((showtime: any) => Number(showtime.screen_id) === Number(screen.id)); return <div className="cinema-board-row" key={screen.id}><div className="cinema-board-screen"><b>{screen.name}</b><span>{screen.screen_type || 'Phòng chiếu'} · {screen.total_seats || 0} ghế</span><em className={screen.status === 'active' ? 'ready' : ''}>{screen.status === 'active' ? 'Sẵn sàng' : screen.status}</em></div><div className="cinema-board-lane">{boardHours.slice(0, -1).map(hour => <i key={hour} />)}{screenShowtimes.map((showtime: any) => { const start = toMinutes(showtime.start_time); const end = Math.max(toMinutes(showtime.end_time), start + 30); const left = Math.max(0, Math.min(100, ((start - boardStartHour * 60) / boardMinutes) * 100)); const width = Math.max(7, Math.min(100 - left, ((end - start) / boardMinutes) * 100)); const state = showtime.status === 'running' ? 'running' : showtime.status === 'finished' ? 'finished' : showtime.status === 'cancelled' ? 'cancelled' : 'scheduled'; return <button type="button" key={showtime.id} className={`cinema-showtime-block ${state}`} style={{ left: `${left}%`, width: `${width}%` }} title={`${showtime.movie_title} · ${String(showtime.start_time).slice(0, 5)}–${String(showtime.end_time).slice(0, 5)}`} onClick={() => { const startTime=String(showtime.start_time).slice(0,5), endTime=String(showtime.end_time).slice(0,5); setScheduleForm({ id: Number(showtime.id), movie_id: Number(showtime.movie_id), screen_ids: [Number(showtime.screen_id)], ticket_type_ids: String(showtime.ticket_type_ids || '').split(',').filter(Boolean).map(Number), show_date: showtime.show_date, start_time:startTime, end_time:endTime, time_slots:[{key:'slot-1',screen_id:Number(showtime.screen_id),start_time:startTime,end_time:endTime}], ticket_price: Number(showtime.ticket_price || 0), operational_note: String(showtime.operational_note || ''), status: showtime.status }); setShowScheduleModal(true); }}><b>{String(showtime.start_time).slice(0, 5)} · {showtime.movie_title || 'Phim đang cập nhật'}</b><span>{showtime.booked_seats}/{showtime.total_seats} ghế · {showtime.age_rating || 'P'}</span></button>; })}</div></div>; }) : <div className="cinema-board-empty"><Film size={28} /><b>Chưa có phòng chiếu khả dụng</b><span>Kiểm tra cấu hình phòng chiếu trong Aurora DB.</span></div>}</div></div> : <div className="cinema-board-empty"><AlertTriangle size={28} /><b>Chưa tải được lịch chiếu</b><span>Vui lòng kiểm tra kết nối Aurora DB và thử lại.</span></div>}
           <footer className="cinema-board-legend"><span><i className="scheduled" /> Đã lên lịch</span><span><i className="running" /> Đang chiếu</span><span><i className="finished" /> Đã kết thúc</span><span><i className="cancelled" /> Đã hủy</span><b>Nhấp vào một suất chiếu để cập nhật thông tin.</b></footer>
         </section>
       </div>;
@@ -2696,7 +2742,7 @@ export default function App() {
               <tr key={s.id}>
                 <td style={{fontWeight:700,fontSize:'0.85rem'}}>{s.movie_title}</td><td style={{fontSize:'0.82rem'}}>{s.screen_name}</td><td>{s.show_date}</td><td style={{fontWeight:700,color:'#2563eb'}}>{String(s.start_time).slice(0,5)} - {String(s.end_time).slice(0,5)}</td><td>{s.booked_seats}/{s.total_seats}</td>
                 <td><span style={{fontSize:'0.73rem',fontWeight:700,padding:'2px 7px',borderRadius:4,background:s.status==='running'?'#d1fae5':s.status==='cancelled'?'#fee2e2':'#eff6ff',color:s.status==='running'?'#065f46':s.status==='cancelled'?'#991b1b':'#1e40af'}}>{statusLabel[s.status]}</span></td>
-                <td>{canEdit ? <div style={{display:'flex',gap:4}}><button className="tms-btn tms-btn-outline" style={{padding:'4px 8px'}} onClick={() => { const startTime=String(s.start_time).slice(0,5), endTime=String(s.end_time).slice(0,5); setScheduleForm({ id:s.id, movie_id:Number(s.movie_id), screen_ids:[Number(s.screen_id)], ticket_type_ids:String(s.ticket_type_ids || '').split(',').filter(Boolean).map(Number), show_date:s.show_date, start_time:startTime, end_time:endTime, time_slots:[{key:'slot-1',start_time:startTime,end_time:endTime}], ticket_price:Number(s.ticket_price || 0), operational_note:s.operational_note || '', status:s.status }); setShowScheduleModal(true); }}><Edit size={13}/></button><button className="tms-btn tms-btn-outline" style={{padding:'4px 8px',color:'#dc2626'}} onClick={() => handleDeleteSchedule(s.id)}><Trash2 size={13}/></button></div> : <span style={{color:'#94a3b8',fontSize:'0.75rem'}}>Chỉ xem</span>}</td>
+                <td>{canEdit ? <div style={{display:'flex',gap:4}}><button className="tms-btn tms-btn-outline" style={{padding:'4px 8px'}} onClick={() => { const startTime=String(s.start_time).slice(0,5), endTime=String(s.end_time).slice(0,5); setScheduleForm({ id:s.id, movie_id:Number(s.movie_id), screen_ids:[Number(s.screen_id)], ticket_type_ids:String(s.ticket_type_ids || '').split(',').filter(Boolean).map(Number), show_date:s.show_date, start_time:startTime, end_time:endTime, time_slots:[{key:'slot-1',screen_id:Number(s.screen_id),start_time:startTime,end_time:endTime}], ticket_price:Number(s.ticket_price || 0), operational_note:s.operational_note || '', status:s.status }); setShowScheduleModal(true); }}><Edit size={13}/></button><button className="tms-btn tms-btn-outline" style={{padding:'4px 8px',color:'#dc2626'}} onClick={() => handleDeleteSchedule(s.id)}><Trash2 size={13}/></button></div> : <span style={{color:'#94a3b8',fontSize:'0.75rem'}}>Chỉ xem</span>}</td>
               </tr>
             )) : <tr><td colSpan={7}><div className="schedule-empty-state"><CalendarDays size={28}/><b>Chưa có suất chiếu phù hợp</b><span>{schedulesList.length ? 'Thử thay đổi bộ lọc để xem dữ liệu khác.' : 'Tạo suất chiếu đầu tiên để mở bán và bắt đầu triển khai phim.'}</span>{canEdit && !schedulesList.length && <button type="button" onClick={openNewSchedule}><Plus size={14}/> Tạo suất chiếu</button>}</div></td></tr>}</tbody>
           </table>
@@ -3637,23 +3683,22 @@ export default function App() {
                 <section className="schedule-editor-notice"><span><ShieldCheck size={18}/></span><div><b>Kiểm tra lịch an toàn trước khi lưu</b><p>Aurora DB chặn mọi suất chiếu trùng giờ trong cùng phòng và lưu lại lịch sử thao tác.</p></div></section>
                 <div className="schedule-editor-layout">
                   <section className="schedule-editor-form-section">
-                    <div className="schedule-section-heading"><Film size={16}/><div><b>Nội dung & phòng chiếu</b><small>Chọn đúng phim và không gian phục vụ.</small></div></div>
+                    <div className="schedule-section-heading"><Film size={16}/><div><b>Nội dung suất chiếu</b><small>Chọn phim và trạng thái vận hành; phòng được gán riêng ở từng khung giờ.</small></div></div>
                     <div className="schedule-editor-grid">
-                      <div className="tms-form-group full"><label className="tms-form-label">Phim công chiếu <em>*</em></label><select required className="tms-form-select" value={scheduleForm.movie_id} onChange={e => { const movieId = Number(e.target.value); const slots = scheduleForm.time_slots.map(slot => ({ ...slot, end_time: calculateScheduleEndTime(slot.start_time, movieId) })); setScheduleForm({...scheduleForm, movie_id:movieId, time_slots:slots, start_time:slots[0]?.start_time || '09:00', end_time:slots[0]?.end_time || '11:00'}); }}>{moviesList.map(m => <option key={m.id} value={m.id}>{m.title} · {m.duration_minutes} phút</option>)}</select><small className="form-hint">Giờ kết thúc được tính từ thời lượng phim lưu trong Aurora DB.</small></div>
-                      <div className="tms-form-group schedule-screen-picker"><label className="tms-form-label">Phòng chiếu <em>*</em></label>{scheduleForm.id ? <select required className="tms-form-select" value={scheduleForm.screen_ids[0] || 0} onChange={e => setScheduleForm({...scheduleForm,screen_ids:[Number(e.target.value)]})}>{screensList.map(s => <option key={s.id} value={s.id}>{screenDisplayName(s.name, s.id)} · {s.total_seats} ghế</option>)}</select> : <><div className="screen-picker-tools"><span>Chọn các phòng cùng lịch chiếu</span><button type="button" onClick={() => setScheduleForm({...scheduleForm,screen_ids: scheduleForm.screen_ids.length === screensList.length ? [] : screensList.map(s => s.id)})}>{scheduleForm.screen_ids.length === screensList.length ? 'Bỏ chọn tất cả' : 'Chọn tất cả'}</button></div><div className="screen-picker-list">{screensList.map(s => <label key={s.id} className={scheduleForm.screen_ids.includes(s.id) ? 'selected' : ''}><input type="checkbox" checked={scheduleForm.screen_ids.includes(s.id)} onChange={() => setScheduleForm({...scheduleForm,screen_ids:scheduleForm.screen_ids.includes(s.id) ? scheduleForm.screen_ids.filter(id => id !== s.id) : [...scheduleForm.screen_ids,s.id]})}/><span><b>{screenDisplayName(s.name, s.id)}</b><small>{s.screen_type} · {s.total_seats} ghế</small></span><Check size={15}/></label>)}</div><small className="form-hint">Một lần lưu sẽ tạo một suất chiếu cho mỗi phòng đã chọn.</small></>}</div>
+                      <div className="tms-form-group full"><label className="tms-form-label">Phim đã phân bổ cho rạp <em>*</em></label><select required className="tms-form-select" value={scheduleForm.movie_id || 0} onChange={e => { const movieId = Number(e.target.value); const slots = scheduleForm.time_slots.map(slot => ({ ...slot, end_time: calculateScheduleEndTime(slot.start_time, movieId) })); setScheduleForm({...scheduleForm, movie_id:movieId, time_slots:slots, start_time:slots[0]?.start_time || '09:00', end_time:slots[0]?.end_time || '11:00'}); }}><option value={0} disabled>{getScheduleMovieOptions(scheduleForm.show_date).length ? 'Chọn phim đã được phân bổ' : 'Không có phim phù hợp ngày đã chọn'}</option>{getScheduleMovieOptions(scheduleForm.show_date).map(m => <option key={m.id} value={m.id}>{m.title} · {m.duration_minutes} phút · {m.plan_code}</option>)}</select><small className="form-hint">Chỉ hiển thị phim thuộc kế hoạch đã ban hành, đã được rạp xác nhận tiếp nhận và còn trong thời gian phân bổ. Dữ liệu lấy trực tiếp từ Aurora DB.</small></div>
                       <div className="tms-form-group"><label className="tms-form-label">Trạng thái suất chiếu <em>*</em></label><select className="tms-form-select" value={scheduleForm.status} onChange={e => setScheduleForm({...scheduleForm,status:e.target.value})}><option value="scheduled">Nháp - Lên lịch</option><option value="running">Đang chiếu</option><option value="cancelled">Hủy</option></select><small className="form-hint">Suất mới nên được lưu ở trạng thái “Nháp - Lên lịch”.</small></div>
                     </div>
-                    <div className="schedule-section-heading timing"><Clock size={16}/><div><b>Khung giờ vận hành</b><small>Thêm nhiều giờ bắt đầu; giờ kết thúc được tính tự động theo thời lượng phim trong Aurora DB.</small></div></div>
-                    <div className="schedule-editor-grid time-grid"><div className="tms-form-group"><label className="tms-form-label">Ngày chiếu <em>*</em></label><input required type="date" className="tms-form-input" value={scheduleForm.show_date} onChange={e => setScheduleForm({...scheduleForm,show_date:e.target.value})}/></div></div>
-                    <div className="schedule-time-slot-list">{scheduleForm.time_slots.map((slot, index) => <div className="schedule-time-slot-row" key={slot.key}><span className="schedule-time-slot-number">{index + 1}</span><div><label className="tms-form-label">Giờ bắt đầu <em>*</em></label><input required type="time" className="tms-form-input" value={slot.start_time} onChange={e => { const slots = scheduleForm.time_slots.map(item => item.key === slot.key ? {...item, start_time:e.target.value, end_time:calculateScheduleEndTime(e.target.value, scheduleForm.movie_id)} : item); setScheduleForm({...scheduleForm, time_slots:slots, start_time:slots[0].start_time, end_time:slots[0].end_time}); }}/></div><div><label className="tms-form-label">Giờ kết thúc tự động</label><output>{slot.end_time}</output><small>{moviesList.find(movie => Number(movie.id) === Number(scheduleForm.movie_id))?.duration_minutes || 0} phút</small></div>{!scheduleForm.id && <button type="button" className="schedule-time-slot-remove" disabled={scheduleForm.time_slots.length === 1} aria-label="Xóa khung giờ" onClick={() => { const slots = scheduleForm.time_slots.filter(item => item.key !== slot.key); setScheduleForm({...scheduleForm, time_slots:slots, start_time:slots[0].start_time, end_time:slots[0].end_time}); }}><Trash2 size={15}/></button>}</div>)}</div>
-                    {!scheduleForm.id && <button type="button" className="schedule-time-slot-add" onClick={() => { const last = scheduleForm.time_slots[scheduleForm.time_slots.length - 1]; const date = new Date(`2000-01-01T${last.end_time}:00`); date.setMinutes(date.getMinutes() + 15); const start = date.toTimeString().slice(0,5); const slot = { key:`slot-${Date.now()}`, start_time:start, end_time:calculateScheduleEndTime(start, scheduleForm.movie_id) }; setScheduleForm({...scheduleForm, time_slots:[...scheduleForm.time_slots, slot]}); }}><Plus size={15}/> Thêm khung giờ khác</button>}
+                    <div className="schedule-section-heading timing"><Clock size={16}/><div><b>Phòng & khung giờ vận hành</b><small>Mỗi dòng là một suất chiếu độc lập: chọn phòng, giờ bắt đầu và hệ thống tự tính giờ kết thúc.</small></div></div>
+                    <div className="schedule-editor-grid time-grid"><div className="tms-form-group"><label className="tms-form-label">Ngày chiếu <em>*</em></label><input required type="date" className="tms-form-input" value={scheduleForm.show_date} onChange={e => { const showDate=e.target.value; const options=getScheduleMovieOptions(showDate); const currentAllowed=options.some(movie=>Number(movie.id)===Number(scheduleForm.movie_id)); const movieId=currentAllowed?scheduleForm.movie_id:Number(options[0]?.id||0); const slots=scheduleForm.time_slots.map(slot=>({...slot,end_time:calculateScheduleEndTime(slot.start_time,movieId)})); setScheduleForm({...scheduleForm,show_date:showDate,movie_id:movieId,time_slots:slots,start_time:slots[0]?.start_time||'09:00',end_time:slots[0]?.end_time||'11:00'}); }}/></div></div>
+                    <div className="schedule-time-slot-list">{scheduleForm.time_slots.map((slot, index) => <div className="schedule-time-slot-row" key={slot.key}><span className="schedule-time-slot-number">{index + 1}</span><div><label className="tms-form-label">Phòng chiếu <em>*</em></label><select required className="tms-form-select" value={slot.screen_id || 0} onChange={e => { const screenId=Number(e.target.value); const slots=scheduleForm.time_slots.map(item=>item.key===slot.key?{...item,screen_id:screenId}:item); setScheduleForm({...scheduleForm,time_slots:slots,screen_ids:Array.from(new Set(slots.map(item=>item.screen_id).filter(Boolean)))}); }}><option value={0} disabled>Chọn phòng</option>{screensList.map(s=><option key={s.id} value={s.id}>{screenDisplayName(s.name,s.id)} · {s.total_seats} ghế</option>)}</select><small>{screensList.find(s=>Number(s.id)===Number(slot.screen_id))?.screen_type || 'Phòng đang hoạt động'}</small></div><div><label className="tms-form-label">Giờ bắt đầu <em>*</em></label><input required type="time" className="tms-form-input" value={slot.start_time} onChange={e => { const slots = scheduleForm.time_slots.map(item => item.key === slot.key ? {...item, start_time:e.target.value, end_time:calculateScheduleEndTime(e.target.value, scheduleForm.movie_id)} : item); setScheduleForm({...scheduleForm, time_slots:slots, start_time:slots[0].start_time, end_time:slots[0].end_time}); }}/></div><div><label className="tms-form-label">Giờ kết thúc tự động</label><output>{slot.end_time}</output><small>{(scheduleMoviesList.find(movie => Number(movie.id) === Number(scheduleForm.movie_id)) || moviesList.find(movie => Number(movie.id) === Number(scheduleForm.movie_id)))?.duration_minutes || 0} phút</small></div>{!scheduleForm.id && <button type="button" className="schedule-time-slot-remove" disabled={scheduleForm.time_slots.length === 1} aria-label="Xóa suất chiếu" onClick={() => { const slots = scheduleForm.time_slots.filter(item => item.key !== slot.key); setScheduleForm({...scheduleForm, time_slots:slots, screen_ids:Array.from(new Set(slots.map(item=>item.screen_id).filter(Boolean))), start_time:slots[0].start_time, end_time:slots[0].end_time}); }}><Trash2 size={15}/></button>}</div>)}</div>
+                    {!scheduleForm.id && <button type="button" className="schedule-time-slot-add" onClick={() => { const last = scheduleForm.time_slots[scheduleForm.time_slots.length - 1]; const date = new Date(`2000-01-01T${last.end_time}:00`); date.setMinutes(date.getMinutes() + 15); const start = date.toTimeString().slice(0,5); const slot = { key:`slot-${Date.now()}`, screen_id:last.screen_id || screensList[0]?.id || 0, start_time:start, end_time:calculateScheduleEndTime(start, scheduleForm.movie_id) }; const slots=[...scheduleForm.time_slots,slot]; setScheduleForm({...scheduleForm, time_slots:slots, screen_ids:Array.from(new Set(slots.map(item=>item.screen_id).filter(Boolean)))}); }}><Plus size={15}/> Thêm suất chiếu</button>}
                     <div className="schedule-section-heading pricing"><DollarSign size={16}/><div><b>Loại vé áp dụng & ghi chú</b><small>Chọn một hoặc nhiều loại vé đang có trong Aurora DB.</small></div></div>
                     <div className="schedule-editor-grid"><div className="tms-form-group ticket-type-picker"><label className="tms-form-label">Loại vé áp dụng <em>*</em></label><div className="ticket-type-select-list">{ticketTypesList.length ? ticketTypesList.map(ticketType => { const available = isTicketAvailableForSchedule(ticketType, scheduleForm.show_date, scheduleForm.start_time); const effectivePrice = getEffectiveTicketPrice(ticketType, scheduleForm.show_date, scheduleForm.start_time); return <label key={ticketType.id} className={`${scheduleForm.ticket_type_ids.includes(Number(ticketType.id)) ? 'selected' : ''} ${available ? '' : 'disabled'}`}><input type="checkbox" disabled={!available} checked={scheduleForm.ticket_type_ids.includes(Number(ticketType.id))} onChange={() => { const checked = scheduleForm.ticket_type_ids.includes(Number(ticketType.id)); const nextIds = checked ? scheduleForm.ticket_type_ids.filter(id => id !== Number(ticketType.id)) : [...scheduleForm.ticket_type_ids, Number(ticketType.id)]; const selectedPrices = ticketTypesList.filter(item => nextIds.includes(Number(item.id))).map(item => getEffectiveTicketPrice(item, scheduleForm.show_date, scheduleForm.start_time)); setScheduleForm({...scheduleForm, ticket_type_ids:nextIds, ticket_price:selectedPrices.length ? Math.min(...selectedPrices) : 0}); }}/><span><b>{ticketType.name}</b><small>{available ? ticketType.code : `${ticketType.code} · Không áp dụng`}</small></span><strong>{available ? effectivePrice === 0 ? 'Miễn phí' : `${effectivePrice.toLocaleString('vi-VN')} ₫` : '—'}</strong><Check size={15}/></label>; }) : <span className="ticket-type-loading">Chưa có loại vé hoạt động trong Aurora DB.</span>}</div><small className="form-hint">Giá hiển thị theo ngày và giờ chiếu; máy chủ xác nhận giá chính thức từ <b>aurora_db</b> khi lưu.</small></div><div className="tms-form-group"><label className="tms-form-label">Ghi chú vận hành</label><input maxLength={500} className="tms-form-input" value={scheduleForm.operational_note} onChange={e => setScheduleForm({...scheduleForm,operational_note:e.target.value})} placeholder="Ví dụ: Ưu tiên quầy vé 1, kiểm tra kính 3D"/></div></div>
                   </section>
-                  <aside className="schedule-summary-panel"><span className="schedule-summary-kicker">TÓM TẮT SUẤT CHIẾU</span><div className="schedule-summary-movie"><Film size={19}/><div><b>{moviesList.find(movie => Number(movie.id) === Number(scheduleForm.movie_id))?.title || 'Chưa chọn phim'}</b><small>{moviesList.find(movie => Number(movie.id) === Number(scheduleForm.movie_id))?.duration_minutes || 0} phút · {moviesList.find(movie => Number(movie.id) === Number(scheduleForm.movie_id))?.age_rating || 'Chưa phân loại'}</small></div></div><dl><div><dt>Phòng phục vụ</dt><dd>{scheduleForm.screen_ids.length} phòng được chọn</dd></div><div><dt>Khung giờ</dt><dd>{scheduleForm.time_slots.length} khung được chọn</dd></div><div><dt>Tổng suất tạo</dt><dd>{scheduleForm.screen_ids.length * scheduleForm.time_slots.length} suất</dd></div><div><dt>Loại vé áp dụng</dt><dd>{scheduleForm.ticket_type_ids.length} loại vé</dd></div></dl><div className={`schedule-sale-status ${scheduleForm.status}`}><span>{scheduleForm.status === 'scheduled' ? '● Nháp - Lên lịch' : scheduleForm.status === 'running' ? '● Đang chiếu' : '● Đã hủy'}</span></div><p><CheckCircle2 size={15}/> Dữ liệu được lưu tại <b>aurora_db.showtimes</b> và bảng giá theo suất trong <b>aurora_db.tms_showtime_ticket_types</b>.</p></aside>
+                  <aside className="schedule-summary-panel"><span className="schedule-summary-kicker">TÓM TẮT SUẤT CHIẾU</span><div className="schedule-summary-movie"><Film size={19}/><div><b>{moviesList.find(movie => Number(movie.id) === Number(scheduleForm.movie_id))?.title || 'Chưa chọn phim'}</b><small>{moviesList.find(movie => Number(movie.id) === Number(scheduleForm.movie_id))?.duration_minutes || 0} phút · {moviesList.find(movie => Number(movie.id) === Number(scheduleForm.movie_id))?.age_rating || 'Chưa phân loại'}</small></div></div><dl><div><dt>Phòng phục vụ</dt><dd>{new Set(scheduleForm.time_slots.map(slot=>slot.screen_id).filter(Boolean)).size} phòng</dd></div><div><dt>Khung giờ</dt><dd>{scheduleForm.time_slots.length} khung giờ</dd></div><div><dt>Tổng suất tạo</dt><dd>{scheduleForm.time_slots.length} suất</dd></div><div><dt>Loại vé áp dụng</dt><dd>{scheduleForm.ticket_type_ids.length} loại vé</dd></div></dl><div className={`schedule-sale-status ${scheduleForm.status}`}><span>{scheduleForm.status === 'scheduled' ? '● Nháp - Lên lịch' : scheduleForm.status === 'running' ? '● Đang chiếu' : '● Đã hủy'}</span></div><p><CheckCircle2 size={15}/> Mỗi khung giờ được lưu cùng đúng phòng đã chọn trong <b>aurora_db.showtimes</b>.</p></aside>
                 </div>
               </div>
-              <div className="tms-modal-footer schedule-editor-footer"><span><ShieldCheck size={15}/> Kiểm tra xung đột được thực hiện tại máy chủ.</span><div><button type="button" className="tms-btn tms-btn-outline" onClick={() => setShowScheduleModal(false)}>Hủy</button><button type="submit" className="tms-btn tms-btn-primary" disabled={!scheduleForm.screen_ids.length || !scheduleForm.ticket_type_ids.length || !scheduleForm.time_slots.length}><CalendarCheck size={16}/>{scheduleForm.id ? 'Lưu thay đổi' : `Tạo ${scheduleForm.screen_ids.length * scheduleForm.time_slots.length} suất chiếu`}</button></div></div>
+              <div className="tms-modal-footer schedule-editor-footer"><span><ShieldCheck size={15}/> Máy chủ kiểm tra phân bổ phim và xung đột riêng cho từng phòng, khung giờ.</span><div><button type="button" className="tms-btn tms-btn-outline" onClick={() => setShowScheduleModal(false)}>Hủy</button><button type="submit" className="tms-btn tms-btn-primary" disabled={!scheduleForm.movie_id || !scheduleForm.ticket_type_ids.length || !scheduleForm.time_slots.length || scheduleForm.time_slots.some(slot=>!slot.screen_id)}><CalendarCheck size={16}/>{scheduleForm.id ? 'Lưu thay đổi' : `Tạo ${scheduleForm.time_slots.length} suất chiếu`}</button></div></div>
             </form>
           </div>
         </div>

@@ -1,7 +1,5 @@
-import { ArrowLeft, CalendarDays, Clock3, Film, MapPin, Ticket } from 'lucide-react';
-import { useEffect, useState } from 'react';
-
-const API_URL = 'http://localhost/AURORA%20CINEMA/customer/backend/public/api.php';
+import { ArrowLeft, Clock3, Film } from 'lucide-react';
+import MovieSchedulePanel from './MovieSchedulePanel';
 
 type Props = {
   movie: any;
@@ -14,22 +12,9 @@ type Props = {
 };
 
 export default function MovieDetailPage({ movie, theaters, theater, showtimes, date, onBack, onBook }: Props) {
-  const firstTheater = theaters.find(item => item.name === theater) || theaters[0];
-  const [theaterId, setTheaterId] = useState<number | null>(firstTheater ? firstTheater.id : null);
-  const [currentShowtimes, setCurrentShowtimes] = useState<any[]>(showtimes);
-  const selectedTheater = theaters.find(item => item.id === theaterId);
   const trailerUrl = String(movie.trailerUrl || '').trim();
   const trailerId = trailerUrl && (trailerUrl.match(/[?&]v=([^&]+)/) || trailerUrl.match(/youtu\.be\/([^?]+)/) || trailerUrl.match(/youtube\.com\/embed\/([^?&/]+)/));
   const isDirectTrailer = /\.(mp4|webm|mov)(?:[?#].*)?$/i.test(trailerUrl);
-  const formattedDate = new Intl.DateTimeFormat('vi-VN', { timeZone: 'Asia/Ho_Chi_Minh', day: '2-digit', month: '2-digit', year: 'numeric' }).format(new Date(`${date}T00:00:00+07:00`));
-
-  useEffect(() => {
-    if (theaterId === null) return;
-    fetch(`${API_URL}?action=showtimes&theater_id=${theaterId}&date=${date}`)
-      .then(response => response.json())
-      .then(result => setCurrentShowtimes((result.showtimes || []).filter((item: any) => item.movie_id === movie.id)))
-      .catch(() => setCurrentShowtimes([]));
-  }, [theaterId, movie.id, date]);
 
   return <main style={{ maxWidth: 1120, margin: '0 auto', padding: '22px 20px 54px' }}>
     <button onClick={onBack} style={backButton}><ArrowLeft size={16} /> VỀ TRANG CHỦ</button>
@@ -47,12 +32,7 @@ export default function MovieDetailPage({ movie, theaters, theater, showtimes, d
       </div>
     </section>
 
-    <section style={scheduleCard}>
-      <div style={sectionTitle}><CalendarDays size={18} color="#d59a17" /> LỊCH CHIẾU THEO CỤM RẠP</div>
-      <div style={{ display: 'flex', flexWrap: 'wrap', gap: 8, marginBottom: 18 }}>{theaters.map(item => <button key={item.id} onClick={() => setTheaterId(item.id)} style={{ ...theaterButton, ...(theaterId === item.id ? activeTheaterButton : {}) }}><MapPin size={13} /> {item.name}</button>)}</div>
-      <div style={{ background: '#f5f7fa', borderRadius: 10, padding: '12px 14px', display: 'flex', alignItems: 'center', gap: 8, color: '#0d1b2e', fontWeight: 900, fontSize: 13, marginBottom: 15 }}>{selectedTheater?.name || theater} <span style={{ color: '#94a3b8', fontWeight: 500 }}>· Suất chiếu ngày {formattedDate}</span></div>
-      {currentShowtimes.length ? <div style={{ display: 'flex', flexWrap: 'wrap', gap: 12 }}>{currentShowtimes.map(item => <button key={item.id} onClick={() => onBook(item, selectedTheater?.name || theater)} style={showtimeButton}><strong>{new Date(item.starts_at.replace(' ', 'T')).toLocaleTimeString('vi-VN', { hour: '2-digit', minute: '2-digit' })}</strong><small>{item.screen_name || 'Phòng chiếu'} · {Number(item.ticket_price).toLocaleString('vi-VN')}đ</small></button>)}</div> : <div style={{ color: '#94a3b8', fontSize: 13 }}>Chưa có suất chiếu trong database cho cụm rạp và ngày này.</div>}
-    </section>
+    <MovieSchedulePanel movie={movie} theaters={theaters} initialTheaterName={theater} initialDate={date} onBook={onBook} />
 
     {(trailerId || isDirectTrailer) && <section style={trailerCard}><div style={{ ...sectionTitle, color: '#fff' }}><Film size={18} color="#f4c04a" /> TRAILER PHIM</div><div style={trailerFrame}>{trailerId ? <iframe title={`Trailer ${movie.title}`} src={`https://www.youtube.com/embed/${trailerId[1]}`} style={videoFrame} allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture" allowFullScreen /> : <video src={trailerUrl} style={videoFrame} controls preload="metadata">Trình duyệt không hỗ trợ phát video này.</video>}</div></section>}
   </main>;
@@ -65,11 +45,7 @@ const meta: React.CSSProperties = { display: 'flex', flexWrap: 'wrap', gap: 14, 
 const rating: React.CSSProperties = { background: '#f4c04a', color: '#0d1b2e', borderRadius: 5, padding: '4px 8px', fontWeight: 900 };
 const description: React.CSSProperties = { color: '#475569', fontSize: 14, lineHeight: 1.75, margin: '20px 0' };
 const facts: React.CSSProperties = { display: 'grid', gridTemplateColumns: '110px 1fr', gap: '9px 18px', fontSize: 13, color: '#475569', borderTop: '1px solid #eef2f6', paddingTop: 15 };
-const scheduleCard: React.CSSProperties = { background: '#fff', borderRadius: 18, padding: 24, marginTop: 18, boxShadow: '0 5px 20px rgba(13,27,46,.07)', border: '1px solid #e7edf3' };
 const sectionTitle: React.CSSProperties = { display: 'flex', alignItems: 'center', gap: 8, color: '#0d1b2e', fontSize: 15, fontWeight: 900, letterSpacing: .3, marginBottom: 14 };
-const theaterButton: React.CSSProperties = { display: 'inline-flex', alignItems: 'center', gap: 5, border: '1px solid #dbe3ec', background: '#f8fafc', color: '#475569', borderRadius: 7, padding: '8px 10px', fontSize: 11, fontWeight: 800, cursor: 'pointer' };
-const activeTheaterButton: React.CSSProperties = { background: '#0d1b2e', borderColor: '#0d1b2e', color: '#f4c04a' };
-const showtimeButton: React.CSSProperties = { border: '1px solid #f0c454', background: '#fffaf0', color: '#855b00', borderRadius: 9, padding: '10px 14px', cursor: 'pointer', display: 'flex', flexDirection: 'column', alignItems: 'flex-start', gap: 4 };
 const trailerCard: React.CSSProperties = { background: '#071526', borderRadius: 18, padding: 24, marginTop: 18, color: '#fff' };
 const trailerFrame: React.CSSProperties = { aspectRatio: '16 / 9', maxWidth: 850, margin: '0 auto', overflow: 'hidden', borderRadius: 12, background: '#000' };
 const videoFrame: React.CSSProperties = { display: 'block', width: '100%', height: '100%', border: 0 };
