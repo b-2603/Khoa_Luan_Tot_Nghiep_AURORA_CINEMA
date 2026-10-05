@@ -12,6 +12,8 @@ Route::middleware('web')->group(function (): void {
     Route::get('/showtimes/{showtime}/seats', [CustomerController::class, 'seats']);
     Route::post('/bookings', [CustomerController::class, 'createBooking']);
     Route::get('/oauth/start', [CustomerController::class, 'oauthStart']);
+    Route::get('/oauth/status', [CustomerController::class, 'oauthStatus']);
+    Route::get('/oauth/callback', [CustomerController::class, 'oauthCallback']);
     Route::post('/register', [CustomerController::class, 'register']);
     Route::post('/login', [CustomerController::class, 'login']);
     Route::post('/logout', [CustomerController::class, 'logout']);

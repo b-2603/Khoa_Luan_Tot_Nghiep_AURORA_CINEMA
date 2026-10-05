@@ -24,7 +24,9 @@ Các tài khoản local được seed bởi `database/seed_tms_admin_users.sql`;
 | `supervisor` | Theo dõi ca trực, phòng chiếu và nghiệp vụ cần giám sát |
 | `accounting` | Đối soát, giá vé, giao dịch và hoàn tiền |
 
-Session được đối chiếu lại với bảng `users` ở mỗi request; tài khoản bị khóa hoặc đổi quyền sẽ mất hiệu lực ngay.
+Session được đối chiếu lại với bảng `users` trong `aurora_db` ở mỗi request cần đăng nhập. Chỉ tài khoản có `status = 'active'` mới đăng nhập và tiếp tục sử dụng TMS được. Tài khoản có trạng thái `locked` hoặc `inactive` bị từ chối đăng nhập; nếu đang đăng nhập khi bị khóa/ngừng hoạt động thì phiên và cookie nhận diện bị vô hiệu hóa ở request tiếp theo. Sửa hồ sơ không gửi trường `status` sẽ giữ nguyên trạng thái hiện tại của tài khoản.
+
+Thời gian TMS dùng múi giờ Việt Nam (`Asia/Ho_Chi_Minh`, UTC+07:00); các mốc đăng nhập bất thường như `1970-01-01` hoặc ở tương lai không được hiển thị như thời gian đăng nhập hợp lệ. Danh sách tài khoản hiển thị lần đăng nhập cuối theo định dạng `HH:mm:ss DD/MM/YYYY`.
 
 ## Endpoint
 

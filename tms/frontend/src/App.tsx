@@ -9,7 +9,7 @@ import {
   Plus, Edit, Trash2, DollarSign, Thermometer, Volume2,
   ShieldAlert, UserCheck, Monitor, ScrollText, CreditCard, Search, RefreshCw,
   Tv, Clapperboard as ShowtimeIcon, MapPin, Clock, Target,
-  Layers, Send, CalendarCheck, Sparkles, Filter
+  Layers, Send, CalendarCheck, Sparkles, Filter, Globe
 } from 'lucide-react';
 
 // ============================================================
@@ -135,13 +135,65 @@ function getRoleNavItems(role: TMSRole): NavItem[] {
 // ============================================================
 // DATA TYPES
 // ============================================================
-interface TMSUser { id?: number; username: string; full_name: string; role: TMSRole; phone?: string; email?: string; theater_id?: number; theater_name?: string; status?: string; last_login?: string; }
+interface TMSUser { id?: number; username: string; full_name: string; role: TMSRole; phone?: string; email?: string; theater_id?: number; theater_name?: string; status?: string; last_login?: string | null; }
+function formatLastLogin(value?: string | null) {
+  if (!value) return '—';
+  const match = value.match(/^(\d{4})-(\d{2})-(\d{2})[ T](\d{2}):(\d{2}):(\d{2})$/);
+  if (!match) return '—';
+  const [, yearText, monthText, dayText, hourText, minuteText, secondText] = match;
+  const [year, month, day, hour, minute, second] = [yearText, monthText, dayText, hourText, minuteText, secondText].map(Number);
+  const parsed = new Date(Date.UTC(year, month - 1, day, hour, minute, second));
+  if (
+    !Number.isFinite(parsed.getTime()) ||
+    parsed.getUTCFullYear() !== year ||
+    parsed.getUTCMonth() !== month - 1 ||
+    parsed.getUTCDate() !== day ||
+    (year === 1970 && month === 1 && day === 1 && hour === 0 && minute === 0 && second === 0)
+  ) return '—';
+  return `${hourText}:${minuteText}:${secondText} ${dayText}/${monthText}/${yearText}`;
+}
+const TMS_VIEW_PARAM = 'view';
+const tmsViewStorageKey = (user: Pick<TMSUser, 'id' | 'username'>) => `aurora_tms_active_view:${user.id || user.username}`;
+const allowedTmsViews = (role: TMSRole) => {
+  const allowed = new Set<string>(['dashboard']);
+  getRoleNavItems(role).forEach(item => {
+    allowed.add(item.id);
+    (item.children || []).forEach(child => allowed.add(child));
+  });
+  const operationalViews: Record<TMSRole, string[]> = {
+    super_admin: ['screens', 'transactions', 'movies'],
+    cinema_admin: ['screens', 'movie_plan', 'schedules'],
+    supervisor: ['screens', 'showtimes', 'transactions', 'refunds'],
+    accounting: ['transactions', 'refunds'],
+  };
+  operationalViews[role].forEach(view => allowed.add(view));
+  return allowed;
+};
+const restoredTmsView = (user: Pick<TMSUser, 'id' | 'username' | 'role'>) => {
+  const urlView = new URLSearchParams(window.location.search).get(TMS_VIEW_PARAM);
+  const storedView = window.sessionStorage.getItem(tmsViewStorageKey(user));
+  const candidate = urlView || storedView || 'dashboard';
+  return allowedTmsViews(user.role).has(candidate) ? candidate : 'dashboard';
+};
+const replaceTmsViewInUrl = (view?: string) => {
+  const url = new URL(window.location.href);
+  if (view && view !== 'dashboard') url.searchParams.set(TMS_VIEW_PARAM, view);
+  else url.searchParams.delete(TMS_VIEW_PARAM);
+  window.history.replaceState(window.history.state, '', `${url.pathname}${url.search}${url.hash}`);
+};
 interface ScreenData { id: number; theater_id?: number; screen_code: string; name: string; screen_type: string; total_seats: number; projector_status: 'online'|'standby'|'maintenance'|'error'; sound_system_status: 'online'|'standby'|'error'; hvac_temperature: number; lamp_hours: number; status: 'active'|'paused'|'cleaning'|'closed'; }
 interface RefundItem { id: number; transaction_code: string; customer_name: string; reason: string; amount: number; payment_method: string; status: 'pending'|'approved'|'rejected'|'completed'; created_at?: string; requested_by?: string; }
 interface TxnItem { id: number; transaction_code: string; customer_name?: string; customer_phone?: string; channel: 'pos'|'website'|'ota'; amount: number; payment_method: string; status: 'paid'|'pending'|'cancelled'|'refunded'; created_at?: string; cancel_requested?: boolean; }
 interface StaffShift { id: number; name: string; position: string; shift: string; time: string; status: 'on_duty'|'checked_in'|'absent'; checkin: string; }
 interface TicketType { id: number; name: string; code: string; price: number; status?: string; description?: string; matrix?: Record<string, Record<string, number>>; }
-interface ScheduleItem { id: number; screen_id: number; movie_id: number; movie_title: string; screen_name: string; show_date: string; start_time: string; end_time: string; booked_seats: number; total_seats: number; ticket_price?: number; ticket_type_ids?: string; operational_note?: string; status: 'scheduled'|'running'|'finished'|'cancelled'; customer_showtime_id?: number; }
+interface ScheduleItem { id: number; screen_id: number; movie_id: number; movie_title: string; screen_name: string; show_date: string; start_time: string; end_time: string; booked_seats: number; total_seats: number; ticket_price?: number; ticket_type_ids?: string; operational_note?: string; status: 'scheduled'|'running'|'finished'|'cancelled'; customer_showtime_id?: number; can_delete?: number|string|boolean; delete_block_reason?: string; }
+type ScheduleView = 'active' | 'upcoming' | 'history' | 'all';
+interface ScheduleMeta { page: number; per_page: number; total: number; total_pages: number; view: ScheduleView; summary: { scheduled: number; running: number; finished: number; active_rooms: number; booked_seats: number; }; }
+interface ScheduleDeleteError extends Error { blockedIds?: number[]; }
+const canDeleteSchedule = (schedule: ScheduleItem) => Number(schedule.can_delete) === 1;
+const scheduleDeleteBlockLabel = (schedule: ScheduleItem) => schedule.delete_block_reason === 'has_booking_history'
+  ? 'Suất chiếu đã có lịch sử đặt vé'
+  : schedule.delete_block_reason === 'started' ? 'Suất chiếu đã bắt đầu' : 'Suất chiếu không thể xóa';
 interface MovieImportRow extends Omit<MovieForm, 'id'> {
   raw: Record<string, string>;
   fieldHeaders: Record<string, string>;
@@ -192,6 +244,21 @@ const getAgeRating = (value: string) => {
   const normalized = String(value || '').toUpperCase();
   const code = ['T18', 'T16', 'T13', 'K', 'P'].find(item => normalized === item || normalized.startsWith(`${item} `) || normalized.startsWith(`${item}-`) || normalized.startsWith(`${item} -`)) || normalized;
   return { code: code || '—', ...(AGE_RATING_META[code] || { label: String(value || 'Chưa phân loại'), color: '#64748b', background: '#f1f5f9' }) };
+};
+type MovieStatus = 'coming_soon' | 'now_showing' | 'special_showing' | 'ended';
+const MOVIE_STATUS_META: Record<MovieStatus, { label: string; color: string; background: string }> = {
+  coming_soon: { label: 'Sắp chiếu', color: '#1d4ed8', background: '#dbeafe' },
+  now_showing: { label: 'Đang chiếu', color: '#047857', background: '#d1fae5' },
+  special_showing: { label: 'Đặc biệt', color: '#a16207', background: '#fef3c7' },
+  ended: { label: 'Đã kết thúc', color: '#64748b', background: '#eef2f6' },
+};
+const normalizeMovieStatus = (value: unknown): MovieStatus | null => {
+  const normalized = String(value || '').trim().toLowerCase();
+  return normalized in MOVIE_STATUS_META ? normalized as MovieStatus : null;
+};
+const getMovieStatus = (value: unknown) => {
+  const normalized = normalizeMovieStatus(value);
+  return normalized ? { code: normalized, ...MOVIE_STATUS_META[normalized] } : { code: 'unknown', label: 'Chưa xác định', color: '#64748b', background: '#f1f5f9' };
 };
 const MOVIE_IMPORT_REQUIRED_FIELDS: Record<string, string> = {
   title: 'Tên phim', original_title: 'Tên phim gốc', genre: 'Thể loại', duration_minutes: 'Thời lượng', age_rating: 'Độ tuổi',
@@ -414,6 +481,8 @@ export default function App() {
   const [moviesList, setMoviesList] = useState<MovieItem[]>([]);
   const [scheduleMoviesList, setScheduleMoviesList] = useState<ScheduleMovieItem[]>([]);
   const [theatersList, setTheatersList] = useState<TheaterItem[]>([]);
+  const [theatersLoading, setTheatersLoading] = useState(false);
+  const [theatersError, setTheatersError] = useState('');
   const [planMonth, setPlanMonth] = useState<number>(10);
   const [planYear, setPlanYear] = useState<number>(2026);
   const [planSearch, setPlanSearch] = useState('');
@@ -462,7 +531,7 @@ export default function App() {
   // ALLOCATION MODAL
   const [showAllocationModal, setShowAllocationModal] = useState(false);
   const [allocationTargetPlan, setAllocationTargetPlan] = useState<MoviePlan | null>(null);
-  const [allocSelectedTheaters, setAllocSelectedTheaters] = useState<number[]>([1, 2, 3, 4, 5]);
+  const [allocSelectedTheaters, setAllocSelectedTheaters] = useState<number[]>([]);
   const [allocMinScreenings, setAllocMinScreenings] = useState(6);
 
   // MOVIE MODAL
@@ -493,6 +562,13 @@ export default function App() {
   const [scheduleDateFilter, setScheduleDateFilter] = useState('');
   const [scheduleStatusFilter, setScheduleStatusFilter] = useState<'all' | ScheduleItem['status']>('all');
   const [scheduleSearch, setScheduleSearch] = useState('');
+  const [scheduleView, setScheduleView] = useState<ScheduleView>('active');
+  const [schedulePage, setSchedulePage] = useState(1);
+  const [scheduleMeta, setScheduleMeta] = useState<ScheduleMeta>({ page:1, per_page:20, total:0, total_pages:1, view:'active', summary:{ scheduled:0, running:0, finished:0, active_rooms:0, booked_seats:0 } });
+  const [selectedScheduleIds, setSelectedScheduleIds] = useState<number[]>([]);
+  const [scheduleBulkDeleting, setScheduleBulkDeleting] = useState(false);
+  const [schedulesLoading, setSchedulesLoading] = useState(false);
+  const scheduleLoadSequence = useRef(0);
   const [showScheduleModal, setShowScheduleModal] = useState(false);
   const [scheduleForm, setScheduleForm] = useState({ id: 0, movie_id: 0, screen_ids: [] as number[], ticket_type_ids: [] as number[], show_date: new Date().toISOString().slice(0, 10), start_time: '09:00', end_time: '11:00', time_slots: [{ key: 'slot-1', screen_id: 0, start_time: '09:00', end_time: '11:00' }], ticket_price: 0, operational_note: '', status: 'scheduled' });
   const [showDeploymentDetailModal, setShowDeploymentDetailModal] = useState(false);
@@ -540,7 +616,9 @@ export default function App() {
           // Do not turn a recoverable session mismatch into an automatic
           // logout; the account returned by the authenticated API is restored.
           window.sessionStorage.setItem('aurora_tms_username', user.username);
-          setCurrentUser({ id: user.id, username: user.username, full_name: user.full_name, role: toTmsRole(user.role), phone: user.phone, theater_id: Number(user.theater_id || 0), status: user.status });
+          const restoredUser = { id: user.id, username: user.username, full_name: user.full_name, role: toTmsRole(user.role), phone: user.phone, theater_id: Number(user.theater_id || 0), status: user.status } as TMSUser;
+          setCurrentUser(restoredUser);
+          setActive(restoredTmsView(restoredUser));
           setIsLoggedIn(true);
         }
       } catch {
@@ -552,6 +630,29 @@ export default function App() {
     restoreSession();
     return () => { isMounted = false; };
   }, []);
+
+  useEffect(() => {
+    if (!isLoggedIn || !currentUser) return;
+    const allowed = allowedTmsViews(currentUser.role);
+    if (!allowed.has(active)) {
+      setActive('dashboard');
+      return;
+    }
+    window.sessionStorage.setItem(tmsViewStorageKey(currentUser), active);
+    replaceTmsViewInUrl(active);
+    const parent = getRoleNavItems(currentUser.role).find(item => item.children?.includes(active));
+    if (parent) setExpanded(parent.id);
+  }, [active, isLoggedIn, currentUser?.id, currentUser?.role]);
+
+  useEffect(() => {
+    if (!isLoggedIn || !currentUser) return;
+    const handleHistoryNavigation = () => {
+      const requested = new URLSearchParams(window.location.search).get(TMS_VIEW_PARAM) || 'dashboard';
+      setActive(allowedTmsViews(currentUser.role).has(requested) ? requested : 'dashboard');
+    };
+    window.addEventListener('popstate', handleHistoryNavigation);
+    return () => window.removeEventListener('popstate', handleHistoryNavigation);
+  }, [isLoggedIn, currentUser?.id, currentUser?.role]);
 
   const showSystemNotice = (message: string) => {
     const text = String(message || 'Đã hoàn tất thao tác.');
@@ -613,11 +714,10 @@ export default function App() {
 
   const loadMoviePlans = async (m = planMonth, y = planYear) => {
     try {
-      const res = await fetch(`${API_BASE}?action=movie-plans&month=${m}&year=${y}`);
+      const res = await fetch(`${API_BASE}?action=movie-plans&month=${m}&year=${y}`, { credentials: 'include', cache: 'no-store' });
       const data = await res.json();
-      if (data.success && Array.isArray(data.data)) {
-        setMoviePlans(data.data);
-      }
+      if (!res.ok || !data.success || !Array.isArray(data.data)) throw new Error(data.message || 'Không thể tải kế hoạch phim từ Aurora DB.');
+      setMoviePlans(data.data);
     } catch (e) {
       console.error('Error loading movie plans:', e);
     }
@@ -626,11 +726,10 @@ export default function App() {
   const loadMovieAllocations = async (theaterId = 0) => {
     try {
       const url = theaterId > 0 ? `${API_BASE}?action=movie-allocations&theater_id=${theaterId}` : `${API_BASE}?action=movie-allocations`;
-      const res = await fetch(url);
+      const res = await fetch(url, { credentials: 'include', cache: 'no-store' });
       const data = await res.json();
-      if (data.success && Array.isArray(data.data)) {
-        setMovieAllocations(data.data);
-      }
+      if (!res.ok || !data.success || !Array.isArray(data.data)) throw new Error(data.message || 'Không thể tải dữ liệu phân bổ từ Aurora DB.');
+      setMovieAllocations(data.data);
     } catch (e) {
       console.error('Error loading allocations:', e);
     }
@@ -638,10 +737,10 @@ export default function App() {
 
   const loadMovies = async () => {
     try {
-      const res = await fetch(`${API_BASE}?action=movies`);
+      const res = await fetch(`${API_BASE}?action=movies`, { credentials: 'include', cache: 'no-store' });
       const data = await res.json();
       if (data.success && Array.isArray(data.data)) {
-        setMoviesList(data.data);
+        setMoviesList(data.data.map((movie: MovieItem) => ({ ...movie, status: normalizeMovieStatus(movie.status) || String(movie.status || '').toLowerCase() })));
       }
     } catch (e) {
       console.error('Error loading movies:', e);
@@ -660,13 +759,42 @@ export default function App() {
     }
   };
 
-  const loadSchedules = async () => {
+  const loadSchedules = async (options: { showError?: boolean; page?: number } = {}) => {
+    const requestId = ++scheduleLoadSequence.current;
+    setSchedulesLoading(true);
     try {
-      const res = await fetch(`${API_BASE}?action=schedules`, { credentials: 'include' });
+      const params = new URLSearchParams({ action:'schedules', view:scheduleView, page:String(options.page || schedulePage), per_page:'20' });
+      if (scheduleSearch.trim()) params.set('q', scheduleSearch.trim());
+      if (scheduleDateFilter) params.set('date', scheduleDateFilter);
+      if (scheduleStatusFilter !== 'all') params.set('status', scheduleStatusFilter);
+      const res = await fetch(`${API_BASE}?${params.toString()}`, { credentials: 'include', cache: 'no-store' });
       const data = await res.json();
-      if (data.success && Array.isArray(data.data)) setSchedulesList(data.data);
+      if (!res.ok || !data.success || !Array.isArray(data.data)) throw new Error(data.message || 'Không thể tải lịch chiếu.');
+      if (requestId !== scheduleLoadSequence.current) return false;
+      const schedules = data.data as ScheduleItem[];
+      setSchedulesList(schedules);
+      if (data.meta) {
+        const summary = data.meta.summary || {};
+        setScheduleMeta({
+          page:Number(data.meta.page || 1), per_page:Number(data.meta.per_page || 20), total:Number(data.meta.total || 0), total_pages:Number(data.meta.total_pages || 1),
+          view:(data.meta.view || scheduleView) as ScheduleView,
+          summary:{ scheduled:Number(summary.scheduled || 0), running:Number(summary.running || 0), finished:Number(summary.finished || 0), active_rooms:Number(summary.active_rooms || 0), booked_seats:Number(summary.booked_seats || 0) }
+        });
+        setSchedulePage(Number(data.meta.page || 1));
+      }
+      // A reload can move rows outside the active filters after another admin
+      // edits them. Clearing selection prevents an invisible row from being
+      // included in a later destructive request.
+      setSelectedScheduleIds([]);
+      return true;
     } catch (e) {
-      console.error('Error loading schedules:', e);
+      if (requestId === scheduleLoadSequence.current) {
+        console.error('Error loading schedules:', e);
+        if (options.showError !== false) showSystemNotice(e instanceof Error ? e.message : 'Không thể tải lịch chiếu từ Aurora DB.');
+      }
+      return false;
+    } finally {
+      if (requestId === scheduleLoadSequence.current) setSchedulesLoading(false);
     }
   };
 
@@ -779,16 +907,36 @@ export default function App() {
     } catch (error) { setSystemNotice({ message: error instanceof Error ? error.message : 'Không thể cập nhật chuẩn bị phòng.', type: 'error' }); }
   };
 
-  const loadTheaters = async () => {
+  const loadTheaters = async (notifyOnError = false): Promise<TheaterItem[]> => {
+    setTheatersLoading(true);
+    setTheatersError('');
     try {
-      const res = await fetch(`${API_BASE}?action=theaters`);
+      const res = await fetch(`${API_BASE}?action=theaters`, { credentials: 'include', cache: 'no-store' });
       const data = await res.json();
-      if (data.success && Array.isArray(data.data)) {
-        setTheatersList(data.data);
-      }
+      if (!res.ok || !data.success || !Array.isArray(data.data)) throw new Error(data.message || 'Không thể tải danh sách cụm rạp từ Aurora DB.');
+      const theaters = data.data.map((theater: TheaterItem) => ({ ...theater, id: Number(theater.id) }));
+      setTheatersList(theaters);
+      return theaters;
     } catch (e) {
       console.error('Error loading theaters:', e);
+      const message = e instanceof Error ? e.message : 'Không thể kết nối Aurora DB để tải danh sách cụm rạp.';
+      setTheatersList([]);
+      setTheatersError(message);
+      if (notifyOnError) setSystemNotice({ message, type: 'error' });
+      return [];
+    } finally {
+      setTheatersLoading(false);
     }
+  };
+
+  const openAllocationModal = async (plan: MoviePlan) => {
+    setAllocationTargetPlan(plan);
+    setAllocMinScreenings(plan.target_screenings_per_day);
+    setShowAllocationModal(true);
+    const allocatedIds = new Set((plan.allocations || []).map(allocation => Number(allocation.theater_id)));
+    setAllocSelectedTheaters(theatersList.map(theater => Number(theater.id)).filter(id => !allocatedIds.has(id)));
+    const theaters = await loadTheaters(true);
+    setAllocSelectedTheaters(theaters.map(theater => Number(theater.id)).filter(id => !allocatedIds.has(id)));
   };
 
   useEffect(() => {
@@ -799,7 +947,6 @@ export default function App() {
       loadMovies();
       loadScheduleMovies();
       loadTheaters();
-      loadSchedules();
       loadTicketTypes();
       loadPricingPolicies();
       loadScreens();
@@ -807,11 +954,21 @@ export default function App() {
   }, [isLoggedIn]);
 
   useEffect(() => {
+    if (!isLoggedIn) return;
+    const timer = window.setTimeout(() => { void loadSchedules(); }, scheduleSearch ? 280 : 0);
+    return () => window.clearTimeout(timer);
+  }, [isLoggedIn, scheduleView, schedulePage, scheduleDateFilter, scheduleStatusFilter, scheduleSearch]);
+
+  useEffect(() => {
     if (isLoggedIn) {
       loadDashboard(reportDate);
       if (currentUser?.role === 'cinema_admin') loadCinemaScheduleBoard(reportDate);
     }
   }, [isLoggedIn, reportDate]);
+
+  useEffect(() => {
+    setSelectedScheduleIds([]);
+  }, [active, currentUser?.id]);
 
   // Handle plan month change
   const handleSelectPlanMonth = (m: number) => {
@@ -914,10 +1071,16 @@ export default function App() {
       setSystemNotice({ message: 'Vui lòng chọn ít nhất một cụm rạp để phân bổ.', type: 'warning' });
       return;
     }
+    const theaterIds = new Set(theatersList.map(theater => Number(theater.id)));
+    const validSelectedTheaters = allocSelectedTheaters.filter(id => theaterIds.has(Number(id)));
+    if (validSelectedTheaters.length !== allocSelectedTheaters.length) {
+      setSystemNotice({ message: 'Danh sách cụm rạp đã thay đổi. Vui lòng tải lại và chọn lại rạp từ Aurora DB.', type: 'warning' });
+      return;
+    }
     try {
-      for (const tId of allocSelectedTheaters) {
-        const theater = theatersList.find(t => t.id === tId);
-        const tName = theater ? theater.name : `Rạp #${tId}`;
+      for (const tId of validSelectedTheaters) {
+        const theater = theatersList.find(t => Number(t.id) === Number(tId));
+        if (!theater) throw new Error('Cụm rạp được chọn không còn tồn tại trong Aurora DB.');
         const response = await fetch(`${API_BASE}?action=movie-allocations`, {
           method: 'POST',
           credentials: 'include',
@@ -927,7 +1090,7 @@ export default function App() {
             movie_id: allocationTargetPlan.movie_id,
             movie_title: allocationTargetPlan.movie_title,
             theater_id: tId,
-            theater_name: tName,
+            theater_name: theater.name,
             min_screenings_per_day: allocMinScreenings,
             preferred_screen_types: allocationTargetPlan.format || 'Standard / IMAX',
             allocated_start_date: allocationTargetPlan.expected_start_date,
@@ -938,7 +1101,7 @@ export default function App() {
         const result = await response.json();
         if (!response.ok || !result.success) throw new Error(result.message || 'Không thể ghi phân bổ vào Aurora DB.');
       }
-      setSystemNotice({ message: `Đã gửi kế hoạch phim đến ${allocSelectedTheaters.length} cụm rạp. Admin Rạp có thể tiếp nhận và triển khai lịch chiếu.`, type: 'success' });
+      setSystemNotice({ message: `Đã gửi kế hoạch phim đến ${validSelectedTheaters.length} cụm rạp. Admin Rạp có thể tiếp nhận và triển khai lịch chiếu.`, type: 'success' });
       setShowAllocationModal(false);
       loadMoviePlans();
       loadMovieAllocations();
@@ -1183,11 +1346,11 @@ export default function App() {
       });
       const data = await res.json();
       if (data.success) {
+        await loadMovies();
         alert(movieForm.id > 0 ? 'Đã cập nhật phim!' : 'Đã thêm phim mới vào kho hệ thống!');
         setShowMovieModal(false);
         clearMovieMedia();
         setMovieFormError('');
-        loadMovies();
       } else {
         const message = data.message || 'Lưu phim thất bại.';
         setMovieFormError(message);
@@ -1278,17 +1441,84 @@ export default function App() {
     }
   };
 
+  const deleteSchedules = async (ids: number[]) => {
+    const response = await fetch(`${API_BASE}?action=schedules`, {
+      method: 'DELETE',
+      credentials: 'include',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ ids }),
+    });
+    const result = await response.json().catch(() => ({ success: false, message: 'Phản hồi máy chủ không hợp lệ.' }));
+    if (!response.ok || !result.success) {
+      const error = new Error(result.message || 'Không thể xóa suất chiếu.') as ScheduleDeleteError;
+      error.blockedIds = Array.isArray(result.data?.blocked_ids) ? result.data.blocked_ids.map(Number) : [];
+      throw error;
+    }
+    return result;
+  };
+
+  const reconcileDeletedSchedules = async (result: any, fallbackIds: number[]) => {
+    const deletedIds = Array.isArray(result.data?.deleted_ids) ? result.data.deleted_ids.map(Number) : fallbackIds;
+    const alreadyMissingIds = Array.isArray(result.data?.already_missing_ids) ? result.data.already_missing_ids.map(Number) : [];
+    const deletedSet = new Set<number>([...deletedIds, ...alreadyMissingIds]);
+    // Invalidate any GET that started before the delete response, then remove
+    // the rows immediately so a temporary refresh error cannot show stale data.
+    scheduleLoadSequence.current += 1;
+    setSchedulesList(current => current.filter(schedule => !deletedSet.has(Number(schedule.id))));
+    setSelectedScheduleIds(current => current.filter(id => !deletedSet.has(id)));
+    const refreshed = await loadSchedules({ showError: false });
+    if (refreshed) showSystemNotice(result.message);
+    else setSystemNotice({ message: `${result.message} Danh sách đã được cập nhật cục bộ; hãy bấm Làm mới khi kết nối ổn định.`, type: 'warning' });
+  };
+
+  const handleScheduleDeleteError = async (error: unknown) => {
+    const deleteError = error as ScheduleDeleteError;
+    if (deleteError.blockedIds?.length) {
+      const blockedSet = new Set(deleteError.blockedIds);
+      const blockReason = error instanceof Error && /bắt đầu/i.test(error.message) ? 'started' : 'has_booking_history';
+      setSelectedScheduleIds(current => current.filter(id => !blockedSet.has(id)));
+      setSchedulesList(current => current.map(schedule => blockedSet.has(Number(schedule.id))
+        ? { ...schedule, can_delete: 0, delete_block_reason: blockReason }
+        : schedule));
+      scheduleLoadSequence.current += 1;
+      await loadSchedules({ showError: false });
+    }
+    setSystemNotice({ message: error instanceof Error ? error.message : 'Lỗi kết nối cơ sở dữ liệu.', type: deleteError.blockedIds?.length ? 'warning' : 'error' });
+  };
+
   const handleDeleteSchedule = async (id: number) => {
-    requestSystemConfirmation('Suất chiếu sẽ bị hủy và không còn hiển thị trên website khách hàng.', async () => {
+    requestSystemConfirmation('Suất chiếu chưa bắt đầu sẽ bị xóa khỏi aurora_db và không còn hiển thị trên website khách hàng.', async () => {
+      setScheduleBulkDeleting(true);
       try {
-      const response = await fetch(`${API_BASE}?action=schedules&id=${id}`, { method: 'DELETE', credentials: 'include', headers: { 'X-TMS-User': currentUser?.username || 'admin_rap' } });
-      const result = await response.json();
-      if (!response.ok || !result.success) throw new Error(result.message || 'Không thể hủy suất chiếu.');
-      await loadSchedules();
+        const result = await deleteSchedules([id]);
+        await reconcileDeletedSchedules(result, [id]);
       } catch (error) {
-        alert(error instanceof Error ? error.message : 'Lỗi kết nối cơ sở dữ liệu.');
+        await handleScheduleDeleteError(error);
+      } finally {
+        setScheduleBulkDeleting(false);
       }
-    }, 'Hủy suất chiếu');
+    }, 'Xóa suất chiếu', 'Xác nhận xóa suất chiếu');
+  };
+
+  const handleDeleteSelectedSchedules = () => {
+    const ids = [...selectedScheduleIds];
+    if (!ids.length || scheduleBulkDeleting) return;
+    requestSystemConfirmation(
+      `Bạn đang chọn xóa ${ids.length} suất chiếu. Hệ thống sẽ không xóa bất kỳ suất nào nếu trong nhóm có suất đã bắt đầu hoặc đã phát sinh đặt vé.`,
+      async () => {
+        setScheduleBulkDeleting(true);
+        try {
+          const result = await deleteSchedules(ids);
+          await reconcileDeletedSchedules(result, ids);
+        } catch (error) {
+          await handleScheduleDeleteError(error);
+        } finally {
+          setScheduleBulkDeleting(false);
+        }
+      },
+      `Xóa ${ids.length} suất chiếu`,
+      'Xác nhận xóa hàng loạt'
+    );
   };
 
   // -------- LOGIN --------
@@ -1319,6 +1549,10 @@ export default function App() {
   const handleLogout = async () => {
     try { await fetch(`${API_BASE}?action=logout`, { credentials: 'include' }); } catch { /* ignore */ }
     window.sessionStorage.removeItem('aurora_tms_username');
+    if (currentUser) window.sessionStorage.removeItem(tmsViewStorageKey(currentUser));
+    replaceTmsViewInUrl();
+    scheduleLoadSequence.current += 1;
+    setSchedulesLoading(false); setSelectedScheduleIds([]);
     setIsLoggedIn(false); setPassword(''); setCurrentUser(null); setUserDropdownOpen(false);
   };
 
@@ -1348,6 +1582,35 @@ export default function App() {
       if (!response.ok || !result.success) throw new Error(result.message || 'Không thể cập nhật trạng thái tài khoản.');
       showSystemNotice(result.message); loadUsers();
     } catch (error) { setSystemNotice({ message: error instanceof Error ? error.message : 'Không thể cập nhật trạng thái tài khoản.', type: 'error' }); }
+  };
+
+  const deleteUserAccount = async (u: TMSUser) => {
+    if (currentUser?.role !== 'super_admin') { setSystemNotice({ message: 'Chỉ Admin Tổng mới có quyền xóa tài khoản TMS.', type: 'warning' }); return; }
+    if (Number(currentUser?.id) === Number(u.id)) { setSystemNotice({ message: 'Bạn không thể tự xóa tài khoản đang đăng nhập.', type: 'warning' }); return; }
+    if (!window.confirm(`Bạn có chắc chắn muốn xóa vĩnh viễn tài khoản "${u.full_name}" (@${u.username}) khỏi Aurora DB không?\n\nHành động này sẽ xóa dữ liệu người dùng và các liên kết phụ thuộc trong cơ sở dữ liệu.`)) return;
+    try {
+      const response = await fetch(`${API_BASE}?action=users&id=${u.id}`, {
+        method: 'DELETE',
+        credentials: 'include',
+        headers: {
+          'Content-Type': 'application/json',
+          'X-TMS-User': currentUser?.username || 'admin_tong'
+        }
+      });
+      const rawText = await response.text();
+      let result: any = null;
+      try {
+        result = JSON.parse(rawText);
+      } catch {
+        const cleanMsg = rawText.replace(/<[^>]*>?/gm, ' ').replace(/\s+/g, ' ').trim();
+        throw new Error(cleanMsg || 'Máy chủ trả về phản hồi không hợp lệ.');
+      }
+      if (!response.ok || !result.success) throw new Error(result.message || 'Không thể xóa tài khoản khỏi Aurora DB.');
+      showSystemNotice(result.message || 'Đã xóa tài khoản khỏi Aurora DB thành công.');
+      loadUsers();
+    } catch (error) {
+      setSystemNotice({ message: error instanceof Error ? error.message : 'Không thể xóa tài khoản khỏi Aurora DB.', type: 'error' });
+    }
   };
 
   const updateScreenOperation = async (id: number, changes: Record<string, string | number>) => {
@@ -1836,7 +2099,7 @@ export default function App() {
     if (a === 'accounts' || a === 'Danh sách tài khoản' || a === 'Ma trận phân quyền') {
       const isMatrix = a === 'Ma trận phân quyền';
       const accountRows = tmsUsers.filter(user => {
-        const text = `${user.full_name || ''} ${user.username || ''} ${user.phone || ''}`.toLocaleLowerCase();
+        const text = `${user.full_name || ''} ${user.username || ''} ${user.phone || ''} ${user.theater_name || ''}`.toLocaleLowerCase();
         return (!accountSearch || text.includes(accountSearch.toLocaleLowerCase())) && (accountRoleFilter === 'all' || user.role === accountRoleFilter) && (accountStatusFilter === 'all' || user.status === accountStatusFilter);
       });
       const activeAccountCount = tmsUsers.filter(user => user.status === 'active').length;
@@ -1858,25 +2121,64 @@ export default function App() {
               <div className="tms-card-table account-management-table">
               <div className="account-table-heading"><div><span>QUẢN TRỊ NGƯỜI DÙNG</span><h2>Tài khoản vận hành TMS</h2><p>Thêm, phân quyền và kiểm soát truy cập trực tiếp trên Aurora DB.</p></div><button type="button" className="account-create-button" onClick={() => { setUserForm({id:0,username:'',full_name:'',phone:'',email:'',theater_id:0,role:'cinema_admin',password:'',status:'active'}); setShowUserPassword(false); setShowUserModal(true); }}><Plus size={17}/><span>Thêm tài khoản</span></button></div>
               <div className="tms-table-toolbar account-toolbar">
-                <div className="tms-search-input"><Search size={16} color="#94a3b8"/><input value={accountSearch} onChange={e => setAccountSearch(e.target.value)} placeholder="Tìm tên, username hoặc số điện thoại..." /></div>
+                <div className="tms-search-input"><Search size={16} color="#94a3b8"/><input value={accountSearch} onChange={e => setAccountSearch(e.target.value)} placeholder="Tìm tên, rạp phụ trách, username hoặc SĐT..." /></div>
                 <select value={accountRoleFilter} onChange={e => setAccountRoleFilter(e.target.value as 'all' | TMSRole)}><option value="all">Tất cả vai trò</option><option value="super_admin">Admin Tổng</option><option value="cinema_admin">Admin Rạp</option><option value="supervisor">Supervisor</option><option value="accounting">Kế toán</option></select>
                 <select value={accountStatusFilter} onChange={e => setAccountStatusFilter(e.target.value as 'all' | 'active' | 'locked')}><option value="all">Mọi trạng thái</option><option value="active">Đang hoạt động</option><option value="locked">Tạm khóa</option></select>
                 <button className="account-refresh-btn" type="button" onClick={loadUsers} title="Tải lại từ Aurora DB"><RefreshCw size={15}/> Làm mới</button>
               </div>
               <table className="tms-data-table">
-                <thead><tr><th>ID</th><th>Họ và Tên</th><th>Username</th><th>SĐT</th><th>Vai trò</th><th>Trạng thái</th><th>Đăng nhập cuối</th><th>Thao tác</th></tr></thead>
+                <thead><tr><th>ID</th><th>Họ và Tên</th><th>Rạp phụ trách</th><th>SĐT</th><th>Vai trò</th><th>Trạng thái</th><th>Đăng nhập cuối</th><th>Thao tác</th></tr></thead>
                 <tbody>{accountRows.map(u => {
                   const ucfg = ROLE_CONFIGS[u.role as TMSRole] || ROLE_CONFIGS.cinema_admin;
+                  const thName = u.theater_name || theatersList.find(t => Number(t.id) === Number(u.theater_id))?.name || (u.theater_id ? `Rạp #${u.theater_id}` : '');
                   return (
                     <tr key={u.id}>
                       <td style={{fontWeight:700,color:'#64748b'}}>#{u.id}</td>
-                      <td><div style={{display:'flex',alignItems:'center',gap:10}}><div style={{width:32,height:32,borderRadius:8,background:ucfg.bg,color:ucfg.color,fontWeight:800,display:'grid',placeItems:'center',fontSize:'1rem'}}>{ucfg.emoji}</div><div><div style={{fontWeight:700}}>{u.full_name}</div><div style={{fontSize:'0.74rem',color:'#64748b'}}>{ucfg.tagline}</div></div></div></td>
-                      <td><code style={{background:'#f1f5f9',padding:'3px 7px',borderRadius:4}}>@{u.username}</code></td>
-                      <td>{u.phone}</td>
+                      <td>
+                        <div style={{display:'flex',alignItems:'center',gap:10}}>
+                          <div style={{width:32,height:32,borderRadius:8,background:ucfg.bg,color:ucfg.color,fontWeight:800,display:'grid',placeItems:'center',fontSize:'1rem'}}>{ucfg.emoji}</div>
+                          <div>
+                            <div style={{fontWeight:700}}>{u.full_name}</div>
+                            <div style={{fontSize:'0.74rem',color:'#64748b'}}>{ucfg.tagline}</div>
+                          </div>
+                        </div>
+                      </td>
+                      <td>
+                        {(() => {
+                          if (u.role === 'super_admin') {
+                            return (
+                              <span style={{display:'inline-flex',alignItems:'center',gap:5,padding:'4px 9px',borderRadius:6,fontSize:'0.78rem',fontWeight:700,background:'#fffbeb',border:'1px solid #fef3c7',color:'#b45309'}}>
+                                <Globe size={13} color="#d97706"/> Toàn hệ thống
+                              </span>
+                            );
+                          }
+                          if (!thName) {
+                            if (u.role === 'accounting') {
+                              return (
+                                <span style={{display:'inline-flex',alignItems:'center',gap:5,padding:'4px 9px',borderRadius:6,fontSize:'0.78rem',fontWeight:600,background:'#f8fafc',border:'1px solid #e2e8f0',color:'#475569'}}>
+                                  <Building2 size={13} color="#64748b"/> Toàn hệ thống
+                                </span>
+                              );
+                            }
+                            return (
+                              <span style={{fontSize:'0.78rem',color:'#94a3b8',fontStyle:'italic',display:'inline-flex',alignItems:'center',gap:4}}>
+                                Chưa phân rạp
+                              </span>
+                            );
+                          }
+                          return (
+                            <div style={{display:'inline-flex',alignItems:'center',gap:6,fontWeight:600,fontSize:'0.82rem',color:'#0f172a'}}>
+                              <Building2 size={15} color="#2563eb" style={{flexShrink:0}}/>
+                              <span>{thName}</span>
+                            </div>
+                          );
+                        })()}
+                      </td>
+                      <td>{u.phone || '—'}</td>
                       <td><span className={`role-badge-pill ${u.role}`}>{ucfg.name}</span></td>
                       <td><span style={{display:'inline-flex',alignItems:'center',gap:4,padding:'3px 8px',borderRadius:6,fontSize:'0.74rem',fontWeight:700,background:u.status==='active'?'#ecfdf5':'#fee2e2',color:u.status==='active'?'#065f46':'#991b1b'}}>{u.status==='active'?<CheckCircle2 size={12}/>:<XCircle size={12}/>}{u.status==='active'?'Hoạt động':'Tạm khóa'}</span></td>
-                      <td style={{fontSize:'0.8rem',color:'#64748b'}}>{u.last_login||'—'}</td>
-                      <td><div style={{display:'inline-flex',gap:6}}><button className="tms-btn tms-btn-outline" style={{padding:'5px 8px'}} onClick={()=>{setUserForm({id:u.id||0,username:u.username,full_name:u.full_name,phone:u.phone||'',email:u.email||'',theater_id:Number(u.theater_id||0),role:u.role,password:'',status:u.status||'active'});setShowUserPassword(false);setShowUserModal(true);}}><Edit size={14}/></button><button className="tms-btn tms-btn-outline" style={{padding:'5px 8px',color:u.status==='active'?'#dc2626':'#059669'}} onClick={()=>toggleUserStatus(u)}>{u.status==='active'?<Lock size={14}/>:<Check size={14}/>}</button></div></td>
+                      <td style={{fontSize:'0.8rem',color:'#64748b'}}>{formatLastLogin(u.last_login)}</td>
+                      <td><div style={{display:'inline-flex',gap:6}}><button className="tms-btn tms-btn-outline" style={{padding:'5px 8px'}} onClick={()=>{setUserForm({id:u.id||0,username:u.username,full_name:u.full_name,phone:u.phone||'',email:u.email||'',theater_id:Number(u.theater_id||0),role:u.role,password:'',status:u.status||'active'});setShowUserPassword(false);setShowUserModal(true);}} title="Chỉnh sửa"><Edit size={14}/></button><button className="tms-btn tms-btn-outline" style={{padding:'5px 8px',color:u.status==='active'?'#dc2626':'#059669'}} onClick={()=>toggleUserStatus(u)} title={u.status==='active'?'Tạm khóa tài khoản':'Mở khóa tài khoản'}>{u.status==='active'?<Lock size={14}/>:<Check size={14}/>}</button><button className="tms-btn tms-btn-outline" style={{padding:'5px 8px',color:'#dc2626',borderColor:'#fecaca',background:'#fff5f5'}} onClick={()=>deleteUserAccount(u)} title="Xóa vĩnh viễn tài khoản"><Trash2 size={14}/></button></div></td>
                     </tr>
                   );
                 })}{accountRows.length === 0 && <tr><td colSpan={8}><div className="account-empty-state"><Users size={25}/><b>Không tìm thấy tài khoản phù hợp</b><span>Thay đổi bộ lọc hoặc tạo tài khoản mới trong Aurora DB.</span></div></td></tr>}</tbody>
@@ -2244,11 +2546,7 @@ export default function App() {
                               className="tms-btn tms-btn-outline"
                               style={{ padding: '4px 8px', fontSize: '0.73rem', color: '#2563eb' }}
                               title="Phân bổ cho các cụm rạp TP.HCM"
-                              onClick={() => {
-                                setAllocationTargetPlan(plan);
-                                setAllocMinScreenings(plan.target_screenings_per_day);
-                                setShowAllocationModal(true);
-                              }}
+                              onClick={() => { void openAllocationModal(plan); }}
                             >
                               <Send size={13} />
                               <span>Phân bổ</span>
@@ -2467,7 +2765,7 @@ export default function App() {
                             className="tms-btn tms-btn-outline"
                             style={{ padding: '3px 8px', fontSize: '0.73rem', color: '#dc2626' }}
                             onClick={() => requestSystemConfirmation('Phân bổ phim này sẽ bị thu hồi khỏi rạp đã chọn.', async () => {
-                              await fetch(`${API_BASE}?action=movie-allocations&id=${al.id}`, { method: 'DELETE', headers: { 'X-TMS-User': currentUser?.username || 'admin_tong' } });
+                              await fetch(`${API_BASE}?action=movie-allocations&id=${al.id}`, { method: 'DELETE', credentials: 'include', headers: { 'X-TMS-User': currentUser?.username || 'admin_tong' } });
                               loadMovieAllocations();
                               loadMoviePlans();
                               showSystemNotice('Đã thu hồi phân bổ phim khỏi rạp.');
@@ -2531,8 +2829,9 @@ export default function App() {
               </tr>
             </thead>
             <tbody>
-              {moviesList.map(m => (
-                <tr key={m.id}>
+              {moviesList.map(m => {
+                const movieStatus = getMovieStatus(m.status);
+                return <tr key={m.id}>
                   <td style={{ fontWeight: 700, color: '#64748b' }}>#{m.id}</td>
                   <td style={{ fontWeight: 700 }}>{m.title}</td>
                   <td>{m.duration_minutes} phút</td>
@@ -2544,14 +2843,14 @@ export default function App() {
                   <td>{m.format}</td>
                   <td>
                     <span style={{
-                      background: m.status === 'now_showing' ? '#ecfdf5' : '#fef3c7',
-                      color: m.status === 'now_showing' ? '#065f46' : '#92400e',
-                      padding: '2px 7px',
-                      borderRadius: 4,
+                      background: movieStatus.background,
+                      color: movieStatus.color,
+                      padding: '3px 8px',
+                      borderRadius: 12,
                       fontWeight: 700,
                       fontSize: '0.74rem'
                     }}>
-                      {m.status === 'now_showing' ? 'Đang chiếu' : m.status === 'coming_soon' ? 'Sắp chiếu' : 'Đặc biệt'}
+                      {movieStatus.label}
                     </span>
                   </td>
                   <td>
@@ -2583,8 +2882,8 @@ export default function App() {
                       </button>
                     </div>
                   </td>
-                </tr>
-              ))}
+                </tr>;
+              })}
             </tbody>
           </table>
         </div>
@@ -2721,31 +3020,57 @@ export default function App() {
     if (a === 'schedules' || a === 'showtimes' || a === 'Lịch chiếu' || a === 'Theo dõi suất chiếu') {
       const canEdit = role === 'super_admin' || role === 'cinema_admin';
       const statusLabel: Record<ScheduleItem['status'], string> = { scheduled: 'Mở bán', running: 'Đang chiếu', finished: 'Đã kết thúc', cancelled: 'Đã hủy' };
-      const visibleSchedules = schedulesList.filter(schedule => (!scheduleDateFilter || schedule.show_date === scheduleDateFilter) && (scheduleStatusFilter === 'all' || schedule.status === scheduleStatusFilter) && (!scheduleSearch || `${schedule.movie_title} ${schedule.screen_name}`.toLocaleLowerCase().includes(scheduleSearch.toLocaleLowerCase())));
-      const openSchedules = schedulesList.filter(schedule => schedule.status === 'scheduled').length;
-      const runningSchedules = schedulesList.filter(schedule => schedule.status === 'running').length;
-      const bookedSeats = schedulesList.reduce((total, schedule) => total + Number(schedule.booked_seats || 0), 0);
+      const visibleSchedules = schedulesList;
+      const visibleScheduleIds = visibleSchedules.filter(canDeleteSchedule).map(schedule => Number(schedule.id));
+      const selectedVisibleCount = visibleScheduleIds.filter(id => selectedScheduleIds.includes(id)).length;
+      const allVisibleSchedulesSelected = visibleScheduleIds.length > 0 && selectedVisibleCount === visibleScheduleIds.length;
+      const toggleVisibleSchedules = () => setSelectedScheduleIds(current => allVisibleSchedulesSelected
+        ? current.filter(id => !visibleScheduleIds.includes(id))
+        : Array.from(new Set([...current, ...visibleScheduleIds])));
+      const scheduleBusy = scheduleBulkDeleting || schedulesLoading;
+      const summary = scheduleMeta.summary;
+      const pageStart = scheduleMeta.total ? (scheduleMeta.page - 1) * scheduleMeta.per_page + 1 : 0;
+      const pageEnd = Math.min(scheduleMeta.page * scheduleMeta.per_page, scheduleMeta.total);
+      const viewOptions: Array<{id:ScheduleView; label:string; count?:number}> = [
+        { id:'active', label:'Đang vận hành', count:summary.scheduled + summary.running },
+        { id:'upcoming', label:'Sắp tới', count:summary.scheduled },
+        { id:'history', label:'Lịch sử', count:summary.finished },
+        { id:'all', label:'Tất cả' },
+      ];
+      const formatScheduleDay = (value:string) => {
+        const parts = value.split('-').map(Number);
+        if (parts.length !== 3) return { date:value, weekday:'' };
+        const date = new Date(parts[0], parts[1] - 1, parts[2]);
+        return { date:`${String(parts[2]).padStart(2,'0')}/${String(parts[1]).padStart(2,'0')}/${parts[0]}`, weekday:new Intl.DateTimeFormat('vi-VN',{weekday:'short'}).format(date) };
+      };
       return (
         <div className="schedule-operations-page">
-          <section className="schedule-operations-hero"><div><span>ĐIỀU PHỐI LỊCH CHIẾU · AURORA DB</span><h2>{role==='supervisor'?'Theo dõi suất chiếu trong ca':'Lịch chiếu tại rạp'}</h2><p>Lập lịch không trùng phòng, theo dõi lượng ghế đặt và đồng bộ tiến độ triển khai phim.</p></div>{canEdit&&<button className="tms-btn tms-btn-primary" onClick={openNewSchedule}><Plus size={16}/><span>Tạo suất chiếu</span></button>}</section>
-          <section className="schedule-kpi-grid"><article><CalendarDays size={18}/><span>Suất đang mở bán<b>{openSchedules}</b></span></article><article><ShowtimeIcon size={18}/><span>Suất đang chiếu<b>{runningSchedules}</b></span></article><article><Users size={18}/><span>Ghế đã đặt<b>{bookedSeats.toLocaleString('vi-VN')}</b></span></article><article><Building2 size={18}/><span>Phòng có lịch<b>{new Set(schedulesList.map(schedule => schedule.screen_id)).size}</b></span></article></section>
+          <section className="schedule-operations-hero"><div><span>ĐIỀU PHỐI LỊCH CHIẾU · AURORA DB</span><h2>{role==='supervisor'?'Theo dõi suất chiếu trong ca':'Lịch chiếu tại rạp'}</h2><p>Lập lịch không trùng phòng, theo dõi lượng ghế đặt và đồng bộ tiến độ triển khai phim.</p></div>{canEdit&&<button className="tms-btn tms-btn-primary" disabled={scheduleBusy} onClick={openNewSchedule}><Plus size={16}/><span>Tạo suất chiếu</span></button>}</section>
+          <section className="schedule-kpi-grid"><article><CalendarDays size={18}/><span>Suất sắp chiếu<b>{summary.scheduled.toLocaleString('vi-VN')}</b></span></article><article><ShowtimeIcon size={18}/><span>Đang chiếu<b>{summary.running.toLocaleString('vi-VN')}</b></span></article><article><Users size={18}/><span>Ghế đã đặt<b>{summary.booked_seats.toLocaleString('vi-VN')}</b></span></article><article><Building2 size={18}/><span>Phòng đang vận hành<b>{summary.active_rooms.toLocaleString('vi-VN')}</b></span></article></section>
           <div className="tms-card-table schedule-management-table">
-          <div className="tms-table-toolbar schedule-toolbar">
-            <div className="tms-search-input"><Search size={16} color="#94a3b8"/><input value={scheduleSearch} onChange={event => setScheduleSearch(event.target.value)} placeholder="Tìm phim hoặc phòng chiếu..." /></div>
-            <input type="date" value={scheduleDateFilter} onChange={event => setScheduleDateFilter(event.target.value)} aria-label="Lọc theo ngày" />
-            <select value={scheduleStatusFilter} onChange={event => setScheduleStatusFilter(event.target.value as 'all' | ScheduleItem['status'])}><option value="all">Mọi trạng thái</option><option value="scheduled">Mở bán</option><option value="running">Đang chiếu</option><option value="finished">Đã kết thúc</option><option value="cancelled">Đã hủy</option></select>
-            <button type="button" className="account-refresh-btn" onClick={loadSchedules}><RefreshCw size={15}/> Làm mới</button>
+          <div className="schedule-list-heading">
+            <div><span>DANH SÁCH SUẤT CHIẾU</span><h3>{scheduleView === 'history' ? 'Lịch sử vận hành' : scheduleView === 'upcoming' ? 'Lịch sắp tới' : scheduleView === 'all' ? 'Toàn bộ lịch chiếu' : 'Lịch đang vận hành'}</h3><p>{scheduleMeta.total.toLocaleString('vi-VN')} suất phù hợp · dữ liệu trực tiếp từ aurora_db</p></div>
+            <div className="schedule-view-tabs" role="tablist" aria-label="Phạm vi lịch chiếu">{viewOptions.map(option => <button key={option.id} type="button" role="tab" aria-selected={scheduleView===option.id} className={scheduleView===option.id?'active':''} onClick={() => { setScheduleView(option.id); setSchedulePage(1); setScheduleStatusFilter('all'); setSelectedScheduleIds([]); }}>{option.label}{typeof option.count==='number'&&<b>{option.count.toLocaleString('vi-VN')}</b>}</button>)}</div>
           </div>
-          <table className="tms-data-table">
-            <thead><tr><th>Phim</th><th>Phòng chiếu</th><th>Ngày</th><th>Giờ chiếu</th><th>Ghế đặt</th><th>Trạng thái</th><th>Thao tác</th></tr></thead>
+          <div className="tms-table-toolbar schedule-toolbar">
+            <div className="tms-search-input"><Search size={16} color="#94a3b8"/><input disabled={scheduleBulkDeleting} value={scheduleSearch} onChange={event => { setScheduleSearch(event.target.value); setSchedulePage(1); setSelectedScheduleIds([]); }} placeholder="Tìm theo tên phim hoặc phòng..." /></div>
+            <label className="schedule-filter-field"><span>Ngày chiếu</span><input type="date" disabled={scheduleBulkDeleting} value={scheduleDateFilter} onChange={event => { setScheduleDateFilter(event.target.value); setSchedulePage(1); setSelectedScheduleIds([]); }} aria-label="Lọc theo ngày" /></label>
+            <label className="schedule-filter-field"><span>Trạng thái</span><select disabled={scheduleBulkDeleting} value={scheduleStatusFilter} onChange={event => { setScheduleStatusFilter(event.target.value as 'all' | ScheduleItem['status']); setSchedulePage(1); setSelectedScheduleIds([]); }}><option value="all">Tất cả trạng thái</option>{scheduleView!=='history'&&<option value="scheduled">Mở bán</option>}{scheduleView!=='history'&&scheduleView!=='upcoming'&&<option value="running">Đang chiếu</option>}{(scheduleView==='history'||scheduleView==='all')&&<option value="finished">Đã kết thúc</option>}{(scheduleView==='history'||scheduleView==='all')&&<option value="cancelled">Đã hủy</option>}</select></label>
+            <button type="button" className="account-refresh-btn" aria-busy={schedulesLoading} disabled={scheduleBusy} onClick={() => { void loadSchedules(); }}><RefreshCw size={15}/>{schedulesLoading ? 'Đang tải...' : 'Làm mới'}</button>
+          </div>
+          {canEdit && selectedScheduleIds.length > 0 && <div className="schedule-selection-bar"><span><CheckCircle2 size={17}/><b>{selectedScheduleIds.length} suất đã chọn</b><small>Chỉ các suất chưa bắt đầu và chưa có đặt vé mới có thể xóa.</small></span><div><button type="button" className="schedule-clear-selection" disabled={scheduleBusy} onClick={() => setSelectedScheduleIds([])}>Bỏ chọn</button><button type="button" className="schedule-bulk-delete-btn" aria-busy={scheduleBulkDeleting} disabled={scheduleBusy} onClick={handleDeleteSelectedSchedules}><Trash2 size={15}/>{scheduleBulkDeleting ? 'Đang xóa...' : `Xóa ${selectedScheduleIds.length} suất`}</button></div></div>}
+          <div className="schedule-table-scroll"><table className="tms-data-table" aria-busy={scheduleBusy}>
+            <thead><tr>{canEdit && <th className="schedule-select-column"><input className="schedule-row-checkbox" type="checkbox" aria-label="Chọn tất cả suất chiếu có thể xóa trên trang" checked={allVisibleSchedulesSelected} disabled={!visibleScheduleIds.length || scheduleBusy} ref={node => { if (node) node.indeterminate = selectedVisibleCount > 0 && !allVisibleSchedulesSelected; }} onChange={toggleVisibleSchedules}/></th>}<th>Phim</th><th>Phòng chiếu</th><th>Ngày chiếu</th><th>Khung giờ</th><th>Ghế đặt</th><th>Trạng thái</th><th>Thao tác</th></tr></thead>
             <tbody>{visibleSchedules.length ? visibleSchedules.map(s => (
-              <tr key={s.id}>
-                <td style={{fontWeight:700,fontSize:'0.85rem'}}>{s.movie_title}</td><td style={{fontSize:'0.82rem'}}>{s.screen_name}</td><td>{s.show_date}</td><td style={{fontWeight:700,color:'#2563eb'}}>{String(s.start_time).slice(0,5)} - {String(s.end_time).slice(0,5)}</td><td>{s.booked_seats}/{s.total_seats}</td>
-                <td><span style={{fontSize:'0.73rem',fontWeight:700,padding:'2px 7px',borderRadius:4,background:s.status==='running'?'#d1fae5':s.status==='cancelled'?'#fee2e2':'#eff6ff',color:s.status==='running'?'#065f46':s.status==='cancelled'?'#991b1b':'#1e40af'}}>{statusLabel[s.status]}</span></td>
-                <td>{canEdit ? <div style={{display:'flex',gap:4}}><button className="tms-btn tms-btn-outline" style={{padding:'4px 8px'}} onClick={() => { const startTime=String(s.start_time).slice(0,5), endTime=String(s.end_time).slice(0,5); setScheduleForm({ id:s.id, movie_id:Number(s.movie_id), screen_ids:[Number(s.screen_id)], ticket_type_ids:String(s.ticket_type_ids || '').split(',').filter(Boolean).map(Number), show_date:s.show_date, start_time:startTime, end_time:endTime, time_slots:[{key:'slot-1',screen_id:Number(s.screen_id),start_time:startTime,end_time:endTime}], ticket_price:Number(s.ticket_price || 0), operational_note:s.operational_note || '', status:s.status }); setShowScheduleModal(true); }}><Edit size={13}/></button><button className="tms-btn tms-btn-outline" style={{padding:'4px 8px',color:'#dc2626'}} onClick={() => handleDeleteSchedule(s.id)}><Trash2 size={13}/></button></div> : <span style={{color:'#94a3b8',fontSize:'0.75rem'}}>Chỉ xem</span>}</td>
+              <tr key={s.id} className={selectedScheduleIds.includes(Number(s.id)) ? 'schedule-row-selected' : ''}>
+                {canEdit && <td className="schedule-select-column" title={canDeleteSchedule(s) ? 'Chọn để xóa' : scheduleDeleteBlockLabel(s)}><input className="schedule-row-checkbox" type="checkbox" aria-label={`${canDeleteSchedule(s) ? 'Chọn' : scheduleDeleteBlockLabel(s)}: ${s.movie_title}`} checked={selectedScheduleIds.includes(Number(s.id))} disabled={scheduleBusy || !canDeleteSchedule(s)} onChange={() => setSelectedScheduleIds(current => current.includes(Number(s.id)) ? current.filter(id => id !== Number(s.id)) : [...current, Number(s.id)])}/></td>}
+                <td><div className="schedule-movie-cell"><span className={`schedule-status-dot ${s.status}`}/><span><b>{s.movie_title}</b><small>Mã suất #{s.id}</small></span></div></td><td><span className="schedule-room-pill"><Building2 size={13}/>{screenDisplayName(s.screen_name,s.screen_id)}</span></td><td>{(() => { const day=formatScheduleDay(s.show_date); return <span className="schedule-date-cell"><b>{day.date}</b><small>{day.weekday}</small></span>; })()}</td><td><span className="schedule-time-cell"><Clock size={14}/><b>{String(s.start_time).slice(0,5)}</b><i>→</i><b>{String(s.end_time).slice(0,5)}</b></span></td><td><span className="schedule-seat-cell"><b>{Number(s.booked_seats)}</b><small>/ {Number(s.total_seats)} ghế</small></span></td>
+                <td><span className={`schedule-status-badge ${s.status}`}>{statusLabel[s.status]}</span></td>
+                <td>{canEdit ? <div className="schedule-row-actions"><button className="tms-btn tms-btn-outline" aria-label={`Sửa suất chiếu ${s.movie_title}`} title="Chỉnh sửa" disabled={scheduleBusy || s.status==='finished'} onClick={() => { const startTime=String(s.start_time).slice(0,5), endTime=String(s.end_time).slice(0,5); setScheduleForm({ id:s.id, movie_id:Number(s.movie_id), screen_ids:[Number(s.screen_id)], ticket_type_ids:String(s.ticket_type_ids || '').split(',').filter(Boolean).map(Number), show_date:s.show_date, start_time:startTime, end_time:endTime, time_slots:[{key:'slot-1',screen_id:Number(s.screen_id),start_time:startTime,end_time:endTime}], ticket_price:Number(s.ticket_price || 0), operational_note:s.operational_note || '', status:s.status }); setShowScheduleModal(true); }}><Edit size={13}/></button><button className="tms-btn tms-btn-outline danger" aria-label={`Xóa suất chiếu ${s.movie_title}`} title={canDeleteSchedule(s) ? 'Xóa suất chiếu' : scheduleDeleteBlockLabel(s)} disabled={scheduleBusy || !canDeleteSchedule(s)} onClick={() => handleDeleteSchedule(s.id)}><Trash2 size={13}/></button></div> : <span className="schedule-readonly">Chỉ xem</span>}</td>
               </tr>
-            )) : <tr><td colSpan={7}><div className="schedule-empty-state"><CalendarDays size={28}/><b>Chưa có suất chiếu phù hợp</b><span>{schedulesList.length ? 'Thử thay đổi bộ lọc để xem dữ liệu khác.' : 'Tạo suất chiếu đầu tiên để mở bán và bắt đầu triển khai phim.'}</span>{canEdit && !schedulesList.length && <button type="button" onClick={openNewSchedule}><Plus size={14}/> Tạo suất chiếu</button>}</div></td></tr>}</tbody>
-          </table>
+            )) : <tr><td colSpan={canEdit ? 8 : 7}><div className="schedule-empty-state"><CalendarDays size={28}/><b>{schedulesLoading ? 'Đang tải lịch chiếu...' : scheduleView==='history' ? 'Chưa có lịch sử suất chiếu' : 'Chưa có suất chiếu phù hợp'}</b><span>{schedulesLoading ? 'Đang đồng bộ dữ liệu mới nhất từ aurora_db.' : (scheduleSearch || scheduleDateFilter || scheduleStatusFilter!=='all') ? 'Không tìm thấy kết quả theo bộ lọc hiện tại. Hãy điều chỉnh điều kiện tìm kiếm.' : scheduleView==='history' ? 'Các suất đã kết thúc hoặc đã hủy sẽ được lưu tại đây.' : 'Tạo suất chiếu mới để bắt đầu mở bán và vận hành phòng.'}</span>{canEdit && !schedulesLoading && scheduleView!=='history' && !scheduleSearch && !scheduleDateFilter && scheduleStatusFilter==='all' && <button type="button" onClick={openNewSchedule}><Plus size={14}/> Tạo suất chiếu</button>}</div></td></tr>}</tbody>
+          </table></div>
+          <div className="schedule-pagination"><span>Hiển thị <b>{pageStart}–{pageEnd}</b> trong <b>{scheduleMeta.total.toLocaleString('vi-VN')}</b> suất</span><div><button type="button" aria-label="Trang trước" disabled={scheduleBusy || scheduleMeta.page<=1} onClick={() => { setSchedulePage(page => Math.max(1,page-1)); setSelectedScheduleIds([]); }}>‹</button><span>Trang <b>{scheduleMeta.page}</b> / {scheduleMeta.total_pages}</span><button type="button" aria-label="Trang sau" disabled={scheduleBusy || scheduleMeta.page>=scheduleMeta.total_pages} onClick={() => { setSchedulePage(page => Math.min(scheduleMeta.total_pages,page+1)); setSelectedScheduleIds([]); }}>›</button></div></div>
           </div>
         </div>
       );
@@ -3580,6 +3905,9 @@ export default function App() {
                 <section className="tms-allocation-form-section">
                   <div className="tms-allocation-section-heading"><Building2 size={15} /> Cụm rạp tiếp nhận <span>{allocSelectedTheaters.length}/{theatersList.length} đã chọn</span></div>
                   <div className="tms-allocation-theater-list">
+                    {theatersLoading && <div className="tms-allocation-theater-state"><RefreshCw size={17} /> Đang tải cụm rạp từ Aurora DB…</div>}
+                    {!theatersLoading && theatersError && <div className="tms-allocation-theater-state error"><AlertTriangle size={17} /><span>{theatersError}</span><button type="button" onClick={() => { void openAllocationModal(allocationTargetPlan); }}>Thử lại</button></div>}
+                    {!theatersLoading && !theatersError && theatersList.length === 0 && <div className="tms-allocation-theater-state"><Building2 size={17} /> Chưa có cụm rạp nào trong Aurora DB.</div>}
                     {theatersList.map(t => {
                       const isChecked = allocSelectedTheaters.includes(Number(t.id));
                       return (
@@ -3612,7 +3940,7 @@ export default function App() {
               </div>
               <div className="tms-modal-footer tms-allocation-modal-footer">
                 <button type="button" className="tms-btn tms-btn-outline" onClick={() => setShowAllocationModal(false)}>Hủy</button>
-                <button type="submit" className="tms-btn tms-btn-primary">
+                <button type="submit" disabled={theatersLoading || Boolean(theatersError) || allocSelectedTheaters.length === 0} className="tms-btn tms-btn-primary">
                   <Send size={15} />
                   <span>Ghi phân bổ cho {allocSelectedTheaters.length} cụm rạp</span>
                 </button>

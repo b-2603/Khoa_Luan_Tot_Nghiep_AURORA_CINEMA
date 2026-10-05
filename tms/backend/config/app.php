@@ -4,6 +4,8 @@ return array(
     'name' => 'Aurora Cinema - Theater Management System (TMS)',
     'env' => 'local',
     'debug' => true,
+    'timezone' => 'Asia/Ho_Chi_Minh',
+    'db_timezone' => '+07:00',
     'db' => array(
         'host' => '127.0.0.1',
         'port' => 3306,

@@ -118,6 +118,8 @@ export default function App() {
   const [chatMsg, setChatMsg] = useState('');
   const [authMode, setAuthMode] = useState<'login' | 'register' | null>(null);
   const [authUser, setAuthUser] = useState<{ fullName: string; email: string; membershipLevel?: string; points?: number } | null>(null);
+  const [oauthError, setOauthError] = useState('');
+  const [oauthNotice, setOauthNotice] = useState('');
   const [moviesList, setMoviesList] = useState<any[]>([]);
   const [promotionsList, setPromotionsList] = useState<any[]>([]);
   const [theatersList, setTheatersList] = useState<any[]>([]);
@@ -262,6 +264,26 @@ export default function App() {
     }, 260);
     return () => { controller.abort(); window.clearTimeout(timeout); };
   }, [searchQuery, isSearchOpen, language]);
+
+  useEffect(() => {
+    const params = new URLSearchParams(window.location.search);
+    const oauthStatus = params.get('oauth');
+    if (!oauthStatus) return;
+
+    const provider = params.get('provider') === 'facebook' ? 'Facebook' : 'Google';
+    if (oauthStatus === 'success') {
+      setOauthNotice(`Đăng nhập với ${provider} thành công.`);
+      window.setTimeout(() => setOauthNotice(''), 5000);
+    } else {
+      setOauthError(params.get('message') || `Không thể đăng nhập với ${provider}.`);
+      setAuthMode('login');
+    }
+    params.delete('oauth');
+    params.delete('provider');
+    params.delete('message');
+    const cleanQuery = params.toString();
+    window.history.replaceState({}, document.title, `${window.location.pathname}${cleanQuery ? `?${cleanQuery}` : ''}${window.location.hash}`);
+  }, []);
 
   useEffect(() => {
     fetch(`${API_URL}?action=me`, { credentials: 'include' })
@@ -432,6 +454,12 @@ export default function App() {
 
   return (
     <div style={{ height: '100vh', display: 'flex', flexDirection: 'column', overflow: 'hidden', background: '#eef0f4', fontFamily: "'Inter','Segoe UI',Arial,sans-serif", color: '#1a2332' }}>
+
+      {oauthNotice && (
+        <div role="status" style={{ position: 'fixed', top: 18, left: '50%', transform: 'translateX(-50%)', zIndex: 1000, display: 'flex', alignItems: 'center', gap: 9, padding: '11px 17px', borderRadius: 10, background: '#ecfdf5', border: '1px solid #86efac', color: '#166534', boxShadow: '0 12px 30px rgba(15,23,42,.18)', fontSize: 13, fontWeight: 700 }}>
+          <Check size={17} /> {oauthNotice}
+        </div>
+      )}
 
       {/* TOP BAR */}
       <div style={{ flexShrink: 0, background: '#0d1b2e', color: '#c8d6e5' }}>
@@ -925,11 +953,13 @@ export default function App() {
       ) : authMode ? (
         <AuthModal
           mode={authMode}
-          onClose={() => setAuthMode(null)}
-          onSwitchMode={newMode => setAuthMode(newMode)}
+          initialError={oauthError}
+          onClose={() => { setAuthMode(null); setOauthError(''); }}
+          onSwitchMode={newMode => { setAuthMode(newMode); setOauthError(''); }}
           onAuthenticated={account => {
             setAuthUser(account);
             setAuthMode(null);
+            setOauthError('');
           }}
         />
       ) : showAccount ? (

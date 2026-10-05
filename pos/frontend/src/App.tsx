@@ -1,339 +1,108 @@
-import { useState, useEffect, FormEvent } from 'react';
+import { FormEvent, useEffect, useState } from 'react';
+import { BadgeCheck, Eye, EyeOff, LockKeyhole, LogIn, ShieldCheck, UserRound } from 'lucide-react';
 import ShiftDashboard, { ShiftInfo } from './components/ShiftDashboard';
 import PosSalesScreen from './components/PosSalesScreen';
 
-type ViewMode = 'login' | 'dashboard' | 'sales';
+type ViewMode = 'loading' | 'login' | 'dashboard' | 'sales';
+type PosUser = { id: number; username: string; full_name: string; role: string; theater_name?: string; counter_code?: string };
+type LoginResponse = { success: boolean; message?: string; data?: { user: PosUser; session: Record<string, unknown> } };
+
+const API_URL = 'http://localhost/AURORA%20CINEMA/pos/backend/public/api.php';
+const defaultShift: ShiftInfo = { cinemaName: 'Aurora Cinema', staffName: '', workDate: '', shiftTime: '', counter: '', initialCash: '0 VNĐ', status: 'Đang hoạt động' };
+
+function formatCurrency(value: unknown) { return `${Number(value || 0).toLocaleString('vi-VN')} VNĐ`; }
+function toShiftInfo(payload: Record<string, unknown>, user?: PosUser): ShiftInfo {
+  return {
+    cinemaName: String(payload.cinema_name || user?.theater_name || 'Aurora Cinema'), staffName: String(payload.staff_name || user?.full_name || ''),
+    workDate: String(payload.work_date || new Date().toLocaleDateString('vi-VN')), shiftTime: String(payload.shift_time || ''),
+    counter: String(payload.counter || user?.counter_code || ''), initialCash: formatCurrency(payload.initial_cash),
+    status: payload.status === 'Tạm nghỉ' ? 'Tạm nghỉ' : 'Đang hoạt động',
+  };
+}
 
 export default function App() {
-  const [view, setView] = useState<ViewMode>('login');
-  const [username, setUsername] = useState('');
+  const [view, setView] = useState<ViewMode>('loading');
+  const [user, setUser] = useState<PosUser | null>(null);
+  const [shiftData, setShiftData] = useState<ShiftInfo>(defaultShift);
+  const [username, setUsername] = useState(() => localStorage.getItem('aurora-pos-last-username') || '');
   const [password, setPassword] = useState('');
+  const [showPassword, setShowPassword] = useState(false);
+  const [rememberUsername, setRememberUsername] = useState(() => Boolean(localStorage.getItem('aurora-pos-last-username')));
   const [errorMsg, setErrorMsg] = useState('');
   const [successMsg, setSuccessMsg] = useState('');
-  const [shiftData, setShiftData] = useState<ShiftInfo>({
-    cinemaName: 'AURORA CINEMA',
-    staffName: 'Nguyễn Trần Thái Bảo',
-    workDate: '03/06/2026',
-    shiftTime: '00:00:00 - 23:59:59',
-    counter: 'AURORA BOX 02',
-    initialCash: '500.000 VNĐ',
-    status: 'Tạm nghỉ',
-  });
+  const [isSubmitting, setIsSubmitting] = useState(false);
 
-  // Khi tải trang: Bắt buộc luôn hiển thị màn hình ĐĂNG NHẬP trước
+  async function refreshDashboard() {
+    const response = await fetch(`${API_URL}?action=dashboard`, { credentials: 'include' });
+    const result = await response.json();
+    if (!response.ok || !result.success) throw new Error(result.message || 'Không thể tải phiên làm việc.');
+    const activeUser = result.data.user as PosUser;
+    setUser(activeUser); setShiftData(toShiftInfo(result.data.shift as Record<string, unknown>, activeUser));
+  }
+
   useEffect(() => {
-    const savedUser = localStorage.getItem('pos_user_session');
-    if (savedUser) {
-      try {
-        const parsed = JSON.parse(savedUser);
-        if (parsed.username) {
-          setUsername(parsed.username);
-        }
-      } catch {
-        // Bỏ qua nếu parse lỗi
-      }
-    }
+    let alive = true;
+    fetch(`${API_URL}?action=me`, { credentials: 'include' })
+      .then(response => response.ok ? response.json() : Promise.reject(new Error('No session')))
+      .then(async result => { if (!result.success) throw new Error('No session'); if (!alive) return; await refreshDashboard(); if (alive) setView('dashboard'); })
+      .catch(() => { if (alive) setView('login'); });
+    return () => { alive = false; };
   }, []);
 
-  const [isLoading, setIsLoading] = useState(false);
-
-  const handleLogin = async (e: FormEvent) => {
-    e.preventDefault();
-    setErrorMsg('');
-    setSuccessMsg('');
-
-    const inputUser = username.trim();
-    const inputPass = password.trim();
-
-    if (!inputUser || !inputPass) {
-      setErrorMsg('Vui lòng nhập đầy đủ tên đăng nhập và mật khẩu.');
-      return;
-    }
-
-    setIsLoading(true);
-
+  async function handleLogin(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault(); const account = username.trim();
+    if (!account || !password) { setErrorMsg('Vui lòng nhập tên đăng nhập và mật khẩu.'); return; }
+    setIsSubmitting(true); setErrorMsg(''); setSuccessMsg('');
     try {
-      // 1. Gửi request đăng nhập tới API Backend PHP POS
-      const apiUrl = 'http://localhost/AURORA%20CINEMA/pos/backend/public/api.php?action=login';
-      const response = await fetch(apiUrl, {
-        method: 'POST',
-        credentials: 'include',
-        headers: {
-          'Content-Type': 'application/json',
-        },
-        body: JSON.stringify({
-          username: inputUser,
-          password: inputPass,
-        }),
-      });
-
-      const result = await response.json();
-
-      if (result.success && result.data) {
-        // Đăng nhập thành công từ Database MySQL
-        const userData = result.data.user;
-        const sessionData = result.data.session;
-
-        const newShift: ShiftInfo = {
-          cinemaName: sessionData?.cinema_name || 'AURORA CINEMA',
-          staffName: userData?.full_name || 'Nguyễn Trần Thái Bảo',
-          workDate: sessionData?.work_date || new Date().toLocaleDateString('vi-VN', {
-            day: '2-digit',
-            month: '2-digit',
-            year: 'numeric',
-          }),
-          shiftTime: sessionData?.shift_time || '00:00:00 - 23:59:59',
-          counter: sessionData?.counter || 'AURORA BOX 02',
-          initialCash: sessionData?.initial_cash ? `${Number(sessionData.initial_cash).toLocaleString('vi-VN')} VNĐ` : '500.000 VNĐ',
-          status: 'Tạm nghỉ',
-        };
-
-        setShiftData(newShift);
-
-        localStorage.setItem(
-          'pos_user_session',
-          JSON.stringify({
-            isLoggedIn: true,
-            username: userData.username,
-            fullName: userData.full_name,
-            counter: newShift.counter,
-          })
-        );
-
-        setView('dashboard');
-        return;
-      } else {
-        setErrorMsg(result.message || 'Tên đăng nhập hoặc mật khẩu không chính xác.');
-      }
-    } catch {
-      // 2. Fallback nếu Apache/PHP WAMP chưa bật hoặc đang dev độc lập
-      const isMatched = 
-        (inputUser === '0328754062' && inputPass === '8888') ||
-        (inputUser.toLowerCase() === 'admin' && inputPass === 'admin123');
-
-      if (!isMatched) {
-        setErrorMsg('Tên đăng nhập hoặc mật khẩu không chính xác.');
-      } else {
-        const displayName = 'Nguyễn Trần Thái Bảo';
-        const newShift: ShiftInfo = {
-          ...shiftData,
-          staffName: displayName,
-          workDate: new Date().toLocaleDateString('vi-VN', {
-            day: '2-digit',
-            month: '2-digit',
-            year: 'numeric',
-          }),
-          status: 'Tạm nghỉ',
-        };
-
-        setShiftData(newShift);
-
-        localStorage.setItem(
-          'pos_user_session',
-          JSON.stringify({
-            isLoggedIn: true,
-            username: inputUser,
-            fullName: displayName,
-            counter: newShift.counter,
-          })
-        );
-
-        setView('dashboard');
-      }
-    } finally {
-      setIsLoading(false);
-    }
-  };
-
-  const handleLogout = () => {
-    localStorage.removeItem('pos_user_session');
-    setPassword('');
-    setView('login');
-  };
-
-  const handleCloseShift = () => {
-    localStorage.removeItem('pos_user_session');
-    setPassword('');
-    setSuccessMsg('Phiên làm việc đã được đóng và kết thúc thành công.');
-    setView('login');
-  };
-
-  const handleSalesClick = () => {
-    setView('sales');
-  };
-
-  const handleBackToDashboard = () => {
-    setView('dashboard');
-  };
-
-  // 1. Màn hình Bán hàng
-  if (view === 'sales') {
-    return (
-      <PosSalesScreen
-        cinemaName={shiftData.cinemaName}
-        staffName={shiftData.staffName}
-        counter={shiftData.counter}
-        onBackToDashboard={handleBackToDashboard}
-      />
-    );
+      const response = await fetch(`${API_URL}?action=login`, { method: 'POST', credentials: 'include', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ username: account, password }) });
+      const result: LoginResponse = await response.json();
+      if (!response.ok || !result.success || !result.data) throw new Error(result.message || 'Đăng nhập không thành công.');
+      if (rememberUsername) localStorage.setItem('aurora-pos-last-username', account); else localStorage.removeItem('aurora-pos-last-username');
+      setUser(result.data.user); setShiftData(toShiftInfo(result.data.session, result.data.user)); setPassword(''); setView('dashboard');
+    } catch (error) { setErrorMsg(error instanceof Error ? error.message : 'Không thể kết nối máy chủ POS.'); }
+    finally { setIsSubmitting(false); }
   }
 
-  // 2. Màn hình Dashboard Ca làm việc (Hiển thị sau khi đăng nhập đúng theo ảnh yêu cầu)
-  if (view === 'dashboard') {
-    return (
-      <ShiftDashboard
-        shiftData={shiftData}
-        onSalesClick={handleSalesClick}
-        onLogout={handleLogout}
-        onCloseShift={handleCloseShift}
-        onReload={() => {
-          // Làm mới thời gian / dữ liệu
-          setShiftData((prev) => ({
-            ...prev,
-            workDate: new Date().toLocaleDateString('vi-VN', {
-              day: '2-digit',
-              month: '2-digit',
-              year: 'numeric',
-            }),
-          }));
-        }}
-      />
-    );
+  async function handleLogout() { try { await fetch(`${API_URL}?action=logout`, { method: 'POST', credentials: 'include' }); } finally { setUser(null); setPassword(''); setView('login'); } }
+  async function handleCloseShift() {
+    const amount = Number(String(shiftData.initialCash).replace(/\D/g, '')) || 0;
+    try {
+      const response = await fetch(`${API_URL}?action=close_shift`, { method: 'POST', credentials: 'include', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ cash_at_close: amount }) });
+      const result = await response.json(); if (!response.ok || !result.success) throw new Error(result.message || 'Không thể đóng ca.');
+      await handleLogout(); setSuccessMsg('Ca làm việc đã được đóng và ghi nhận trong aurora_db.');
+    } catch (error) { setErrorMsg(error instanceof Error ? error.message : 'Không thể đóng ca.'); setView('login'); }
   }
 
-  // 3. Màn hình Đăng nhập POS
-  return (
-    <div className="pos-page">
-      <div className="pos-card">
-        <div className="shared-brand" style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 12, marginBottom: 20 }}>
-          <div style={{
-            width: 44,
-            height: 44,
-            background: '#f0b52d',
-            borderRadius: 12,
-            display: 'flex',
-            alignItems: 'center',
-            justifyContent: 'center',
-            boxShadow: '0 4px 14px rgba(240, 181, 45, 0.35)',
-            flexShrink: 0
-          }}>
-            <svg viewBox="0 0 24 24" width="24" height="24" fill="#0b1220">
-              <path d="M12 2l2.8 6.5 7 .6-5.3 4.7 1.6 6.9-6.1-3.6-6.1 3.6 1.6-6.9-5.3-4.7 7-.6z" />
-            </svg>
-          </div>
-          <div style={{ textAlign: 'left', lineHeight: 1.05 }}>
-            <div style={{ fontSize: 21, fontWeight: 900, letterSpacing: '0.04em', color: '#0b1220' }}>AURORA</div>
-            <div style={{ fontSize: 9.5, letterSpacing: '0.36em', color: '#7a8fa6', fontWeight: 700, marginTop: 2 }}>CINEMA</div>
-          </div>
+  if (view === 'loading') return <div className="pos-boot"><span className="pos-boot-mark">✦</span><strong>AURORA POS</strong><small>Đang kiểm tra phiên làm việc…</small></div>;
+  if (view === 'sales') return <PosSalesScreen cinemaName={shiftData.cinemaName} staffName={shiftData.staffName} counter={shiftData.counter} onBackToDashboard={() => setView('dashboard')} />;
+  if (view === 'dashboard') return <ShiftDashboard shiftData={shiftData} onSalesClick={() => setView('sales')} onLogout={handleLogout} onCloseShift={handleCloseShift} onReload={() => refreshDashboard().catch(() => setErrorMsg('Không thể làm mới dữ liệu ca trực.'))} />;
+
+  return <main className="pos-auth-shell">
+    <div className="pos-auth-decoration" aria-hidden="true">✦</div>
+    <section className="pos-login-card" aria-label="Đăng nhập hệ thống POS">
+        <header className="pos-simple-brand">
+          <span className="pos-auth-logo">✦</span>
+          <span><strong>AURORA</strong><small>CINEMA · POS</small></span>
+        </header>
+        <div className="pos-login-heading">
+          <span>HỆ THỐNG BÁN HÀNG</span>
+          <h1>Đăng nhập POS</h1>
+          <p>Nhập tài khoản nhân viên để bắt đầu ca làm việc.</p>
         </div>
-
-        <h2 className="title">ĐĂNG NHẬP HỆ THỐNG POS</h2>
-        <p className="subtitle">Vui lòng nhập tài khoản và mật khẩu để đăng nhập</p>
-
-        <div className="divider" />
-
-        {errorMsg && <div className="pos-login-error">{errorMsg}</div>}
-        {successMsg && <div className="pos-login-success">{successMsg}</div>}
-
-        <form onSubmit={handleLogin} className="login-form">
-          <label className="field-label" htmlFor="username-input">Tên đăng nhập</label>
-          <div className="input-wrap">
-            <span className="icon" aria-hidden="true">
-              <svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">
-                <path d="M20 21a8 8 0 0 0-16 0" />
-                <circle cx="12" cy="7" r="4" />
-              </svg>
-            </span>
-            <input
-              id="username-input"
-              type="text"
-              value={username}
-              onChange={(e) => setUsername(e.target.value)}
-              placeholder="Nhập tên đăng nhập"
-              autoComplete="username"
-              required
-            />
-          </div>
-
-          <label className="field-label" htmlFor="password-input">Mật khẩu</label>
-          <div className="input-wrap">
-            <span className="icon" aria-hidden="true">
-              <svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">
-                <rect x="5" y="11" width="14" height="10" rx="2" />
-                <path d="M8 11V7a4 4 0 0 1 8 0v4" />
-              </svg>
-            </span>
-            <input
-              id="password-input"
-              type="password"
-              value={password}
-              onChange={(e) => setPassword(e.target.value)}
-              placeholder="Nhập mật khẩu"
-              autoComplete="current-password"
-              required
-            />
-          </div>
-
-          <button
-            type="submit"
-            className="login-button"
-            id="btn-login-submit"
-            disabled={isLoading}
-          >
-            {isLoading ? 'ĐANG ĐĂNG NHẬP...' : 'ĐĂNG NHẬP'}
-          </button>
+        {successMsg && <div className="pos-login-alert success"><BadgeCheck size={18} />{successMsg}</div>}
+        {errorMsg && <div className="pos-login-alert error"><span>!</span>{errorMsg}</div>}
+        <form className="pos-auth-form" onSubmit={handleLogin}>
+          <label htmlFor="pos-username">Tên đăng nhập</label>
+          <div className="pos-auth-input"><UserRound size={18} /><input id="pos-username" value={username} onChange={event => setUsername(event.target.value)} placeholder="Nhập tên đăng nhập" autoComplete="username" autoFocus required /></div>
+          <label htmlFor="pos-password">Mật khẩu</label>
+          <div className="pos-auth-input"><LockKeyhole size={18} /><input id="pos-password" type={showPassword ? 'text' : 'password'} value={password} onChange={event => setPassword(event.target.value)} placeholder="Nhập mật khẩu" autoComplete="current-password" required /><button type="button" onClick={() => setShowPassword(value => !value)} aria-label={showPassword ? 'Ẩn mật khẩu' : 'Hiện mật khẩu'}>{showPassword ? <EyeOff size={18} /> : <Eye size={18} />}</button></div>
+          <label className="pos-auth-remember"><input type="checkbox" checked={rememberUsername} onChange={event => setRememberUsername(event.target.checked)} /> <span>Ghi nhớ tài khoản trên thiết bị này</span></label>
+          <button className="pos-auth-submit" type="submit" disabled={isSubmitting}>{isSubmitting ? 'ĐANG ĐĂNG NHẬP…' : <><LogIn size={18} /> ĐĂNG NHẬP</>}</button>
         </form>
-
-        <div style={{ marginTop: 20, paddingTop: 16, borderTop: '1px dashed #d8e1df' }}>
-          <div style={{ fontSize: '0.75rem', fontWeight: 700, textTransform: 'uppercase', color: '#6a7b7d', letterSpacing: '0.05em', marginBottom: 8, textAlign: 'center' }}>
-            Tài khoản nhân viên thu ngân mẫu
-          </div>
-          <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 8 }}>
-            <button
-              type="button"
-              onClick={() => {
-                setUsername('0328754062');
-                setPassword('8888');
-              }}
-              style={{
-                padding: '8px 10px',
-                background: '#f7faf9',
-                border: '1px solid #d8e1df',
-                borderRadius: 8,
-                fontSize: '0.78rem',
-                color: '#19333a',
-                textAlign: 'left',
-                cursor: 'pointer',
-              }}
-            >
-              <strong style={{ display: 'block' }}>Thu ngân chính</strong>
-              <span style={{ fontSize: '0.7rem', color: '#6a7b7d' }}>0328754062 • 8888</span>
-            </button>
-            <button
-              type="button"
-              onClick={() => {
-                setUsername('admin');
-                setPassword('admin123');
-              }}
-              style={{
-                padding: '8px 10px',
-                background: '#f7faf9',
-                border: '1px solid #d8e1df',
-                borderRadius: 8,
-                fontSize: '0.78rem',
-                color: '#19333a',
-                textAlign: 'left',
-                cursor: 'pointer',
-              }}
-            >
-              <strong style={{ display: 'block' }}>Quản lý ca trực</strong>
-              <span style={{ fontSize: '0.7rem', color: '#6a7b7d' }}>admin • admin123</span>
-            </button>
-          </div>
-        </div>
-
-        <div className="footer">© 2026 Aurora Cinema POS - Powered by AuroraSoft</div>
-      </div>
-    </div>
-  );
+        <footer className="pos-login-footer">
+          <p><ShieldCheck size={14} /> Kết nối bảo mật · Dữ liệu được ghi nhận trong Aurora DB</p>
+          <span>© 2026 Aurora Cinema</span>
+        </footer>
+    </section>
+  </main>;
 }

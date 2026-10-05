@@ -1,5 +1,9 @@
 <?php
-if (!isset($_SESSION)) {
+// POS still runs on the supplied PHP 5.2 WAMP stack. Keep this entrypoint
+// backwards-compatible while enforcing a database-backed employee session.
+if (session_id() === '') {
+    ini_set('session.use_strict_mode', '1');
+    ini_set('session.cookie_httponly', '1');
     session_start();
 }
 header('Content-Type: application/json; charset=utf-8');
@@ -12,11 +16,8 @@ $allowed = array(
 
 if (in_array($origin, $allowed, true)) {
     header('Access-Control-Allow-Origin: ' . $origin);
-} else {
-    header('Access-Control-Allow-Origin: *');
+    header('Access-Control-Allow-Credentials: true');
 }
-
-header('Access-Control-Allow-Credentials: true');
 header('Access-Control-Allow-Headers: Content-Type, Authorization, X-Requested-With');
 header('Access-Control-Allow-Methods: GET, POST, PUT, DELETE, OPTIONS');
 
@@ -45,6 +46,11 @@ function requestJson() {
 }
 
 function passwordMatches($password, $hash) {
+    $legacyPrefix = 'sha256:aurora-pos-local-2026:';
+    if (strpos($hash, $legacyPrefix) === 0) {
+        $expected = substr($hash, strlen($legacyPrefix));
+        return hash('sha256', 'aurora-pos-local-2026:' . $password) === $expected;
+    }
     if (function_exists('password_verify')) {
         return password_verify($password, $hash);
     }
@@ -52,17 +58,17 @@ function passwordMatches($password, $hash) {
 }
 
 function findPosUser($db, $username) {
-    $stmt = $db->prepare('SELECT id, username, password_hash, full_name, role, status, theater_id FROM users WHERE username = ? LIMIT 1');
+    $stmt = $db->prepare('SELECT id, username, password_hash, full_name, role, status, theater_id, counter_code FROM pos_users WHERE username = ? LIMIT 1');
     if (!$stmt) return null;
     $stmt->bind_param('s', $username);
     $stmt->execute();
-    $id = null; $foundUsername = null; $passwordHash = null; $fullName = null; $role = null; $status = null; $assignedTheaterId = 1;
-    $stmt->bind_result($id, $foundUsername, $passwordHash, $fullName, $role, $status, $assignedTheaterId);
+    $id = null; $foundUsername = null; $passwordHash = null; $fullName = null; $role = null; $status = null; $assignedTheaterId = 1; $counterCode = 'AURORA BOX 02';
+    $stmt->bind_result($id, $foundUsername, $passwordHash, $fullName, $role, $status, $assignedTheaterId, $counterCode);
     $found = $stmt->fetch();
     $stmt->close();
     if (!$found) return null;
     if (!$assignedTheaterId) $assignedTheaterId = 1;
-    return array('id' => (int)$id, 'username' => $foundUsername, 'password_hash' => $passwordHash, 'full_name' => $fullName, 'role' => $role, 'status' => $status, 'theater_id' => $assignedTheaterId);
+    return array('id' => (int)$id, 'username' => $foundUsername, 'password_hash' => $passwordHash, 'full_name' => $fullName, 'role' => $role, 'status' => $status, 'theater_id' => $assignedTheaterId, 'counter_code' => $counterCode);
 }
 
 
@@ -76,12 +82,7 @@ function getPosTheater($db, $theaterId) {
 }
 
 function posUser() {
-    return isset($_SESSION['pos_user']) ? $_SESSION['pos_user'] : array(
-        'id' => 1,
-        'username' => 'offline-cashier',
-        'full_name' => 'Nhân viên quầy',
-        'role' => 'cashier'
-    );
+    return isset($_SESSION['pos_user']) ? $_SESSION['pos_user'] : null;
 }
 
 function requirePosUser() {
@@ -166,6 +167,104 @@ function posHasBookingShowtimeColumn($db) {
     return $result && $result->num_rows > 0;
 }
 
+function posTableColumnExists($db, $table, $column) {
+    $safeTable = $db->real_escape_string($table); $safeColumn = $db->real_escape_string($column);
+    $result = $db->query("SHOW COLUMNS FROM `{$safeTable}` LIKE '{$safeColumn}'");
+    return $result && $result->num_rows > 0;
+}
+
+function ensurePosAuthenticationSchema($db) {
+    $queries = array(
+        "CREATE TABLE IF NOT EXISTS pos_users (
+            id BIGINT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
+            username VARCHAR(60) NOT NULL, password_hash VARCHAR(255) NOT NULL,
+            full_name VARCHAR(120) NOT NULL, phone VARCHAR(20) NULL,
+            role ENUM('cashier','supervisor','admin') NOT NULL DEFAULT 'cashier',
+            status ENUM('active','inactive','locked') NOT NULL DEFAULT 'active',
+            theater_id BIGINT UNSIGNED NOT NULL DEFAULT 1,
+            counter_code VARCHAR(60) NOT NULL DEFAULT 'AURORA BOX 02',
+            last_login_at DATETIME NULL, created_at TIMESTAMP NULL DEFAULT CURRENT_TIMESTAMP,
+            updated_at DATETIME NULL DEFAULT NULL, UNIQUE KEY uq_pos_users_username (username),
+            KEY idx_pos_users_theater (theater_id)
+        ) ENGINE=InnoDB DEFAULT CHARSET=utf8 COLLATE=utf8_unicode_ci",
+        "CREATE TABLE IF NOT EXISTS pos_login_events (
+            id BIGINT UNSIGNED AUTO_INCREMENT PRIMARY KEY, user_id BIGINT UNSIGNED NULL,
+            username VARCHAR(60) NOT NULL, event_type VARCHAR(30) NOT NULL,
+            is_success TINYINT(1) NOT NULL DEFAULT 0, ip_address VARCHAR(45) NULL,
+            user_agent VARCHAR(255) NULL, created_at TIMESTAMP NULL DEFAULT CURRENT_TIMESTAMP,
+            KEY idx_pos_login_user_created (user_id, created_at),
+            KEY idx_pos_login_username_created (username, created_at)
+        ) ENGINE=InnoDB DEFAULT CHARSET=utf8 COLLATE=utf8_unicode_ci",
+        "CREATE TABLE IF NOT EXISTS pos_shifts (
+            id BIGINT UNSIGNED AUTO_INCREMENT PRIMARY KEY, user_id BIGINT UNSIGNED NOT NULL,
+            theater_id BIGINT UNSIGNED NOT NULL DEFAULT 1, cinema_name VARCHAR(120) NOT NULL,
+            counter VARCHAR(60) NOT NULL, initial_cash DECIMAL(12,2) NOT NULL DEFAULT 0,
+            cash_at_close DECIMAL(12,2) NULL, status ENUM('active','paused','closed') NOT NULL DEFAULT 'active',
+            opened_at DATETIME NOT NULL, closed_at DATETIME NULL, notes TEXT NULL,
+            created_at TIMESTAMP NULL DEFAULT CURRENT_TIMESTAMP, updated_at DATETIME NULL DEFAULT NULL,
+            KEY idx_pos_shifts_user_status (user_id, status), KEY idx_pos_shifts_theater (theater_id)
+        ) ENGINE=InnoDB DEFAULT CHARSET=utf8 COLLATE=utf8_unicode_ci"
+    );
+    foreach ($queries as $query) if (!$db->query($query)) return false;
+    // Support an older POS database that was initialized before branch/counter fields existed.
+    if (!posTableColumnExists($db, 'pos_users', 'theater_id') && !$db->query('ALTER TABLE pos_users ADD theater_id BIGINT UNSIGNED NOT NULL DEFAULT 1')) return false;
+    if (!posTableColumnExists($db, 'pos_users', 'counter_code') && !$db->query("ALTER TABLE pos_users ADD counter_code VARCHAR(60) NOT NULL DEFAULT 'AURORA BOX 02'")) return false;
+    if (!posTableColumnExists($db, 'pos_users', 'last_login_at') && !$db->query('ALTER TABLE pos_users ADD last_login_at DATETIME NULL')) return false;
+    if (!posTableColumnExists($db, 'pos_shifts', 'theater_id') && !$db->query('ALTER TABLE pos_shifts ADD theater_id BIGINT UNSIGNED NOT NULL DEFAULT 1')) return false;
+
+    $cashierHash = 'sha256:aurora-pos-local-2026:' . hash('sha256', 'aurora-pos-local-2026:8888');
+    $adminHash = 'sha256:aurora-pos-local-2026:' . hash('sha256', 'aurora-pos-local-2026:admin123');
+    $now = date('Y-m-d H:i:s');
+    $seed = $db->prepare("INSERT INTO pos_users (username,password_hash,full_name,phone,role,status,theater_id,counter_code,updated_at)
+        VALUES (?, ?, ?, ?, ?, 'active', 1, ?, ?)
+        ON DUPLICATE KEY UPDATE username=VALUES(username)");
+    if (!$seed) return false;
+    $username = '0328754062'; $name = 'Nguyễn Trần Thái Bảo'; $phone = '0328754062'; $role = 'cashier'; $counter = 'AURORA BOX 02';
+    $seed->bind_param('sssssss', $username, $cashierHash, $name, $phone, $role, $counter, $now); if (!$seed->execute()) { $seed->close(); return false; }
+    $username = 'admin'; $name = 'Quản lý ca trực Aurora'; $phone = '0328754000'; $role = 'admin'; $counter = 'AURORA BOX 01';
+    $seed->bind_param('sssssss', $username, $adminHash, $name, $phone, $role, $counter, $now); $ok = $seed->execute(); $seed->close();
+    return $ok;
+}
+
+function posLogAuthEvent($db, $userId, $username, $eventType, $isSuccess) {
+    $ip = isset($_SERVER['REMOTE_ADDR']) ? substr((string)$_SERVER['REMOTE_ADDR'], 0, 45) : '';
+    $agent = isset($_SERVER['HTTP_USER_AGENT']) ? substr((string)$_SERVER['HTTP_USER_AGENT'], 0, 255) : '';
+    $stmt = $db->prepare('INSERT INTO pos_login_events (user_id,username,event_type,is_success,ip_address,user_agent) VALUES (?, ?, ?, ?, ?, ?)');
+    if (!$stmt) return;
+    $successValue = $isSuccess ? 1 : 0; $nullableUser = $userId ? $userId : null;
+    $stmt->bind_param('ississ', $nullableUser, $username, $eventType, $successValue, $ip, $agent); $stmt->execute(); $stmt->close();
+}
+
+function posCurrentShift($db, $userId) {
+    $stmt = $db->prepare("SELECT id, cinema_name, counter, initial_cash, status, opened_at FROM pos_shifts WHERE user_id = ? AND status IN ('active','paused') ORDER BY id DESC LIMIT 1");
+    if (!$stmt) return null;
+    $stmt->bind_param('i', $userId); $stmt->execute();
+    $id = null; $cinema = null; $counter = null; $initial = null; $status = null; $opened = null;
+    $stmt->bind_result($id, $cinema, $counter, $initial, $status, $opened); $found = $stmt->fetch(); $stmt->close();
+    return $found ? array('id'=>(int)$id, 'cinema_name'=>$cinema, 'counter'=>$counter, 'initial_cash'=>(float)$initial, 'status'=>$status, 'opened_at'=>$opened) : null;
+}
+
+function posOpenShift($db, $user, $theater) {
+    $existing = posCurrentShift($db, (int)$user['id']);
+    if ($existing) {
+        if ($existing['status'] === 'paused') {
+            $now = date('Y-m-d H:i:s'); $resume = $db->prepare("UPDATE pos_shifts SET status='active', updated_at=? WHERE id=?");
+            if (!$resume) return null;
+            $resume->bind_param('si', $now, $existing['id']); $ok = $resume->execute(); $resume->close();
+            if (!$ok) return null;
+            $existing['status'] = 'active';
+        }
+        return $existing;
+    }
+    $now = date('Y-m-d H:i:s'); $initialCash = 500000.00; $counter = $user['counter_code']; $cinema = $theater['name']; $theaterId = (int)$theater['id']; $userId = (int)$user['id'];
+    $stmt = $db->prepare("INSERT INTO pos_shifts (user_id,theater_id,cinema_name,counter,initial_cash,status,opened_at,created_at,updated_at) VALUES (?, ?, ?, ?, ?, 'active', ?, ?, ?)");
+    if (!$stmt) return null;
+    $stmt->bind_param('iissdsss', $userId, $theaterId, $cinema, $counter, $initialCash, $now, $now, $now);
+    if (!$stmt->execute()) { $stmt->close(); return null; }
+    $id = (int)$stmt->insert_id; $stmt->close();
+    return array('id'=>$id, 'cinema_name'=>$cinema, 'counter'=>$counter, 'initial_cash'=>$initialCash, 'status'=>'active', 'opened_at'=>$now);
+}
+
 // POS, TMS và customer dùng chung aurora_db.
 $db = @new mysqli('127.0.0.1', 'root', '', 'aurora_db', 3306);
 
@@ -174,8 +273,8 @@ if ($db->connect_error) {
 }
 
 $db->set_charset('utf8');
-if (!ensurePosTheaterAssignment($db)) {
-    jsonResponse(array('success' => false, 'message' => 'Không thể thiết lập rạp cho nhân viên POS.'), 500);
+if (!ensurePosAuthenticationSchema($db)) {
+    jsonResponse(array('success' => false, 'message' => 'Không thể khởi tạo dữ liệu xác thực POS trong aurora_db.'), 500);
 }
 $action = isset($_GET['action']) ? $_GET['action'] : 'health';
 
@@ -199,30 +298,13 @@ if ($action === 'login' && $requestMethod === 'POST') {
 
     $user = findPosUser($db, $username);
 
-    $matched = false;
-    if ($user) {
-        if (passwordMatches($password, $user['password_hash']) || in_array($password, array('8888', 'admin123'), true)) {
-            $matched = true;
-        }
-    } else {
-        // Tài khoản mặc định fallback
-        if (($username === '0328754062' && $password === '8888') || ($username === 'admin' && $password === 'admin123')) {
-            $user = array(
-                'id' => 1,
-                'username' => $username,
-                'full_name' => 'Nguyễn Trần Thái Bảo',
-                'role' => 'cashier',
-                'status' => 'active'
-            );
-            $matched = true;
-        }
-    }
-
-    if (!$matched || !$user) {
+    if (!$user || !passwordMatches($password, $user['password_hash'])) {
+        posLogAuthEvent($db, 0, $username, 'LOGIN_FAILED', false);
         jsonResponse(array('success' => false, 'message' => 'Tên đăng nhập hoặc mật khẩu không chính xác.'), 401);
     }
 
     if (isset($user['status']) && $user['status'] !== 'active') {
+        posLogAuthEvent($db, (int)$user['id'], $username, 'LOGIN_DENIED', false);
         jsonResponse(array('success' => false, 'message' => 'Tài khoản nhân viên đang bị tạm khóa.'), 403);
     }
 
@@ -231,8 +313,16 @@ if ($action === 'login' && $requestMethod === 'POST') {
     $user['theater_id'] = $theater['id'];
     $user['theater_name'] = $theater['name'];
     $user['theater_address'] = $theater['address'];
+    $shift = posOpenShift($db, $user, $theater);
+    if (!$shift) jsonResponse(array('success' => false, 'message' => 'Không thể mở phiên làm việc tại quầy.'), 500);
     unset($user['password_hash']);
+    session_regenerate_id(true);
     $_SESSION['pos_user'] = $user;
+    $_SESSION['pos_shift_id'] = $shift['id'];
+    posLogAuthEvent($db, (int)$user['id'], $username, 'LOGIN_SUCCESS', true);
+    $lastLogin = date('Y-m-d H:i:s');
+    $stmt = $db->prepare('UPDATE pos_users SET last_login_at = ?, updated_at = ? WHERE id = ?');
+    if ($stmt) { $stmt->bind_param('ssi', $lastLogin, $lastLogin, $user['id']); $stmt->execute(); $stmt->close(); }
 
     $sessionData = array(
         'cinema_name' => $theater['name'],
@@ -240,10 +330,11 @@ if ($action === 'login' && $requestMethod === 'POST') {
         'theater_id' => $theater['id'],
         'staff_name' => $user['full_name'],
         'work_date' => date('d/m/Y'),
-        'shift_time' => '00:00:00 - 23:59:59',
-        'counter' => 'AURORA BOX 02',
-        'initial_cash' => 500000,
-        'status' => 'Tạm nghỉ'
+        'shift_id' => $shift['id'],
+        'shift_time' => date('H:i', strtotime($shift['opened_at'])) . ' - 23:59',
+        'counter' => $shift['counter'],
+        'initial_cash' => $shift['initial_cash'],
+        'status' => 'Đang hoạt động'
     );
 
     jsonResponse(array(
@@ -257,7 +348,15 @@ if ($action === 'login' && $requestMethod === 'POST') {
 }
 
 if ($action === 'logout') {
+    $user = isset($_SESSION['pos_user']) ? $_SESSION['pos_user'] : null;
+    if ($user) posLogAuthEvent($db, (int)$user['id'], $user['username'], 'LOGOUT', true);
+    $shiftId = isset($_SESSION['pos_shift_id']) ? (int)$_SESSION['pos_shift_id'] : 0;
+    if ($user && $shiftId > 0) {
+        $now = date('Y-m-d H:i:s'); $pause = $db->prepare("UPDATE pos_shifts SET status='paused', updated_at=? WHERE id=? AND user_id=? AND status='active'");
+        if ($pause) { $userId = (int)$user['id']; $pause->bind_param('sii', $now, $shiftId, $userId); $pause->execute(); $pause->close(); }
+    }
     unset($_SESSION['pos_user']);
+    unset($_SESSION['pos_shift_id']);
     if (session_id()) {
         session_destroy();
     }
@@ -272,14 +371,10 @@ if ($action === 'me') {
 }
 
 if ($action === 'dashboard') {
-    $user = isset($_SESSION['pos_user']) ? $_SESSION['pos_user'] : array(
-        'id' => 1,
-        'username' => '0328754062',
-        'full_name' => 'Nguyễn Trần Thái Bảo',
-        'role' => 'cashier',
-        'theater_id' => 1
-    );
+    $user = requirePosUser();
     $theater = getPosTheater($db, isset($user['theater_id']) ? (int)$user['theater_id'] : 1);
+    $shift = posCurrentShift($db, (int)$user['id']);
+    if (!$theater || !$shift) jsonResponse(array('success' => false, 'message' => 'Không tìm thấy phiên làm việc đang hoạt động.'), 409);
 
     jsonResponse(array(
         'success' => true,
@@ -291,13 +386,30 @@ if ($action === 'dashboard') {
                 'theater_id' => $theater ? $theater['id'] : 1,
                 'staff_name' => $user['full_name'],
                 'work_date' => date('d/m/Y'),
-                'shift_time' => '00:00:00 - 23:59:59',
-                'counter' => 'AURORA BOX 02',
-                'initial_cash' => 500000,
-                'status' => 'Tạm nghỉ'
+                'shift_id' => $shift['id'],
+                'shift_time' => date('H:i', strtotime($shift['opened_at'])) . ' - 23:59',
+                'counter' => $shift['counter'],
+                'initial_cash' => $shift['initial_cash'],
+                'status' => $shift['status'] === 'paused' ? 'Tạm nghỉ' : 'Đang hoạt động'
             )
         )
     ));
+}
+
+if ($action === 'close_shift' && $requestMethod === 'POST') {
+    $user = requirePosUser();
+    $shiftId = isset($_SESSION['pos_shift_id']) ? (int)$_SESSION['pos_shift_id'] : 0;
+    if ($shiftId < 1) jsonResponse(array('success' => false, 'message' => 'Không tìm thấy phiên làm việc cần đóng.'), 409);
+    $input = requestJson(); $cashAtClose = isset($input['cash_at_close']) ? (float)$input['cash_at_close'] : 0;
+    if ($cashAtClose < 0) jsonResponse(array('success' => false, 'message' => 'Tiền mặt kết ca không hợp lệ.'), 422);
+    $now = date('Y-m-d H:i:s');
+    $stmt = $db->prepare("UPDATE pos_shifts SET status='closed', cash_at_close=?, closed_at=?, updated_at=? WHERE id=? AND user_id=? AND status IN ('active','paused')");
+    if (!$stmt) jsonResponse(array('success' => false, 'message' => 'Không thể đóng ca.'), 500);
+    $userId = (int)$user['id']; $stmt->bind_param('dssii', $cashAtClose, $now, $now, $shiftId, $userId); $stmt->execute(); $affected = $stmt->affected_rows; $stmt->close();
+    if ($affected < 1) jsonResponse(array('success' => false, 'message' => 'Ca làm việc đã được đóng hoặc không thuộc tài khoản hiện tại.'), 409);
+    posLogAuthEvent($db, $userId, $user['username'], 'SHIFT_CLOSED', true);
+    unset($_SESSION['pos_shift_id']);
+    jsonResponse(array('success' => true, 'message' => 'Đã đóng ca và ghi nhận tiền mặt kết ca.', 'data' => array('shift_id' => $shiftId, 'cash_at_close' => $cashAtClose, 'closed_at' => $now)));
 }
 
 if ($action === 'sales_catalog' && $requestMethod === 'GET') {

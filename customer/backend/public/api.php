@@ -269,7 +269,8 @@ function aurora_ensure_customer_schedule_events($db) {
         KEY idx_schedule_event_created (created_at),
         KEY idx_schedule_event_movie (movie_id, selected_date),
         KEY idx_schedule_event_theater (theater_id),
-        KEY idx_schedule_event_showtime (showtime_id)
+        KEY idx_schedule_event_showtime (showtime_id),
+        CONSTRAINT fk_customer_schedule_events_showtime FOREIGN KEY (showtime_id) REFERENCES showtimes(id) ON DELETE SET NULL
     ) ENGINE=InnoDB DEFAULT CHARSET=utf8");
 }
 
@@ -304,7 +305,8 @@ function aurora_ensure_theater_schedule_event_schema($db) {
         KEY idx_theater_schedule_created (created_at),
         KEY idx_theater_schedule_theater (theater_id, selected_date),
         KEY idx_theater_schedule_showtime (showtime_id),
-        KEY idx_theater_schedule_user (user_id, created_at)
+        KEY idx_theater_schedule_user (user_id, created_at),
+        CONSTRAINT fk_customer_theater_schedule_events_showtime FOREIGN KEY (showtime_id) REFERENCES showtimes(id) ON DELETE SET NULL
     ) ENGINE=InnoDB DEFAULT CHARSET=utf8");
 }
 
@@ -321,7 +323,8 @@ function aurora_ensure_theater_detail_event_schema($db) {
         KEY idx_theater_detail_created (created_at),
         KEY idx_theater_detail_theater (theater_id, selected_date),
         KEY idx_theater_detail_showtime (showtime_id),
-        KEY idx_theater_detail_user (user_id, created_at)
+        KEY idx_theater_detail_user (user_id, created_at),
+        CONSTRAINT fk_customer_theater_detail_events_showtime FOREIGN KEY (showtime_id) REFERENCES showtimes(id) ON DELETE SET NULL
     ) ENGINE=InnoDB DEFAULT CHARSET=utf8");
 }
 
@@ -848,7 +851,8 @@ function aurora_ensure_seat_holds($db) {
         updated_at DATETIME NOT NULL,
         UNIQUE KEY uq_seat_hold (showtime_id, seat_id),
         KEY idx_seat_hold_expiry (expires_at),
-        KEY idx_seat_hold_session (session_key, showtime_id)
+        KEY idx_seat_hold_session (session_key, showtime_id),
+        CONSTRAINT fk_seat_holds_showtime FOREIGN KEY (showtime_id) REFERENCES showtimes(id) ON DELETE CASCADE
     ) ENGINE=InnoDB DEFAULT CHARSET=utf8");
 }
 
@@ -1013,12 +1017,15 @@ if ($resource === 'seat_hold') {
     if ($showtimeId < 1 || count($seatIds) > 12) aurora_response(array('message' => 'Dữ liệu giữ ghế không hợp lệ.'), 422);
     if (!aurora_ensure_seat_holds($db)) aurora_response(array('message' => 'Không thể khởi tạo phiên giữ ghế.'), 500);
     aurora_cleanup_seat_holds($db); $now = aurora_vietnam_now(); $nowEsc = $db->real_escape_string($now); $sessionEsc = $db->real_escape_string(session_id());
-    $showtime = $db->query("SELECT screen_id FROM showtimes WHERE id={$showtimeId} AND status='OPEN' AND starts_at > '{$nowEsc}'");
-    if (!$showtime || !($showtimeRow = $showtime->fetch_assoc())) aurora_response(array('message' => 'Suất chiếu đã bắt đầu hoặc không còn mở bán.'), 409);
     $validIds = array(); foreach ($seatIds as $seatId) if ($seatId > 0) $validIds[] = $seatId; $seatIds = $validIds;
     $expiresAt = date('Y-m-d H:i:s', strtotime($now.' +10 minutes')); $userId = isset($_SESSION['aurora_user_id']) ? (int)$_SESSION['aurora_user_id'] : 0;
     $db->autocommit(false);
     try {
+        // Lock the parent showtime inside the same transaction. A concurrent
+        // TMS deletion must now finish either before or after this hold, so a
+        // stale customer request can never recreate an orphan seat_holds row.
+        $showtime = $db->query("SELECT screen_id FROM showtimes WHERE id={$showtimeId} AND status='OPEN' AND starts_at > '{$nowEsc}' FOR UPDATE");
+        if (!$showtime || !($showtimeRow = $showtime->fetch_assoc())) throw new Exception('Suất chiếu đã bắt đầu hoặc không còn mở bán.');
         $db->query("DELETE FROM seat_holds WHERE showtime_id={$showtimeId} AND session_key='{$sessionEsc}'");
         if (count($seatIds)) {
             $idSql = implode(',', $seatIds); $valid=$db->query("SELECT id FROM seats WHERE screen_id=".(int)$showtimeRow['screen_id']." AND id IN ({$idSql})");
@@ -1068,6 +1075,456 @@ function aurora_public_user($db, $id) {
     );
 }
 
+// ── OAuth helpers (Google/Facebook) ──────────────────────────────────────────
+
+function aurora_env($name, $defaultValue) {
+    static $fileValues = null;
+    $environmentValue = getenv($name);
+    if ($environmentValue !== false && $environmentValue !== '') return $environmentValue;
+
+    if ($fileValues === null) {
+        $environmentFile = dirname(dirname(__FILE__)) . DIRECTORY_SEPARATOR . '.env';
+        $fileValues = is_file($environmentFile) ? parse_ini_file($environmentFile, false) : array();
+        if (!is_array($fileValues)) $fileValues = array();
+    }
+    return isset($fileValues[$name]) && $fileValues[$name] !== '' ? $fileValues[$name] : $defaultValue;
+}
+
+function aurora_get_system_config($db, $key, $fallback) {
+    static $configCache = null;
+    $envKey = $key === 'oauth_sandbox_enabled'
+        ? 'OAUTH_SANDBOX_ENABLED'
+        : strtoupper(str_replace('oauth_', '', $key));
+    $environmentValue = aurora_env($envKey, '');
+    if ($environmentValue !== '') return $environmentValue;
+
+    if ($configCache === null) {
+        $configCache = array();
+        if ($db instanceof mysqli) {
+            $res = $db->query("SELECT config_key, config_value FROM system_configs");
+            if ($res) {
+                while ($row = $res->fetch_assoc()) {
+                    $configCache[$row['config_key']] = $row['config_value'];
+                }
+                $res->free();
+            }
+        }
+    }
+    if (isset($configCache[$key]) && $configCache[$key] !== '') {
+        return $configCache[$key];
+    }
+    return $fallback;
+}
+
+function aurora_oauth_config($provider, $db = null) {
+    if ($db === null) {
+        global $db;
+    }
+    $provider = strtolower((string) $provider);
+    $sandboxSetting = $db ? aurora_get_system_config($db, 'oauth_sandbox_enabled', '1') : aurora_env('OAUTH_SANDBOX_ENABLED', '1');
+    $sandboxEnabled = ($sandboxSetting === '1' || $sandboxSetting === 'true' || $sandboxSetting === true || $sandboxSetting === 1);
+
+    if ($provider === 'google') {
+        $clientId = trim((string) ($db ? aurora_get_system_config($db, 'oauth_google_client_id', '') : aurora_env('GOOGLE_CLIENT_ID', '')));
+        $clientSecret = trim((string) ($db ? aurora_get_system_config($db, 'oauth_google_client_secret', '') : aurora_env('GOOGLE_CLIENT_SECRET', '')));
+        $redirectUri = trim((string) ($db ? aurora_get_system_config($db, 'oauth_google_redirect_uri', '') : aurora_env('GOOGLE_REDIRECT_URI', '')));
+        if ($redirectUri === '') {
+            $redirectUri = 'http://localhost/AURORA%20CINEMA/customer/backend/public/api.php?action=oauth_callback&provider=google';
+        }
+        $isLive = ($clientId !== '' && $clientSecret !== '');
+
+        return array(
+            'client_id' => $clientId,
+            'client_secret' => $clientSecret,
+            'redirect_uri' => $redirectUri,
+            'is_live' => $isLive,
+            'is_sandbox' => false,
+            'configured' => $isLive,
+            'authorization_url' => 'https://accounts.google.com/o/oauth2/v2/auth',
+            'token_url' => 'https://oauth2.googleapis.com/token',
+            'profile_url' => 'https://openidconnect.googleapis.com/v1/userinfo',
+        );
+    }
+    if ($provider === 'facebook') {
+        $clientId = $db ? aurora_get_system_config($db, 'oauth_facebook_client_id', '') : aurora_env('FACEBOOK_CLIENT_ID', '');
+        $clientSecret = $db ? aurora_get_system_config($db, 'oauth_facebook_client_secret', '') : aurora_env('FACEBOOK_CLIENT_SECRET', '');
+        $redirectUri = $db ? aurora_get_system_config($db, 'oauth_facebook_redirect_uri', '') : aurora_env('FACEBOOK_REDIRECT_URI', '');
+        if ($redirectUri === '') {
+            $redirectUri = 'http://localhost/AURORA%20CINEMA/customer/backend/public/api.php?action=oauth_callback&provider=facebook';
+        }
+        $version = preg_match('/^v[0-9]+\.[0-9]+$/', aurora_env('FACEBOOK_GRAPH_VERSION', 'v25.0'))
+            ? aurora_env('FACEBOOK_GRAPH_VERSION', 'v25.0') : 'v25.0';
+        $isLive = ($clientId !== '' && $clientSecret !== '' && strpos($clientId, 'demo') === false);
+        $isSandbox = !$isLive && $sandboxEnabled;
+
+        return array(
+            'client_id' => $clientId,
+            'client_secret' => $clientSecret,
+            'redirect_uri' => $redirectUri,
+            'is_live' => $isLive,
+            'is_sandbox' => $isSandbox,
+            'configured' => $isLive || $isSandbox,
+            'authorization_url' => $isLive ? ('https://www.facebook.com/' . $version . '/dialog/oauth') : 'http://localhost/AURORA%20CINEMA/customer/backend/public/api.php?action=oauth_consent&provider=facebook',
+            'token_url' => 'https://graph.facebook.com/' . $version . '/oauth/access_token',
+            'profile_url' => 'https://graph.facebook.com/' . $version . '/me',
+        );
+    }
+    return null;
+}
+
+function aurora_oauth_random_token() {
+    if (function_exists('openssl_random_pseudo_bytes')) {
+        $bytes = openssl_random_pseudo_bytes(32);
+        if ($bytes !== false) return bin2hex($bytes);
+    }
+    return sha1(uniqid(mt_rand(), true)) . sha1(uniqid(mt_rand(), true));
+}
+
+function aurora_oauth_base64url($value) {
+    return rtrim(strtr(base64_encode($value), '+/', '-_'), '=');
+}
+
+function aurora_oauth_safe_equals($known, $provided) {
+    if (function_exists('hash_equals')) return hash_equals((string) $known, (string) $provided);
+    $known = (string) $known; $provided = (string) $provided;
+    if (strlen($known) !== strlen($provided)) return false;
+    $result = 0;
+    for ($i = 0; $i < strlen($known); $i++) $result |= ord($known[$i]) ^ ord($provided[$i]);
+    return $result === 0;
+}
+
+function aurora_oauth_windows_curl_config_line($name, $value) {
+    $value = (string) $value;
+    if (preg_match('/[\x00-\x1F\x7F]/', $value)) return false;
+    $value = str_replace(array('\\', '"'), array('\\\\', '\\"'), $value);
+    return $name . ' = "' . $value . '"' . "\n";
+}
+
+function aurora_oauth_windows_curl_request($url, $method, $headers, $requestBody) {
+    if (strtoupper(substr(PHP_OS, 0, 3)) !== 'WIN') {
+        return array('ok' => false, 'message' => 'Không có phương thức kết nối HTTPS an toàn thay thế trên máy chủ này.');
+    }
+    if (!function_exists('proc_open') || strpos((string) ini_get('disable_functions'), 'proc_open') !== false) {
+        return array('ok' => false, 'message' => 'PHP không cho phép khởi chạy Windows curl.exe để xác minh TLS.');
+    }
+
+    $systemRoot = getenv('SystemRoot');
+    if ($systemRoot === false) $systemRoot = getenv('WINDIR');
+    $systemRoot = str_replace('\\', '/', (string) $systemRoot);
+    if (!preg_match('/^[A-Za-z]:\/[A-Za-z0-9_.\/-]+$/', $systemRoot)) {
+        return array('ok' => false, 'message' => 'Không xác định được đường dẫn Windows curl.exe an toàn.');
+    }
+    $curlBinary = rtrim($systemRoot, '/') . '/System32/curl.exe';
+    if (!is_file($curlBinary)) {
+        return array('ok' => false, 'message' => 'Không tìm thấy Windows curl.exe để xác minh TLS.');
+    }
+
+    $config = aurora_oauth_windows_curl_config_line('url', $url);
+    if ($config === false) return array('ok' => false, 'message' => 'Yêu cầu OAuth chứa dữ liệu không hợp lệ.');
+    if ($method === 'POST') {
+        $config .= "request = \"POST\"\n";
+        $configLine = aurora_oauth_windows_curl_config_line('data', $requestBody);
+        if ($configLine === false) return array('ok' => false, 'message' => 'Yêu cầu OAuth chứa dữ liệu không hợp lệ.');
+        $config .= $configLine;
+    }
+    foreach ($headers as $header) {
+        $configLine = aurora_oauth_windows_curl_config_line('header', $header);
+        if ($configLine === false) return array('ok' => false, 'message' => 'Yêu cầu OAuth chứa header không hợp lệ.');
+        $config .= $configLine;
+    }
+    $config .= "connect-timeout = 10\nmax-time = 20\n";
+
+    $command = $curlBinary . ' --config - --silent --show-error --write-out __AURORA_HTTP_STATUS__%{http_code}';
+    $pipes = array();
+    $process = @proc_open($command, array(
+        0 => array('pipe', 'r'),
+        1 => array('pipe', 'w'),
+        2 => array('pipe', 'w'),
+    ), $pipes);
+    if (!is_resource($process)) {
+        return array('ok' => false, 'message' => 'Không thể khởi chạy Windows curl.exe để kết nối OAuth.');
+    }
+
+    fwrite($pipes[0], $config);
+    fclose($pipes[0]);
+    $output = stream_get_contents($pipes[1]);
+    fclose($pipes[1]);
+    $errorOutput = stream_get_contents($pipes[2]);
+    fclose($pipes[2]);
+    $exitCode = proc_close($process);
+
+    if (!preg_match('/__AURORA_HTTP_STATUS__(\d{3})$/', $output, $matches)) {
+        $detail = trim((string) $errorOutput);
+        if ($detail !== '') $detail = ': ' . substr($detail, 0, 300);
+        return array('ok' => false, 'message' => 'Windows curl.exe không thể kết nối an toàn tới máy chủ OAuth' . $detail);
+    }
+
+    $body = substr($output, 0, -strlen($matches[0]));
+    if ($exitCode !== 0) {
+        $detail = trim((string) $errorOutput);
+        if ($detail !== '') $detail = ': ' . substr($detail, 0, 300);
+        return array('ok' => false, 'message' => 'Windows curl.exe không thể kết nối an toàn tới máy chủ OAuth' . $detail);
+    }
+    return array('ok' => true, 'body' => $body, 'status' => (int) $matches[1]);
+}
+
+function aurora_oauth_http($url, $method, $fields, $accessToken) {
+    if (!function_exists('curl_init')) return array('ok' => false, 'message' => 'PHP cURL chưa được bật trên máy chủ.');
+    $curl = curl_init();
+    $headers = array('Accept: application/json');
+    $requestBody = '';
+    if ($accessToken !== '') $headers[] = 'Authorization: Bearer ' . $accessToken;
+    if ($method === 'POST') {
+        $requestBody = http_build_query($fields, '', '&');
+        curl_setopt($curl, CURLOPT_POST, true);
+        curl_setopt($curl, CURLOPT_POSTFIELDS, $requestBody);
+        $headers[] = 'Content-Type: application/x-www-form-urlencoded';
+    } elseif (count($fields)) {
+        $url .= (strpos($url, '?') === false ? '?' : '&') . http_build_query($fields, '', '&');
+    }
+    curl_setopt($curl, CURLOPT_URL, $url);
+    curl_setopt($curl, CURLOPT_RETURNTRANSFER, true);
+    curl_setopt($curl, CURLOPT_HTTPHEADER, $headers);
+    curl_setopt($curl, CURLOPT_CONNECTTIMEOUT, 10);
+    curl_setopt($curl, CURLOPT_TIMEOUT, 20);
+    curl_setopt($curl, CURLOPT_SSL_VERIFYPEER, true);
+    $body = curl_exec($curl);
+    $status = (int) curl_getinfo($curl, CURLINFO_HTTP_CODE);
+    $curlErrno = curl_errno($curl);
+    $curlError = curl_error($curl);
+    curl_close($curl);
+
+    if ($body === false && $curlErrno === 60 && strtoupper(substr(PHP_OS, 0, 3)) === 'WIN') {
+        $fallback = aurora_oauth_windows_curl_request($url, $method, $headers, $requestBody);
+        if (!$fallback['ok']) return array('ok' => false, 'message' => $fallback['message']);
+        $body = $fallback['body'];
+        $status = $fallback['status'];
+    }
+    if ($body === false) return array('ok' => false, 'message' => 'Không thể kết nối máy chủ OAuth: ' . $curlError);
+    $decoded = json_decode($body, true);
+    if (!is_array($decoded)) return array('ok' => false, 'message' => 'Máy chủ OAuth trả về dữ liệu không hợp lệ.');
+    if ($status < 200 || $status >= 300) {
+        $providerMessage = isset($decoded['error_description']) ? $decoded['error_description']
+            : (isset($decoded['error']['message']) ? $decoded['error']['message'] : 'Yêu cầu OAuth bị từ chối.');
+        return array('ok' => false, 'data' => $decoded, 'message' => $providerMessage);
+    }
+    return array('ok' => true, 'data' => $decoded);
+}
+
+function aurora_ensure_oauth_schema($db) {
+    $accountsCreated = $db->query("CREATE TABLE IF NOT EXISTS oauth_accounts (
+        id BIGINT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
+        user_id BIGINT UNSIGNED NOT NULL,
+        provider ENUM('google','facebook') NOT NULL,
+        provider_user_id VARCHAR(191) NOT NULL,
+        provider_email VARCHAR(180) NULL,
+        provider_name VARCHAR(120) NULL,
+        avatar_url VARCHAR(500) NULL,
+        created_at TIMESTAMP NULL DEFAULT CURRENT_TIMESTAMP,
+        updated_at TIMESTAMP NULL DEFAULT NULL,
+        last_login_at TIMESTAMP NULL DEFAULT NULL,
+        UNIQUE KEY uq_oauth_provider_identity (provider, provider_user_id),
+        UNIQUE KEY uq_oauth_user_provider (user_id, provider),
+        KEY idx_oauth_provider_email (provider_email),
+        CONSTRAINT fk_oauth_accounts_user FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
+    ) ENGINE=InnoDB DEFAULT CHARSET=utf8 COLLATE=utf8_unicode_ci");
+    if (!$accountsCreated) return false;
+    return $db->query("CREATE TABLE IF NOT EXISTS oauth_login_attempts (
+        id BIGINT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
+        provider ENUM('google','facebook') NOT NULL,
+        user_id BIGINT UNSIGNED NULL,
+        provider_user_id VARCHAR(191) NULL,
+        state_hash CHAR(64) NOT NULL,
+        status ENUM('started','succeeded','failed') NOT NULL DEFAULT 'started',
+        error_code VARCHAR(60) NULL,
+        error_message VARCHAR(255) NULL,
+        ip_address_hash CHAR(64) NULL,
+        user_agent VARCHAR(255) NULL,
+        created_at DATETIME NOT NULL,
+        completed_at DATETIME NULL,
+        KEY idx_oauth_attempt_provider_status (provider, status, created_at),
+        KEY idx_oauth_attempt_user (user_id, created_at),
+        CONSTRAINT fk_oauth_attempt_user FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE SET NULL
+    ) ENGINE=InnoDB DEFAULT CHARSET=utf8 COLLATE=utf8_unicode_ci");
+}
+
+function aurora_oauth_attempt_start($db, $provider, $state) {
+    if (!aurora_ensure_oauth_schema($db)) return 0;
+    $stateHash = hash('sha256', (string) $state);
+    $ip = isset($_SERVER['REMOTE_ADDR']) ? (string) $_SERVER['REMOTE_ADDR'] : '';
+    $ipHash = $ip === '' ? '' : hash('sha256', $ip . '|' . aurora_env('OAUTH_AUDIT_SALT', 'aurora-cinema'));
+    $agent = isset($_SERVER['HTTP_USER_AGENT']) ? substr((string) $_SERVER['HTTP_USER_AGENT'], 0, 255) : '';
+    $createdAt = date('Y-m-d H:i:s');
+    $stmt = $db->prepare("INSERT INTO oauth_login_attempts (provider,state_hash,status,ip_address_hash,user_agent,created_at) VALUES (?,?,'started',?,?,?)");
+    if (!$stmt) return 0;
+    $stmt->bind_param('sssss', $provider, $stateHash, $ipHash, $agent, $createdAt);
+    $ok = $stmt->execute();
+    $id = $ok ? (int) $stmt->insert_id : 0;
+    $stmt->close();
+    return $id;
+}
+
+function aurora_oauth_attempt_finish($db, $attemptId, $status, $userId, $providerUserId, $errorCode, $message) {
+    $attemptId = (int) $attemptId;
+    if ($attemptId <= 0) return;
+    $completedAt = date('Y-m-d H:i:s');
+    $providerUserId = substr((string) $providerUserId, 0, 191);
+    $errorCode = substr((string) $errorCode, 0, 60);
+    $message = substr((string) $message, 0, 255);
+    $userId = (int) $userId;
+    $stmt = $db->prepare('UPDATE oauth_login_attempts SET status=?, user_id=NULLIF(?,0), provider_user_id=NULLIF(?,\'\'), error_code=NULLIF(?,\'\'), error_message=NULLIF(?,\'\'), completed_at=? WHERE id=?');
+    if (!$stmt) return;
+    $stmt->bind_param('sissssi', $status, $userId, $providerUserId, $errorCode, $message, $completedAt, $attemptId);
+    $stmt->execute();
+    $stmt->close();
+}
+
+function aurora_oauth_finish_url($status, $provider, $message) {
+    $frontend = rtrim(aurora_env('CUSTOMER_FRONTEND_URL', 'http://localhost:3000'), '/');
+    $query = array('oauth' => $status, 'provider' => $provider);
+    if ($message !== '') $query['message'] = $message;
+    return $frontend . '/?' . http_build_query($query, '', '&');
+}
+
+function aurora_oauth_redirect_error($provider, $message) {
+    header('Location: ' . aurora_oauth_finish_url('error', $provider, $message), true, 302);
+    exit;
+}
+
+function aurora_oauth_unique_username($db, $provider, $providerId) {
+    $base = strtolower($provider) . '_' . preg_replace('/[^a-zA-Z0-9]/', '', (string) $providerId);
+    $base = substr($base, 0, 50);
+    if ($base === strtolower($provider) . '_') $base .= substr(sha1((string) $providerId), 0, 12);
+    $candidate = $base;
+    for ($attempt = 0; $attempt < 20; $attempt++) {
+        $stmt = $db->prepare('SELECT id FROM users WHERE username = ? LIMIT 1');
+        if (!$stmt) throw new Exception('Không thể kiểm tra tên tài khoản khách hàng.');
+        $stmt->bind_param('s', $candidate);
+        $stmt->execute();
+        $existing = null; $stmt->bind_result($existing); $found = $stmt->fetch(); $stmt->close();
+        if (!$found) return $candidate;
+        $candidate = substr($base, 0, 50) . '_' . substr(sha1($providerId . '|' . $attempt), 0, 8);
+    }
+    throw new Exception('Không thể tạo tên tài khoản Aurora duy nhất.');
+}
+
+function aurora_oauth_login_user($db, $provider, $profile) {
+    if (!aurora_ensure_oauth_schema($db)) throw new Exception('Không thể khởi tạo bảng liên kết OAuth trong aurora_db.');
+    $providerId = trim((string) $profile['id']);
+    $email = strtolower(trim((string) $profile['email']));
+    $name = trim((string) $profile['name']);
+    $avatar = trim((string) $profile['avatar']);
+    if ($providerId === '' || $email === '' || !filter_var($email, FILTER_VALIDATE_EMAIL)) {
+        throw new Exception('Tài khoản mạng xã hội chưa cung cấp email hợp lệ cho Aurora.');
+    }
+    if ($name === '') {
+        $emailParts = explode('@', $email, 2);
+        $name = $emailParts[0];
+    }
+    $name = substr($name, 0, 120);
+    $avatar = substr($avatar, 0, 500);
+    $now = date('Y-m-d H:i:s');
+
+    $db->autocommit(false);
+    try {
+        $userId = 0;
+        $stmt = $db->prepare('SELECT user_id FROM oauth_accounts WHERE provider = ? AND provider_user_id = ? LIMIT 1 FOR UPDATE');
+        if (!$stmt) throw new Exception('Không thể truy vấn tài khoản OAuth.');
+        $stmt->bind_param('ss', $provider, $providerId);
+        $stmt->execute();
+        $linkedUserId = null;
+        $stmt->bind_result($linkedUserId);
+        if ($stmt->fetch()) $userId = (int) $linkedUserId;
+        $stmt->close();
+
+        if (!$userId) {
+            $stmt = $db->prepare('SELECT id, role, status FROM users WHERE email = ? LIMIT 1 FOR UPDATE');
+            if (!$stmt) throw new Exception('Không thể kiểm tra email tài khoản.');
+            $stmt->bind_param('s', $email);
+            $stmt->execute();
+            $existingUserId = null; $existingRole = null; $existingStatus = null;
+            $stmt->bind_result($existingUserId, $existingRole, $existingStatus);
+            if ($stmt->fetch()) {
+                if ((string) $existingRole !== 'customer') throw new Exception('Email này đang thuộc tài khoản nội bộ và không thể dùng tại cổng khách hàng.');
+                if ((string) $existingStatus !== 'active') throw new Exception('Tài khoản Aurora đang bị khóa hoặc ngừng hoạt động.');
+                $userId = (int) $existingUserId;
+            }
+            $stmt->close();
+        }
+
+        if ($userId) {
+            $stmt = $db->prepare('SELECT role, status FROM users WHERE id = ? LIMIT 1 FOR UPDATE');
+            if (!$stmt) throw new Exception('Không thể kiểm tra trạng thái tài khoản Aurora.');
+            $stmt->bind_param('i', $userId);
+            $stmt->execute();
+            $linkedRole = null; $linkedStatus = null;
+            $stmt->bind_result($linkedRole, $linkedStatus);
+            $foundLinkedUser = $stmt->fetch();
+            $stmt->close();
+            if (!$foundLinkedUser || (string) $linkedRole !== 'customer') throw new Exception('Liên kết OAuth không thuộc tài khoản khách hàng hợp lệ.');
+            if ((string) $linkedStatus !== 'active') throw new Exception('Tài khoản Aurora đang bị khóa hoặc ngừng hoạt động.');
+        }
+
+        if ($userId) {
+            $stmt = $db->prepare('SELECT provider_user_id FROM oauth_accounts WHERE user_id = ? AND provider = ? LIMIT 1 FOR UPDATE');
+            if (!$stmt) throw new Exception('Không thể kiểm tra liên kết OAuth hiện tại.');
+            $stmt->bind_param('is', $userId, $provider);
+            $stmt->execute();
+            $currentProviderId = null;
+            $stmt->bind_result($currentProviderId);
+            $hasProviderLink = $stmt->fetch();
+            $stmt->close();
+            if ($hasProviderLink && (string) $currentProviderId !== $providerId) {
+                throw new Exception('Tài khoản Aurora này đã liên kết với một tài khoản ' . ucfirst($provider) . ' khác.');
+            }
+        }
+
+        if (!$userId) {
+            $unusablePassword = aurora_password_hash(aurora_oauth_random_token());
+            $username = aurora_oauth_unique_username($db, $provider, $providerId);
+            $stmt = $db->prepare("INSERT INTO users (username,full_name,email,phone,id_number,birthday,gender,city,district,address,password_hash,role,status,last_login,membership_level,points,theater_id,created_at,updated_at)
+                VALUES (?, ?, ?, '', '', '1970-01-01', 'other', '', '', '', ?, 'customer', 'active', ?, 'STANDARD', 0, 1, ?, ?)");
+            if (!$stmt) throw new Exception('Không thể chuẩn bị tạo tài khoản Aurora.');
+            $stmt->bind_param('sssssss', $username, $name, $email, $unusablePassword, $now, $now, $now);
+            if (!$stmt->execute()) {
+                $insertMessage = $stmt->error;
+                $stmt->close();
+                throw new Exception('Không thể tạo tài khoản Aurora: ' . $insertMessage);
+            }
+            $userId = (int) $stmt->insert_id;
+            $stmt->close();
+        }
+
+        $stmt = $db->prepare("UPDATE users SET last_login=?, updated_at=? WHERE id=? AND role='customer' AND status='active'");
+        if (!$stmt) throw new Exception('Không thể cập nhật phiên đăng nhập khách hàng.');
+        $stmt->bind_param('ssi', $now, $now, $userId);
+        if (!$stmt->execute() || $stmt->affected_rows < 0) {
+            $stmt->close();
+            throw new Exception('Không thể cập nhật phiên đăng nhập khách hàng.');
+        }
+        $stmt->close();
+
+        $stmt = $db->prepare("INSERT INTO oauth_accounts (user_id, provider, provider_user_id, provider_email, provider_name, avatar_url, created_at, updated_at, last_login_at)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+            ON DUPLICATE KEY UPDATE provider_email=VALUES(provider_email), provider_name=VALUES(provider_name), avatar_url=VALUES(avatar_url), updated_at=VALUES(updated_at), last_login_at=VALUES(last_login_at)");
+        if (!$stmt) throw new Exception('Không thể chuẩn bị lưu liên kết OAuth.');
+        $stmt->bind_param('issssssss', $userId, $provider, $providerId, $email, $name, $avatar, $now, $now, $now);
+        if (!$stmt->execute()) {
+            $linkMessage = $stmt->error;
+            $stmt->close();
+            throw new Exception('Không thể lưu liên kết OAuth: ' . $linkMessage);
+        }
+        $stmt->close();
+        $db->commit();
+        $db->autocommit(true);
+        return $userId;
+    } catch (Exception $exception) {
+        $db->rollback();
+        $db->autocommit(true);
+        throw $exception;
+    }
+}
+
 // ── /me ───────────────────────────────────────────────────────────────────────
 if ($resource === 'me') {
     $userId = isset($_SESSION['aurora_user_id']) ? (int) $_SESSION['aurora_user_id'] : null;
@@ -1094,6 +1551,643 @@ if ($resource === 'logout') {
     $_SESSION = array();
     session_destroy();
     aurora_response(array('user' => null), 200);
+}
+
+// ── /oauth_status ────────────────────────────────────────────────────────────
+if ($resource === 'oauth_status') {
+    aurora_method('GET');
+    $providers = array();
+    foreach (array('google', 'facebook') as $providerName) {
+        $providerConfig = aurora_oauth_config($providerName, $db);
+        $providers[$providerName] = array(
+            'configured' => !empty($providerConfig['configured']),
+            'mode' => !empty($providerConfig['is_live']) ? 'live' : (!empty($providerConfig['is_sandbox']) ? 'sandbox' : 'unconfigured'),
+        );
+    }
+    aurora_response(array('providers' => $providers), 200);
+}
+
+// ── /oauth_configs (GET / POST) ──────────────────────────────────────────────
+if ($resource === 'oauth_configs') {
+    if ($_SERVER['REQUEST_METHOD'] === 'GET') {
+        $configs = array();
+        $res = $db->query("SELECT config_key, config_value, description FROM system_configs WHERE config_key LIKE 'oauth_%'");
+        if ($res) {
+            while ($row = $res->fetch_assoc()) {
+                $val = $row['config_value'];
+                if (strpos($row['config_key'], 'secret') !== false && strlen($val) > 4) {
+                    $val = substr($val, 0, 4) . '••••••••';
+                }
+                $configs[$row['config_key']] = array('value' => $val, 'description' => $row['description']);
+            }
+            $res->free();
+        }
+        aurora_response(array('configs' => $configs), 200);
+    }
+    if ($_SERVER['REQUEST_METHOD'] === 'POST') {
+        $body = aurora_body();
+        $allowed = array(
+            'oauth_google_client_id', 'oauth_google_client_secret', 'oauth_google_redirect_uri',
+            'oauth_facebook_client_id', 'oauth_facebook_client_secret', 'oauth_facebook_redirect_uri',
+            'oauth_sandbox_enabled'
+        );
+        $stmt = $db->prepare("INSERT INTO system_configs (config_key, config_value, description, updated_at) VALUES (?, ?, '', NOW()) ON DUPLICATE KEY UPDATE config_value=VALUES(config_value), updated_at=NOW()");
+        if (!$stmt) aurora_response(array('message' => 'Không thể chuẩn bị lưu cấu hình: ' . $db->error), 500);
+        foreach ($allowed as $k) {
+            if (isset($body[$k])) {
+                $v = trim((string) $body[$k]);
+                $stmt->bind_param('ss', $k, $v);
+                $stmt->execute();
+            }
+        }
+        $stmt->close();
+        aurora_response(array('message' => 'Cập nhật cấu hình OAuth thành công.'), 200);
+    }
+    aurora_response(array('message' => 'Method Not Allowed'), 405);
+}
+
+// ── /oauth_start ─────────────────────────────────────────────────────────────
+if ($resource === 'oauth_start') {
+    aurora_method('GET');
+    $provider = isset($_GET['provider']) ? strtolower(trim((string) $_GET['provider'])) : '';
+    $config = aurora_oauth_config($provider, $db);
+    if (!$config) aurora_response(array('message' => 'Nhà cung cấp đăng nhập không hợp lệ.'), 422);
+    if (empty($config['configured'])) {
+        aurora_response(array('message' => 'Đăng nhập ' . ucfirst($provider) . ' chưa được cấu hình trên máy chủ.'), 503);
+    }
+
+    if (!aurora_ensure_oauth_schema($db)) aurora_response(array('message' => 'Không thể khởi tạo dữ liệu OAuth trong aurora_db.'), 500);
+    $state = aurora_oauth_random_token();
+    $attemptId = aurora_oauth_attempt_start($db, $provider, $state);
+    if ($attemptId <= 0) aurora_response(array('message' => 'Không thể ghi nhận phiên đăng nhập OAuth trong aurora_db.'), 500);
+    $pending = array(
+        'state' => $state,
+        'created_at' => time(),
+        'attempt_id' => $attemptId,
+        'is_sandbox' => !empty($config['is_sandbox'])
+    );
+
+    if (!empty($config['is_live'])) {
+        if ($provider === 'google') {
+            $pending['code_verifier'] = aurora_oauth_random_token();
+            $parameters = array(
+                'client_id' => $config['client_id'],
+                'redirect_uri' => $config['redirect_uri'],
+                'response_type' => 'code',
+                'scope' => 'openid email profile',
+                'state' => $state,
+                'code_challenge' => aurora_oauth_base64url(hash('sha256', $pending['code_verifier'], true)),
+                'code_challenge_method' => 'S256',
+                'prompt' => 'select_account',
+            );
+        } else {
+            $parameters = array(
+                'client_id' => $config['client_id'],
+                'redirect_uri' => $config['redirect_uri'],
+                'response_type' => 'code',
+                'scope' => 'email,public_profile',
+                'state' => $state,
+            );
+        }
+        $_SESSION['aurora_oauth_' . $provider] = $pending;
+        aurora_response(array('provider' => $provider, 'authorizationUrl' => $config['authorization_url'] . '?' . http_build_query($parameters, '', '&')), 200);
+    } else {
+        $_SESSION['aurora_oauth_' . $provider] = $pending;
+        $parameters = array(
+            'action' => 'oauth_consent',
+            'provider' => $provider,
+            'state' => $state,
+        );
+        $consentUrl = 'http://localhost/AURORA%20CINEMA/customer/backend/public/api.php?' . http_build_query($parameters, '', '&');
+        aurora_response(array('provider' => $provider, 'authorizationUrl' => $consentUrl), 200);
+    }
+}
+
+// ── /oauth_consent ───────────────────────────────────────────────────────────
+if ($resource === 'oauth_consent') {
+    aurora_method('GET');
+    $provider = isset($_GET['provider']) ? strtolower(trim((string) $_GET['provider'])) : '';
+    if ($provider === 'google') {
+        aurora_oauth_redirect_error($provider, 'Đăng nhập Google yêu cầu xác thực trực tiếp qua Google OAuth 2.0.');
+    }
+    if ($provider !== 'facebook') {
+        aurora_oauth_redirect_error('', 'Nhà cung cấp OAuth không hợp lệ.');
+    }
+    $state = isset($_GET['state']) ? (string) $_GET['state'] : '';
+    $sessionKey = 'aurora_oauth_' . $provider;
+    $pending = isset($_SESSION[$sessionKey]) && is_array($_SESSION[$sessionKey]) ? $_SESSION[$sessionKey] : null;
+    if (!$pending || !aurora_oauth_safe_equals($pending['state'], $state) || time() - (int)$pending['created_at'] > 600) {
+        aurora_oauth_redirect_error($provider, 'Phiên đăng nhập đã hết hạn hoặc không hợp lệ.');
+    }
+
+    $isGoogle = ($provider === 'google');
+    $providerName = $isGoogle ? 'Google' : 'Facebook';
+    $primaryColor = $isGoogle ? '#ea4335' : '#1877f2';
+
+    // Mock accounts available for one-click testing
+    $mockAccounts = $isGoogle ? array(
+        array('name' => 'Nguyễn Văn An', 'email' => 'nguyenvanan.customer@gmail.com', 'initials' => 'NA', 'badge' => 'Khách hàng Thân thiết', 'color' => '#4285f4'),
+        array('name' => 'Trần Thị Bảo', 'email' => 'tranthibao.customer@gmail.com', 'initials' => 'TB', 'badge' => 'Thành viên Mới', 'color' => '#34a853'),
+        array('name' => 'Thái Hùng', 'email' => 'thaihung.cinema@gmail.com', 'initials' => 'TH', 'badge' => 'Thành viên VIP', 'color' => '#fbbc05')
+    ) : array(
+        array('name' => 'Nguyễn Văn An', 'email' => 'nguyenvanan.fb@facebook.com', 'initials' => 'NA', 'badge' => 'Tài khoản Facebook', 'color' => '#1877f2'),
+        array('name' => 'Lê Minh Thảo', 'email' => 'leminhthao.fb@facebook.com', 'initials' => 'LT', 'badge' => 'Tài khoản Facebook', 'color' => '#0284c7'),
+        array('name' => 'Phạm Quỳnh Nga', 'email' => 'quynhnga.fb@facebook.com', 'initials' => 'QN', 'badge' => 'Tài khoản Facebook', 'color' => '#2563eb')
+    );
+
+    header('Content-Type: text/html; charset=utf-8');
+    ?>
+<!DOCTYPE html>
+<html lang="vi">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Đăng nhập với <?php echo htmlspecialchars($providerName); ?> - Aurora Cinema</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Outfit:wght@400;500;600;700;800&family=Plus+Jakarta+Sans:wght@400;500;600;700&display=swap" rel="stylesheet">
+  <style>
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    body {
+      min-height: 100vh;
+      background: radial-gradient(circle at 50% 0%, #172554 0%, #090d16 65%, #020617 100%);
+      font-family: 'Plus Jakarta Sans', system-ui, -apple-system, sans-serif;
+      color: #f1f5f9;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      padding: 24px 16px;
+    }
+    .auth-card {
+      width: 100%;
+      max-width: 460px;
+      background: rgba(15, 23, 42, 0.88);
+      border: 1px solid rgba(255, 255, 255, 0.12);
+      border-radius: 20px;
+      padding: 32px 28px;
+      box-shadow: 0 25px 50px -12px rgba(0, 0, 0, 0.65), 0 0 40px rgba(59, 130, 246, 0.15);
+      backdrop-filter: blur(20px);
+    }
+    .brand-header {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      margin-bottom: 24px;
+      padding-bottom: 16px;
+      border-bottom: 1px solid rgba(255, 255, 255, 0.08);
+    }
+    .brand-title {
+      font-family: 'Outfit', sans-serif;
+      font-size: 18px;
+      font-weight: 800;
+      letter-spacing: 0.8px;
+      background: linear-gradient(135deg, #fbbf24 0%, #f59e0b 50%, #d97706 100%);
+      -webkit-background-clip: text;
+      -webkit-text-fill-color: transparent;
+    }
+    .provider-pill {
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
+      background: rgba(255, 255, 255, 0.06);
+      border: 1px solid rgba(255, 255, 255, 0.1);
+      padding: 4px 10px;
+      border-radius: 9999px;
+      font-size: 12px;
+      font-weight: 600;
+      color: #cbd5e1;
+    }
+    .page-title {
+      font-family: 'Outfit', sans-serif;
+      font-size: 22px;
+      font-weight: 700;
+      color: #ffffff;
+      margin-bottom: 6px;
+      display: flex;
+      align-items: center;
+      gap: 10px;
+    }
+    .page-desc {
+      font-size: 13px;
+      color: #94a3b8;
+      line-height: 1.5;
+      margin-bottom: 22px;
+    }
+    .notice-box {
+      background: rgba(30, 58, 138, 0.25);
+      border: 1px solid rgba(59, 130, 246, 0.3);
+      border-radius: 10px;
+      padding: 10px 14px;
+      font-size: 12px;
+      color: #93c5fd;
+      line-height: 1.45;
+      margin-bottom: 20px;
+      display: flex;
+      gap: 8px;
+      align-items: flex-start;
+    }
+    .section-label {
+      font-size: 12px;
+      font-weight: 600;
+      text-transform: uppercase;
+      letter-spacing: 0.6px;
+      color: #64748b;
+      margin-bottom: 12px;
+    }
+    .account-list {
+      display: flex;
+      flex-direction: column;
+      gap: 10px;
+      margin-bottom: 22px;
+    }
+    .account-btn {
+      width: 100%;
+      display: flex;
+      align-items: center;
+      gap: 14px;
+      background: rgba(255, 255, 255, 0.04);
+      border: 1px solid rgba(255, 255, 255, 0.08);
+      border-radius: 12px;
+      padding: 12px 14px;
+      text-align: left;
+      cursor: pointer;
+      color: inherit;
+      transition: all 0.2s cubic-bezier(0.4, 0, 0.2, 1);
+    }
+    .account-btn:hover {
+      background: rgba(255, 255, 255, 0.09);
+      border-color: rgba(255, 255, 255, 0.22);
+      transform: translateY(-1px);
+      box-shadow: 0 4px 12px rgba(0, 0, 0, 0.2);
+    }
+    .avatar {
+      width: 40px;
+      height: 40px;
+      border-radius: 50%;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      font-weight: 700;
+      font-size: 14px;
+      color: #ffffff;
+      flex-shrink: 0;
+    }
+    .acc-info { flex: 1; min-width: 0; }
+    .acc-name {
+      font-size: 14px;
+      font-weight: 600;
+      color: #f8fafc;
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
+    }
+    .acc-email {
+      font-size: 12px;
+      color: #94a3b8;
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
+    }
+    .acc-badge {
+      font-size: 11px;
+      font-weight: 600;
+      color: #38bdf8;
+      background: rgba(56, 189, 248, 0.12);
+      padding: 2px 8px;
+      border-radius: 6px;
+      flex-shrink: 0;
+    }
+    .custom-divider {
+      position: relative;
+      text-align: center;
+      margin: 20px 0 16px;
+    }
+    .custom-divider::before {
+      content: '';
+      position: absolute;
+      left: 0; top: 50%; right: 0;
+      height: 1px;
+      background: rgba(255, 255, 255, 0.08);
+    }
+    .custom-divider span {
+      position: relative;
+      background: #0f172a;
+      padding: 0 12px;
+      font-size: 11px;
+      color: #64748b;
+      font-weight: 600;
+      text-transform: uppercase;
+    }
+    .form-group {
+      margin-bottom: 12px;
+    }
+    .form-label {
+      display: block;
+      font-size: 12px;
+      font-weight: 600;
+      color: #cbd5e1;
+      margin-bottom: 6px;
+    }
+    .form-input {
+      width: 100%;
+      background: rgba(0, 0, 0, 0.35);
+      border: 1px solid rgba(255, 255, 255, 0.12);
+      border-radius: 8px;
+      padding: 9px 12px;
+      font-size: 13px;
+      color: #ffffff;
+      outline: none;
+      transition: border-color 0.2s;
+    }
+    .form-input:focus {
+      border-color: #3b82f6;
+    }
+    .submit-btn {
+      width: 100%;
+      padding: 10px 16px;
+      background: <?php echo $isGoogle ? '#ea4335' : '#1877f2'; ?>;
+      border: none;
+      border-radius: 8px;
+      font-size: 13.5px;
+      font-weight: 600;
+      color: #ffffff;
+      cursor: pointer;
+      margin-top: 6px;
+      transition: opacity 0.2s;
+    }
+    .submit-btn:hover { opacity: 0.92; }
+    .cancel-link {
+      display: block;
+      text-align: center;
+      margin-top: 18px;
+      font-size: 12.5px;
+      color: #64748b;
+      text-decoration: none;
+      transition: color 0.2s;
+    }
+    .cancel-link:hover { color: #94a3b8; }
+    .footer-note {
+      text-align: center;
+      margin-top: 20px;
+      font-size: 11px;
+      color: #475569;
+      line-height: 1.4;
+    }
+  </style>
+</head>
+<body>
+  <div class="auth-card">
+    <div class="brand-header">
+      <span class="brand-title">AURORA CINEMA</span>
+      <span class="provider-pill">
+        <?php if ($isGoogle): ?>
+          <svg width="14" height="14" viewBox="0 0 24 24"><path fill="#4285F4" d="M23.745 12.27c0-.7-.06-1.4-.19-2.07H12v4.51h6.6c-.29 1.52-1.14 2.82-2.4 3.68v3.05h3.88c2.27-2.09 3.665-5.17 3.665-9.17z"/><path fill="#34A853" d="M12 24c3.24 0 5.95-1.08 7.93-2.91l-3.88-3.05c-1.08.72-2.45 1.16-4.05 1.16-3.12 0-5.77-2.1-6.72-4.93H1.25v3.15C3.26 21.36 7.33 24 12 24z"/><path fill="#FBBC05" d="M5.28 14.27c-.25-.72-.38-1.49-.38-2.27s.14-1.55.38-2.27V6.58H1.25C.45 8.18 0 10.03 0 12s.45 3.82 1.25 5.42l4.03-3.15z"/><path fill="#EA4335" d="M12 4.75c1.77 0 3.35.61 4.6 1.8l3.42-3.42C17.95 1.19 15.24 0 12 0 7.33 0 3.26 2.64 1.25 6.58l4.03 3.15c.95-2.83 3.6-4.98 6.72-4.98z"/></svg>
+        <?php else: ?>
+          <svg width="14" height="14" fill="#1877f2" viewBox="0 0 24 24"><path d="M24 12.073c0-6.627-5.373-12-12-12s-12 5.373-12 12c0 5.99 4.388 10.954 10.125 11.854v-8.385H7.078v-3.47h3.047V9.43c0-3.007 1.792-4.669 4.533-4.669 1.312 0 2.686.235 2.686.235v2.953H15.83c-1.491 0-1.956.925-1.956 1.874v2.25h3.328l-.532 3.47h-2.796v8.385C19.612 23.027 24 18.062 24 12.073z"/></svg>
+        <?php endif; ?>
+        <?php echo htmlspecialchars($providerName); ?> OAuth
+      </span>
+    </div>
+
+    <div class="page-title">
+      Đăng nhập với <?php echo htmlspecialchars($providerName); ?>
+    </div>
+    <div class="page-desc">
+      Chọn một tài khoản để đăng nhập vào Aurora Cinema. Thông tin sẽ được liên kết và đồng bộ trực tiếp vào cơ sở dữ liệu <strong>aurora_db</strong>.
+    </div>
+
+    <div class="notice-box">
+      <span>ℹ️</span>
+      <span>Hệ thống tự động đồng bộ hồ sơ khách hàng, cấp hạng Standard và quản lý điểm thưởng trong cơ sở dữ liệu MySQL aurora_db.</span>
+    </div>
+
+    <div class="section-label">Chọn tài khoản nhanh</div>
+    <div class="account-list">
+      <?php foreach ($mockAccounts as $acc): ?>
+        <form method="POST" action="api.php?action=oauth_consent_confirm">
+          <input type="hidden" name="provider" value="<?php echo htmlspecialchars($provider); ?>">
+          <input type="hidden" name="state" value="<?php echo htmlspecialchars($state); ?>">
+          <input type="hidden" name="name" value="<?php echo htmlspecialchars($acc['name']); ?>">
+          <input type="hidden" name="email" value="<?php echo htmlspecialchars($acc['email']); ?>">
+          <button type="submit" class="account-btn">
+            <div class="avatar" style="background: <?php echo htmlspecialchars($acc['color']); ?>;">
+              <?php echo htmlspecialchars($acc['initials']); ?>
+            </div>
+            <div class="acc-info">
+              <div class="acc-name"><?php echo htmlspecialchars($acc['name']); ?></div>
+              <div class="acc-email"><?php echo htmlspecialchars($acc['email']); ?></div>
+            </div>
+            <span class="acc-badge"><?php echo htmlspecialchars($acc['badge']); ?></span>
+          </button>
+        </form>
+      <?php endforeach; ?>
+    </div>
+
+    <div class="custom-divider">
+      <span>Hoặc sử dụng tài khoản khác</span>
+    </div>
+
+    <form method="POST" action="api.php?action=oauth_consent_confirm">
+      <input type="hidden" name="provider" value="<?php echo htmlspecialchars($provider); ?>">
+      <input type="hidden" name="state" value="<?php echo htmlspecialchars($state); ?>">
+      <div class="form-group">
+        <label class="form-label" for="custom-name">Họ và tên</label>
+        <input class="form-input" id="custom-name" name="name" type="text" placeholder="Nguyễn Hoàng Long" required>
+      </div>
+      <div class="form-group">
+        <label class="form-label" for="custom-email">Địa chỉ Email</label>
+        <input class="form-input" id="custom-email" name="email" type="email" placeholder="<?php echo $isGoogle ? 'hoanglong.aurora@gmail.com' : 'hoanglong.aurora@facebook.com'; ?>" required>
+      </div>
+      <button type="submit" class="submit-btn">Đăng nhập tài khoản này</button>
+    </form>
+
+    <a href="<?php echo htmlspecialchars(aurora_oauth_finish_url('error', $provider, 'Bạn đã hủy đăng nhập ' . $providerName . '.')); ?>" class="cancel-link">
+      Hủy bỏ và quay lại Aurora Cinema
+    </a>
+
+    <div class="footer-note">
+      Aurora Cinema Auth • Dữ liệu ghi nhận vào MySQL aurora_db: users, oauth_accounts & oauth_login_attempts.
+    </div>
+  </div>
+</body>
+</html>
+    <?php
+    exit;
+}
+
+// ── /oauth_consent_confirm ───────────────────────────────────────────────────
+if ($resource === 'oauth_consent_confirm') {
+    aurora_method('POST');
+    $provider = isset($_POST['provider']) ? strtolower(trim((string) $_POST['provider'])) : '';
+    if ($provider === 'google') {
+        aurora_oauth_redirect_error($provider, 'Không chấp nhận hồ sơ Google giả lập. Vui lòng xác thực trực tiếp qua Google.');
+    }
+    $state = isset($_POST['state']) ? (string) $_POST['state'] : '';
+    $name = isset($_POST['name']) ? trim((string) $_POST['name']) : '';
+    $email = isset($_POST['email']) ? strtolower(trim((string) $_POST['email'])) : '';
+
+    if (!in_array($provider, array('google', 'facebook'), true)) {
+        aurora_oauth_redirect_error('', 'Nhà cung cấp OAuth không hợp lệ.');
+    }
+    $sessionKey = 'aurora_oauth_' . $provider;
+    $pending = isset($_SESSION[$sessionKey]) && is_array($_SESSION[$sessionKey]) ? $_SESSION[$sessionKey] : null;
+    if (!$pending || !aurora_oauth_safe_equals($pending['state'], $state) || time() - (int)$pending['created_at'] > 600) {
+        aurora_oauth_redirect_error($provider, 'Phiên đăng nhập đã hết hạn hoặc không hợp lệ.');
+    }
+
+    if ($name === '' || $email === '' || !filter_var($email, FILTER_VALIDATE_EMAIL)) {
+        aurora_oauth_redirect_error($provider, 'Thông tin tài khoản không hợp lệ.');
+    }
+
+    // Generate mock code and save identity into session
+    $code = 'mock_code_' . aurora_oauth_random_token();
+    $mockId = 'mock_' . $provider . '_' . substr(md5($email), 0, 14);
+    $mockAvatar = 'https://ui-avatars.com/api/?name=' . urlencode($name) . '&background=0D8ABC&color=fff';
+    $_SESSION['aurora_oauth_code_' . $code] = array(
+        'id' => $mockId,
+        'email' => $email,
+        'name' => $name,
+        'avatar' => $mockAvatar,
+        'state' => $state,
+    );
+
+    // Redirect to oauth_callback
+    $callbackUrl = 'http://localhost/AURORA%20CINEMA/customer/backend/public/api.php?' . http_build_query(array(
+        'action' => 'oauth_callback',
+        'provider' => $provider,
+        'code' => $code,
+        'state' => $state,
+    ), '', '&');
+    header('Location: ' . $callbackUrl, true, 302);
+    exit;
+}
+
+// ── /oauth_callback ──────────────────────────────────────────────────────────
+if ($resource === 'oauth_callback') {
+    aurora_method('GET');
+    $provider = isset($_GET['provider']) ? strtolower(trim((string) $_GET['provider'])) : '';
+    $config = aurora_oauth_config($provider, $db);
+    if (!$config) aurora_oauth_redirect_error('', 'Nhà cung cấp đăng nhập không hợp lệ.');
+
+    $sessionKey = 'aurora_oauth_' . $provider;
+    $pending = isset($_SESSION[$sessionKey]) && is_array($_SESSION[$sessionKey]) ? $_SESSION[$sessionKey] : null;
+    unset($_SESSION[$sessionKey]);
+    $attemptId = $pending && isset($pending['attempt_id']) ? (int) $pending['attempt_id'] : 0;
+    if (empty($config['configured'])) {
+        aurora_oauth_attempt_finish($db, $attemptId, 'failed', 0, '', 'provider_not_configured', 'Nhà cung cấp OAuth chưa được cấu hình.');
+        aurora_oauth_redirect_error($provider, 'Đăng nhập ' . ucfirst($provider) . ' chưa được cấu hình trên máy chủ.');
+    }
+    if (isset($_GET['error'])) {
+        aurora_oauth_attempt_finish($db, $attemptId, 'failed', 0, '', 'access_denied', 'Khách hàng hủy hoặc từ chối đăng nhập.');
+        aurora_oauth_redirect_error($provider, 'Bạn đã hủy hoặc từ chối yêu cầu đăng nhập.');
+    }
+    $state = isset($_GET['state']) ? (string) $_GET['state'] : '';
+    $code = isset($_GET['code']) ? (string) $_GET['code'] : '';
+    if (!$pending || $state === '' || !aurora_oauth_safe_equals($pending['state'], $state) || time() - (int) $pending['created_at'] > 600) {
+        aurora_oauth_attempt_finish($db, $attemptId, 'failed', 0, '', 'invalid_state', 'Phiên OAuth không hợp lệ hoặc đã hết hạn.');
+        aurora_oauth_redirect_error($provider, 'Phiên đăng nhập đã hết hạn hoặc không hợp lệ. Vui lòng thử lại.');
+    }
+    if ($code === '') {
+        aurora_oauth_attempt_finish($db, $attemptId, 'failed', 0, '', 'missing_code', 'Nhà cung cấp không trả về mã xác thực.');
+        aurora_oauth_redirect_error($provider, 'Nhà cung cấp không trả về mã xác thực.');
+    }
+
+    $isSandboxAttempt = !empty($pending['is_sandbox']);
+    if ($provider === 'google' && $isSandboxAttempt) {
+        aurora_oauth_attempt_finish($db, $attemptId, 'failed', 0, '', 'sandbox_google_rejected', 'Google đăng nhập giả lập không được phép.');
+        aurora_oauth_redirect_error($provider, 'Không chấp nhận phiên Google giả lập. Vui lòng bắt đầu lại bằng tài khoản Google thật.');
+    }
+    if ($isSandboxAttempt) {
+        $codeKey = 'aurora_oauth_code_' . $code;
+        $mockProfileData = isset($_SESSION[$codeKey]) && is_array($_SESSION[$codeKey]) ? $_SESSION[$codeKey] : null;
+        unset($_SESSION[$codeKey]);
+        if (!$mockProfileData || empty($mockProfileData['email'])) {
+            aurora_oauth_attempt_finish($db, $attemptId, 'failed', 0, '', 'invalid_mock_code', 'Mã xác thực thử nghiệm không hợp lệ.');
+            aurora_oauth_redirect_error($provider, 'Mã xác thực thử nghiệm không hợp lệ hoặc đã hết hạn.');
+        }
+        $providerProfile = array(
+            'id' => $mockProfileData['id'],
+            'email' => $mockProfileData['email'],
+            'name' => $mockProfileData['name'],
+            'avatar' => $mockProfileData['avatar'],
+        );
+    } else {
+        $tokenFields = array(
+            'client_id' => $config['client_id'],
+            'client_secret' => $config['client_secret'],
+            'redirect_uri' => $config['redirect_uri'],
+            'code' => $code,
+            'grant_type' => 'authorization_code',
+        );
+        if ($provider === 'google' && !empty($pending['code_verifier'])) $tokenFields['code_verifier'] = $pending['code_verifier'];
+        $tokenResult = aurora_oauth_http($config['token_url'], 'POST', $tokenFields, '');
+        if (!$tokenResult['ok'] || empty($tokenResult['data']['access_token'])) {
+            $tokenErrorCode = !empty($tokenResult['data']['error']) && preg_match('/^[a-zA-Z0-9_-]{1,60}$/', (string)$tokenResult['data']['error'])
+                ? (string)$tokenResult['data']['error'] : 'token_exchange_failed';
+            $tokenErrorDetail = !empty($tokenResult['data']['error_description'])
+                ? (string)$tokenResult['data']['error_description']
+                : (!empty($tokenResult['message']) ? (string)$tokenResult['message'] : '');
+            $tokenErrorDetail = trim(preg_replace('/[\x00-\x1F\x7F]/', ' ', strip_tags($tokenErrorDetail)));
+            $tokenErrorDetail = substr($tokenErrorDetail, 0, 180);
+
+            if ($provider === 'google' && strpos($tokenErrorDetail, 'PHP cURL chưa được bật') !== false) {
+                $userMessage = 'Apache PHP chưa bật extension cURL nên không thể kết nối máy chủ Google. Hãy bật extension=curl trong php.ini đang dùng bởi Apache rồi khởi động lại Apache.';
+            } elseif ($provider === 'google' && $tokenErrorCode === 'invalid_client') {
+                $userMessage = 'Google từ chối OAuth Client (invalid_client). Hãy kiểm tra Client ID/Secret trong customer/backend/.env có cùng thuộc OAuth client đang bật hay không.';
+            } elseif ($provider === 'google' && $tokenErrorCode === 'invalid_grant') {
+                $userMessage = 'Mã đăng nhập Google không còn hợp lệ (invalid_grant). Hãy bắt đầu đăng nhập mới; nếu vẫn lỗi, kiểm tra redirect URI và tạo lại Client Secret của đúng OAuth client.';
+            } elseif ($provider === 'google' && $tokenErrorCode === 'unauthorized_client') {
+                $userMessage = 'OAuth Client chưa được Google cho phép dùng luồng này (unauthorized_client). Hãy xác nhận Client ID thuộc loại Web application và cấu hình Google Auth Platform.';
+            } else {
+                $userMessage = 'Google không cấp access token (' . $tokenErrorCode . ').';
+            }
+
+            $auditMessage = $tokenErrorDetail !== '' ? $tokenErrorDetail : $userMessage;
+            aurora_oauth_attempt_finish($db, $attemptId, 'failed', 0, '', $tokenErrorCode, $auditMessage);
+            aurora_oauth_redirect_error($provider, $userMessage);
+        }
+        $accessToken = (string) $tokenResult['data']['access_token'];
+
+        if ($provider === 'google') {
+            $profileResult = aurora_oauth_http($config['profile_url'], 'GET', array(), $accessToken);
+        } else {
+            $profileResult = aurora_oauth_http($config['profile_url'], 'GET', array(
+                'fields' => 'id,name,email,picture.type(large)',
+                'access_token' => $accessToken,
+            ), '');
+        }
+        if (!$profileResult['ok']) {
+            aurora_oauth_attempt_finish($db, $attemptId, 'failed', 0, '', 'profile_request_failed', 'Không thể lấy hồ sơ tài khoản từ nhà cung cấp.');
+            aurora_oauth_redirect_error($provider, 'Không thể lấy thông tin tài khoản từ nhà cung cấp. Vui lòng thử lại.');
+        }
+        $data = $profileResult['data'];
+        if ($provider === 'google' && empty($data['email_verified'])) {
+            aurora_oauth_attempt_finish($db, $attemptId, 'failed', 0, isset($data['sub']) ? $data['sub'] : '', 'email_unverified', 'Email Google chưa được xác minh.');
+            aurora_oauth_redirect_error($provider, 'Email Google chưa được xác minh.');
+        }
+        $avatar = '';
+        if ($provider === 'google' && isset($data['picture'])) $avatar = (string) $data['picture'];
+        if ($provider === 'facebook' && isset($data['picture']['data']['url'])) $avatar = (string) $data['picture']['data']['url'];
+
+        $providerProfile = array(
+            'id' => isset($data['sub']) ? $data['sub'] : (isset($data['id']) ? $data['id'] : ''),
+            'email' => isset($data['email']) ? $data['email'] : '',
+            'name' => isset($data['name']) ? $data['name'] : '',
+            'avatar' => $avatar,
+        );
+    }
+
+    try {
+        $userId = aurora_oauth_login_user($db, $provider, $providerProfile);
+        session_regenerate_id(true);
+        $_SESSION['aurora_user_id'] = $userId;
+        aurora_oauth_attempt_finish($db, $attemptId, 'succeeded', $userId, $providerProfile['id'], '', '');
+        header('Location: ' . aurora_oauth_finish_url('success', $provider, ''), true, 302);
+        exit;
+    } catch (Exception $exception) {
+        aurora_oauth_attempt_finish($db, $attemptId, 'failed', 0, '', 'account_link_failed', $exception->getMessage());
+        aurora_oauth_redirect_error($provider, $exception->getMessage());
+    }
 }
 
 // ── /register ─────────────────────────────────────────────────────────────────

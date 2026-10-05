@@ -33,7 +33,8 @@ pos/backend/
 
 ## Mục đích
 
-- Xử lý đăng nhập POS
+- Xử lý đăng nhập POS bằng tài khoản nhân sự trong `aurora_db.pos_users`
+- Mở/đóng ca, ghi lịch sử xác thực và giữ session tại máy chủ
 - Cung cấp API cho frontend React
 - Tách biệt logic nghiệp vụ và controller
 - Dễ mở rộng cho quản lý hóa đơn, nhân viên, hàng hóa
@@ -58,14 +59,19 @@ DB_PASSWORD=
 - `POST ?action=login`
 - `GET ?action=me`
 - `POST ?action=logout`
+- `GET ?action=dashboard`
+- `POST ?action=close_shift` (`cash_at_close`)
 
 ## Bước chạy
 
 1. Khởi tạo database `aurora_db` bằng schema chính ở thư mục gốc.
-2. Chạy SQL trong `database/schema.sql` để bổ sung các bảng POS còn thiếu.
+2. Chạy SQL trong `database/schema.sql` (hoặc `database/pos_auth_schema.sql`) để bổ sung các bảng POS còn thiếu.
 3. Truy cập frontend POS và đăng nhập bằng tài khoản demo.
 
 ## Tài khoản demo
 
-- Username: `admin`
-- Password: `admin123`
+- Thu ngân: `0328754062` / `8888`
+- Quản lý ca trực: `admin` / `admin123`
+
+Mỗi lượt đăng nhập được lưu tại `pos_login_events`; mỗi ca làm việc được lưu
+tại `pos_shifts`. API không còn xác thực fallback ở frontend/backend.

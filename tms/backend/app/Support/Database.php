@@ -12,6 +12,14 @@ class Database
 
         $config = require __DIR__ . '/../../config/app.php';
         $dbConfig = $config['db'];
+        $timezone = isset($config['timezone']) ? $config['timezone'] : 'Asia/Ho_Chi_Minh';
+        if (!date_default_timezone_set($timezone)) {
+            throw new Exception('Múi giờ TMS không hợp lệ: ' . $timezone);
+        }
+        $dbTimezone = isset($config['db_timezone']) ? $config['db_timezone'] : '+07:00';
+        if (!preg_match('/^[+-](?:0\d|1[0-4]):[0-5]\d$/', $dbTimezone)) {
+            throw new Exception('Múi giờ MySQL TMS không hợp lệ.');
+        }
 
         $host = isset($_ENV['DB_HOST']) ? $_ENV['DB_HOST'] : $dbConfig['host'];
         $port = isset($_ENV['DB_PORT']) ? (int) $_ENV['DB_PORT'] : $dbConfig['port'];
@@ -36,6 +44,9 @@ class Database
         }
 
         $mysqli->set_charset('utf8');
+        if (!$mysqli->query("SET time_zone = '" . $dbTimezone . "'")) {
+            throw new Exception('Không thể đặt múi giờ MySQL cho TMS: ' . $mysqli->error);
+        }
         self::$connection = $mysqli;
 
         return self::$connection;

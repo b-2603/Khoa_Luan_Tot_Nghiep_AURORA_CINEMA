@@ -14,11 +14,15 @@ type AuthenticatedAccount = {
   points?: number;
 };
 
+type OAuthProvider = 'google' | 'facebook';
+type OAuthStatus = Record<OAuthProvider, { configured: boolean }>;
+
 type AuthModalProps = {
   mode: AuthMode;
   onClose: () => void;
   onAuthenticated: (account: AuthenticatedAccount) => void;
   onSwitchMode?: (mode: AuthMode) => void;
+  initialError?: string;
 };
 
 const API_URL = 'http://localhost/AURORA%20CINEMA/customer/backend/public/api.php';
@@ -27,7 +31,8 @@ export default function AuthModal({
   mode: initialMode,
   onClose,
   onAuthenticated,
-  onSwitchMode
+  onSwitchMode,
+  initialError = ''
 }: AuthModalProps) {
   const [mode, setMode] = useState<AuthMode>(initialMode);
   const [fullName, setFullName] = useState('');
@@ -44,12 +49,14 @@ export default function AuthModal({
   const [captchaInput, setCaptchaInput] = useState('');
   const [error, setError] = useState('');
   const [isSubmitting, setIsSubmitting] = useState(false);
+  const [socialProvider, setSocialProvider] = useState<OAuthProvider | null>(null);
+  const [oauthStatus, setOauthStatus] = useState<OAuthStatus | null>(null);
 
   // Sync mode when prop changes
   useEffect(() => {
     setMode(initialMode);
-    setError('');
-  }, [initialMode]);
+    setError(initialError);
+  }, [initialMode, initialError]);
 
   // Generate random captcha
   function generateCaptcha() {
@@ -61,6 +68,17 @@ export default function AuthModal({
   useEffect(() => {
     generateCaptcha();
   }, [mode]);
+
+  useEffect(() => {
+    const controller = new AbortController();
+    fetch(`${API_URL}?action=oauth_status`, { credentials: 'include', cache: 'no-store', signal: controller.signal })
+      .then(response => response.ok ? response.json() : Promise.reject(new Error('OAuth status unavailable')))
+      .then(result => setOauthStatus(result.providers || null))
+      .catch(fetchError => {
+        if (fetchError.name !== 'AbortError') setOauthStatus(null);
+      });
+    return () => controller.abort();
+  }, []);
 
   function handleSwitch(nextMode: AuthMode) {
     setMode(nextMode);
@@ -132,8 +150,12 @@ export default function AuthModal({
     }
   }
 
-  async function handleSocialLogin(provider: 'google' | 'facebook') {
-    setIsSubmitting(true);
+  async function handleSocialLogin(provider: OAuthProvider) {
+    if (oauthStatus && !oauthStatus[provider]?.configured) {
+      setError(`Đăng nhập ${provider === 'google' ? 'Google' : 'Facebook'} chưa được cấu hình trên máy chủ.`);
+      return;
+    }
+    setSocialProvider(provider);
     setError('');
     try {
       const response = await fetch(`${API_URL}?action=oauth_start&provider=${provider}`, { credentials: 'include' });
@@ -142,11 +164,24 @@ export default function AuthModal({
         setError(result.message || 'Đăng nhập mạng xã hội chưa được cấu hình.');
         return;
       }
-      setError(result.message || 'Đăng nhập mạng xã hội chưa được cấu hình.');
+      if (!result.authorizationUrl) {
+        setError('Máy chủ không trả về địa chỉ xác thực.');
+        return;
+      }
+      const authorizationUrl = new URL(result.authorizationUrl);
+      const isLocalHost = authorizationUrl.hostname === 'localhost' || authorizationUrl.hostname === '127.0.0.1' || authorizationUrl.hostname === window.location.hostname;
+      const allowedHosts = provider === 'google'
+        ? ['accounts.google.com']
+        : ['www.facebook.com', 'facebook.com'];
+      if (!isLocalHost && (authorizationUrl.protocol !== 'https:' || !allowedHosts.includes(authorizationUrl.hostname))) {
+        setError('Địa chỉ xác thực từ máy chủ không hợp lệ.');
+        return;
+      }
+      window.location.assign(authorizationUrl.toString());
     } catch {
       setError('Không thể kết nối máy chủ xác thực.');
     } finally {
-      setIsSubmitting(false);
+      setSocialProvider(null);
     }
   }
 
@@ -863,7 +898,7 @@ export default function AuthModal({
                 {/* Google Button */}
                 <button
                   type="button"
-                  disabled={isSubmitting}
+                  disabled={isSubmitting || socialProvider !== null || oauthStatus?.google?.configured === false}
                   onClick={() => handleSocialLogin('google')}
                   style={{
                     width: '100%',
@@ -874,7 +909,8 @@ export default function AuthModal({
                     fontSize: 12.5,
                     fontWeight: 600,
                     color: '#334155',
-                    cursor: isSubmitting ? 'wait' : 'pointer',
+                    cursor: socialProvider === 'google' ? 'wait' : oauthStatus?.google?.configured === false ? 'not-allowed' : 'pointer',
+                    opacity: oauthStatus?.google?.configured === false ? 0.58 : 1,
                     display: 'flex',
                     alignItems: 'center',
                     justifyContent: 'center',
@@ -899,13 +935,13 @@ export default function AuthModal({
                       d="M12 5.38c1.62 0 3.06.56 4.21 1.64l3.15-3.15C17.45 2.09 14.97 1 12 1 7.7 1 3.99 3.47 2.18 7.06l3.66 2.84c.87-2.6 3.3-4.52 6.16-4.52z"
                     />
                   </svg>
-                  <span>{mode === 'register' ? 'Đăng ký với Google' : 'Đăng nhập với Google'}</span>
+                  <span>{socialProvider === 'google' ? 'Đang chuyển đến Google...' : oauthStatus?.google?.configured === false ? 'Google chưa được cấu hình' : mode === 'register' ? 'Đăng ký với Google' : 'Đăng nhập với Google'}</span>
                 </button>
 
                 {/* Facebook Button */}
                 <button
                   type="button"
-                  disabled={isSubmitting}
+                  disabled={isSubmitting || socialProvider !== null || oauthStatus?.facebook?.configured === false}
                   onClick={() => handleSocialLogin('facebook')}
                   style={{
                     width: '100%',
@@ -916,7 +952,8 @@ export default function AuthModal({
                     fontSize: 12.5,
                     fontWeight: 600,
                     color: '#ffffff',
-                    cursor: isSubmitting ? 'wait' : 'pointer',
+                    cursor: socialProvider === 'facebook' ? 'wait' : oauthStatus?.facebook?.configured === false ? 'not-allowed' : 'pointer',
+                    opacity: oauthStatus?.facebook?.configured === false ? 0.58 : 1,
                     display: 'flex',
                     alignItems: 'center',
                     justifyContent: 'center',
@@ -924,7 +961,7 @@ export default function AuthModal({
                   }}
                 >
                   <Facebook size={16} fill="#ffffff" color="#ffffff" />
-                  <span>{mode === 'register' ? 'Đăng ký với Facebook' : 'Đăng nhập với Facebook'}</span>
+                  <span>{socialProvider === 'facebook' ? 'Đang chuyển đến Facebook...' : oauthStatus?.facebook?.configured === false ? 'Facebook chưa được cấu hình' : mode === 'register' ? 'Đăng ký với Facebook' : 'Đăng nhập với Facebook'}</span>
                 </button>
               </div>
 

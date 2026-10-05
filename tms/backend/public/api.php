@@ -1,4 +1,6 @@
 <?php
+date_default_timezone_set('Asia/Ho_Chi_Minh');
+
 // Keep the TMS server-side session across page reloads for eight hours.
 // This project also supports legacy WAMP/PHP installations where
 // session_status() and the array cookie API are not available.
@@ -48,6 +50,8 @@ function jsonResponse($payload, $status = 200) {
     else if ($status === 401) header('HTTP/1.1 401 Unauthorized');
     else if ($status === 403) header('HTTP/1.1 403 Forbidden');
     else if ($status === 404) header('HTTP/1.1 404 Not Found');
+    else if ($status === 409) header('HTTP/1.1 409 Conflict');
+    else if ($status === 422) header('HTTP/1.1 422 Unprocessable Entity');
     else if ($status === 500) header('HTTP/1.1 500 Internal Server Error');
     else header('HTTP/1.1 ' . $status . ' OK');
     echo json_encode($payload);
@@ -75,10 +79,26 @@ function generateImportedMovieCode($db) {
 }
 
 function requireAdmin() {
-    if (!empty($_SESSION['tms_user'])) {
-        return $_SESSION['tms_user'];
+    global $db;
+    if (empty($_SESSION['tms_user']['id'])) {
+        jsonResponse(array('success' => false, 'message' => 'Vui lòng đăng nhập tài khoản quản trị TMS.'), 401);
     }
-    jsonResponse(array('success' => false, 'message' => 'Vui lòng đăng nhập tài khoản quản trị TMS.'), 401);
+
+    $userId = (int)$_SESSION['tms_user']['id'];
+    $result = $db->query("SELECT id, username, full_name, phone, theater_id, role, status FROM users WHERE id = {$userId} LIMIT 1");
+    if (!$result) {
+        jsonResponse(array('success' => false, 'message' => 'Không thể xác minh trạng thái tài khoản trong aurora_db: ' . $db->error), 500);
+    }
+    $user = $result->fetch_assoc();
+    if (!$user || $user['status'] !== 'active') {
+        unset($_SESSION['tms_user']);
+        clearTmsIdentity();
+        jsonResponse(array('success' => false, 'message' => 'Tài khoản TMS đã bị khóa hoặc ngưng hoạt động. Vui lòng liên hệ quản trị viên.'), 401);
+    }
+
+    $user['role'] = AdminController::normalizeRole($user['role']);
+    $_SESSION['tms_user'] = $user;
+    return $user;
 }
 
 // PHP 5.2/WAMP sends a second Set-Cookie when the session id is regenerated.
@@ -92,6 +112,11 @@ function regenerateTmsSession() {
 }
 
 function passwordMatches($password, $hash) {
+    $legacyPrefix = 'sha256:aurora-tms-local-2026:';
+    if (strpos($hash, $legacyPrefix) === 0) {
+        $expected = substr($hash, strlen($legacyPrefix));
+        return hash('sha256', 'aurora-tms-local-2026:' . $password) === $expected;
+    }
     if (function_exists('password_verify')) {
         return password_verify($password, $hash);
     }
@@ -106,6 +131,9 @@ if ($db->connect_error) {
 }
 
 $db->set_charset('utf8');
+if (!$db->query("SET time_zone = '+07:00'")) {
+    jsonResponse(array('success' => false, 'message' => 'Không thể đặt múi giờ Việt Nam cho kết nối aurora_db: ' . $db->error), 500);
+}
 
 // Scope every cinema operator to one cinema.  This migration is intentionally
 // here (before session restoration) so both a fresh login and an existing
@@ -358,19 +386,52 @@ if ($action === 'login' && $requestMethod === 'POST') {
         jsonResponse(array('success' => false, 'message' => 'Vui lòng nhập đầy đủ tên đăng nhập và mật khẩu.'), 400);
     }
 
-    $escapedUser = $db->real_escape_string($username);
-    // TMS accepts either the account username or the registered phone number.
-    // Both values are resolved to the same row in aurora_db so the durable
-    // session always carries the real database identity.
-    // A legacy seed currently contains the same phone on a POS account and
-    // on admin_tong. Prefer an exact username match; for phone-only login,
-    // choose the highest-privilege account deterministically instead of
-    // letting MySQL return whichever duplicate happens to be encountered.
-    $res = $db->query("SELECT id, username, password_hash, full_name, phone, theater_id, role, status FROM users WHERE username = '{$escapedUser}' OR phone = '{$escapedUser}' ORDER BY (username = '{$escapedUser}') DESC, (role = 'super_admin') DESC, id DESC LIMIT 1");
-    $user = $res ? $res->fetch_assoc() : null;
+    $user = null;
+    $stmt = $db->prepare('SELECT id, username, password_hash, full_name, phone, theater_id, role, status FROM users WHERE username = ? LIMIT 1');
+    if (!$stmt) jsonResponse(array('success' => false, 'message' => 'Không thể chuẩn bị truy vấn đăng nhập trong aurora_db: ' . $db->error), 500);
+    $stmt->bind_param('s', $username);
+    if (!$stmt->execute()) {
+        $error = $stmt->error;
+        $stmt->close();
+        jsonResponse(array('success' => false, 'message' => 'Không thể tra cứu tài khoản trong aurora_db: ' . $error), 500);
+    }
+    $res = $stmt->get_result();
+    if (!$res) {
+        $error = $stmt->error;
+        $stmt->close();
+        jsonResponse(array('success' => false, 'message' => 'Không thể đọc tài khoản từ aurora_db: ' . $error), 500);
+    }
+    $user = $res->fetch_assoc();
+    $stmt->close();
+
+    // Phone numbers can be shared by legacy staff records. Never silently
+    // authenticate a different, active account when the intended account is
+    // locked; require the unique username whenever the phone is ambiguous.
+    if (!$user) {
+        $stmt = $db->prepare('SELECT id, username, password_hash, full_name, phone, theater_id, role, status FROM users WHERE phone = ? ORDER BY id DESC LIMIT 2');
+        if (!$stmt) jsonResponse(array('success' => false, 'message' => 'Không thể chuẩn bị tra cứu số điện thoại trong aurora_db: ' . $db->error), 500);
+        $stmt->bind_param('s', $username);
+        if (!$stmt->execute()) {
+            $error = $stmt->error;
+            $stmt->close();
+            jsonResponse(array('success' => false, 'message' => 'Không thể tra cứu số điện thoại trong aurora_db: ' . $error), 500);
+        }
+        $res = $stmt->get_result();
+        if (!$res) {
+            $error = $stmt->error;
+            $stmt->close();
+            jsonResponse(array('success' => false, 'message' => 'Không thể đọc tài khoản từ aurora_db: ' . $error), 500);
+        }
+        if ($res->num_rows > 1) {
+            $stmt->close();
+            jsonResponse(array('success' => false, 'message' => 'Số điện thoại này được dùng cho nhiều tài khoản. Vui lòng đăng nhập bằng tên tài khoản.'), 400);
+        }
+        $user = $res->fetch_assoc();
+        $stmt->close();
+    }
 
     if ($user) {
-        if (!passwordMatches($password, $user['password_hash']) && !in_array($password, array('8888', 'admin123'), true)) {
+        if (!passwordMatches($password, $user['password_hash'])) {
             jsonResponse(array('success' => false, 'message' => 'Tên đăng nhập hoặc mật khẩu không chính xác.'), 401);
         }
 
@@ -378,7 +439,9 @@ if ($action === 'login' && $requestMethod === 'POST') {
             jsonResponse(array('success' => false, 'message' => 'Tài khoản nhân sự TMS đang bị khóa hoặc ngưng hoạt động.'), 403);
         }
 
-        $db->query('UPDATE users SET last_login = NOW() WHERE id = ' . (int)$user['id']);
+        if (!$db->query('UPDATE users SET last_login = NOW() WHERE id = ' . (int)$user['id'])) {
+            jsonResponse(array('success' => false, 'message' => 'Không thể ghi nhận lần đăng nhập trong aurora_db: ' . $db->error), 500);
+        }
         unset($user['password_hash']);
 
         $user['role'] = AdminController::normalizeRole($user['role']);
@@ -419,24 +482,7 @@ if ($action === 'logout') {
 }
 
 if ($action === 'me') {
-    if (empty($_SESSION['tms_user'])) {
-        jsonResponse(array('success' => false, 'message' => 'Chưa đăng nhập.'), 401);
-    }
-    $user = $_SESSION['tms_user'];
-    // Re-check the database account before restoring an existing session.
-    if (isset($user['id']) && (int)$user['id'] > 0) {
-        $userId = (int)$user['id'];
-        $result = $db->query("SELECT id, username, full_name, phone, theater_id, role, status FROM users WHERE id = {$userId} LIMIT 1");
-        if ($result && ($currentUser = $result->fetch_assoc())) {
-            if ($currentUser['status'] !== 'active') {
-                unset($_SESSION['tms_user']);
-                jsonResponse(array('success' => false, 'message' => 'Tài khoản TMS không còn hoạt động.'), 401);
-            }
-            $currentUser['role'] = AdminController::normalizeRole($currentUser['role']);
-            $_SESSION['tms_user'] = $currentUser;
-            $user = $currentUser;
-        }
-    }
+    $user = requireAdmin();
     $roleDefs = AdminController::getRoleDefinitions();
     $user['role_info'] = isset($roleDefs[$user['role']]) ? $roleDefs[$user['role']] : null;
     jsonResponse(array('success' => true, 'data' => $user));
@@ -455,6 +501,9 @@ if ($action === 'users') {
         $controller->listUsers();
     }
     if ($requestMethod === 'POST' || $requestMethod === 'PUT') {
+        if (isset($_GET['delete']) || (isset($_GET['action_type']) && $_GET['action_type'] === 'delete')) {
+            $controller->deleteUser();
+        }
         $controller->saveUser();
     }
     if ($requestMethod === 'DELETE') {

@@ -1,6 +1,7 @@
--- Aurora POS schema (all data belongs to the shared aurora_db database).
 USE aurora_db;
 
+-- Nguồn tài khoản vận hành POS. Tách với users khách hàng để quyền tại quầy
+-- không bị lẫn với tài khoản thành viên Aurora.
 CREATE TABLE IF NOT EXISTS pos_users (
   id BIGINT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
   username VARCHAR(60) NOT NULL,
@@ -18,24 +19,6 @@ CREATE TABLE IF NOT EXISTS pos_users (
   KEY idx_pos_users_theater (theater_id)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8 COLLATE=utf8_unicode_ci;
 
-CREATE TABLE IF NOT EXISTS pos_shifts (
-  id BIGINT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
-  user_id BIGINT UNSIGNED NOT NULL,
-  theater_id BIGINT UNSIGNED NOT NULL DEFAULT 1,
-  cinema_name VARCHAR(120) NOT NULL,
-  counter VARCHAR(60) NOT NULL,
-  initial_cash DECIMAL(12,2) NOT NULL DEFAULT 0,
-  cash_at_close DECIMAL(12,2) NULL,
-  status ENUM('active','paused','closed') NOT NULL DEFAULT 'active',
-  opened_at DATETIME NOT NULL,
-  closed_at DATETIME NULL,
-  notes TEXT NULL,
-  created_at TIMESTAMP NULL DEFAULT CURRENT_TIMESTAMP,
-  updated_at DATETIME NULL DEFAULT NULL,
-  KEY idx_pos_shifts_user_status (user_id, status),
-  KEY idx_pos_shifts_theater (theater_id)
-) ENGINE=InnoDB DEFAULT CHARSET=utf8 COLLATE=utf8_unicode_ci;
-
 CREATE TABLE IF NOT EXISTS pos_login_events (
   id BIGINT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
   user_id BIGINT UNSIGNED NULL,
@@ -49,7 +32,8 @@ CREATE TABLE IF NOT EXISTS pos_login_events (
   KEY idx_pos_login_username_created (username, created_at)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8 COLLATE=utf8_unicode_ci;
 
--- Demo personnel. Change these initial credentials before production use.
+-- Mật khẩu mẫu: cashier = 8888, admin = admin123. Môi trường thật cần đổi
+-- trong trang quản trị; hash có tiền tố để backend PHP 5.2 tương thích.
 INSERT INTO pos_users (username, password_hash, full_name, phone, role, status, theater_id, counter_code, updated_at)
 VALUES
   ('0328754062', 'sha256:aurora-pos-local-2026:656c6be16cea56dda370ca4ceb71f8a0020454de65a69d1259598aac257116a2', 'Nguyễn Trần Thái Bảo', '0328754062', 'cashier', 'active', 1, 'AURORA BOX 02', NOW()),
