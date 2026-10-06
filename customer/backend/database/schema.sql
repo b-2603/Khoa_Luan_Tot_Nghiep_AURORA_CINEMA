@@ -184,3 +184,32 @@ CREATE TABLE IF NOT EXISTS promotions (
   status ENUM('ACTIVE', 'INACTIVE', 'EXPIRED') NOT NULL DEFAULT 'ACTIVE',
   created_at TIMESTAMP NULL DEFAULT CURRENT_TIMESTAMP
 ) ENGINE=InnoDB;
+
+-- Nội dung trang Ưu đãi dùng chung với nghiệp vụ voucher trong TMS/POS.
+CREATE TABLE IF NOT EXISTS vouchers (
+  id BIGINT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
+  code VARCHAR(40) NOT NULL UNIQUE,
+  name VARCHAR(150) NOT NULL,
+  short_description VARCHAR(255) NULL,
+  details TEXT NULL,
+  terms_text TEXT NULL,
+  category VARCHAR(30) NOT NULL DEFAULT 'ticket',
+  audience VARCHAR(30) NOT NULL DEFAULT 'all',
+  badge_text VARCHAR(60) NULL,
+  theme_color VARCHAR(20) NOT NULL DEFAULT '#D99A1B',
+  image_url VARCHAR(500) NULL,
+  discount_type ENUM('percent','amount') NOT NULL DEFAULT 'percent',
+  discount_value DECIMAL(12,2) NOT NULL DEFAULT 0,
+  min_order_amount DECIMAL(12,2) NOT NULL DEFAULT 0,
+  max_discount DECIMAL(12,2) NOT NULL DEFAULT 0,
+  starts_at DATETIME NOT NULL,
+  ends_at DATETIME NOT NULL,
+  usage_limit INT UNSIGNED NOT NULL DEFAULT 0,
+  used_count INT UNSIGNED NOT NULL DEFAULT 0,
+  status ENUM('active','inactive','expired') NOT NULL DEFAULT 'active',
+  is_featured TINYINT(1) NOT NULL DEFAULT 0,
+  sort_order INT NOT NULL DEFAULT 0,
+  created_at TIMESTAMP NULL DEFAULT CURRENT_TIMESTAMP,
+  updated_at DATETIME NULL,
+  KEY idx_vouchers_customer (status, starts_at, ends_at, sort_order)
+) ENGINE=InnoDB;

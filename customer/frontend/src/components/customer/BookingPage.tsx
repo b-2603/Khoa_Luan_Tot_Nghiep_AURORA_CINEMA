@@ -626,7 +626,7 @@ export default function BookingPage({ movie, showtime: initShowtime, theater: in
       const res = await fetch(`${API}?action=bookings`, {
         method:'POST', credentials:'include',
         headers:{'Content-Type':'application/json'},
-        body: JSON.stringify({ showtimeId: selectedShowtime.id, seatIds: selectedSeatIds, combos: comboItems.map(item => ({ id: item.combo.id, quantity: item.quantity })) }),
+        body: JSON.stringify({ showtimeId: selectedShowtime.id, seatIds: selectedSeatIds, combos: comboItems.map(item => ({ id: item.combo.id, quantity: item.quantity })), voucherCode: voucherInfo ? voucherCode.trim().toUpperCase() : undefined }),
       });
       const data = await res.json();
       if (!res.ok) { setError(data.message || t('Đặt vé thất bại.','Booking failed.',lang)); return; }

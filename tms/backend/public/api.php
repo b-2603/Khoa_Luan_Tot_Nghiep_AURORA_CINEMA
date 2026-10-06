@@ -395,20 +395,32 @@ if ($action === 'login' && $requestMethod === 'POST') {
         $stmt->close();
         jsonResponse(array('success' => false, 'message' => 'Không thể tra cứu tài khoản trong aurora_db: ' . $error), 500);
     }
-    $res = $stmt->get_result();
-    if (!$res) {
-        $error = $stmt->error;
-        $stmt->close();
-        jsonResponse(array('success' => false, 'message' => 'Không thể đọc tài khoản từ aurora_db: ' . $error), 500);
+    // get_result() requires mysqlnd, which is not bundled with the PHP 5.2
+    // version used by the project's WAMP stack. Bind the selected columns
+    // directly so login works on both the legacy runtime and modern PHP.
+    $stmt->store_result();
+    $id = $dbUsername = $passwordHash = $fullName = $phone = $theaterId = $role = $status = null;
+    $stmt->bind_result($id, $dbUsername, $passwordHash, $fullName, $phone, $theaterId, $role, $status);
+    if ($stmt->fetch()) {
+        $user = array(
+            'id' => $id,
+            'username' => $dbUsername,
+            'password_hash' => $passwordHash,
+            'full_name' => $fullName,
+            'phone' => $phone,
+            'theater_id' => $theaterId,
+            'role' => $role,
+            'status' => $status
+        );
     }
-    $user = $res->fetch_assoc();
     $stmt->close();
 
-    // Phone numbers can be shared by legacy staff records. Never silently
-    // authenticate a different, active account when the intended account is
-    // locked; require the unique username whenever the phone is ambiguous.
+    // Phone numbers can be shared by legacy staff records. Use the password
+    // to disambiguate them, but only continue when exactly one account
+    // matches. This keeps the documented phone-number login working without
+    // ever selecting another account merely because it is active.
     if (!$user) {
-        $stmt = $db->prepare('SELECT id, username, password_hash, full_name, phone, theater_id, role, status FROM users WHERE phone = ? ORDER BY id DESC LIMIT 2');
+        $stmt = $db->prepare('SELECT id, username, password_hash, full_name, phone, theater_id, role, status FROM users WHERE phone = ? ORDER BY id DESC');
         if (!$stmt) jsonResponse(array('success' => false, 'message' => 'Không thể chuẩn bị tra cứu số điện thoại trong aurora_db: ' . $db->error), 500);
         $stmt->bind_param('s', $username);
         if (!$stmt->execute()) {
@@ -416,18 +428,28 @@ if ($action === 'login' && $requestMethod === 'POST') {
             $stmt->close();
             jsonResponse(array('success' => false, 'message' => 'Không thể tra cứu số điện thoại trong aurora_db: ' . $error), 500);
         }
-        $res = $stmt->get_result();
-        if (!$res) {
-            $error = $stmt->error;
-            $stmt->close();
-            jsonResponse(array('success' => false, 'message' => 'Không thể đọc tài khoản từ aurora_db: ' . $error), 500);
+        $stmt->store_result();
+        $id = $dbUsername = $passwordHash = $fullName = $phone = $theaterId = $role = $status = null;
+        $stmt->bind_result($id, $dbUsername, $passwordHash, $fullName, $phone, $theaterId, $role, $status);
+        $matchedUsers = array();
+        while ($stmt->fetch()) {
+            $candidate = array(
+                'id' => $id,
+                'username' => $dbUsername,
+                'password_hash' => $passwordHash,
+                'full_name' => $fullName,
+                'phone' => $phone,
+                'theater_id' => $theaterId,
+                'role' => $role,
+                'status' => $status
+            );
+            if (passwordMatches($password, $passwordHash)) $matchedUsers[] = $candidate;
         }
-        if ($res->num_rows > 1) {
-            $stmt->close();
-            jsonResponse(array('success' => false, 'message' => 'Số điện thoại này được dùng cho nhiều tài khoản. Vui lòng đăng nhập bằng tên tài khoản.'), 400);
-        }
-        $user = $res->fetch_assoc();
         $stmt->close();
+        if (count($matchedUsers) > 1) {
+            jsonResponse(array('success' => false, 'message' => 'Thông tin đăng nhập khớp với nhiều tài khoản. Vui lòng dùng tên tài khoản TMS.'), 400);
+        }
+        if (count($matchedUsers) === 1) $user = $matchedUsers[0];
     }
 
     if ($user) {
@@ -437,6 +459,16 @@ if ($action === 'login' && $requestMethod === 'POST') {
 
         if ($user['status'] !== 'active') {
             jsonResponse(array('success' => false, 'message' => 'Tài khoản nhân sự TMS đang bị khóa hoặc ngưng hoạt động.'), 403);
+        }
+
+        $user['theater_name'] = '';
+        $signedInTheaterId = isset($user['theater_id']) ? (int)$user['theater_id'] : 0;
+        if ($signedInTheaterId > 0) {
+            $theaterResult = $db->query('SELECT name FROM theaters WHERE id=' . $signedInTheaterId . ' LIMIT 1');
+            if ($theaterResult && ($theaterRow = $theaterResult->fetch_row())) {
+                $user['theater_name'] = $theaterRow[0];
+            }
+            if ($theaterResult) $theaterResult->free();
         }
 
         if (!$db->query('UPDATE users SET last_login = NOW() WHERE id = ' . (int)$user['id'])) {
@@ -512,6 +544,11 @@ if ($action === 'users') {
     jsonResponse(array('success' => false, 'message' => 'Phương thức không được hỗ trợ cho users.'), 405);
 }
 
+if ($action === 'customer-account-status') {
+    if ($requestMethod === 'POST' || $requestMethod === 'PUT') $controller->updateCustomerStatus();
+    jsonResponse(array('success' => false, 'message' => 'Phương thức không được hỗ trợ cho trạng thái customer.'), 405);
+}
+
 if ($action === 'dashboard') {
     requireAdmin();
     $controller->dashboard();
@@ -563,6 +600,16 @@ if ($action === 'refunds') {
 
 if ($action === 'seats') {
     $controller->seats();
+}
+
+if ($action === 'screen-seat-map') {
+    if ($requestMethod === 'GET') $controller->screenSeatMap();
+    if ($requestMethod === 'POST' || $requestMethod === 'PUT') $controller->updateShowtimeSeatLocks();
+    jsonResponse(array('success' => false, 'message' => 'Phương thức không được hỗ trợ cho sơ đồ ghế.'), 405);
+}
+
+if ($action === 'cinema-system-overview' && $requestMethod === 'GET') {
+    $controller->cinemaSystemOverview();
 }
 
 if ($action === 'report' || $action === 'reports') {

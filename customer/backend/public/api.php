@@ -391,6 +391,40 @@ function aurora_ensure_vouchers($db) {
     return $db->query('SELECT 1 FROM vouchers LIMIT 1') !== false;
 }
 
+function aurora_ensure_order_voucher_column($db) {
+    $column = $db->query("SHOW COLUMNS FROM orders LIKE 'voucher_code'");
+    if ($column && $column->num_rows > 0) return true;
+    return (bool)$db->query("ALTER TABLE orders ADD COLUMN voucher_code VARCHAR(40) NULL AFTER discount_amount");
+}
+
+function aurora_promotion_payload($row) {
+    $limit = (int)$row['usage_limit'];
+    $used = (int)$row['used_count'];
+    return array(
+        'id' => (int)$row['id'],
+        'name' => $row['name'],
+        'code' => $row['code'],
+        'description' => $row['short_description'],
+        'details' => $row['details'],
+        'terms' => $row['terms_text'],
+        'category' => $row['category'],
+        'audience' => $row['audience'],
+        'badge' => $row['badge_text'],
+        'themeColor' => $row['theme_color'],
+        'imageUrl' => $row['image_url'],
+        'discountType' => $row['discount_type'],
+        'discountValue' => (float)$row['discount_value'],
+        'minOrderAmount' => (float)$row['min_order_amount'],
+        'maxDiscount' => (float)$row['max_discount'],
+        'startsAt' => $row['starts_at'],
+        'endsAt' => $row['ends_at'],
+        'usageLimit' => $limit,
+        'usedCount' => $used,
+        'remainingUses' => $limit > 0 ? max(0, $limit - $used) : null,
+        'isFeatured' => (bool)$row['is_featured']
+    );
+}
+
 function aurora_route() {
     $path = isset($_SERVER['PATH_INFO']) ? $_SERVER['PATH_INFO'] : '';
     if (!$path && isset($_SERVER['REQUEST_URI'])) {
@@ -618,7 +652,7 @@ if ($resource === 'home_event') {
         $entity = $db->query("SELECT id FROM showtimes WHERE id={$entityId} AND status='OPEN' AND starts_at > '{$nowEntityEsc}' LIMIT 1");
         if (!$entity || !$entity->num_rows) aurora_response(array('message'=>'Suất chiếu không còn khả dụng.'), 409);
     } elseif ($entityType === 'promotion' && $entityId > 0) {
-        $entity = $db->query("SELECT id FROM promotions WHERE id={$entityId} AND status='ACTIVE' AND starts_at <= NOW() AND ends_at >= NOW() LIMIT 1");
+        $entity = $db->query("SELECT id FROM vouchers WHERE id={$entityId} AND status='active' AND starts_at <= NOW() AND ends_at >= NOW() AND (usage_limit=0 OR used_count < usage_limit) LIMIT 1");
         if (!$entity || !$entity->num_rows) aurora_response(array('message'=>'Ưu đãi không còn hiệu lực.'), 409);
     }
     if (!aurora_ensure_home_event_schema($db)) aurora_response(array('message'=>'Không thể khởi tạo nhật ký trang chủ.'), 500);
@@ -637,22 +671,28 @@ if ($resource === 'home_event') {
     aurora_response(array('recorded'=>true, 'id'=>(int)$db->insert_id), 201);
 }
 
-// Promotions shown on the customer home-page banner. Only currently valid
-// campaigns are exposed, so expired or disabled promotions never rotate here.
-if ($resource === 'promotions') {
-    $sql = "SELECT id, name, code, description, discount_percent, discount_amount, starts_at, ends_at
-            FROM promotions
-            WHERE status = 'ACTIVE' AND starts_at <= NOW() AND ends_at >= NOW()
-            ORDER BY ends_at ASC, id DESC";
+// Customer offer catalogue backed by the same aurora_db.vouchers records used
+// at checkout and by TMS. Only usable campaigns are exposed publicly.
+if ($resource === 'promotions' || $resource === 'promotion_detail') {
+    if (!aurora_ensure_vouchers($db)) aurora_response(array('message' => 'Không thể đọc danh mục ưu đãi.'), 500);
+    $detailId = $resource === 'promotion_detail' && isset($_GET['id']) ? (int)$_GET['id'] : 0;
+    if ($resource === 'promotion_detail' && $detailId < 1) aurora_response(array('message' => 'Ưu đãi không hợp lệ.'), 422);
+    $detailWhere = $detailId > 0 ? ' AND id=' . $detailId : '';
+    $sql = "SELECT id, name, code, short_description, details, terms_text, category, audience,
+                   badge_text, theme_color, image_url, discount_type, discount_value,
+                   min_order_amount, max_discount, starts_at, ends_at, usage_limit,
+                   used_count, is_featured
+            FROM vouchers
+            WHERE status='active' AND starts_at <= NOW() AND ends_at >= NOW()
+              AND (usage_limit=0 OR used_count < usage_limit)" . $detailWhere . "
+            ORDER BY is_featured DESC, sort_order ASC, ends_at ASC, id DESC";
     $result = $db->query($sql);
     if (!$result) aurora_response(array('message' => $db->error), 500);
     $promotions = array();
-    while ($row = $result->fetch_assoc()) {
-        $promotions[] = array(
-            'id' => (int)$row['id'], 'name' => $row['name'], 'code' => $row['code'],
-            'description' => $row['description'], 'discountPercent' => $row['discount_percent'],
-            'discountAmount' => $row['discount_amount'], 'startsAt' => $row['starts_at'], 'endsAt' => $row['ends_at']
-        );
+    while ($row = $result->fetch_assoc()) $promotions[] = aurora_promotion_payload($row);
+    if ($resource === 'promotion_detail') {
+        if (!count($promotions)) aurora_response(array('message' => 'Ưu đãi không tồn tại hoặc đã hết hiệu lực.'), 404);
+        aurora_response(array('promotion' => $promotions[0]), 200);
     }
     aurora_response(array('promotions' => $promotions), 200);
 }
@@ -856,6 +896,22 @@ function aurora_ensure_seat_holds($db) {
     ) ENGINE=InnoDB DEFAULT CHARSET=utf8");
 }
 
+function aurora_ensure_showtime_seat_locks($db) {
+    return $db->query("CREATE TABLE IF NOT EXISTS tms_showtime_seat_locks (
+        id BIGINT UNSIGNED NOT NULL AUTO_INCREMENT PRIMARY KEY,
+        showtime_id BIGINT UNSIGNED NOT NULL,
+        seat_id BIGINT UNSIGNED NOT NULL,
+        reason VARCHAR(255) NOT NULL DEFAULT '',
+        locked_by VARCHAR(120) NOT NULL,
+        locked_at DATETIME NOT NULL,
+        updated_at DATETIME NOT NULL,
+        UNIQUE KEY uq_tms_showtime_seat_lock (showtime_id, seat_id),
+        KEY idx_tms_showtime_seat_lock_seat (seat_id),
+        CONSTRAINT fk_tms_seat_lock_showtime FOREIGN KEY (showtime_id) REFERENCES showtimes(id) ON DELETE CASCADE,
+        CONSTRAINT fk_tms_seat_lock_seat FOREIGN KEY (seat_id) REFERENCES seats(id) ON DELETE CASCADE
+    ) ENGINE=InnoDB DEFAULT CHARSET=utf8");
+}
+
 function aurora_cleanup_seat_holds($db) {
     $db->query("DELETE FROM seat_holds WHERE expires_at <= '".$db->real_escape_string(aurora_vietnam_now())."'");
 }
@@ -921,7 +977,7 @@ if ($resource === 'showtimes') {
     $where = $theaterId ? ' AND s.theater_id = '.$theaterId : '';
     if ($date !== '') $where .= " AND DATE(st.starts_at) = '".$db->real_escape_string($date)."'";
     if ($movieId > 0) $where .= ' AND st.movie_id = '.$movieId;
-    if (!aurora_ensure_seat_holds($db)) aurora_response(array('message'=>'Không thể tải trạng thái ghế.'), 500);
+    if (!aurora_ensure_seat_holds($db) || !aurora_ensure_showtime_seat_locks($db)) aurora_response(array('message'=>'Không thể tải trạng thái ghế.'), 500);
     aurora_cleanup_seat_holds($db);
     $visibilityNow = $db->real_escape_string(aurora_vietnam_now());
     // Past or already-started shows are never bookable or visible here.
@@ -933,7 +989,9 @@ if ($resource === 'showtimes') {
                     INNER JOIN bookings b ON b.id=bs.booking_id
                     WHERE b.showtime_id=st.id AND b.status NOT IN ('CANCELLED','EXPIRED')) AS booked_seats,
                    (SELECT COUNT(DISTINCT h.seat_id) FROM seat_holds h
-                    WHERE h.showtime_id=st.id AND h.expires_at > '{$visibilityNow}') AS held_seats
+                    WHERE h.showtime_id=st.id AND h.expires_at > '{$visibilityNow}') AS held_seats,
+                   (SELECT COUNT(DISTINCT sl.seat_id) FROM tms_showtime_seat_locks sl
+                    WHERE sl.showtime_id=st.id) AS locked_seats
             FROM showtimes st
             INNER JOIN screens s ON s.id = st.screen_id
             INNER JOIN movies m ON m.id = st.movie_id
@@ -945,8 +1003,8 @@ if ($resource === 'showtimes') {
         $row['id']=(int)$row['id']; $row['movie_id']=(int)$row['movie_id'];
         $row['theater_id']=(int)$row['theater_id']; $row['screen_id']=(int)$row['screen_id'];
         $row['total_seats']=(int)$row['total_seats']; $row['booked_seats']=(int)$row['booked_seats'];
-        $row['held_seats']=(int)$row['held_seats']; $row['ticket_price']=(float)$row['ticket_price'];
-        $row['seats_left']=max(0,$row['total_seats']-$row['booked_seats']-$row['held_seats']);
+        $row['held_seats']=(int)$row['held_seats']; $row['locked_seats']=(int)$row['locked_seats']; $row['ticket_price']=(float)$row['ticket_price'];
+        $row['seats_left']=max(0,$row['total_seats']-$row['booked_seats']-$row['held_seats']-$row['locked_seats']);
         $row['availability']=$row['seats_left'] < 1 ? 'SOLD_OUT' : ($row['seats_left'] <= 10 ? 'LIMITED' : 'AVAILABLE');
         $showtimes[]=$row;
     }
@@ -985,7 +1043,7 @@ if ($resource === 'theater_schedule_event') {
 if ($resource === 'showtime_seats') {
     $showtimeId = isset($_GET['showtime_id']) ? (int)$_GET['showtime_id'] : 0;
     if ($showtimeId < 1) aurora_response(array('message' => 'Suất chiếu không hợp lệ.'), 422);
-    if (!aurora_ensure_seat_holds($db)) aurora_response(array('message' => 'Không thể khởi tạo phiên giữ ghế.'), 500);
+    if (!aurora_ensure_seat_holds($db) || !aurora_ensure_showtime_seat_locks($db)) aurora_response(array('message' => 'Không thể khởi tạo trạng thái ghế.'), 500);
     $seatPriceRules = aurora_seat_price_rules($db);
     if ($seatPriceRules === false) aurora_response(array('message' => 'Không thể tải cấu hình giá ghế.'), 500);
     aurora_cleanup_seat_holds($db);
@@ -997,7 +1055,7 @@ if ($resource === 'showtime_seats') {
     $seatPricing = aurora_showtime_seat_pricing($db, $showtimeId, $startsAt, $ticketPrice, $seatPriceRules);
     $nowEsc = $db->real_escape_string($now); $sessionEsc = $db->real_escape_string(session_id());
     $sql = "SELECT seats.id, seats.seat_row, seats.seat_number, seats.seat_type,
-            CASE WHEN EXISTS (SELECT 1 FROM booking_seats bs INNER JOIN bookings b ON b.id=bs.booking_id WHERE bs.seat_id=seats.id AND b.showtime_id=".(int)$showtimeId." AND b.status NOT IN ('CANCELLED','EXPIRED')) OR EXISTS (SELECT 1 FROM seat_holds h WHERE h.showtime_id=".(int)$showtimeId." AND h.seat_id=seats.id AND h.expires_at > '".$nowEsc."' AND h.session_key <> '".$sessionEsc."') THEN 0 ELSE 1 END AS is_available,
+            CASE WHEN EXISTS (SELECT 1 FROM booking_seats bs INNER JOIN bookings b ON b.id=bs.booking_id WHERE bs.seat_id=seats.id AND b.showtime_id=".(int)$showtimeId." AND b.status NOT IN ('CANCELLED','EXPIRED')) OR EXISTS (SELECT 1 FROM seat_holds h WHERE h.showtime_id=".(int)$showtimeId." AND h.seat_id=seats.id AND h.expires_at > '".$nowEsc."' AND h.session_key <> '".$sessionEsc."') OR EXISTS (SELECT 1 FROM tms_showtime_seat_locks sl WHERE sl.showtime_id=".(int)$showtimeId." AND sl.seat_id=seats.id) THEN 0 ELSE 1 END AS is_available,
             CASE WHEN EXISTS (SELECT 1 FROM seat_holds h WHERE h.showtime_id=".(int)$showtimeId." AND h.seat_id=seats.id AND h.expires_at > '".$nowEsc."' AND h.session_key = '".$sessionEsc."') THEN 1 ELSE 0 END AS held_by_you
             FROM seats
             WHERE seats.screen_id = ".(int)$screenId."
@@ -1015,7 +1073,7 @@ if ($resource === 'seat_hold') {
     $body = aurora_body(); $showtimeId = isset($body['showtimeId']) ? (int)$body['showtimeId'] : 0;
     $seatIds = isset($body['seatIds']) && is_array($body['seatIds']) ? array_values(array_unique(array_map('intval', $body['seatIds']))) : array();
     if ($showtimeId < 1 || count($seatIds) > 12) aurora_response(array('message' => 'Dữ liệu giữ ghế không hợp lệ.'), 422);
-    if (!aurora_ensure_seat_holds($db)) aurora_response(array('message' => 'Không thể khởi tạo phiên giữ ghế.'), 500);
+    if (!aurora_ensure_seat_holds($db) || !aurora_ensure_showtime_seat_locks($db)) aurora_response(array('message' => 'Không thể khởi tạo trạng thái ghế.'), 500);
     aurora_cleanup_seat_holds($db); $now = aurora_vietnam_now(); $nowEsc = $db->real_escape_string($now); $sessionEsc = $db->real_escape_string(session_id());
     $validIds = array(); foreach ($seatIds as $seatId) if ($seatId > 0) $validIds[] = $seatId; $seatIds = $validIds;
     $expiresAt = date('Y-m-d H:i:s', strtotime($now.' +10 minutes')); $userId = isset($_SESSION['aurora_user_id']) ? (int)$_SESSION['aurora_user_id'] : 0;
@@ -1034,6 +1092,8 @@ if ($resource === 'seat_hold') {
             if ($conflict && $conflict->num_rows) throw new Exception('Một ghế vừa được khách khác giữ. Vui lòng chọn ghế khác.');
             $booked=$db->query("SELECT bs.seat_id FROM booking_seats bs INNER JOIN bookings b ON b.id=bs.booking_id WHERE b.showtime_id={$showtimeId} AND bs.seat_id IN ({$idSql}) AND b.status NOT IN ('CANCELLED','EXPIRED') LIMIT 1");
             if ($booked && $booked->num_rows) throw new Exception('Một ghế vừa được đặt. Vui lòng chọn ghế khác.');
+            $locked=$db->query("SELECT seat_id FROM tms_showtime_seat_locks WHERE showtime_id={$showtimeId} AND seat_id IN ({$idSql}) LIMIT 1");
+            if ($locked && $locked->num_rows) throw new Exception('Một hoặc nhiều ghế đã được rạp khóa cho suất chiếu này.');
             foreach ($seatIds as $seatId) if (!$db->query("INSERT INTO seat_holds (showtime_id,seat_id,session_key,user_id,expires_at,created_at,updated_at) VALUES ({$showtimeId},{$seatId},'{$sessionEsc}',".($userId ? $userId : 'NULL').",'{$expiresAt}','{$nowEsc}','{$nowEsc}')")) throw new Exception('Không thể giữ ghế đã chọn.');
         }
         $db->commit(); $db->autocommit(true); aurora_response(array('seat_ids'=>$seatIds,'expires_at'=>$expiresAt,'hold_seconds'=>600),200);
@@ -2277,6 +2337,8 @@ if ($resource === 'bookings') {
     $body = aurora_body();
     $showtimeId = isset($body['showtimeId']) ? (int)$body['showtimeId'] : 0;
     $paymentMethod = isset($body['paymentMethod']) ? strtoupper(trim((string)$body['paymentMethod'])) : 'ONLINE';
+    $voucherCode = isset($body['voucherCode']) ? strtoupper(trim((string)$body['voucherCode'])) : '';
+    if (strlen($voucherCode) > 40) aurora_response(array('message' => 'Mã ưu đãi không hợp lệ.'), 422);
     $seatIds = isset($body['seatIds']) && is_array($body['seatIds']) ? array_values(array_unique(array_map('intval', $body['seatIds']))) : array();
     $concessionCatalog = aurora_concession_catalog($db);
     $combos = array();
@@ -2303,8 +2365,14 @@ if ($resource === 'bookings') {
     if (!aurora_ensure_sales_orders($db)) {
         aurora_response(array('message' => 'Không thể khởi tạo bảng đơn hàng tổng.'), 500);
     }
+    if (!aurora_ensure_order_voucher_column($db)) {
+        aurora_response(array('message' => 'Không thể chuẩn bị dữ liệu ưu đãi cho đơn hàng.'), 500);
+    }
     if (!aurora_ensure_loyalty_schema($db)) {
         aurora_response(array('message' => 'Không thể khởi tạo sổ điểm Aurora.'), 500);
+    }
+    if (!aurora_ensure_showtime_seat_locks($db)) {
+        aurora_response(array('message' => 'Không thể kiểm tra trạng thái khóa ghế.'), 500);
     }
     $seatPriceRules = aurora_seat_price_rules($db);
     if ($seatPriceRules === false) aurora_response(array('message' => 'Không thể tải cấu hình giá ghế.'), 500);
@@ -2339,6 +2407,12 @@ if ($resource === 'bookings') {
         call_user_func_array(array($stmt, 'bind_param'), $refs);
         $stmt->execute(); $taken = 0; $stmt->bind_result($taken); $stmt->fetch(); $stmt->close();
         if ((int)$taken > 0) throw new Exception('Một hoặc nhiều ghế vừa được đặt bởi khách khác.');
+        $lockedSql = "SELECT COUNT(*) FROM tms_showtime_seat_locks WHERE showtime_id = ? AND seat_id IN (" . implode(',', array_fill(0, count($seatIds), '?')) . ")";
+        $stmt = $db->prepare($lockedSql);
+        $refs = array(str_repeat('i', count($seatIds) + 1), $showtimeId); foreach ($seatIds as $key => $value) $refs[] = &$seatIds[$key];
+        call_user_func_array(array($stmt, 'bind_param'), $refs);
+        $stmt->execute(); $locked = 0; $stmt->bind_result($locked); $stmt->fetch(); $stmt->close();
+        if ((int)$locked > 0) throw new Exception('Một hoặc nhiều ghế đã được rạp khóa cho suất chiếu này.');
 
         $code = 'AUR-' . strtoupper(substr(md5(uniqid(mt_rand(), true)), 0, 10));
         $total = 0;
@@ -2349,6 +2423,22 @@ if ($resource === 'bookings') {
         }
         foreach ($combos as $comboId => $quantity) {
             $total += $concessionCatalog[$comboId]['price'] * $quantity;
+        }
+        $subtotal = $total;
+        $discount = 0;
+        if ($voucherCode !== '') {
+            $stmt = $db->prepare("SELECT name, discount_type, discount_value, min_order_amount, max_discount FROM vouchers WHERE code=? AND status='active' AND starts_at <= NOW() AND ends_at >= NOW() AND (usage_limit=0 OR used_count < usage_limit) LIMIT 1 FOR UPDATE");
+            if (!$stmt) throw new Exception('Không thể kiểm tra mã ưu đãi.');
+            $stmt->bind_param('s', $voucherCode); $stmt->execute();
+            $voucherName = $voucherType = $voucherValue = $minimumOrder = $maximumDiscount = null;
+            $stmt->bind_result($voucherName, $voucherType, $voucherValue, $minimumOrder, $maximumDiscount);
+            $foundVoucher = $stmt->fetch(); $stmt->close();
+            if (!$foundVoucher) throw new Exception('Mã ưu đãi không hợp lệ, đã hết hạn hoặc hết lượt sử dụng.');
+            if ($subtotal < (float)$minimumOrder) throw new Exception('Đơn hàng chưa đạt giá trị tối thiểu của mã ưu đãi.');
+            $discount = $voucherType === 'percent' ? $subtotal * (float)$voucherValue / 100 : min((float)$voucherValue, $subtotal);
+            if ((float)$maximumDiscount > 0) $discount = min($discount, (float)$maximumDiscount);
+            $discount = round($discount);
+            $total = max(0, $subtotal - $discount);
         }
         $now = date('Y-m-d H:i:s');
         $stmt = $db->prepare("INSERT INTO bookings (user_id, showtime_id, booking_code, total_amount, status, created_at, updated_at) VALUES (?, ?, ?, ?, 'PAID', ?, ?)");
@@ -2382,11 +2472,16 @@ if ($resource === 'bookings') {
             }
             $stmt->close();
         }
-        $stmt = $db->prepare("INSERT INTO orders (order_code, channel, booking_id, customer_id, subtotal, total_amount, payment_method, amount_received, change_amount, status) VALUES (?, 'ONLINE', ?, ?, ?, ?, ?, ?, 0, 'PAID')");
+        $stmt = $db->prepare("INSERT INTO orders (order_code, channel, booking_id, customer_id, subtotal, discount_amount, voucher_code, total_amount, payment_method, amount_received, change_amount, status) VALUES (?, 'ONLINE', ?, ?, ?, ?, NULLIF(?, ''), ?, ?, ?, 0, 'PAID')");
         if (!$stmt) throw new Exception('Không thể lưu đơn hàng tổng.');
-        $stmt->bind_param('siiddsd', $code, $bookingId, $userId, $total, $total, $paymentMethod, $total);
+        $stmt->bind_param('siiddsdsd', $code, $bookingId, $userId, $subtotal, $discount, $voucherCode, $total, $paymentMethod, $total);
         if (!$stmt->execute()) throw new Exception('Không thể lưu đơn hàng tổng.');
         $stmt->close();
+        if ($voucherCode !== '') {
+            $voucherEsc = $db->real_escape_string($voucherCode);
+            if (!$db->query("UPDATE vouchers SET used_count=used_count+1, updated_at=NOW() WHERE code='{$voucherEsc}' AND (usage_limit=0 OR used_count < usage_limit)")) throw new Exception('Không thể ghi nhận lượt sử dụng ưu đãi.');
+            if ($db->affected_rows !== 1) throw new Exception('Mã ưu đãi vừa hết lượt sử dụng. Vui lòng chọn mã khác.');
+        }
         // The seats are now durable bookings; remove this browser session's
         // temporary holds before committing the same transaction.
         if (aurora_ensure_seat_holds($db)) {
@@ -2396,7 +2491,7 @@ if ($resource === 'bookings') {
         $pointsEarned = aurora_award_booking_points($db, $userId, $bookingId, $total);
         $db->commit();
         $db->autocommit(true);
-        aurora_response(array('booking' => array('id'=>$bookingId, 'code'=>$code, 'showtimeId'=>$showtimeId, 'seatIds'=>$seatIds, 'combos'=>$combos, 'totalAmount'=>$total, 'status'=>'PAID', 'pointsEarned'=>$pointsEarned), 'member' => aurora_public_user($db, $userId)), 201);
+        aurora_response(array('booking' => array('id'=>$bookingId, 'code'=>$code, 'showtimeId'=>$showtimeId, 'seatIds'=>$seatIds, 'combos'=>$combos, 'subtotal'=>$subtotal, 'discountAmount'=>$discount, 'voucherCode'=>$voucherCode, 'totalAmount'=>$total, 'status'=>'PAID', 'pointsEarned'=>$pointsEarned), 'member' => aurora_public_user($db, $userId)), 201);
     } catch (Exception $exception) {
         $db->rollback();
         $db->autocommit(true);
@@ -2766,8 +2861,7 @@ if ($resource === 'showtime_detail') {
 }
 
 // ── /apply_voucher (POST) ─────────────────────────────────────────────────────
-// Kiểm tra và áp dụng mã voucher – hiện tại là stub trả về giảm giá cố định
-// Trong production sẽ tra bảng vouchers
+// Validate a voucher against the same conditions displayed on the offer page.
 if ($resource === 'apply_voucher') {
     aurora_method('POST');
     aurora_require_user();
@@ -2777,11 +2871,14 @@ if ($resource === 'apply_voucher') {
     if ($code === '') aurora_response(array('message' => 'Vui lòng nhập mã voucher.'), 422);
 
     if (!aurora_ensure_vouchers($db)) aurora_response(array('message' => 'Không thể đọc danh mục voucher.'), 500);
-    $stmt = $db->prepare("SELECT name, discount_type, discount_value FROM vouchers WHERE code=? AND status='active' AND starts_at <= NOW() AND ends_at >= NOW() AND (usage_limit=0 OR used_count < usage_limit) LIMIT 1");
-    $stmt->bind_param('s', $code); $stmt->execute(); $stmt->bind_result($voucherName, $voucherType, $voucherValue);
+    $stmt = $db->prepare("SELECT name, discount_type, discount_value, min_order_amount, max_discount FROM vouchers WHERE code=? AND status='active' AND starts_at <= NOW() AND ends_at >= NOW() AND (usage_limit=0 OR used_count < usage_limit) LIMIT 1");
+    $stmt->bind_param('s', $code); $stmt->execute(); $stmt->bind_result($voucherName, $voucherType, $voucherValue, $minimumOrder, $maximumDiscount);
     $foundVoucher = $stmt->fetch(); $stmt->close();
     if (!$foundVoucher) {
         aurora_response(array('message' => 'Mã voucher không hợp lệ hoặc đã hết hạn.'), 404);
+    }
+    if ($total < (float)$minimumOrder) {
+        aurora_response(array('message' => 'Đơn hàng cần đạt tối thiểu ' . number_format((float)$minimumOrder, 0, ',', '.') . 'đ để sử dụng mã này.'), 422);
     }
     $discount = 0;
     if ($voucherType === 'percent') {
@@ -2789,6 +2886,7 @@ if ($resource === 'apply_voucher') {
     } else {
         $discount = min((float)$voucherValue, $total);
     }
+    if ((float)$maximumDiscount > 0) $discount = min($discount, (float)$maximumDiscount);
     $discount = round($discount);
 
     aurora_response(array(

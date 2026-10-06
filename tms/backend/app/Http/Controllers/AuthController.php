@@ -32,7 +32,7 @@ class AuthController
         }
 
         // Truy vấn trực tiếp từ bảng tms_users trong database MySQL aurora_db
-        $stmt = $this->db->prepare("SELECT tu.id, tu.username, tu.password_hash, tu.full_name, tu.phone, tu.role, tu.status, COALESCE(tu.theater_id, u.theater_id) AS theater_id FROM tms_users tu LEFT JOIN users u ON u.username=tu.username WHERE tu.username = ? LIMIT 1");
+        $stmt = $this->db->prepare("SELECT tu.id, tu.username, tu.password_hash, tu.full_name, tu.phone, tu.role, tu.status, COALESCE(tu.theater_id, u.theater_id) AS theater_id, t.name AS theater_name FROM tms_users tu LEFT JOIN users u ON u.username=tu.username LEFT JOIN theaters t ON t.id=COALESCE(tu.theater_id, u.theater_id) WHERE tu.username = ? LIMIT 1");
         if (!$stmt) {
             jsonResponse(array(
                 'success' => false,
@@ -87,6 +87,7 @@ class AuthController
             'phone' => $user['phone'],
             'role' => $user['role'],
             'theater_id' => !empty($user['theater_id']) ? (int)$user['theater_id'] : 0,
+            'theater_name' => !empty($user['theater_name']) ? $user['theater_name'] : '',
             'system' => 'TMS - Theater Management System',
             'cinema' => 'AURORA CINEMA'
         );

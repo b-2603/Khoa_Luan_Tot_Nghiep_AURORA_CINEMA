@@ -27,7 +27,7 @@ backend/
 - Không ghi dữ liệu sang database khác
 - Không dùng script ghi dữ liệu ở `public/`
 
-Import dữ liệu theo đúng thứ tự: `schema.sql`, `seed_theaters.sql`, `seed_movies.sql`, `seed_showtimes.sql`, sau đó `seed_seats.sql`. Database cũ cần chạy thêm `alter_booking_seats.sql` một lần.
+Import dữ liệu theo đúng thứ tự: `schema.sql`, `seed_theaters.sql`, `seed_movies.sql`, `seed_showtimes.sql`, sau đó `seed_seats.sql`. Database cũ cần chạy thêm `alter_booking_seats.sql` và `upgrade_customer_promotions.sql` một lần.
 
 ## Cấu hình kết nối MySQL
 - Host: `127.0.0.1`
@@ -49,6 +49,8 @@ Public:
 - GET action=theaters
 - GET action=showtimes&theater_id=1&movie_id=1&date=2026-09-04
 - GET action=showtime_seats&showtime_id=1
+- GET action=promotions
+- GET action=promotion_detail&id=1
 
 Authentication:
 
@@ -96,6 +98,7 @@ Customer:
 - POST action=change_password
 - POST action=bookings (showtimeId, seatIds[])
 - GET action=booking_history
+- POST action=apply_voucher (code, total)
 
 Đặt vé được xử lý trong transaction và khóa suất chiếu/ghế khi kiểm tra,
 tránh hai khách đặt trùng ghế. API không trả về password hash.
@@ -112,6 +115,7 @@ Chạy theo thứ tự:
 6. seed_seats.sql
 7. alter_booking_seats.sql (chỉ cần với database cũ)
 8. seed_showtimes.sql
+9. upgrade_customer_promotions.sql (database cũ; bổ sung metadata và dữ liệu cho trang Ưu đãi)
 
 seed_showtimes.sql là script bổ sung an toàn: không truncate dữ liệu lịch chiếu,
 giữ dữ liệu hiện có và chỉ thêm các suất còn thiếu theo từng rạp, phim và ngày.

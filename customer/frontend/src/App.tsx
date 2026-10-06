@@ -15,6 +15,7 @@ import TheaterDetailPage from './components/customer/TheaterDetailPage';
 import MoviesPage from './components/customer/MoviesPage';
 import TicketPricingPage from './components/customer/TicketPricingPage';
 import CustomerHome from './components/customer/CustomerHome';
+import PromotionsPage from './components/customer/PromotionsPage';
 
 const API_URL = 'http://localhost/AURORA%20CINEMA/customer/backend/public/api.php';
 
@@ -122,6 +123,8 @@ export default function App() {
   const [oauthNotice, setOauthNotice] = useState('');
   const [moviesList, setMoviesList] = useState<any[]>([]);
   const [promotionsList, setPromotionsList] = useState<any[]>([]);
+  const [promotionsLoading, setPromotionsLoading] = useState(true);
+  const [promotionsError, setPromotionsError] = useState('');
   const [theatersList, setTheatersList] = useState<any[]>([]);
   const [selectedTheater, setSelectedTheater] = useState<string>('Aurora Q1');
   const [selectedTheaterId, setSelectedTheaterId] = useState<number | null>(null);
@@ -140,7 +143,7 @@ export default function App() {
   const [showUserMenu, setShowUserMenu] = useState<boolean>(false);
   const [showAccount, setShowAccount] = useState<boolean>(false);
   const [accountTab, setAccountTab] = useState('info');
-  const [currentPage, setCurrentPage] = useState<'home' | 'schedule' | 'movies' | 'theaters' | 'ticket-prices'>('home');
+  const [currentPage, setCurrentPage] = useState<'home' | 'schedule' | 'movies' | 'theaters' | 'ticket-prices' | 'offers'>('home');
   const [footerPage, setFooterPage] = useState<'faq' | 'booking-guide' | 'privacy' | 'terms' | null>(null);
   const copy = COPY[language];
   const t = (vi: string, en: string) => language === 'en' ? en : vi;
@@ -150,6 +153,22 @@ export default function App() {
     setSearchQuery('');
     setSearchResults([]);
     setSearchError('');
+  }
+
+  async function loadPromotions() {
+    setPromotionsLoading(true);
+    setPromotionsError('');
+    try {
+      const response = await fetch(`${API_URL}?action=promotions&_=${Date.now()}`, { credentials: 'include', cache: 'no-store' });
+      const result = await response.json();
+      if (!response.ok) throw new Error(result.message || t('Không thể tải danh sách ưu đãi.', 'Unable to load offers.'));
+      setPromotionsList(Array.isArray(result.promotions) ? result.promotions : []);
+    } catch (error) {
+      setPromotionsList([]);
+      setPromotionsError(error instanceof Error ? error.message : t('Không thể tải danh sách ưu đãi.', 'Unable to load offers.'));
+    } finally {
+      setPromotionsLoading(false);
+    }
   }
 
   function mapApiMovie(movie: any) {
@@ -322,10 +341,7 @@ export default function App() {
       })
       .catch(() => {});
 
-    fetch(`${API_URL}?action=promotions`)
-      .then(response => response.json())
-      .then(result => setPromotionsList(result && result.promotions ? result.promotions : []))
-      .catch(() => setPromotionsList([]));
+    loadPromotions();
 
     // Lấy dữ liệu cụm rạp trực tiếp từ MySQL Database aurora_db
     fetch(`${API_URL}?action=theaters`)
@@ -409,6 +425,17 @@ export default function App() {
     setShowTheaterMenu(false);
     setShowUserMenu(false);
     setCurrentPage('ticket-prices');
+    setFooterPage(null);
+    scrollContentToTop();
+  }
+
+  function handleGoOffers() {
+    setAuthMode(null);
+    setShowAccount(false);
+    setDetailMovie(null);
+    setShowTheaterMenu(false);
+    setShowUserMenu(false);
+    setCurrentPage('offers');
     setFooterPage(null);
     scrollContentToTop();
   }
@@ -625,14 +652,16 @@ export default function App() {
                 (i === 1 && currentPage === 'schedule' && !authMode && !footerPage && !showAccount && !detailMovie) ||
                 (i === 2 && currentPage === 'movies' && !authMode && !footerPage && !showAccount && !detailMovie) ||
                 (i === 3 && currentPage === 'theaters' && !authMode && !footerPage && !showAccount && !detailMovie) ||
-                (i === 4 && currentPage === 'ticket-prices' && !authMode && !footerPage && !showAccount && !detailMovie);
+                (i === 4 && currentPage === 'ticket-prices' && !authMode && !footerPage && !showAccount && !detailMovie) ||
+                (i === 5 && currentPage === 'offers' && !authMode && !footerPage && !showAccount && !detailMovie);
 
               const handleClick =
                 i === 0 ? handleGoHome :
                 i === 1 ? handleGoSchedule :
                 i === 2 ? handleGoMovies :
                 i === 3 ? handleGoTheaters :
-                i === 4 ? handleGoTicketPrices : undefined;
+                i === 4 ? handleGoTicketPrices :
+                i === 5 ? handleGoOffers : undefined;
 
               return (
                 <button
@@ -1017,6 +1046,15 @@ export default function App() {
             setTrailerMovie(movie);
           }}
         />
+      ) : currentPage === 'offers' ? (
+        <PromotionsPage
+          language={language}
+          promotions={promotionsList}
+          loading={promotionsLoading}
+          error={promotionsError}
+          onRetry={loadPromotions}
+          onBook={handleGoSchedule}
+        />
       ) : currentPage === 'home' ? (
         <CustomerHome
           language={language}
@@ -1033,6 +1071,7 @@ export default function App() {
           onOpenSchedule={handleGoSchedule}
           onOpenMovies={handleGoMovies}
           onOpenPrices={handleGoTicketPrices}
+          onOpenOffers={handleGoOffers}
           onOpenAccount={() => openAccountTab('member')}
           onRegister={() => setAuthMode('register')}
         />
@@ -1086,11 +1125,7 @@ export default function App() {
                   const openSlide = () => {
                     if (isMovie) {
                       setDetailMovie(slide.movie);
-                    } else {
-                      setCurrentPage('movies');
-                      setMovieTab('NOW_SHOWING');
-                      scrollContentToTop();
-                    }
+                    } else handleGoOffers();
                   };
                   const goToSlide = (direction: number) => setHeroSlide(current => (current + direction + heroSlides.length) % heroSlides.length);
                   return <div onMouseEnter={() => setHeroPaused(true)} onMouseLeave={() => setHeroPaused(false)} style={{ boxSizing: 'border-box', height: 300, borderRadius: 16, overflow: 'hidden', background: slide.type === 'promotion' ? 'linear-gradient(110deg,#0f2742 0%,#71501b 62%,#d09016 100%)' : 'linear-gradient(110deg,#071628 0%,#0d2849 58%,#123455 100%)', position: 'relative', padding: '28px 32px', display: 'flex', alignItems: 'center', isolation: 'isolate' }}>

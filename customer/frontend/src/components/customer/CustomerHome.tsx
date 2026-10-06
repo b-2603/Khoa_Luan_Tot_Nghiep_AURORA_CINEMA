@@ -24,6 +24,7 @@ type CustomerHomeProps = {
   onOpenSchedule: () => void;
   onOpenMovies: () => void;
   onOpenPrices: () => void;
+  onOpenOffers: () => void;
   onOpenAccount: () => void;
   onRegister: () => void;
 };
@@ -62,6 +63,7 @@ export default function CustomerHome({
   language, user, movies, promotions, theaters, selectedTheaterId, selectedTheaterName,
   onSelectTheater, onOpenMovie, onWatchTrailer, onBook, onOpenSchedule, onOpenMovies,
   onOpenPrices, onOpenAccount, onRegister,
+  onOpenOffers,
 }: CustomerHomeProps) {
   const t = (vi: string, en: string) => language === 'en' ? en : vi;
   const dates = useMemo(dateRange, []);
@@ -168,7 +170,7 @@ export default function CustomerHome({
         <article className="home-v2-offer-card">
           <div className="home-v2-offer-icon"><Gift size={22}/></div>
           <div><span>{t('Ưu đãi nổi bật', 'Featured offer')}</span><h3>{promotions[0]?.name || t('Ưu đãi dành cho bạn', 'Offers made for you')}</h3><p>{promotions[0]?.description || t('Khám phá voucher và combo mới nhất từ Aurora.', 'Discover Aurora’s latest vouchers and combos.')}</p></div>
-          <button onClick={() => { if (promotions[0]) recordEvent('VIEW_PROMOTION', 'promotion', Number(promotions[0].id)); onOpenPrices(); }}>{t('Khám phá', 'Explore')}<ArrowRight size={14}/></button>
+          <button onClick={() => { if (promotions[0]) recordEvent('VIEW_PROMOTION', 'promotion', Number(promotions[0].id)); onOpenOffers(); }}>{t('Khám phá', 'Explore')}<ArrowRight size={14}/></button>
         </article>
 
         <article className="home-v2-trust-card">

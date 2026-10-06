@@ -269,7 +269,17 @@ class AdminController
         // compatible with old MySQL versions used by WAMP.
         $columns = array(
             'users' => array('theater_id' => 'BIGINT UNSIGNED NULL'),
-            'screens' => array('theater_id' => 'BIGINT UNSIGNED NULL')
+            'screens' => array(
+                'theater_id' => 'BIGINT UNSIGNED NULL',
+                'screen_code' => "VARCHAR(30) NOT NULL DEFAULT ''",
+                'screen_type' => "VARCHAR(40) NOT NULL DEFAULT '2D'",
+                'projector_status' => "VARCHAR(20) NOT NULL DEFAULT 'online'",
+                'sound_system_status' => "VARCHAR(20) NOT NULL DEFAULT 'online'",
+                'hvac_temperature' => 'DECIMAL(4,1) NOT NULL DEFAULT 22.0',
+                'lamp_hours' => 'INT UNSIGNED NOT NULL DEFAULT 0',
+                'status' => "VARCHAR(20) NOT NULL DEFAULT 'active'"
+            ),
+            'staff_shifts' => array('theater_id' => 'BIGINT UNSIGNED NULL')
         );
         foreach ($columns as $table => $defs) foreach ($defs as $column => $definition) {
             $exists = $this->db->query("SHOW COLUMNS FROM {$table} LIKE '{$column}'");
@@ -279,6 +289,9 @@ class AdminController
         if (!$screenIndex || $screenIndex->num_rows === 0) $this->db->query("CREATE INDEX idx_screens_theater_scope ON screens (theater_id, status)");
         $userIndex = $this->db->query("SHOW INDEX FROM users WHERE Key_name='idx_users_theater_scope'");
         if (!$userIndex || $userIndex->num_rows === 0) $this->db->query("CREATE INDEX idx_users_theater_scope ON users (theater_id, role, status)");
+        $staffIndex = $this->db->query("SHOW INDEX FROM staff_shifts WHERE Key_name='idx_staff_shift_theater_date'");
+        if (!$staffIndex || $staffIndex->num_rows === 0) $this->db->query("CREATE INDEX idx_staff_shift_theater_date ON staff_shifts (theater_id, work_date, status)");
+        $this->db->query("UPDATE screens SET screen_code=CONCAT('SCR-', LPAD(id, 3, '0')) WHERE screen_code='' OR screen_code IS NULL");
         $this->db->query("CREATE TABLE IF NOT EXISTS tms_cinema_scope_audits (
             id BIGINT UNSIGNED NOT NULL AUTO_INCREMENT PRIMARY KEY,
             actor_username VARCHAR(120) NOT NULL,
@@ -522,41 +535,51 @@ class AdminController
         return ($alias !== '' ? $alias.'.' : '') . 'theater_id = ' . $theaterId;
     }
 
+    private function enforceMovieAllocationAccess($allocationId)
+    {
+        $role = $this->getCurrentRole();
+        if (!in_array($role, array('cinema_admin', 'supervisor'), true)) return;
+        $theaterId = $this->getCurrentTheaterId();
+        if ($theaterId <= 0) {
+            jsonResponse(array('success' => false, 'message' => 'Tài khoản rạp chưa được gán rạp phụ trách trong aurora_db.'), 403);
+        }
+        $allocationId = (int)$allocationId;
+        if ($allocationId <= 0 || !(int)$this->scalar("SELECT COUNT(*) FROM movie_allocations WHERE id={$allocationId} AND theater_id={$theaterId}")) {
+            jsonResponse(array('success' => false, 'message' => 'Phân bổ phim không thuộc rạp bạn đang phụ trách.'), 403);
+        }
+    }
+
     public function dashboard()
     {
+        requireAdmin();
+        $this->ensureCinemaOwnershipSchema();
         $role = $this->getCurrentRole();
         $reportDate = !empty($_GET['date']) && preg_match('/^\\d{4}-\\d{2}-\\d{2}$/', $_GET['date']) ? $_GET['date'] : date('Y-m-d');
         $reportDateEsc = $this->db->real_escape_string($reportDate);
-        // Transactions are the source of truth when they exist. Revenue logs
-        // remain a read-only historical fallback for installations importing
-        // legacy data before the POS/customer systems were connected.
-        $transactionToday = $this->rows("SELECT
-            COALESCE(SUM(CASE WHEN status = 'paid' THEN amount ELSE 0 END), 0) AS total_revenue,
-            COALESCE(SUM(CASE WHEN status = 'paid' AND channel = 'pos' THEN amount ELSE 0 END), 0) AS pos_revenue,
-            COALESCE(SUM(CASE WHEN status = 'paid' AND channel = 'website' THEN amount ELSE 0 END), 0) AS website_revenue,
-            COALESCE(SUM(CASE WHEN status = 'paid' AND channel = 'ota' THEN amount ELSE 0 END), 0) AS ota_revenue,
-            SUM(CASE WHEN status = 'paid' THEN 1 ELSE 0 END) AS transaction_count
-            FROM transactions WHERE DATE(created_at) = '{$reportDateEsc}'");
-        $transactionToday = !empty($transactionToday) ? $transactionToday[0] : array();
-        $hasTransactionData = !empty($transactionToday['transaction_count']);
-        $today = $this->rows("SELECT total_revenue, ticket_sales, concession_sales, total_tickets, occupancy_rate
-            FROM revenue_logs WHERE log_date = '{$reportDateEsc}' ORDER BY id DESC LIMIT 1");
-        $legacyRevenue = !empty($today) ? $today[0] : array('total_revenue' => 0, 'ticket_sales' => 0, 'concession_sales' => 0, 'total_tickets' => 0, 'occupancy_rate' => 0);
-        $revenue = $hasTransactionData ? array(
-            'total_revenue' => $transactionToday['total_revenue'],
-            'ticket_sales' => $transactionToday['total_revenue'],
-            'concession_sales' => 0,
-            'total_tickets' => $this->scalar("SELECT COALESCE(SUM(booked_seats), 0) FROM showtimes WHERE show_date = '{$reportDateEsc}' AND status <> 'cancelled'"),
-            'occupancy_rate' => $this->scalar("SELECT COALESCE(AVG(CASE WHEN total_seats > 0 THEN booked_seats * 100 / total_seats ELSE 0 END), 0) FROM showtimes WHERE show_date = '{$reportDateEsc}' AND status <> 'cancelled'")
-        ) : $legacyRevenue;
+        $theaterId = in_array($role, array('cinema_admin', 'supervisor'), true) ? $this->getCurrentTheaterId() : 0;
+        if (in_array($role, array('cinema_admin', 'supervisor'), true) && $theaterId <= 0) jsonResponse(array('success'=>false,'message'=>'Tài khoản chưa được gán rạp phụ trách trong aurora_db.'),403);
+        $screenScope = $theaterId > 0 ? ' AND sc.theater_id='.$theaterId : '';
+        $staffScope = $theaterId > 0 ? ' AND ss.theater_id='.$theaterId : '';
+        $orderScope = $theaterId > 0 ? ' AND sc.theater_id='.$theaterId : '';
+        $theater = $theaterId > 0 ? $this->row('SELECT id,name,address,city FROM theaters WHERE id='.$theaterId) : null;
 
-        $dailyRows = $this->rows("SELECT DATE(created_at) AS date, COALESCE(SUM(amount), 0) AS total_revenue
-            FROM transactions WHERE status = 'paid' AND created_at >= DATE_SUB('{$reportDateEsc}', INTERVAL 6 DAY) AND created_at < DATE_ADD('{$reportDateEsc}', INTERVAL 1 DAY)
-            GROUP BY DATE(created_at) ORDER BY date");
-        if (empty($dailyRows)) {
-            $dailyRows = $this->rows("SELECT log_date AS date, ticket_sales, concession_sales, total_revenue, total_tickets, occupancy_rate
-                FROM revenue_logs WHERE log_date >= DATE_SUB('{$reportDateEsc}', INTERVAL 6 DAY) AND log_date <= '{$reportDateEsc}' ORDER BY log_date");
-        }
+        $orderTodayRows = $this->rows("SELECT COALESCE(SUM(o.total_amount),0) total_revenue,
+            COALESCE(SUM(CASE WHEN LOWER(o.channel)='pos' THEN o.total_amount ELSE 0 END),0) pos_revenue,
+            COALESCE(SUM(CASE WHEN LOWER(o.channel) IN ('website','web','app') THEN o.total_amount ELSE 0 END),0) website_revenue,
+            COALESCE(SUM(CASE WHEN LOWER(o.channel)='ota' THEN o.total_amount ELSE 0 END),0) ota_revenue,
+            COUNT(DISTINCT o.id) transaction_count
+            FROM orders o LEFT JOIN bookings b ON b.id=o.booking_id LEFT JOIN showtimes st ON st.id=b.showtime_id LEFT JOIN screens sc ON sc.id=st.screen_id
+            WHERE o.status='PAID' AND DATE(o.created_at)='{$reportDateEsc}'{$orderScope}");
+        $orderToday = !empty($orderTodayRows) ? $orderTodayRows[0] : array('total_revenue'=>0,'pos_revenue'=>0,'website_revenue'=>0,'ota_revenue'=>0,'transaction_count'=>0);
+        $ticketCount = (int)$this->scalar("SELECT COUNT(bs.id) FROM booking_seats bs INNER JOIN bookings b ON b.id=bs.booking_id INNER JOIN showtimes st ON st.id=b.showtime_id INNER JOIN screens sc ON sc.id=st.screen_id WHERE b.status='PAID' AND DATE(st.starts_at)='{$reportDateEsc}'{$screenScope}");
+        $capacity = (int)$this->scalar("SELECT COALESCE(SUM(sc.total_seats),0) FROM showtimes st INNER JOIN screens sc ON sc.id=st.screen_id WHERE DATE(st.starts_at)='{$reportDateEsc}' AND st.status<>'CANCELLED'{$screenScope}");
+        $occupancy = $capacity > 0 ? round($ticketCount * 100 / $capacity, 2) : 0;
+        $revenue = array('total_revenue'=>(float)$orderToday['total_revenue'],'ticket_sales'=>(float)$orderToday['total_revenue'],'concession_sales'=>0,'total_tickets'=>$ticketCount,'occupancy_rate'=>$occupancy);
+
+        $dailyRows = $this->rows("SELECT DATE(o.created_at) date, COALESCE(SUM(o.total_amount),0) total_revenue
+            FROM orders o LEFT JOIN bookings b ON b.id=o.booking_id LEFT JOIN showtimes st ON st.id=b.showtime_id LEFT JOIN screens sc ON sc.id=st.screen_id
+            WHERE o.status='PAID' AND o.created_at>=DATE_SUB('{$reportDateEsc}',INTERVAL 6 DAY) AND o.created_at<DATE_ADD('{$reportDateEsc}',INTERVAL 1 DAY){$orderScope}
+            GROUP BY DATE(o.created_at) ORDER BY date");
         $normalizedDailyRows = array();
         foreach ($dailyRows as $dailyRow) {
             $normalizedDailyRows[] = $this->numberFields($dailyRow, array('ticket_sales', 'concession_sales', 'total_revenue', 'total_tickets', 'occupancy_rate'));
@@ -569,26 +592,27 @@ class AdminController
             'date' => $reportDate,
             'role' => $role,
             'role_definition' => $roleDef,
+            'theater' => $theater,
             'revenue' => $this->numberFields($revenue, array('total_revenue', 'ticket_sales', 'concession_sales', 'occupancy_rate')),
-            'revenue_source' => $hasTransactionData ? 'transactions' : 'revenue_logs',
-            'previous_day_revenue' => (float)$this->scalar("SELECT COALESCE(SUM(amount), 0) FROM transactions WHERE status = 'paid' AND DATE(created_at) = DATE_SUB('{$reportDateEsc}', INTERVAL 1 DAY)"),
-            'transaction_count' => (int)$transactionToday['transaction_count'],
+            'revenue_source' => 'orders',
+            'previous_day_revenue' => (float)$this->scalar("SELECT COALESCE(SUM(o.total_amount),0) FROM orders o LEFT JOIN bookings b ON b.id=o.booking_id LEFT JOIN showtimes st ON st.id=b.showtime_id LEFT JOIN screens sc ON sc.id=st.screen_id WHERE o.status='PAID' AND DATE(o.created_at)=DATE_SUB('{$reportDateEsc}',INTERVAL 1 DAY){$orderScope}"),
+            'transaction_count' => (int)$orderToday['transaction_count'],
             'channels' => array(
-                array('code' => 'pos', 'name' => 'Quầy vé (POS)', 'amount' => (float)$transactionToday['pos_revenue']),
-                array('code' => 'website', 'name' => 'Website / Ứng dụng', 'amount' => (float)$transactionToday['website_revenue']),
-                array('code' => 'ota', 'name' => 'Đối tác OTA', 'amount' => (float)$transactionToday['ota_revenue'])
+                array('code' => 'pos', 'name' => 'Quầy vé (POS)', 'amount' => (float)$orderToday['pos_revenue']),
+                array('code' => 'website', 'name' => 'Website / Ứng dụng', 'amount' => (float)$orderToday['website_revenue']),
+                array('code' => 'ota', 'name' => 'Đối tác OTA', 'amount' => (float)$orderToday['ota_revenue'])
             ),
-            'active_theaters' => $this->scalar("SELECT COUNT(*) FROM theaters WHERE status = 'active'"),
+            'active_theaters' => $theaterId > 0 ? 1 : $this->scalar("SELECT COUNT(*) FROM theaters"),
             'active_users' => $this->scalar("SELECT COUNT(*) FROM users WHERE status = 'active'"),
-            'active_screens' => $this->scalar("SELECT COUNT(*) FROM screens WHERE status = 'active'"),
-            'showtimes' => $this->scalar("SELECT COUNT(*) FROM showtimes WHERE show_date = '{$reportDateEsc}' AND status <> 'cancelled'"),
-            'booked_seats' => $this->scalar("SELECT COALESCE(SUM(booked_seats), 0) FROM showtimes WHERE show_date = '{$reportDateEsc}'"),
-            'staff_on_duty' => $this->scalar("SELECT COUNT(*) FROM staff_shifts WHERE work_date = '{$reportDateEsc}' AND status IN ('on_duty','checked_in')"),
-            'pending_refunds' => $this->scalar("SELECT COUNT(*) FROM refunds WHERE status = 'pending'"),
+            'active_screens' => $this->scalar("SELECT COUNT(*) FROM screens sc WHERE sc.status='active'{$screenScope}"),
+            'showtimes' => $this->scalar("SELECT COUNT(*) FROM showtimes st INNER JOIN screens sc ON sc.id=st.screen_id WHERE DATE(st.starts_at)='{$reportDateEsc}' AND st.status<>'CANCELLED'{$screenScope}"),
+            'booked_seats' => $ticketCount,
+            'staff_on_duty' => $this->scalar("SELECT COUNT(*) FROM staff_shifts ss WHERE ss.work_date='{$reportDateEsc}' AND ss.status IN ('on_duty','checked_in'){$staffScope}"),
+            'pending_refunds' => $theaterId > 0 ? $this->scalar("SELECT COUNT(*) FROM refunds r INNER JOIN users requester ON requester.id=r.requested_by WHERE r.status='pending' AND requester.theater_id={$theaterId}") : $this->scalar("SELECT COUNT(*) FROM refunds WHERE status='pending'"),
             'revenue_7_days' => $normalizedDailyRows,
-            'top_movies' => $this->rows("SELECT m.id, m.title, COALESCE(SUM(s.booked_seats), 0) booked_seats, COUNT(s.id) showtimes FROM movies m LEFT JOIN showtimes s ON s.movie_id = m.id AND s.show_date = '{$reportDateEsc}' GROUP BY m.id, m.title ORDER BY booked_seats DESC LIMIT 5"),
-            'recent_transactions' => $this->rows("SELECT t.*, c.full_name customer_name FROM transactions t LEFT JOIN customers c ON c.id=t.customer_id WHERE DATE(t.created_at) = '{$reportDateEsc}' ORDER BY t.id DESC LIMIT 5"),
-            'screens_status' => $this->rows("SELECT id, screen_code, name, screen_type, projector_status, sound_system_status, hvac_temperature, lamp_hours, status FROM screens ORDER BY screen_code"),
+            'top_movies' => $this->rows("SELECT m.id,m.title,COUNT(DISTINCT st.id) showtimes,COUNT(bs.id) booked_seats FROM movies m INNER JOIN showtimes st ON st.movie_id=m.id INNER JOIN screens sc ON sc.id=st.screen_id LEFT JOIN bookings b ON b.showtime_id=st.id AND b.status='PAID' LEFT JOIN booking_seats bs ON bs.booking_id=b.id WHERE DATE(st.starts_at)='{$reportDateEsc}'{$screenScope} GROUP BY m.id,m.title ORDER BY booked_seats DESC,showtimes DESC LIMIT 5"),
+            'recent_transactions' => $this->rows("SELECT o.id,o.order_code transaction_code,u.full_name customer_name,o.total_amount amount,LOWER(o.channel) channel,o.status,o.created_at FROM orders o LEFT JOIN users u ON u.id=o.customer_id LEFT JOIN bookings b ON b.id=o.booking_id LEFT JOIN showtimes st ON st.id=b.showtime_id LEFT JOIN screens sc ON sc.id=st.screen_id WHERE DATE(o.created_at)='{$reportDateEsc}'{$orderScope} ORDER BY o.id DESC LIMIT 5"),
+            'screens_status' => $this->rows("SELECT sc.id,sc.screen_code,sc.name,sc.screen_type,sc.projector_status,sc.sound_system_status,sc.hvac_temperature,sc.lamp_hours,sc.status,sc.total_seats FROM screens sc WHERE 1=1{$screenScope} ORDER BY sc.screen_code,sc.id"),
         );
         jsonResponse(array('success' => true, 'data' => $data));
     }
@@ -604,14 +628,36 @@ class AdminController
         $dateEsc = $this->db->real_escape_string($date);
         $this->ensureSchedulePublishSchema();
         $screenScope = $this->enforceCinemaScope();
-        $scopeSql = $screenScope !== '' ? ' AND '.$screenScope : '';
-        $screens = $this->rows("SELECT id, screen_code, name, screen_type, total_seats, projector_status, sound_system_status, status FROM screens WHERE status <> 'inactive'{$scopeSql} ORDER BY screen_code, id");
-        $showtimes = $this->rows("SELECT st.id, st.screen_id, st.movie_id, st.show_date, st.start_time, st.end_time, st.booked_seats, st.total_seats, st.status, COALESCE(d.ticket_price, 0) ticket_price, COALESCE(d.operational_note, '') operational_note, m.title movie_title, m.age_rating, m.format movie_format FROM showtimes st INNER JOIN screens s ON s.id=st.screen_id LEFT JOIN movies m ON m.id = st.movie_id LEFT JOIN tms_schedule_details d ON d.showtime_id=st.id WHERE st.show_date = '{$dateEsc}'" . ($screenScope !== '' ? ' AND s.theater_id='.$this->getCurrentTheaterId() : '') . " ORDER BY st.screen_id, st.start_time");
+        $theaterId = $screenScope !== '' ? $this->getCurrentTheaterId() : 0;
+        $scopeSql = $theaterId > 0 ? ' AND theater_id='.$theaterId : '';
+        $showtimeScopeSql = $theaterId > 0 ? ' AND s.theater_id='.$theaterId : '';
+        $screens = $this->rows("SELECT id,screen_code,name,screen_type,total_seats,projector_status,sound_system_status,hvac_temperature,lamp_hours,status FROM screens WHERE status<>'inactive'{$scopeSql} ORDER BY screen_code,id");
+        $showtimes = $this->rows("SELECT st.id,st.screen_id,st.movie_id,DATE(st.starts_at) show_date,TIME(st.starts_at) start_time,TIME(st.ends_at) end_time,
+            (SELECT COUNT(bs.id) FROM booking_seats bs INNER JOIN bookings b ON b.id=bs.booking_id WHERE b.showtime_id=st.id AND b.status='PAID') booked_seats,
+            s.total_seats,CASE WHEN st.status='CANCELLED' THEN 'cancelled' WHEN st.status='CLOSED' OR NOW()>st.ends_at THEN 'finished' WHEN NOW() BETWEEN st.starts_at AND st.ends_at THEN 'running' ELSE 'scheduled' END status,
+            st.ticket_price,COALESCE(d.operational_note,'') operational_note,m.title movie_title,m.age_rating,m.format movie_format,
+            COALESCE((SELECT GROUP_CONCAT(tt.ticket_type_id ORDER BY tt.ticket_type_id) FROM tms_showtime_ticket_types tt WHERE tt.showtime_id=st.id),'') ticket_type_ids
+            FROM showtimes st INNER JOIN screens s ON s.id=st.screen_id LEFT JOIN movies m ON m.id=st.movie_id LEFT JOIN tms_schedule_details d ON d.showtime_id=st.id
+            WHERE DATE(st.starts_at)='{$dateEsc}'{$showtimeScopeSql} ORDER BY st.screen_id,st.starts_at");
         foreach ($showtimes as &$showtime) {
             $showtime = $this->numberFields($showtime, array('id', 'screen_id', 'movie_id', 'booked_seats', 'total_seats', 'ticket_price'));
         }
         unset($showtime);
-        jsonResponse(array('success' => true, 'data' => array('date' => $date, 'cinema_name' => 'Aurora Cinema Q1', 'screens' => $screens, 'showtimes' => $showtimes)));
+        $theater = $theaterId > 0 ? $this->row('SELECT id,name,address,city FROM theaters WHERE id='.$theaterId) : null;
+        $totalBooked = 0; $totalCapacity = 0; $scheduled = 0; $running = 0; $finished = 0; $cancelled = 0;
+        foreach ($showtimes as $showtimeSummary) {
+            $totalBooked += (int)$showtimeSummary['booked_seats'];
+            if ($showtimeSummary['status'] !== 'cancelled') $totalCapacity += (int)$showtimeSummary['total_seats'];
+            if ($showtimeSummary['status'] === 'scheduled') $scheduled++;
+            else if ($showtimeSummary['status'] === 'running') $running++;
+            else if ($showtimeSummary['status'] === 'finished') $finished++;
+            else $cancelled++;
+        }
+        $revenueScope = $theaterId > 0 ? ' AND sc.theater_id='.$theaterId : '';
+        $salesRows = $this->rows("SELECT COUNT(DISTINCT o.id) paid_orders,COALESCE(SUM(o.total_amount),0) revenue FROM orders o LEFT JOIN bookings b ON b.id=o.booking_id LEFT JOIN showtimes st ON st.id=b.showtime_id LEFT JOIN screens sc ON sc.id=st.screen_id WHERE o.status='PAID' AND DATE(o.created_at)='{$dateEsc}'{$revenueScope}");
+        $sales = !empty($salesRows) ? $salesRows[0] : array('paid_orders'=>0,'revenue'=>0);
+        $summary = array('total_showtimes'=>count($showtimes),'scheduled'=>$scheduled,'running'=>$running,'finished'=>$finished,'cancelled'=>$cancelled,'active_screens'=>count($screens),'booked_seats'=>$totalBooked,'total_capacity'=>$totalCapacity,'occupancy_rate'=>$totalCapacity > 0 ? round($totalBooked*100/$totalCapacity,1) : 0,'paid_orders'=>(int)$sales['paid_orders'],'revenue'=>(float)$sales['revenue']);
+        jsonResponse(array('success' => true, 'data' => array('date'=>$date,'theater'=>$theater,'cinema_name'=>$theater ? $theater['name'] : 'Toàn hệ thống Aurora','screens'=>$screens,'showtimes'=>$showtimes,'summary'=>$summary)));
     }
 
     private function ensureMovieAllocationTasksSchema()
@@ -702,6 +748,7 @@ class AdminController
         $allocationId = isset($_GET['allocation_id']) ? (int)$_GET['allocation_id'] : 0;
         if ($allocationId <= 0) jsonResponse(array('success' => false, 'message' => 'Thiếu mã phân bổ.'), 400);
         $this->ensurePlanningSchema();
+        $this->enforceMovieAllocationAccess($allocationId);
         $this->ensureMovieAllocationTasksSchema();
         // m.* keeps this endpoint compatible with older Aurora DB installations
         // where the movie catalogue has fewer optional metadata columns.
@@ -736,6 +783,7 @@ class AdminController
         $taskKey = isset($input['task_key']) ? preg_replace('/[^a-z_]/', '', $input['task_key']) : '';
         if ($allocationId <= 0 || $taskKey !== 'brief_team') jsonResponse(array('success' => false, 'message' => 'Thao tác triển khai không hợp lệ.'), 400);
         $this->ensurePlanningSchema(); $this->ensureMovieAllocationTasksSchema();
+        $this->enforceMovieAllocationAccess($allocationId);
         $rows = $this->rows("SELECT ma.*, m.* FROM movie_allocations ma LEFT JOIN movies m ON m.id=ma.movie_id WHERE ma.id={$allocationId} LIMIT 1");
         if (empty($rows)) jsonResponse(array('success' => false, 'message' => 'Không tìm thấy phân bổ phim.'), 404);
         $allocation = $rows[0];
@@ -757,13 +805,15 @@ class AdminController
         $input = requestJson();
         if (!$allocationId && isset($input['allocation_id'])) $allocationId = (int)$input['allocation_id'];
         if ($allocationId <= 0) jsonResponse(array('success' => false, 'message' => 'Thiếu mã phân bổ phim.'), 400);
+        $this->enforceMovieAllocationAccess($allocationId);
         $rows = $this->rows("SELECT ma.*, m.format movie_format, m.title FROM movie_allocations ma LEFT JOIN movies m ON m.id=ma.movie_id WHERE ma.id={$allocationId} LIMIT 1");
         if (empty($rows)) jsonResponse(array('success' => false, 'message' => 'Không tìm thấy phân bổ phim.'), 404);
         $allocation = $rows[0];
+        $allocationTheaterId = (int)$allocation['theater_id'];
         if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             $screenId = isset($input['screen_id']) ? (int)$input['screen_id'] : 0;
             $note = isset($input['note']) ? trim((string)$input['note']) : '';
-            $screen = $this->rows("SELECT id, name, status FROM screens WHERE id={$screenId} LIMIT 1");
+            $screen = $this->rows("SELECT id, name, status FROM screens WHERE id={$screenId} AND theater_id={$allocationTheaterId} LIMIT 1");
             if (!$screen || $screen[0]['status'] !== 'active') jsonResponse(array('success' => false, 'message' => 'Chỉ có thể xác nhận phòng chiếu đang hoạt động.'), 400);
             $actor = !empty($_SESSION['tms_user']['full_name']) ? $_SESSION['tms_user']['full_name'] : 'Admin Rạp';
             $noteEsc = $this->db->real_escape_string($note); $actorEsc = $this->db->real_escape_string($actor);
@@ -771,7 +821,7 @@ class AdminController
             $this->syncMovieAllocationTasks($allocation, $allocation);
             jsonResponse(array('success' => true, 'message' => 'Đã xác nhận phòng '.$screen[0]['name'].' sẵn sàng và lưu vào Aurora DB.'));
         }
-        $screens = $this->rows("SELECT s.id, s.screen_code, s.name, s.screen_type, s.total_seats, s.projector_status, s.sound_system_status, s.hvac_temperature, s.status, p.preparation_status, p.note, p.prepared_by, p.prepared_at FROM screens s LEFT JOIN movie_allocation_screen_preparations p ON p.screen_id=s.id AND p.allocation_id={$allocationId} ORDER BY s.screen_code, s.id");
+        $screens = $this->rows("SELECT s.id, s.screen_code, s.name, s.screen_type, s.total_seats, s.projector_status, s.sound_system_status, s.hvac_temperature, s.status, p.preparation_status, p.note, p.prepared_by, p.prepared_at FROM screens s LEFT JOIN movie_allocation_screen_preparations p ON p.screen_id=s.id AND p.allocation_id={$allocationId} WHERE s.theater_id={$allocationTheaterId} ORDER BY s.screen_code, s.id");
         jsonResponse(array('success' => true, 'data' => array('allocation' => $allocation, 'screens' => $screens)));
     }
 
@@ -787,6 +837,7 @@ class AdminController
         if ($allocationId <= 0 || !$taskKey || !in_array($status, array('pending', 'completed'), true)) jsonResponse(array('success' => false, 'message' => 'Dữ liệu công việc triển khai không hợp lệ.'), 400);
         $this->ensurePlanningSchema();
         $this->ensureMovieAllocationTasksSchema();
+        $this->enforceMovieAllocationAccess($allocationId);
         if (!$this->scalar("SELECT COUNT(*) FROM movie_allocations WHERE id = " . $allocationId)) jsonResponse(array('success' => false, 'message' => 'Không tìm thấy phân bổ phim.'), 404);
         $taskNames = array('review_assets' => 'Kiểm tra hồ sơ & phiên bản phim', 'prepare_screens' => 'Chuẩn bị phòng chiếu ưu tiên', 'create_showtimes' => 'Lập lịch chiếu theo chỉ tiêu', 'brief_team' => 'Thông báo đội ngũ vận hành', 'opening_check' => 'Kiểm tra trước ngày triển khai');
         if (!isset($taskNames[$taskKey])) jsonResponse(array('success' => false, 'message' => 'Công việc triển khai không hợp lệ.'), 400);
@@ -802,7 +853,7 @@ class AdminController
         if (!isset($this->resources[$resource])) {
             jsonResponse(array('success' => false, 'message' => 'Resource không tồn tại.'), 404);
         }
-        if (in_array($resource, array('screens', 'schedules', 'theaters'), true)) {
+        if (in_array($resource, array('screens', 'schedules', 'theaters', 'movie-plans', 'movie-allocations'), true)) {
             requireAdmin();
             $this->ensureCinemaOwnershipSchema();
         }
@@ -818,6 +869,7 @@ class AdminController
         }
         $cfg = $this->resources[$resource];
         $where = array('1=1');
+        $role = $this->getCurrentRole();
         // Data scope is enforced on the API, so manipulating the browser
         // request cannot expose rooms or showtimes belonging to another rạp.
         if ($resource === 'screens') {
@@ -827,16 +879,27 @@ class AdminController
         if ($resource === 'schedules') {
             $scope = $this->enforceCinemaScope('sc');
             if ($scope !== '') $where[] = $scope;
+            if ($role === 'super_admin' && isset($_GET['theater_id']) && (int)$_GET['theater_id'] > 0) {
+                $requestedTheaterId = (int)$_GET['theater_id'];
+                if (!(int)$this->scalar("SELECT COUNT(*) FROM theaters WHERE id={$requestedTheaterId}")) {
+                    jsonResponse(array('success' => false, 'message' => 'Cụm rạp được chọn không tồn tại trong aurora_db.'), 422);
+                }
+                $where[] = 'sc.theater_id = ' . $requestedTheaterId;
+            }
         }
         if ($resource === 'theaters') {
             $scope = $this->enforceCinemaScope();
             if ($scope !== '') $where[] = 'id = ' . $this->getCurrentTheaterId();
         }
+        if ($resource === 'movie-allocations') {
+            $scope = $this->enforceCinemaScope();
+            if ($scope !== '') $where[] = $scope;
+        }
 
         if (!empty($_GET['q'])) {
             $qEsc = $this->db->real_escape_string(trim((string)$_GET['q']));
             if ($resource === 'schedules') {
-                $where[] = "(m.title LIKE '%{$qEsc}%' OR sc.name LIKE '%{$qEsc}%')";
+                $where[] = "(m.title LIKE '%{$qEsc}%' OR sc.name LIKE '%{$qEsc}%' OR th.name LIKE '%{$qEsc}%')";
             } else if (!empty($cfg['search'])) {
                 $parts = array();
                 foreach ($cfg['search'] as $field) {
@@ -877,6 +940,12 @@ class AdminController
             if (!empty($_GET['year'])) {
                 $where[] = "`plan_year` = " . (int)$_GET['year'];
             }
+            $planTheaterId = 0;
+            if (in_array($role, array('cinema_admin', 'supervisor'), true)) {
+                $planTheaterId = $this->getCurrentTheaterId();
+                if ($planTheaterId <= 0) jsonResponse(array('success' => false, 'message' => 'Tài khoản chưa được gán rạp phụ trách.'), 403);
+                $where[] = "EXISTS (SELECT 1 FROM movie_allocations scoped_ma WHERE scoped_ma.plan_id=movie_plans.id AND scoped_ma.theater_id={$planTheaterId})";
+            }
             $sql = "SELECT * FROM movie_plans WHERE " . implode(' AND ', $where) . " ORDER BY plan_month ASC, expected_start_date ASC, id DESC";
             $plans = $this->rows($sql);
             $totalTheaters = $this->scalar("SELECT COUNT(*) FROM theaters");
@@ -884,7 +953,8 @@ class AdminController
             foreach ($plans as &$p) {
                 $pId = (int)$p['id'];
                 $mId = (int)$p['movie_id'];
-                $allocations = $this->rows("SELECT * FROM movie_allocations WHERE plan_id = {$pId} OR (plan_id = 0 AND movie_id = {$mId}) ORDER BY theater_id ASC");
+                $allocationScope = $planTheaterId > 0 ? " AND theater_id={$planTheaterId}" : '';
+                $allocations = $this->rows("SELECT * FROM movie_allocations WHERE (plan_id = {$pId} OR (plan_id = 0 AND movie_id = {$mId})){$allocationScope} ORDER BY theater_id ASC");
                 $p['allocations'] = $allocations;
                 $p['allocated_count'] = count($allocations);
                 $p['total_theaters'] = $totalTheaters;
@@ -921,9 +991,9 @@ class AdminController
 
         $select = '*';
         if ($resource === 'schedules') {
-            $select = "s.id, s.screen_id, s.movie_id, DATE(s.starts_at) show_date, TIME(s.starts_at) start_time, TIME(s.ends_at) end_time, (SELECT COUNT(*) FROM booking_seats bs INNER JOIN bookings b ON b.id=bs.booking_id WHERE b.showtime_id=s.id AND b.status NOT IN ('CANCELLED','EXPIRED')) booked_seats, sc.total_seats, CASE WHEN s.status='CANCELLED' THEN 'cancelled' WHEN s.status='CLOSED' OR NOW() > s.ends_at THEN 'finished' WHEN NOW() BETWEEN s.starts_at AND s.ends_at THEN 'running' ELSE 'scheduled' END status, m.title movie_title, sc.name screen_name, s.ticket_price, COALESCE(d.operational_note, '') operational_note, COALESCE((SELECT GROUP_CONCAT(stt.ticket_type_id ORDER BY stt.ticket_type_id) FROM tms_showtime_ticket_types stt WHERE stt.showtime_id=s.id), '') ticket_type_ids, CASE WHEN s.starts_at > NOW() AND NOT EXISTS (SELECT 1 FROM bookings booking_history WHERE booking_history.showtime_id=s.id) THEN 1 ELSE 0 END can_delete, CASE WHEN s.starts_at <= NOW() THEN 'started' WHEN EXISTS (SELECT 1 FROM bookings booking_history WHERE booking_history.showtime_id=s.id) THEN 'has_booking_history' ELSE '' END delete_block_reason";
+            $select = "s.id, s.screen_id, s.movie_id, sc.theater_id, th.name theater_name, th.city theater_city, DATE(s.starts_at) show_date, TIME(s.starts_at) start_time, TIME(s.ends_at) end_time, (SELECT COUNT(*) FROM booking_seats bs INNER JOIN bookings b ON b.id=bs.booking_id WHERE b.showtime_id=s.id AND b.status NOT IN ('CANCELLED','EXPIRED')) booked_seats, sc.total_seats, CASE WHEN s.status='CANCELLED' THEN 'cancelled' WHEN s.status='CLOSED' OR NOW() > s.ends_at THEN 'finished' WHEN NOW() BETWEEN s.starts_at AND s.ends_at THEN 'running' ELSE 'scheduled' END status, m.title movie_title, sc.name screen_name, s.ticket_price, COALESCE(d.operational_note, '') operational_note, COALESCE((SELECT GROUP_CONCAT(stt.ticket_type_id ORDER BY stt.ticket_type_id) FROM tms_showtime_ticket_types stt WHERE stt.showtime_id=s.id), '') ticket_type_ids, CASE WHEN s.starts_at > NOW() AND NOT EXISTS (SELECT 1 FROM bookings booking_history WHERE booking_history.showtime_id=s.id) THEN 1 ELSE 0 END can_delete, CASE WHEN s.starts_at <= NOW() THEN 'started' WHEN EXISTS (SELECT 1 FROM bookings booking_history WHERE booking_history.showtime_id=s.id) THEN 'has_booking_history' ELSE '' END delete_block_reason";
 
-            $fromSql = ' FROM showtimes s JOIN movies m ON m.id=s.movie_id JOIN screens sc ON sc.id=s.screen_id LEFT JOIN tms_schedule_details d ON d.showtime_id=s.id';
+            $fromSql = ' FROM showtimes s JOIN movies m ON m.id=s.movie_id JOIN screens sc ON sc.id=s.screen_id JOIN theaters th ON th.id=sc.theater_id LEFT JOIN tms_schedule_details d ON d.showtime_id=s.id';
             $whereSql = implode(' AND ', $where);
             $page = isset($_GET['page']) ? max(1, (int)$_GET['page']) : 1;
             $perPage = isset($_GET['per_page']) ? (int)$_GET['per_page'] : 20;
@@ -941,11 +1011,13 @@ class AdminController
             $summaryWhere = array('1=1');
             $summaryScope = $this->enforceCinemaScope('sc');
             if ($summaryScope !== '') $summaryWhere[] = $summaryScope;
+            if ($role === 'super_admin' && isset($requestedTheaterId) && $requestedTheaterId > 0) $summaryWhere[] = 'sc.theater_id=' . $requestedTheaterId;
             $summarySql = "SELECT
                 SUM(CASE WHEN s.status='OPEN' AND s.starts_at>NOW() THEN 1 ELSE 0 END) scheduled,
                 SUM(CASE WHEN s.status='OPEN' AND NOW() BETWEEN s.starts_at AND s.ends_at THEN 1 ELSE 0 END) running,
                 SUM(CASE WHEN s.status='CLOSED' OR (s.status<>'CANCELLED' AND s.ends_at<NOW()) THEN 1 ELSE 0 END) finished,
-                COUNT(DISTINCT CASE WHEN s.status='OPEN' AND s.ends_at>=NOW() THEN s.screen_id ELSE NULL END) active_rooms
+                COUNT(DISTINCT CASE WHEN s.status='OPEN' AND s.ends_at>=NOW() THEN s.screen_id ELSE NULL END) active_rooms,
+                COUNT(DISTINCT sc.theater_id) theaters
                 FROM showtimes s JOIN screens sc ON sc.id=s.screen_id
                 WHERE ".implode(' AND ', $summaryWhere);
             $summaryResult = $this->db->query($summarySql);
@@ -962,6 +1034,7 @@ class AdminController
                     'total' => $total,
                     'total_pages' => $totalPages,
                     'view' => $requestedView,
+                    'theater_id' => isset($requestedTheaterId) ? $requestedTheaterId : ($role === 'super_admin' ? 0 : $this->getCurrentTheaterId()),
                     'summary' => $summary
                 )
             ));
@@ -1131,6 +1204,16 @@ class AdminController
             }
         }
         if ($resource === 'movie-allocations' && isset($input['status']) && $input['status'] === 'confirmed') {
+            if ($role !== 'cinema_admin') {
+                jsonResponse(array('success' => false, 'message' => 'Chỉ Admin Rạp được xác nhận tiếp nhận kế hoạch của rạp mình.'), 403);
+            }
+            if ($id <= 0) jsonResponse(array('success' => false, 'message' => 'Thiếu mã phân bổ cần xác nhận.'), 400);
+            $this->enforceMovieAllocationAccess($id);
+            $allocationRows = $this->rows("SELECT status FROM movie_allocations WHERE id={$id} LIMIT 1");
+            $allocationStatus = !empty($allocationRows[0]['status']) ? strtolower(trim((string)$allocationRows[0]['status'])) : '';
+            if ($allocationStatus !== 'pending') {
+                jsonResponse(array('success' => false, 'message' => 'Phân bổ này không còn ở trạng thái chờ xác nhận.'), 409);
+            }
             $approver = !empty($_SESSION['tms_user']['full_name']) ? $_SESSION['tms_user']['full_name'] : 'Admin Rạp';
             $input['confirmed_by'] = $approver;
             $input['confirmed_at'] = date('Y-m-d H:i:s');
@@ -1462,6 +1545,9 @@ class AdminController
         }
         $screenIds = array_values(array_unique($screenIds));
         if (empty($screenIds) || !$movieId || !preg_match('/^\d{4}-\d{2}-\d{2}$/', $showDate) || !$rawSlots || !in_array($status, array('scheduled', 'running', 'finished', 'cancelled'), true)) jsonResponse(array('success' => false, 'message' => 'Vui lòng nhập đủ phim, phòng, ngày và giờ chiếu hợp lệ.'), 400);
+        $showDateParts = explode('-', $showDate);
+        if (count($showDateParts) !== 3 || !checkdate((int)$showDateParts[1], (int)$showDateParts[2], (int)$showDateParts[0])) jsonResponse(array('success'=>false,'message'=>'Ngày chiếu không hợp lệ. Vui lòng chọn theo thứ tự ngày / tháng / năm.'),422);
+        if (!$wasUpdate && $status !== 'scheduled') jsonResponse(array('success' => false, 'message' => 'Suất chiếu mới chỉ được tạo ở trạng thái Mở bán theo lịch (OPEN).'), 422);
         if (empty($ticketTypeIds)) jsonResponse(array('success' => false, 'message' => 'Vui lòng chọn ít nhất một loại vé áp dụng cho suất chiếu.'), 400);
         $this->ensureTicketPricingSchema();
         if ($id > 0 && count($rawSlots) !== 1) jsonResponse(array('success' => false, 'message' => 'Một lần chỉnh sửa chỉ áp dụng cho một suất chiếu.'), 400);
@@ -1510,6 +1596,13 @@ class AdminController
             $slots[] = array('screen_id'=>$slotScreenId, 'start'=>$start, 'end'=>$end, 'price'=>min($values), 'types'=>$types);
         }
         usort($slots, array('AdminController', 'compareScheduleSlots'));
+        foreach ($slots as $statusSlot) {
+            $statusStartEsc = $this->db->real_escape_string($showDate.' '.$statusSlot['start'].':00');
+            $statusEndEsc = $this->db->real_escape_string($showDate.' '.$statusSlot['end'].':00');
+            if ($status === 'scheduled' && !(int)$this->scalar("SELECT '{$statusStartEsc}' > NOW()")) jsonResponse(array('success'=>false,'message'=>'Chỉ suất chưa bắt đầu mới có thể ở trạng thái Sắp chiếu · Mở bán.'),422);
+            if ($status === 'running' && !(int)$this->scalar("SELECT NOW() BETWEEN '{$statusStartEsc}' AND '{$statusEndEsc}'")) jsonResponse(array('success'=>false,'message'=>'Trạng thái Đang chiếu được hệ thống xác định tự động theo khung giờ, không thể đặt thủ công.'),422);
+            if ($status === 'finished' && !(int)$this->scalar("SELECT '{$statusEndEsc}' < NOW()")) jsonResponse(array('success'=>false,'message'=>'Trạng thái Đã kết thúc được hệ thống xác định tự động sau giờ kết thúc.'),422);
+        }
         for ($i=0; $i<count($slots); $i++) for ($j=$i+1; $j<count($slots); $j++) if ($slots[$i]['screen_id']===$slots[$j]['screen_id'] && $slots[$j]['start'] < $slots[$i]['end'] && $slots[$j]['end'] > $slots[$i]['start']) jsonResponse(array('success'=>false,'message'=>'Các suất của phòng '.$screenMap[$slots[$i]['screen_id']]['name'].' đang chồng lấn nhau.'),400);
         foreach ($slots as $slot) { $candidateId=(int)$slot['screen_id']; $startAt=$dateEsc.' '.$slot['start'].':00'; $endAt=$dateEsc.' '.$slot['end'].':00'; $conflicts=$this->rows("SELECT starts_at,ends_at FROM showtimes WHERE screen_id={$candidateId} AND status <> 'CANCELLED' AND id <> {$id} AND starts_at < '{$endAt}' AND ends_at > '{$startAt}' LIMIT 1"); if ($conflicts) jsonResponse(array('success'=>false,'message'=>'Phòng '.$screenMap[$candidateId]['name'].' đã có suất chiếu trùng khung '.$slot['start'].' – '.$slot['end'].'. Chưa có dữ liệu nào được tạo.'),409); }
         $this->db->query("CREATE TABLE IF NOT EXISTS schedule_operation_logs (
@@ -1566,7 +1659,7 @@ class AdminController
         foreach ($allocations as $allocation) $this->syncMovieAllocationTasks($allocation, $allocation);
         $actor = !empty($_SESSION['tms_user']['full_name']) ? $this->db->real_escape_string($_SESSION['tms_user']['full_name']) : 'Admin Rạp';
         $createdIds=array(); foreach($created as $item) { $createdId=(int)$item['id']; $createdIds[]=$createdId; $this->db->query("INSERT INTO schedule_operation_logs (showtime_id, action_name, performed_by, created_at) VALUES ({$createdId}, '".($wasUpdate ? 'updated' : 'created')."', '{$actor}', NOW())"); }
-        jsonResponse(array('success' => true, 'message' => count($createdIds) > 1 ? 'Đã tạo '.count($createdIds).' suất chiếu, mỗi khung giờ đúng phòng đã chọn trong aurora_db.' : 'Đã lưu suất chiếu vào aurora_db.', 'data' => array('id' => $id, 'ids' => $createdIds)), $wasUpdate ? 200 : 201);
+        jsonResponse(array('success' => true, 'message' => count($createdIds) > 1 ? 'Đã tạo '.count($createdIds).' suất chiếu, mỗi khung giờ đúng phòng đã chọn trong aurora_db.' : 'Đã lưu suất chiếu vào aurora_db.', 'data' => array('id' => $id, 'ids' => $createdIds, 'show_date' => $showDate, 'display_date' => date('d/m/Y', strtotime($showDate)))), $wasUpdate ? 200 : 201);
     }
 
     private function ensureSchedulePublishSchema()
@@ -1931,11 +2024,20 @@ class AdminController
         }
 
         $this->ensureUserManagementSchema();
-        $where = array('1=1');
+        $accountType = isset($_GET['account_type']) && $_GET['account_type'] === 'customer' ? 'customer' : 'internal';
+        if ($accountType === 'customer' && $role !== 'super_admin') {
+            jsonResponse(array('success' => false, 'message' => 'Không gian tài khoản customer chỉ dành cho Admin Tổng.'), 403);
+        }
+        $where = array($accountType === 'customer' ? "u.role = 'customer'" : "u.role <> 'customer'");
         if (!empty($_GET['q'])) { $q = $this->db->real_escape_string(trim($_GET['q'])); $where[] = "(u.username LIKE '%{$q}%' OR u.full_name LIKE '%{$q}%' OR u.phone LIKE '%{$q}%' OR u.email LIKE '%{$q}%')"; }
-        if (!empty($_GET['role'])) { $roleFilter = $this->db->real_escape_string(self::normalizeRole($_GET['role'])); $where[] = "role = '{$roleFilter}'"; }
+        if ($accountType === 'internal' && !empty($_GET['role'])) { $roleFilter = $this->db->real_escape_string(self::normalizeRole($_GET['role'])); $where[] = "u.role = '{$roleFilter}'"; }
+        if ($accountType === 'customer' && !empty($_GET['membership']) && in_array($_GET['membership'], array('STANDARD', 'SILVER', 'GOLD', 'PLATINUM'), true)) { $where[] = "u.membership_level = '".$this->db->real_escape_string($_GET['membership'])."'"; }
         if (!empty($_GET['status']) && in_array($_GET['status'], array('active', 'inactive', 'locked'), true)) { $where[] = "status = '".$this->db->real_escape_string($_GET['status'])."'"; }
-        $users = $this->rows("SELECT u.id, u.username, u.full_name, u.phone, u.email, u.theater_id, t.name AS theater_name, u.role, u.status, u.last_login, u.created_at, MAX(l.created_at) AS last_management_action FROM users u LEFT JOIN theaters t ON t.id=u.theater_id LEFT JOIN tms_user_activity_logs l ON l.target_user_id=u.id WHERE ".implode(' AND ', $where)." GROUP BY u.id, u.username, u.full_name, u.phone, u.email, u.theater_id, t.name, u.role, u.status, u.last_login, u.created_at ORDER BY u.status='active' DESC, u.full_name ASC");
+        $users = $this->rows("SELECT u.id, u.username, u.full_name, u.phone, u.email, u.theater_id, t.name AS theater_name, u.role, u.status, u.last_login, u.membership_level, u.points, u.created_at, MAX(l.created_at) AS last_management_action,
+            (SELECT COUNT(*) FROM bookings b WHERE b.user_id=u.id) AS booking_count,
+            (SELECT COALESCE(SUM(o.total_amount),0) FROM orders o WHERE o.customer_id=u.id AND o.status='PAID') AS total_spent,
+            (SELECT GROUP_CONCAT(DISTINCT oa.provider ORDER BY oa.provider SEPARATOR ',') FROM oauth_accounts oa WHERE oa.user_id=u.id) AS oauth_providers
+            FROM users u LEFT JOIN theaters t ON t.id=u.theater_id LEFT JOIN tms_user_activity_logs l ON l.target_user_id=u.id WHERE ".implode(' AND ', $where)." GROUP BY u.id, u.username, u.full_name, u.phone, u.email, u.theater_id, t.name, u.role, u.status, u.last_login, u.membership_level, u.points, u.created_at ORDER BY u.status='active' DESC, u.full_name ASC");
         $rolesDef = self::getRoleDefinitions();
         $clockResult = $this->db->query('SELECT NOW()');
         if (!$clockResult) {
@@ -1954,17 +2056,27 @@ class AdminController
             }
             $normalized = self::normalizeRole($u['role']);
             $u['normalized_role'] = $normalized;
-            $u['role_info'] = isset($rolesDef[$normalized]) ? $rolesDef[$normalized] : array('name' => $u['role'], 'badge' => $u['role']);
+            $u['account_type'] = $u['role'] === 'customer' ? 'customer' : 'internal';
+            $u['booking_count'] = (int)$u['booking_count'];
+            $u['total_spent'] = (float)$u['total_spent'];
+            $u['points'] = (int)$u['points'];
+            $u['role_info'] = isset($rolesDef[$normalized]) ? $rolesDef[$normalized] : array('name' => 'Khách hàng', 'badge' => 'Customer');
         }
         unset($u);
 
         jsonResponse(array(
             'success' => true,
             'data' => $users,
+            'account_type' => $accountType,
             'summary' => array(
                 'total' => (int)$this->scalar('SELECT COUNT(*) FROM users'),
                 'active' => (int)$this->scalar("SELECT COUNT(*) FROM users WHERE status='active'"),
                 'locked' => (int)$this->scalar("SELECT COUNT(*) FROM users WHERE status IN ('locked','inactive')"),
+                'internal_total' => (int)$this->scalar("SELECT COUNT(*) FROM users WHERE role <> 'customer'"),
+                'internal_active' => (int)$this->scalar("SELECT COUNT(*) FROM users WHERE role <> 'customer' AND status='active'"),
+                'customer_total' => (int)$this->scalar("SELECT COUNT(*) FROM users WHERE role = 'customer'"),
+                'customer_active' => (int)$this->scalar("SELECT COUNT(*) FROM users WHERE role = 'customer' AND status='active'"),
+                'customer_points' => (int)$this->scalar("SELECT COALESCE(SUM(points),0) FROM users WHERE role = 'customer'"),
                 'admins' => (int)$this->scalar("SELECT COUNT(*) FROM users WHERE role IN ('super_admin','cinema_admin') AND status='active'")
             ),
             'roles' => array_values($rolesDef),
@@ -1989,6 +2101,9 @@ class AdminController
         $email = isset($input['email']) ? trim((string)$input['email']) : '';
         $theaterId = isset($input['theater_id']) ? (int)$input['theater_id'] : 0;
         $userRole = isset($input['role']) ? self::normalizeRole($input['role']) : 'cinema_admin';
+        if (!in_array($userRole, array('super_admin', 'cinema_admin', 'supervisor', 'accounting'), true)) {
+            jsonResponse(array('success' => false, 'message' => 'Form phân quyền nội bộ không được phép tạo hoặc chuyển đổi tài khoản customer.'), 400);
+        }
         $allowedStatuses = array('active', 'inactive', 'locked');
         $statusProvided = array_key_exists('status', $input);
         $status = $statusProvided ? $input['status'] : ($id > 0 ? null : 'active');
@@ -2015,8 +2130,9 @@ class AdminController
         $rlEsc = $this->db->real_escape_string($userRole);
 
         if ($id > 0) {
-            $existingUser = $this->row("SELECT status FROM users WHERE id = " . $id);
+            $existingUser = $this->row("SELECT status, role FROM users WHERE id = " . $id);
             if (!$existingUser) jsonResponse(array('success' => false, 'message' => 'Tài khoản không tồn tại trong Aurora DB.'), 404);
+            if ($existingUser['role'] === 'customer') jsonResponse(array('success' => false, 'message' => 'Tài khoản customer phải được quản lý trong không gian Khách hàng, không thể cấp quyền nội bộ.'), 400);
             if ($status === null) {
                 $status = $existingUser['status'];
             }
@@ -2050,6 +2166,22 @@ class AdminController
         }
     }
 
+    public function updateCustomerStatus()
+    {
+        requireAdmin();
+        if ($this->getCurrentRole() !== 'super_admin') jsonResponse(array('success' => false, 'message' => 'Chỉ Admin Tổng mới có quyền thay đổi trạng thái customer.'), 403);
+        $input = requestJson();
+        $id = isset($input['id']) ? (int)$input['id'] : 0;
+        $status = isset($input['status']) ? trim((string)$input['status']) : '';
+        if ($id < 1 || !in_array($status, array('active', 'locked', 'inactive'), true)) jsonResponse(array('success' => false, 'message' => 'Dữ liệu trạng thái customer không hợp lệ.'), 400);
+        $customer = $this->row("SELECT id, full_name, role FROM users WHERE id={$id} LIMIT 1");
+        if (!$customer || $customer['role'] !== 'customer') jsonResponse(array('success' => false, 'message' => 'Không tìm thấy tài khoản customer trong Aurora DB.'), 404);
+        $statusEsc = $this->db->real_escape_string($status);
+        if (!$this->db->query("UPDATE users SET status='{$statusEsc}', updated_at=NOW() WHERE id={$id} AND role='customer'")) jsonResponse(array('success' => false, 'message' => 'Không thể cập nhật trạng thái customer: '.$this->db->error), 500);
+        $this->logUserManagementActivity($id, 'customer_status_updated', 'Cập nhật trạng thái customer thành '.$status.'.');
+        jsonResponse(array('success' => true, 'message' => $status === 'active' ? 'Đã mở lại quyền truy cập của customer.' : 'Đã hạn chế quyền truy cập của customer.', 'data' => array('id'=>$id, 'status'=>$status)));
+    }
+
     public function deleteUser()
     {
         requireAdmin();
@@ -2071,6 +2203,9 @@ class AdminController
         $userRow = $this->row("SELECT id, username, full_name, role FROM users WHERE id = {$id}");
         if (!$userRow) {
             jsonResponse(array('success' => false, 'message' => 'Tài khoản không tồn tại trong Aurora DB.'), 404);
+        }
+        if ($userRow['role'] === 'customer') {
+            jsonResponse(array('success' => false, 'message' => 'Không thể xóa customer từ nghiệp vụ quản trị tài khoản nội bộ.'), 400);
         }
 
         // Dọn dẹp an toàn các bảng liên quan để tránh lỗi Foreign Key
@@ -2212,8 +2347,185 @@ class AdminController
         if (!$screen) {
             jsonResponse(array('success' => false, 'message' => 'Thiếu screen_id.'), 400);
         }
-        $rows = $this->rows('SELECT * FROM seats WHERE screen_id=' . $screen . ' ORDER BY seat_code');
+        requireAdmin();
+        $this->ensureCinemaOwnershipSchema();
+        $scope = $this->enforceCinemaScope('sc');
+        if ($scope !== '' && !(int)$this->scalar('SELECT COUNT(*) FROM screens sc WHERE sc.id='.$screen.' AND '.$scope)) {
+            jsonResponse(array('success' => false, 'message' => 'Bạn không được phép xem sơ đồ ghế của rạp khác.'), 403);
+        }
+        $rows = $this->rows('SELECT se.* FROM seats se INNER JOIN screens sc ON sc.id=se.screen_id WHERE se.screen_id=' . $screen . ' ORDER BY se.seat_row, se.seat_number');
         jsonResponse(array('success' => true, 'data' => $rows));
+    }
+
+    private function ensureShowtimeSeatLockSchema()
+    {
+        $lockSql = "CREATE TABLE IF NOT EXISTS tms_showtime_seat_locks (
+            id BIGINT UNSIGNED NOT NULL AUTO_INCREMENT PRIMARY KEY,
+            showtime_id BIGINT UNSIGNED NOT NULL,
+            seat_id BIGINT UNSIGNED NOT NULL,
+            reason VARCHAR(255) NOT NULL DEFAULT '',
+            locked_by VARCHAR(120) NOT NULL,
+            locked_at DATETIME NOT NULL,
+            updated_at DATETIME NOT NULL,
+            UNIQUE KEY uq_tms_showtime_seat_lock (showtime_id, seat_id),
+            KEY idx_tms_showtime_seat_lock_seat (seat_id),
+            CONSTRAINT fk_tms_seat_lock_showtime FOREIGN KEY (showtime_id) REFERENCES showtimes(id) ON DELETE CASCADE,
+            CONSTRAINT fk_tms_seat_lock_seat FOREIGN KEY (seat_id) REFERENCES seats(id) ON DELETE CASCADE
+        ) ENGINE=InnoDB DEFAULT CHARSET=utf8";
+        if (!$this->db->query($lockSql)) jsonResponse(array('success' => false, 'message' => 'Không thể khởi tạo dữ liệu khóa ghế: '.$this->db->error), 500);
+        $logSql = "CREATE TABLE IF NOT EXISTS tms_showtime_seat_lock_logs (
+            id BIGINT UNSIGNED NOT NULL AUTO_INCREMENT PRIMARY KEY,
+            showtime_id BIGINT UNSIGNED NOT NULL,
+            seat_id BIGINT UNSIGNED NOT NULL,
+            action_name VARCHAR(20) NOT NULL,
+            reason VARCHAR(255) NOT NULL DEFAULT '',
+            performed_by VARCHAR(120) NOT NULL,
+            created_at DATETIME NOT NULL,
+            KEY idx_tms_seat_lock_log_showtime (showtime_id),
+            KEY idx_tms_seat_lock_log_seat (seat_id)
+        ) ENGINE=InnoDB DEFAULT CHARSET=utf8";
+        if (!$this->db->query($logSql)) jsonResponse(array('success' => false, 'message' => 'Không thể khởi tạo lịch sử khóa ghế: '.$this->db->error), 500);
+    }
+
+    public function screenSeatMap()
+    {
+        requireAdmin();
+        $this->ensureCinemaOwnershipSchema();
+        $this->ensureShowtimeSeatLockSchema();
+        $screenId = isset($_GET['screen_id']) ? (int)$_GET['screen_id'] : 0;
+        $showtimeId = isset($_GET['showtime_id']) ? (int)$_GET['showtime_id'] : 0;
+        $date = isset($_GET['date']) ? trim((string)$_GET['date']) : date('Y-m-d');
+        if ($screenId <= 0 || !preg_match('/^\d{4}-\d{2}-\d{2}$/', $date)) jsonResponse(array('success' => false, 'message' => 'Phòng chiếu hoặc ngày xem không hợp lệ.'), 422);
+        $scope = $this->enforceCinemaScope('sc');
+        $scopeSql = $scope !== '' ? ' AND '.$scope : '';
+        $screenRows = $this->rows("SELECT sc.id,sc.theater_id,sc.screen_code,sc.name,sc.screen_type,sc.total_seats,sc.status,th.name theater_name,th.address theater_address FROM screens sc INNER JOIN theaters th ON th.id=sc.theater_id WHERE sc.id={$screenId}{$scopeSql} LIMIT 1");
+        if (empty($screenRows)) jsonResponse(array('success' => false, 'message' => 'Không tìm thấy phòng chiếu trong phạm vi rạp được phân quyền.'), 404);
+        $dateEsc = $this->db->real_escape_string($date);
+        $showtimes = $this->rows("SELECT st.id,st.movie_id,m.title movie_title,m.duration_minutes,m.age_rating,m.poster_url,st.starts_at,st.ends_at,st.status,
+            (SELECT COUNT(*) FROM booking_seats bs INNER JOIN bookings b ON b.id=bs.booking_id WHERE b.showtime_id=st.id AND b.status NOT IN ('CANCELLED','EXPIRED')) booked_seats,
+            (SELECT COUNT(*) FROM tms_showtime_seat_locks sl WHERE sl.showtime_id=st.id) locked_seats
+            FROM showtimes st INNER JOIN movies m ON m.id=st.movie_id
+            WHERE st.screen_id={$screenId} AND DATE(st.starts_at)='{$dateEsc}' AND st.status<>'CANCELLED' ORDER BY st.starts_at");
+        if ($showtimeId <= 0 && !empty($showtimes)) $showtimeId = (int)$showtimes[0]['id'];
+        $selectedShowtime = null;
+        foreach ($showtimes as $showtime) if ((int)$showtime['id'] === $showtimeId) { $selectedShowtime = $showtime; break; }
+        if ($showtimeId > 0 && empty($selectedShowtime)) jsonResponse(array('success' => false, 'message' => 'Suất chiếu không thuộc phòng hoặc ngày đang chọn.'), 422);
+        $seats = array();
+        if ($showtimeId > 0) {
+            $seats = $this->rows("SELECT se.id,se.seat_row,se.seat_number,se.seat_type,
+                CASE WHEN EXISTS (SELECT 1 FROM booking_seats bs INNER JOIN bookings b ON b.id=bs.booking_id WHERE b.showtime_id={$showtimeId} AND bs.seat_id=se.id AND b.status NOT IN ('CANCELLED','EXPIRED')) THEN 'booked'
+                     WHEN EXISTS (SELECT 1 FROM tms_showtime_seat_locks sl WHERE sl.showtime_id={$showtimeId} AND sl.seat_id=se.id) THEN 'locked'
+                     WHEN EXISTS (SELECT 1 FROM seat_holds sh WHERE sh.showtime_id={$showtimeId} AND sh.seat_id=se.id AND sh.expires_at>NOW()) THEN 'held'
+                     ELSE 'available' END seat_status,
+                COALESCE((SELECT sl.reason FROM tms_showtime_seat_locks sl WHERE sl.showtime_id={$showtimeId} AND sl.seat_id=se.id LIMIT 1),'') lock_reason,
+                COALESCE((SELECT sl.locked_by FROM tms_showtime_seat_locks sl WHERE sl.showtime_id={$showtimeId} AND sl.seat_id=se.id LIMIT 1),'') locked_by
+                FROM seats se WHERE se.screen_id={$screenId} ORDER BY se.seat_row,se.seat_number");
+        } else {
+            // Vẫn trả sơ đồ vật lý của phòng khi ngày đang xem chưa có suất chiếu.
+            // Trạng thái khóa/đặt chỉ có ý nghĩa sau khi người dùng chọn một suất cụ thể.
+            $seats = $this->rows("SELECT se.id,se.seat_row,se.seat_number,se.seat_type,
+                'available' seat_status,'' lock_reason,'' locked_by
+                FROM seats se WHERE se.screen_id={$screenId} ORDER BY se.seat_row,se.seat_number");
+        }
+        $counts = array('available'=>0,'booked'=>0,'locked'=>0,'held'=>0);
+        foreach ($seats as $seat) if (isset($counts[$seat['seat_status']])) $counts[$seat['seat_status']]++;
+        jsonResponse(array('success'=>true,'data'=>array('date'=>$date,'screen'=>$screenRows[0],'showtimes'=>$showtimes,'selected_showtime'=>$selectedShowtime,'seats'=>$seats,'summary'=>$counts)));
+    }
+
+    public function cinemaSystemOverview()
+    {
+        requireAdmin();
+        if ($this->getCurrentRole() !== 'super_admin') {
+            jsonResponse(array('success'=>false,'message'=>'Chỉ Admin Tổng được xem trung tâm Hệ thống rạp.'),403);
+        }
+        $this->ensureCinemaOwnershipSchema();
+        $this->ensureShowtimeSeatLockSchema();
+        $date = isset($_GET['date']) ? trim((string)$_GET['date']) : date('Y-m-d');
+        $theaterId = isset($_GET['theater_id']) ? (int)$_GET['theater_id'] : 0;
+        if (!preg_match('/^\d{4}-\d{2}-\d{2}$/', $date)) jsonResponse(array('success'=>false,'message'=>'Ngày vận hành không hợp lệ.'),422);
+        if ($theaterId > 0 && !(int)$this->scalar('SELECT COUNT(*) FROM theaters WHERE id='.$theaterId)) {
+            jsonResponse(array('success'=>false,'message'=>'Rạp được chọn không tồn tại trong aurora_db.'),404);
+        }
+        $dateEsc = $this->db->real_escape_string($date);
+        $theaters = $this->rows("SELECT th.id,th.name,th.address,th.city,'' phone,'active' status,
+            COUNT(DISTINCT sc.id) total_screens,COALESCE(SUM(sc.total_seats),0) total_seats,
+            COALESCE(SUM(CASE WHEN sc.status='active' THEN 1 ELSE 0 END),0) active_screens,
+            COALESCE((SELECT u.full_name FROM users u WHERE u.theater_id=th.id AND u.role='cinema_admin' AND u.status='active' ORDER BY u.id LIMIT 1),'Chưa phân công') admin_name,
+            (SELECT COUNT(*) FROM showtimes st INNER JOIN screens day_sc ON day_sc.id=st.screen_id WHERE day_sc.theater_id=th.id AND DATE(st.starts_at)='{$dateEsc}' AND st.status<>'CANCELLED') showtimes,
+            (SELECT COUNT(*) FROM showtimes st INNER JOIN screens run_sc ON run_sc.id=st.screen_id WHERE run_sc.theater_id=th.id AND DATE(st.starts_at)='{$dateEsc}' AND st.status='OPEN' AND NOW() BETWEEN st.starts_at AND st.ends_at) running_showtimes,
+            (SELECT COUNT(*) FROM booking_seats bs INNER JOIN bookings b ON b.id=bs.booking_id INNER JOIN showtimes st ON st.id=b.showtime_id INNER JOIN screens book_sc ON book_sc.id=st.screen_id WHERE book_sc.theater_id=th.id AND DATE(st.starts_at)='{$dateEsc}' AND b.status NOT IN ('CANCELLED','EXPIRED')) booked_seats,
+            (SELECT COUNT(*) FROM tms_showtime_seat_locks sl INNER JOIN showtimes st ON st.id=sl.showtime_id INNER JOIN screens lock_sc ON lock_sc.id=st.screen_id WHERE lock_sc.theater_id=th.id AND DATE(st.starts_at)='{$dateEsc}') locked_seats
+            FROM theaters th LEFT JOIN screens sc ON sc.theater_id=th.id GROUP BY th.id,th.name,th.address,th.city ORDER BY th.name");
+        $screens = array();
+        if ($theaterId > 0) {
+            $screens = $this->rows("SELECT sc.id,sc.theater_id,sc.screen_code,sc.name,sc.screen_type,sc.total_seats,sc.status,
+                (SELECT COUNT(*) FROM showtimes st WHERE st.screen_id=sc.id AND DATE(st.starts_at)='{$dateEsc}' AND st.status<>'CANCELLED') showtimes,
+                (SELECT COUNT(*) FROM booking_seats bs INNER JOIN bookings b ON b.id=bs.booking_id INNER JOIN showtimes st ON st.id=b.showtime_id WHERE st.screen_id=sc.id AND DATE(st.starts_at)='{$dateEsc}' AND b.status NOT IN ('CANCELLED','EXPIRED')) booked_seats,
+                (SELECT st.starts_at FROM showtimes st WHERE st.screen_id=sc.id AND DATE(st.starts_at)='{$dateEsc}' AND st.status<>'CANCELLED' ORDER BY st.starts_at LIMIT 1) first_showtime,
+                COALESCE((SELECT m.title FROM showtimes st INNER JOIN movies m ON m.id=st.movie_id WHERE st.screen_id=sc.id AND DATE(st.starts_at)='{$dateEsc}' AND st.status<>'CANCELLED' ORDER BY st.starts_at LIMIT 1),'Chưa có lịch') first_movie
+                FROM screens sc WHERE sc.theater_id={$theaterId} ORDER BY sc.screen_code,sc.id");
+        }
+        $summary = array('theaters'=>count($theaters),'screens'=>0,'active_screens'=>0,'seats'=>0,'showtimes'=>0,'booked_seats'=>0,'locked_seats'=>0);
+        foreach ($theaters as $theater) {
+            $summary['screens'] += (int)$theater['total_screens']; $summary['active_screens'] += (int)$theater['active_screens'];
+            $summary['seats'] += (int)$theater['total_seats']; $summary['showtimes'] += (int)$theater['showtimes'];
+            $summary['booked_seats'] += (int)$theater['booked_seats']; $summary['locked_seats'] += (int)$theater['locked_seats'];
+        }
+        jsonResponse(array('success'=>true,'data'=>array('date'=>$date,'selected_theater_id'=>$theaterId,'summary'=>$summary,'theaters'=>$theaters,'screens'=>$screens)));
+    }
+
+    public function updateShowtimeSeatLocks()
+    {
+        requireAdmin();
+        $role = $this->getCurrentRole();
+        if (!in_array($role, array('super_admin','cinema_admin'), true)) jsonResponse(array('success'=>false,'message'=>'Chỉ Admin Tổng hoặc Admin Rạp được khóa ghế theo suất chiếu.'),403);
+        $this->ensureCinemaOwnershipSchema();
+        $this->ensureShowtimeSeatLockSchema();
+        $input = requestJson();
+        $showtimeId = isset($input['showtime_id']) ? (int)$input['showtime_id'] : 0;
+        $mode = isset($input['mode']) ? strtolower(trim((string)$input['mode'])) : '';
+        $reason = isset($input['reason']) ? trim((string)$input['reason']) : '';
+        $seatIds = isset($input['seat_ids']) && is_array($input['seat_ids']) ? array_values(array_unique(array_map('intval',$input['seat_ids']))) : array();
+        $validIds = array(); foreach ($seatIds as $seatId) if ($seatId > 0) $validIds[] = $seatId; $seatIds = $validIds;
+        if ($showtimeId <= 0 || empty($seatIds) || count($seatIds) > 200 || !in_array($mode,array('lock','unlock'),true)) jsonResponse(array('success'=>false,'message'=>'Dữ liệu khóa ghế không hợp lệ.'),422);
+        if ($mode === 'lock' && $reason === '') $reason = 'Khóa ghế theo yêu cầu vận hành';
+        $scope = $this->enforceCinemaScope('sc'); $scopeSql = $scope !== '' ? ' AND '.$scope : '';
+        $showtimeRows = $this->rows("SELECT st.id,st.screen_id,st.starts_at,st.status FROM showtimes st INNER JOIN screens sc ON sc.id=st.screen_id WHERE st.id={$showtimeId}{$scopeSql} LIMIT 1");
+        if (empty($showtimeRows)) jsonResponse(array('success'=>false,'message'=>'Không tìm thấy suất chiếu trong phạm vi rạp được phân quyền.'),404);
+        $screenId = (int)$showtimeRows[0]['screen_id'];
+        // Ghế COUPLE được bố trí thành từng cặp liên tiếp (1-2, 3-4...).
+        // Luôn mở rộng request thành đủ cặp ở backend để không thể khóa lệch
+        // một nửa ghế đôi bằng cách sửa payload từ trình duyệt.
+        $requestedIdSql = implode(',',$seatIds);
+        $pairRows = $this->rows("SELECT pair_seat.id FROM seats selected_seat INNER JOIN seats pair_seat
+            ON pair_seat.screen_id=selected_seat.screen_id AND pair_seat.seat_row=selected_seat.seat_row
+            AND pair_seat.seat_type='COUPLE'
+            AND pair_seat.seat_number=IF(MOD(selected_seat.seat_number,2)=1,selected_seat.seat_number+1,selected_seat.seat_number-1)
+            WHERE selected_seat.screen_id={$screenId} AND selected_seat.seat_type='COUPLE' AND selected_seat.id IN ({$requestedIdSql})");
+        foreach ($pairRows as $pairRow) $seatIds[] = (int)$pairRow['id'];
+        $seatIds = array_values(array_unique($seatIds));
+        if (count($seatIds) > 200) jsonResponse(array('success'=>false,'message'=>'Chỉ được cập nhật tối đa 200 vị trí ghế mỗi lần.'),422);
+        $idSql = implode(',',$seatIds);
+        if ((int)$this->scalar("SELECT COUNT(*) FROM seats WHERE screen_id={$screenId} AND id IN ({$idSql})") !== count($seatIds)) jsonResponse(array('success'=>false,'message'=>'Một hoặc nhiều ghế không thuộc phòng chiếu của suất này.'),422);
+        if ($mode === 'lock') {
+            if ((int)$this->scalar("SELECT COUNT(*) FROM booking_seats bs INNER JOIN bookings b ON b.id=bs.booking_id WHERE b.showtime_id={$showtimeId} AND bs.seat_id IN ({$idSql}) AND b.status NOT IN ('CANCELLED','EXPIRED')") > 0) jsonResponse(array('success'=>false,'message'=>'Không thể khóa ghế đã được khách đặt.'),409);
+            if ((int)$this->scalar("SELECT COUNT(*) FROM seat_holds WHERE showtime_id={$showtimeId} AND seat_id IN ({$idSql}) AND expires_at>NOW()") > 0) jsonResponse(array('success'=>false,'message'=>'Một hoặc nhiều ghế đang được khách giữ tạm thời. Vui lòng thử lại sau.'),409);
+        }
+        $actor = !empty($_SESSION['tms_user']['full_name']) ? $_SESSION['tms_user']['full_name'] : (!empty($_SESSION['tms_user']['username']) ? $_SESSION['tms_user']['username'] : 'Quản trị viên');
+        $actorEsc = $this->db->real_escape_string($actor); $reasonEsc = $this->db->real_escape_string(substr($reason,0,255));
+        if (!$this->beginDbTransaction()) jsonResponse(array('success'=>false,'message'=>'Không thể bắt đầu cập nhật khóa ghế.'),500);
+        try {
+            foreach ($seatIds as $seatId) {
+                if ($mode === 'lock') {
+                    if (!$this->db->query("INSERT INTO tms_showtime_seat_locks (showtime_id,seat_id,reason,locked_by,locked_at,updated_at) VALUES ({$showtimeId},{$seatId},'{$reasonEsc}','{$actorEsc}',NOW(),NOW()) ON DUPLICATE KEY UPDATE reason='{$reasonEsc}',locked_by='{$actorEsc}',updated_at=NOW()")) throw new Exception($this->db->error);
+                } else {
+                    if (!$this->db->query("DELETE FROM tms_showtime_seat_locks WHERE showtime_id={$showtimeId} AND seat_id={$seatId}")) throw new Exception($this->db->error);
+                }
+                if (!$this->db->query("INSERT INTO tms_showtime_seat_lock_logs (showtime_id,seat_id,action_name,reason,performed_by,created_at) VALUES ({$showtimeId},{$seatId},'{$mode}','{$reasonEsc}','{$actorEsc}',NOW())")) throw new Exception($this->db->error);
+            }
+            if (!$this->commitDbTransaction()) throw new Exception($this->db->error);
+        } catch (Exception $e) { $this->rollbackDbTransaction(); jsonResponse(array('success'=>false,'message'=>'Không thể cập nhật khóa ghế: '.$e->getMessage()),500); }
+        jsonResponse(array('success'=>true,'message'=>$mode==='lock' ? 'Đã khóa '.count($seatIds).' ghế cho suất chiếu.' : 'Đã mở khóa '.count($seatIds).' ghế cho suất chiếu.','data'=>array('showtime_id'=>$showtimeId,'seat_ids'=>$seatIds,'mode'=>$mode)));
     }
 
     public function report()

@@ -30,12 +30,21 @@ Thời gian TMS dùng múi giờ Việt Nam (`Asia/Ho_Chi_Minh`, UTC+07:00); cá
 
 ## Endpoint
 
-- `GET ?action=dashboard` — KPI và vận hành.
+- `GET ?action=dashboard&date=YYYY-MM-DD` — KPI vận hành từ `orders`, `bookings`, `booking_seats`, `showtimes`, `screens` và `staff_shifts`; Admin Rạp/Giám sát chỉ nhận dữ liệu thuộc `theater_id` được gán trong `aurora_db`.
+- `GET ?action=cinema-schedule-board&date=YYYY-MM-DD` — sơ đồ phòng và suất chiếu theo thời gian, kèm tổng ghế, công suất, đơn đã thanh toán và doanh thu của rạp đang phụ trách.
 - `GET ?action=revenue` — doanh thu thực tế theo ngày từ booking/order đã thanh toán.
 - `GET ?action=report&from=YYYY-MM-DD&to=YYYY-MM-DD` — tổng hợp doanh thu, kênh và phương thức thanh toán.
 - `GET ?action=transactions`, `GET ?action=refunds`, `POST|PUT ?action=refunds` — giao dịch và hoàn tiền.
 - `GET ?action=seats&screen_id={id}` — sơ đồ ghế.
 - `GET ?action=roles` — ma trận phân quyền.
+- `GET|POST|PUT ?action=schedules` — lịch chiếu dùng `aurora_db.showtimes` làm nguồn dữ liệu. Database lưu `OPEN`, `CLOSED`, `CANCELLED`; API trả `scheduled`, `running`, `finished`, `cancelled`, trong đó `running` và `finished` được xác định theo `starts_at`, `ends_at` thay vì cho người dùng đặt thủ công.
+  - Frontend hiển thị ngày theo `DD/MM/YYYY`, còn API nhận và lưu `show_date` theo ISO `YYYY-MM-DD` để ghép chính xác vào `starts_at`/`ends_at`.
+  - Suất mới mặc định ngày kế tiếp theo giờ Việt Nam; backend kiểm tra ngày lịch thực, thời gian tương lai, phân bổ phim và xung đột phòng trước khi ghi.
+- `GET ?action=users&account_type=internal` — tài khoản vận hành TMS; chỉ trả về `super_admin`, `cinema_admin`, `supervisor`, `accounting`.
+- `GET ?action=users&account_type=customer` — hồ sơ customer, hạng thành viên, điểm, số lượt đặt vé, tổng chi tiêu và OAuth; chỉ Admin Tổng được truy cập.
+- `POST|PUT ?action=users` — tạo/cập nhật tài khoản nội bộ. API từ chối tạo hoặc chuyển đổi sang vai trò `customer`.
+- `POST|PUT ?action=customer-account-status` — khóa, ngừng hoặc mở lại quyền truy cập customer; ghi thay đổi vào `users` và nhật ký `tms_user_activity_logs` trong `aurora_db`.
+- `DELETE ?action=users&id={id}` — xóa tài khoản nội bộ; API không cho phép xóa customer qua nghiệp vụ này.
 
 Các resource `movies`, `screens`, `schedules`, `staff`, `ticket-types`, `products`, `vouchers`, `customers`, `theaters`, `promotions`, `movie-plans`, `movie-allocations` hỗ trợ `GET`; resource được cấp quyền hỗ trợ thêm `POST`, `PUT`, `DELETE` theo nghiệp vụ.
 
