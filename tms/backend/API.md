@@ -45,6 +45,10 @@ Thời gian TMS dùng múi giờ Việt Nam (`Asia/Ho_Chi_Minh`, UTC+07:00); cá
 - `POST|PUT ?action=users` — tạo/cập nhật tài khoản nội bộ. API từ chối tạo hoặc chuyển đổi sang vai trò `customer`.
 - `POST|PUT ?action=customer-account-status` — khóa, ngừng hoặc mở lại quyền truy cập customer; ghi thay đổi vào `users` và nhật ký `tms_user_activity_logs` trong `aurora_db`.
 - `DELETE ?action=users&id={id}` — xóa tài khoản nội bộ; API không cho phép xóa customer qua nghiệp vụ này.
+- `GET|POST|PUT|DELETE ?action=pos-staff` — quản lý nhân viên POS trong `aurora_db.pos_users`. Mã nhân viên, tên đăng nhập và số điện thoại cùng lấy từ một số điện thoại; mật khẩu khởi tạo mặc định `88888888` nếu không nhập.
+- `GET ?action=pos-staff-detail&id={id}` — hồ sơ và hoạt động của nhân viên POS.
+- `GET|POST|PUT ?action=pos-work-schedules` — lập ca với quầy và các khu vực nghiệp vụ được chọn cho từng ca.
+- `GET|POST|PUT ?action=pos-sessions` — cấp/mở, tạm dừng, tiếp tục hoặc kết phiên. Quầy và quyền thao tác được lưu theo phiên trong `pos_shifts`, không gắn cố định với tài khoản nhân viên.
 
 Các resource `movies`, `screens`, `schedules`, `staff`, `ticket-types`, `products`, `vouchers`, `customers`, `theaters`, `promotions`, `movie-plans`, `movie-allocations` hỗ trợ `GET`; resource được cấp quyền hỗ trợ thêm `POST`, `PUT`, `DELETE` theo nghiệp vụ.
 

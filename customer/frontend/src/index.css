@@ -276,6 +276,115 @@ a { color: inherit; text-decoration: none; }
   }
 }
 
+/* Checkout workspace */
+.checkout-shell {
+  width: min(100%, 1120px);
+  display: grid;
+  grid-template-columns: minmax(0, 1.08fr) minmax(360px, .92fr);
+  gap: 16px;
+  align-items: start;
+  margin: 0 auto;
+}
+.checkout-toolbar {
+  grid-column: 1 / -1;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  flex-wrap: wrap;
+  gap: 12px;
+  padding: 2px 1px 4px;
+}
+.checkout-primary-column {
+  grid-column: 1;
+  grid-row: 2 / span 5;
+  display: grid;
+  grid-template-columns: 1fr;
+  gap: 16px;
+}
+.checkout-payment-card { grid-column: 2; grid-row: 2; }
+.checkout-voucher-card { grid-column: 2; grid-row: 3; }
+.checkout-totals-card { grid-column: 2; grid-row: 4; }
+.checkout-customer-card { grid-column: 2; grid-row: 5; }
+.checkout-shell > .aurora-booking-card {
+  overflow: hidden;
+  border-color: #dce5ee;
+  border-radius: 15px;
+  box-shadow: 0 9px 28px rgba(15, 37, 64, .06);
+}
+.checkout-booking-card { position: relative; }
+.checkout-booking-card::before,
+.checkout-payment-card::before {
+  position: absolute;
+  top: 0;
+  right: 0;
+  left: 0;
+  height: 3px;
+  background: linear-gradient(90deg, #f5c246, #e6a51d 62%, transparent);
+  content: "";
+}
+.checkout-payment-card { position: relative; }
+.checkout-payment-option {
+  position: relative;
+  min-height: 70px;
+  border-color: #dce5ee !important;
+  background: #fff !important;
+}
+.checkout-payment-option:hover {
+  border-color: #9db5ce !important;
+  background: #fbfdff !important;
+  transform: translateY(-1px);
+  box-shadow: 0 7px 18px rgba(18, 46, 77, .07) !important;
+}
+.checkout-payment-option.active {
+  border-color: #173756 !important;
+  background: linear-gradient(135deg, #f8fbfe, #fff) !important;
+  box-shadow: 0 0 0 3px rgba(23,55,86,.06) !important;
+}
+.checkout-qr-note {
+  border-color: #bcd1e5 !important;
+  background: linear-gradient(135deg, #f4f9fe, #fbfdff) !important;
+}
+.checkout-combo-card { min-height: 174px; }
+.checkout-empty-products {
+  min-height: 92px;
+  display: grid;
+  grid-template-columns: 38px 1fr;
+  align-content: center;
+  column-gap: 11px;
+  padding: 13px 15px;
+  border: 1px dashed #e3c989;
+  border-radius: 11px;
+  background: rgba(255,250,238,.7);
+}
+.checkout-empty-products > span { grid-row: 1 / 3; align-self: center; font-size: 26px; filter: grayscale(.25); }
+.checkout-empty-products b { color: #61491b; font-size: 12px; }
+.checkout-empty-products small { margin-top: 4px; color: #9a865e; font-size: 10px; line-height: 1.45; }
+.checkout-totals-card {
+  border-color: #d8e3ed !important;
+  background: linear-gradient(145deg, #f6f9fc, #fff) !important;
+}
+.checkout-customer-card { background: #fff; }
+
+@media (max-width: 1120px) {
+  .checkout-shell { grid-template-columns: 1fr; }
+  .checkout-toolbar,
+  .checkout-primary-column,
+  .checkout-payment-card,
+  .checkout-voucher-card,
+  .checkout-totals-card,
+  .checkout-customer-card { grid-column: 1; grid-row: auto; }
+  .checkout-primary-column { order: 1; }
+  .checkout-payment-card { order: 2; }
+  .checkout-voucher-card { order: 3; }
+  .checkout-totals-card { order: 4; }
+  .checkout-customer-card { order: 5; }
+}
+@media (max-width: 640px) {
+  .checkout-shell { gap: 12px; }
+  .checkout-toolbar { align-items: stretch; flex-direction: column; }
+  .checkout-qr-note { align-items: flex-start !important; flex-direction: column; }
+}
+
 /* Customer offers catalogue */
 .offers-page { min-height: calc(100vh - 96px); padding: 30px 22px 58px; background: linear-gradient(180deg,#edf3f8 0,#f7f8fa 360px,#f2f5f8 100%); color: #142b44; }
 .offers-page button,.offers-page input { font: inherit; }.offers-shell { max-width: 1220px; margin: 0 auto; }

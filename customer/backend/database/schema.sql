@@ -185,6 +185,39 @@ CREATE TABLE IF NOT EXISTS promotions (
   created_at TIMESTAMP NULL DEFAULT CURRENT_TIMESTAMP
 ) ENGINE=InnoDB;
 
+CREATE TABLE IF NOT EXISTS orders (
+  id BIGINT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
+  order_code VARCHAR(30) NOT NULL UNIQUE,
+  channel VARCHAR(10) NOT NULL,
+  booking_id BIGINT UNSIGNED NULL,
+  customer_id BIGINT UNSIGNED NULL,
+  cashier_id BIGINT UNSIGNED NOT NULL DEFAULT 0,
+  subtotal DECIMAL(12,2) NOT NULL DEFAULT 0,
+  discount_amount DECIMAL(12,2) NOT NULL DEFAULT 0,
+  voucher_code VARCHAR(40) NULL,
+  total_amount DECIMAL(12,2) NOT NULL DEFAULT 0,
+  payment_method VARCHAR(30) NOT NULL DEFAULT 'UNKNOWN',
+  amount_received DECIMAL(12,2) NOT NULL DEFAULT 0,
+  change_amount DECIMAL(12,2) NOT NULL DEFAULT 0,
+  status VARCHAR(20) NOT NULL DEFAULT 'PAID',
+  created_at TIMESTAMP NULL DEFAULT CURRENT_TIMESTAMP,
+  updated_at TIMESTAMP NULL,
+  INDEX idx_orders_channel (channel),
+  INDEX idx_orders_created (created_at),
+  INDEX idx_orders_customer (customer_id)
+) ENGINE=InnoDB;
+
+CREATE TABLE IF NOT EXISTS payments (
+  id BIGINT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
+  order_id BIGINT UNSIGNED NOT NULL,
+  method VARCHAR(20) NOT NULL,
+  amount DECIMAL(12,2) NOT NULL,
+  reference_code VARCHAR(80) NOT NULL DEFAULT '',
+  created_at DATETIME NOT NULL,
+  INDEX idx_payments_order (order_id),
+  UNIQUE KEY uq_payments_reference (reference_code)
+) ENGINE=InnoDB;
+
 -- Nội dung trang Ưu đãi dùng chung với nghiệp vụ voucher trong TMS/POS.
 CREATE TABLE IF NOT EXISTS vouchers (
   id BIGINT UNSIGNED AUTO_INCREMENT PRIMARY KEY,

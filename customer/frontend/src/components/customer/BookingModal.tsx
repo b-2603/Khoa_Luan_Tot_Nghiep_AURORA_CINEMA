@@ -33,7 +33,7 @@ export default function BookingModal({ movie, theater, showtime, user, language,
   const [step, setStep] = useState<Step>('seats');
   const [timeLeft, setTimeLeft] = useState(BOOKING_SECONDS);
   const [submitting, setSubmitting] = useState(false);
-  const [paymentMethod, setPaymentMethod] = useState<'vnpay' | 'momo' | 'counter'>('counter');
+  const [paymentMethod, setPaymentMethod] = useState<'qr_vnpay' | 'qr_momo' | 'qr_zalopay'>('qr_vnpay');
   const [voucher, setVoucher] = useState('');
   const timerRef = useRef<ReturnType<typeof setInterval> | null>(null);
 
@@ -214,7 +214,7 @@ export default function BookingModal({ movie, theater, showtime, user, language,
             <div style={{ fontSize: 12, fontWeight: 800, color: '#334155', marginBottom: 8 }}>{t('Phương thức thanh toán', 'Payment method')}</div>
             <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: 8 }}>
               {([
-                ['vnpay', 'VNPay'], ['momo', 'MoMo'], ['counter', t('Tại quầy', 'At cinema')],
+                ['qr_vnpay', 'VNPay QR'], ['qr_momo', 'MoMo'], ['qr_zalopay', 'ZaloPay'],
               ] as const).map(([method, label]) => <button key={method} type="button" onClick={() => setPaymentMethod(method)} style={{ border: paymentMethod === method ? '2px solid #f4c04a' : '1px solid #dbe3ec', borderRadius: 8, padding: '9px 6px', background: paymentMethod === method ? '#fff9e6' : '#fff', color: '#0d1b2e', fontWeight: 800, fontSize: 11, cursor: 'pointer' }}>{label}</button>)}
             </div>
             <input value={voucher} onChange={event => setVoucher(event.target.value)} placeholder={t('Mã voucher (nếu có)', 'Voucher code (optional)')} style={{ width: '100%', boxSizing: 'border-box', marginTop: 10, padding: '10px 12px', border: '1px solid #dbe3ec', borderRadius: 8, outline: 'none', fontSize: 12 }} />

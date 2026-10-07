@@ -1,5 +1,12 @@
 USE aurora_db;
 
+CREATE TABLE IF NOT EXISTS pos_counter_roles (
+  code VARCHAR(30) PRIMARY KEY, name VARCHAR(80) NOT NULL, description VARCHAR(255) NOT NULL,
+  can_sell_tickets TINYINT(1) NOT NULL DEFAULT 0, can_sell_concessions TINYINT(1) NOT NULL DEFAULT 0,
+  can_redeem_online_booking TINYINT(1) NOT NULL DEFAULT 0, can_sell_merchandise TINYINT(1) NOT NULL DEFAULT 0,
+  is_active TINYINT(1) NOT NULL DEFAULT 1, sort_order INT NOT NULL DEFAULT 0, updated_at DATETIME NULL
+) ENGINE=InnoDB DEFAULT CHARSET=utf8 COLLATE=utf8_unicode_ci;
+
 -- Nguồn tài khoản vận hành POS. Tách với users khách hàng để quyền tại quầy
 -- không bị lẫn với tài khoản thành viên Aurora.
 CREATE TABLE IF NOT EXISTS pos_users (
@@ -9,10 +16,15 @@ CREATE TABLE IF NOT EXISTS pos_users (
   full_name VARCHAR(120) NOT NULL,
   phone VARCHAR(20) NULL,
   role ENUM('cashier','supervisor','admin') NOT NULL DEFAULT 'cashier',
+  counter_role_code VARCHAR(30) NOT NULL DEFAULT 'box_ticket',
   status ENUM('active','inactive','locked') NOT NULL DEFAULT 'active',
   theater_id BIGINT UNSIGNED NOT NULL DEFAULT 1,
   counter_code VARCHAR(60) NOT NULL DEFAULT 'AURORA BOX 02',
   last_login_at DATETIME NULL,
+  issued_by_tms_user_id BIGINT UNSIGNED NULL,
+  issued_by_name VARCHAR(120) NULL,
+  updated_by_tms_user_id BIGINT UNSIGNED NULL,
+  updated_by_name VARCHAR(120) NULL,
   created_at TIMESTAMP NULL DEFAULT CURRENT_TIMESTAMP,
   updated_at DATETIME NULL DEFAULT NULL,
   UNIQUE KEY uq_pos_users_username (username),
@@ -31,6 +43,9 @@ CREATE TABLE IF NOT EXISTS pos_login_events (
   KEY idx_pos_login_user_created (user_id, created_at),
   KEY idx_pos_login_username_created (username, created_at)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8 COLLATE=utf8_unicode_ci;
+
+-- POS login is allowed only while this employee has an active/paused shift
+-- authorized by a cinema administrator or supervisor in the same theater.
 
 -- Mật khẩu mẫu: cashier = 8888, admin = admin123. Môi trường thật cần đổi
 -- trong trang quản trị; hash có tiền tố để backend PHP 5.2 tương thích.

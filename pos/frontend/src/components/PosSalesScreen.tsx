@@ -1,8 +1,9 @@
 import { useEffect, useMemo, useState } from 'react';
 import {
   ArrowLeft, Check, ChevronDown, CircleDollarSign, Coffee,
-  CreditCard, LoaderCircle, Printer, RotateCcw, Search, Ticket, UserCheck,
+  CreditCard, LoaderCircle, Package, Printer, QrCode, RotateCcw, Search, Ticket, UserCheck,
 } from 'lucide-react';
+import type { PosUser } from '../App';
 
 const API_URL = 'http://localhost/AURORA%20CINEMA/pos/backend/public/api.php';
 
@@ -18,7 +19,7 @@ type Showtime = {
 };
 
 type Seat = { id: number; row: string; number: number; type: string; available: boolean };
-type Combo = { code: string; name: string; price: number };
+type Combo = { code:string; name:string; price:number; category?:string; stock_quantity?:number };
 type Receipt = { code: string; total: number; amount_received: number; change: number; payment_method: string };
 
 const money = (value: number) => `${Math.round(value).toLocaleString('vi-VN')} đ`;
@@ -26,15 +27,19 @@ const time = (value: string) => new Date(value.replace(' ', 'T')).toLocaleTimeSt
 const dateLabel = (value: string) => new Date(`${value}T00:00:00`).toLocaleDateString('vi-VN', { weekday: 'short', day: '2-digit', month: '2-digit' });
 
 export default function PosSalesScreen({
+  user,
   cinemaName = 'AURORA CINEMA',
   staffName = 'Nguyễn Trần Thái Bảo',
   counter = 'AURORA BOX 02',
   onBackToDashboard,
+  onSessionExpired,
 }: {
+  user?: PosUser;
   cinemaName?: string;
   staffName?: string;
   counter?: string;
   onBackToDashboard: () => void;
+  onSessionExpired: (message?: string) => void;
 }) {
   const [dates, setDates] = useState<string[]>([]);
   const [selectedDate, setSelectedDate] = useState('');
@@ -52,12 +57,21 @@ export default function PosSalesScreen({
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState('');
   const [receipt, setReceipt] = useState<Receipt | null>(null);
+  const [workspace,setWorkspace]=useState<'tickets'|'products'|'redeem'>(user?.capabilities?.sell_tickets?'tickets':user?.capabilities?.redeem_online_booking?'redeem':'products');
+  const [bookingCode,setBookingCode]=useState('');
+  const [booking,setBooking]=useState<Record<string,unknown>|null>(null);
+
+  async function readApiResponse(response: Response) {
+    const result = await response.json();
+    if (response.status === 401 || result.code === 'SHIFT_AUTHORIZATION_REQUIRED') onSessionExpired(result.message);
+    return result;
+  }
 
   async function loadCatalog(date = '') {
     setLoading(true); setError('');
     try {
       const response = await fetch(`${API_URL}?action=sales_catalog${date ? `&date=${date}` : ''}`, { credentials: 'include' });
-      const result = await response.json();
+      const result = await readApiResponse(response);
       if (!response.ok || !result.success) throw new Error(result.message || 'Không thể tải dữ liệu bán hàng.');
       const data = result.data;
       setDates(data.dates || []); setSelectedDate(data.selected_date || date || ''); setShowtimes(data.showtimes || []); setCombos(data.combos || []);
@@ -72,7 +86,7 @@ export default function PosSalesScreen({
     if (!selectedShowtime) { setSeats([]); setSelectedSeats([]); return; }
     setLoadingSeats(true); setSelectedSeats([]); setError('');
     fetch(`${API_URL}?action=sales_seats&showtime_id=${selectedShowtime.id}`, { credentials: 'include' })
-      .then(async response => { const result = await response.json(); if (!response.ok || !result.success) throw new Error(result.message); return result.data.seats as Seat[]; })
+      .then(async response => { const result = await readApiResponse(response); if (!response.ok || !result.success) throw new Error(result.message); return result.data.seats as Seat[]; })
       .then(setSeats)
       .catch(requestError => setError(requestError instanceof Error ? requestError.message : 'Không thể tải sơ đồ ghế.'))
       .finally(() => setLoadingSeats(false));
@@ -99,12 +113,26 @@ export default function PosSalesScreen({
     setSubmitting(true); setError('');
     try {
       const response = await fetch(`${API_URL}?action=sales_order`, { method: 'POST', credentials: 'include', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ showtime_id: selectedShowtime.id, seat_ids: selectedSeats, combos: Object.entries(comboQuantities).filter(([, quantity]) => quantity > 0).map(([code, quantity]) => ({ code, quantity })), payment_method: paymentMethod, amount_received: received }) });
-      const result = await response.json();
+      const result = await readApiResponse(response);
       if (!response.ok || !result.success) throw new Error(result.message || 'Không thể hoàn tất giao dịch.');
       setReceipt(result.data); setSelectedSeats([]); setComboQuantities({}); setAmountReceived('');
     } catch (requestError) { setError(requestError instanceof Error ? requestError.message : 'Không thể hoàn tất giao dịch.'); }
     finally { setSubmitting(false); }
   }
+
+  async function submitProductOrder(){
+    if(total<=0){setError('Vui lòng chọn ít nhất một sản phẩm.');return;}if(paymentMethod==='CASH'&&received<total){setError('Số tiền khách đưa chưa đủ.');return;}setSubmitting(true);setError('');
+    try{const response=await fetch(`${API_URL}?action=product_order`,{method:'POST',credentials:'include',headers:{'Content-Type':'application/json'},body:JSON.stringify({items:Object.entries(comboQuantities).filter(([,q])=>q>0).map(([code,quantity])=>({code,quantity})),payment_method:paymentMethod,amount_received:received})});const result=await readApiResponse(response);if(!response.ok||!result.success)throw new Error(result.message);setReceipt(result.data);setComboQuantities({});setAmountReceived('');await loadCatalog(selectedDate);}catch(requestError){setError(requestError instanceof Error?requestError.message:'Không thể hoàn tất đơn hàng.');}finally{setSubmitting(false);}
+  }
+
+  async function lookupBooking(){setSubmitting(true);setError('');setBooking(null);try{const response=await fetch(`${API_URL}?action=online_booking_lookup&code=${encodeURIComponent(bookingCode.trim())}`,{credentials:'include'});const result=await readApiResponse(response);if(!response.ok||!result.success)throw new Error(result.message);setBooking(result.data);}catch(requestError){setError(requestError instanceof Error?requestError.message:'Không tìm thấy vé.');}finally{setSubmitting(false);}}
+  async function redeemBooking(){setSubmitting(true);setError('');try{const response=await fetch(`${API_URL}?action=online_booking_redeem`,{method:'POST',credentials:'include',headers:{'Content-Type':'application/json'},body:JSON.stringify({code:bookingCode.trim()})});const result=await readApiResponse(response);if(!response.ok||!result.success)throw new Error(result.message);setBooking(current=>current?{...current,can_redeem:false,redeemed_at:result.data.redeemed_at}:current);}catch(requestError){setError(requestError instanceof Error?requestError.message:'Không thể đổi vé.');}finally{setSubmitting(false);}}
+
+  if(!user?.capabilities?.sell_tickets || workspace!=='tickets') return <div className="pos-sales-layout role-workspace">
+    <header className="pos-sales-header pos-sales-header-sales"><div className="pos-sales-header-left"><button type="button" className="pos-btn pos-btn-secondary btn-sm" onClick={onBackToDashboard}><ArrowLeft size={16}/> Ca làm việc</button><div><strong className="pos-sales-branch">{cinemaName} / {counter}</strong><span className="pos-sales-caption">{user?.counter_role_name||'Nhân viên POS'}</span></div></div><div className="pos-sales-header-right"><span className="pos-sales-user"><UserCheck size={16}/>{staffName}</span></div></header>
+    <main className="role-workspace-main"><nav className="role-tabs">{user?.capabilities?.sell_tickets&&<button className={workspace==='tickets'?'active':''} onClick={()=>setWorkspace('tickets')}><Ticket size={17}/>Bán vé</button>}{(user?.capabilities?.sell_concessions||user?.capabilities?.sell_merchandise)&&<button className={workspace==='products'?'active':''} onClick={()=>setWorkspace('products')}><Package size={17}/>{user?.capabilities?.sell_merchandise?'Merchandise':'Bắp nước'}</button>}{user?.capabilities?.redeem_online_booking&&<button className={workspace==='redeem'?'active':''} onClick={()=>setWorkspace('redeem')}><QrCode size={17}/>Đổi vé online</button>}</nav>
+      {workspace==='redeem'?<section className="redeem-panel"><div className="role-panel-title"><QrCode size={24}/><div><h1>Đổi vé online</h1><p>Tra cứu mã đặt vé đã thanh toán và xác nhận giao vé cho khách.</p></div></div><div className="booking-search"><input value={bookingCode} onChange={e=>setBookingCode(e.target.value.toUpperCase())} placeholder="Nhập mã đặt vé, ví dụ AUR-8F2K9M"/><button onClick={()=>void lookupBooking()} disabled={submitting||bookingCode.trim().length<5}><Search size={17}/>Tra cứu</button></div>{error&&<div className="pos-sales-error">{error}</div>}{booking&&<article className="booking-result"><header><span>{String(booking.booking_code)}</span><b>{booking.redeemed_at?'Đã đổi vé':'Sẵn sàng đổi vé'}</b></header><h2>{String(booking.movie_title)}</h2><dl><div><dt>Suất chiếu</dt><dd>{String(booking.starts_at)}</dd></div><div><dt>Phòng / ghế</dt><dd>{String(booking.screen_name)} · {String(booking.seats)}</dd></div><div><dt>Khách hàng</dt><dd>{String(booking.customer_name||'Khách online')}</dd></div><div><dt>Tổng tiền</dt><dd>{money(Number(booking.total_amount))}</dd></div></dl><button className="pos-pay-button" disabled={!booking.can_redeem||submitting} onClick={()=>void redeemBooking()}><Check size={18}/>{booking.redeemed_at?'VÉ ĐÃ ĐƯỢC XÁC NHẬN':'XÁC NHẬN ĐỔI VÉ'}</button></article>}</section>:<section className="product-workspace"><div className="product-catalog"><div className="role-panel-title"><Package size={24}/><div><h1>{user?.capabilities?.sell_merchandise?'Bán merchandise':'Bán bắp nước trực tiếp'}</h1><p>Sản phẩm và tồn kho được đồng bộ từ aurora_db.</p></div></div><div className="product-grid">{combos.map(product=><article key={product.code}><span>{product.category}</span><h3>{product.name}</h3><p>Còn {product.stock_quantity??0} sản phẩm</p><strong>{money(product.price)}</strong><div><button onClick={()=>setComboQuantities(q=>({...q,[product.code]:Math.max(0,(q[product.code]||0)-1)}))}>-</button><b>{comboQuantities[product.code]||0}</b><button onClick={()=>setComboQuantities(q=>({...q,[product.code]:Math.min(product.stock_quantity??20,(q[product.code]||0)+1)}))}>+</button></div></article>)}</div></div><aside className="product-checkout"><h2>Thanh toán</h2>{combos.filter(p=>comboQuantities[p.code]).map(p=><div className="pos-order-line" key={p.code}><span>{p.name} × {comboQuantities[p.code]}</span><strong>{money(p.price*comboQuantities[p.code])}</strong></div>)}<div className="pos-grand-total"><span>TỔNG CỘNG</span><strong>{money(total)}</strong></div><div className="pos-payment-methods">{(['CASH','CARD','TRANSFER'] as const).map(method=><button key={method} className={paymentMethod===method?'active':''} onClick={()=>setPaymentMethod(method)}>{method==='CASH'?'Tiền mặt':method==='CARD'?'Thẻ':'Chuyển khoản'}</button>)}</div>{paymentMethod==='CASH'&&<input className="product-cash" type="number" value={amountReceived} onChange={e=>setAmountReceived(e.target.value)} placeholder="Tiền khách đưa"/>}{error&&<div className="pos-sales-error">{error}</div>}{receipt?<div className="pos-receipt"><div className="pos-receipt-success"><Check size={20}/>Thanh toán thành công</div><strong>{receipt.code}</strong><button className="pos-btn pos-btn-primary" onClick={()=>setReceipt(null)}>Tạo đơn mới</button></div>:<button className="pos-pay-button" disabled={submitting||total<=0||(paymentMethod==='CASH'&&received<total)} onClick={()=>void submitProductOrder()}><Check size={18}/>THANH TOÁN</button>}</aside></section>}
+    </main></div>;
 
   return <div className="pos-sales-layout">
     <header className="pos-sales-header pos-sales-header-sales">

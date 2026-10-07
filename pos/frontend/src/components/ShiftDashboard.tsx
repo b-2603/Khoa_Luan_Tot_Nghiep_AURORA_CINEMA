@@ -1,5 +1,5 @@
 import { useState, useEffect } from 'react';
-import { ShoppingCart, RotateCw, LogOut, CheckCircle, PowerOff, AlertTriangle, X } from 'lucide-react';
+import { ArrowRight, CalendarDays, CheckCircle, Clock3, IdCard, KeyRound, LogOut, MapPin, Monitor, PowerOff, RefreshCw, ShieldCheck, ShoppingBag, WalletCards, X, AlertTriangle } from 'lucide-react';
 
 export interface ShiftInfo {
   cinemaName: string;
@@ -85,6 +85,13 @@ export default function ShiftDashboard({
     return `${hours}h : ${minutes.toString().padStart(2, '0')}m : ${seconds.toString().padStart(2, '0')}s`;
   };
 
+  const timeParts = {
+    hours: Math.floor(remainingTime / 3600).toString().padStart(2, '0'),
+    minutes: Math.floor((remainingTime % 3600) / 60).toString().padStart(2, '0'),
+    seconds: (remainingTime % 60).toString().padStart(2, '0'),
+  };
+  const staffInitials = data.staffName.split(/\s+/).filter(Boolean).slice(-2).map(part => part.charAt(0)).join('').toUpperCase();
+
   const handleReload = () => {
     setIsRefreshing(true);
     setRemainingTime(getSecondsUntilEndOfDay());
@@ -96,13 +103,6 @@ export default function ShiftDashboard({
       setNotification('Đã làm mới thông tin và thời gian ca làm việc!');
       setTimeout(() => setNotification(null), 3000);
     }, 500);
-  };
-
-  const toggleStatus = () => {
-    const nextStatus = data.status === 'Tạm nghỉ' ? 'Đang bán' : 'Tạm nghỉ';
-    setData((prev) => ({ ...prev, status: nextStatus }));
-    setNotification(`Trạng thái ca chuyển thành: ${nextStatus}`);
-    setTimeout(() => setNotification(null), 2500);
   };
 
   const handleConfirmCloseShift = () => {
@@ -127,130 +127,39 @@ export default function ShiftDashboard({
         </div>
       )}
 
-      <div className="pos-dashboard-card">
-        {/* Logo & Tên Thương hiệu Aurora Cinema */}
-        <div className="shared-brand" style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 12, marginBottom: 14 }}>
-          <div style={{
-            width: 40,
-            height: 40,
-            background: '#f0b52d',
-            borderRadius: 11,
-            display: 'flex',
-            alignItems: 'center',
-            justifyContent: 'center',
-            boxShadow: '0 4px 12px rgba(240, 181, 45, 0.35)',
-            flexShrink: 0
-          }}>
-            <svg viewBox="0 0 24 24" width="22" height="22" fill="#0b1220">
-              <path d="M12 2l2.8 6.5 7 .6-5.3 4.7 1.6 6.9-6.1-3.6-6.1 3.6 1.6-6.9-5.3-4.7 7-.6z" />
-            </svg>
+      <section className="shift-shell">
+        <aside className="shift-identity">
+          <div className="shift-brand"><span><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 2l2.8 6.5 7 .6-5.3 4.7 1.6 6.9-6.1-3.6-6.1 3.6 1.6-6.9-5.3-4.7 7-.6z"/></svg></span><div><b>AURORA</b><small>CINEMA · POS</small></div></div>
+          <div className="shift-station-label"><Monitor size={14}/><span>WORKSTATION</span><b>{data.counter}</b></div>
+          <div className="shift-welcome">
+            <div className="shift-avatar">{staffInitials || 'NV'}<i/></div>
+            <div className="shift-welcome-copy"><span>PHIÊN BÁN HÀNG ĐÃ SẴN SÀNG</span><h1>Xin chào,<br/>{data.staffName.split(/\s+/).slice(-2).join(' ')}</h1><p>Kiểm tra thông tin bàn giao trước khi bắt đầu phục vụ khách hàng.</p></div>
           </div>
-          <div style={{ textAlign: 'left', lineHeight: 1.05 }}>
-            <div style={{ fontSize: 19, fontWeight: 900, letterSpacing: '0.04em', color: '#0b1220' }}>AURORA</div>
-            <div style={{ fontSize: 8.5, letterSpacing: '0.36em', color: '#7a8fa6', fontWeight: 700, marginTop: 2 }}>CINEMA</div>
-          </div>
-        </div>
+          <div className="shift-location"><MapPin size={18}/><div><small>ĐỊA ĐIỂM LÀM VIỆC</small><b>{data.cinemaName}</b><span>{data.counter}</span></div></div>
+          <div className="shift-authorized"><KeyRound size={17}/><div><b>Đã được cấp quyền bán hàng</b><span>Phiên được Admin Rạp hoặc Supervisor xác nhận.</span></div><CheckCircle size={17}/></div>
+          <div className="shift-security"><ShieldCheck size={17}/><p><b>Phiên được bảo vệ</b><span>Mọi giao dịch được ghi nhận trong Aurora DB.</span></p></div>
+        </aside>
 
-        {/* Tên Rạp / Chi nhánh */}
-        <h2 className="pos-cinema-title" style={{ marginTop: 0 }}>{data.cinemaName}</h2>
+        <main className="shift-overview">
+          <header className="shift-overview-head"><div><span>TRUNG TÂM VẬN HÀNH POS</span><h2>Tổng quan phiên hiện tại</h2><p>Theo dõi thời gian, quầy làm việc và thông tin bàn giao ca.</p></div><span className={`shift-live ${data.status==='Tạm nghỉ'?'paused':''}`}><i/>{data.status}</span></header>
 
-        {/* Danh sách thông tin ca làm việc */}
-        <div className="pos-info-list">
-          <div className="pos-info-row">
-            <span className="pos-info-label">Tên nhân viên:</span>
-            <span className="pos-info-value font-bold">{data.staffName}</span>
+          <div className="shift-countdown">
+            <div className="shift-countdown-copy"><Clock3 size={22}/><span><small>THỜI GIAN CÒN LẠI TRONG CA</small><b>Kết thúc lúc 23:59 hôm nay</b></span></div>
+            <div className="shift-time-blocks" aria-label={formatRemainingTime(remainingTime)}><span><strong>{timeParts.hours}</strong><small>GIỜ</small></span><i>:</i><span><strong>{timeParts.minutes}</strong><small>PHÚT</small></span><i>:</i><span><strong>{timeParts.seconds}</strong><small>GIÂY</small></span></div>
           </div>
 
-          <div className="pos-info-row">
-            <span className="pos-info-label">Ngày làm việc:</span>
-            <span className="pos-info-value font-bold">{data.workDate}</span>
+          <div className="shift-data-grid">
+            <article><span><IdCard size={18}/></span><div><small>Nhân viên phụ trách</small><b>{data.staffName}</b></div></article>
+            <article><span><CalendarDays size={18}/></span><div><small>Ngày làm việc</small><b>{data.workDate}</b></div></article>
+            <article><span><Clock3 size={18}/></span><div><small>Khung giờ phiên</small><b>{data.shiftTime}</b></div></article>
+            <article><span><WalletCards size={18}/></span><div><small>Tiền mặt đầu phiên</small><b>{data.initialCash}</b></div></article>
           </div>
 
-          <div className="pos-info-row">
-            <span className="pos-info-label">Phiên làm việc:</span>
-            <span className="pos-info-value font-bold">{data.shiftTime}</span>
-          </div>
+          <button type="button" className="shift-start-sale" onClick={onSalesClick} id="btn-pos-sales"><span><ShoppingBag size={21}/></span><div><b>Đi đến màn hình bán hàng</b><small>Bán vé, bắp nước và xử lý nghiệp vụ tại quầy</small></div><ArrowRight size={20}/></button>
 
-          <div className="pos-info-row">
-            <span className="pos-info-label">Quầy làm việc:</span>
-            <span className="pos-info-value font-bold">{data.counter}</span>
-          </div>
-
-          <div className="pos-info-row">
-            <span className="pos-info-label">Tiền đầu phiên:</span>
-            <span className="pos-info-value font-bold">{data.initialCash}</span>
-          </div>
-
-          <div className="pos-info-row">
-            <span className="pos-info-label">Trạng thái:</span>
-            <div className="pos-info-value">
-              <span
-                className={`pos-badge ${
-                  data.status === 'Tạm nghỉ' ? 'pos-badge-warning' : 'pos-badge-success'
-                }`}
-                onClick={toggleStatus}
-                title="Bấm để đổi trạng thái ca"
-              >
-                {data.status}
-              </span>
-            </div>
-          </div>
-
-          <div className="pos-info-row">
-            <span className="pos-info-label">Thời gian còn lại:</span>
-            <div className="pos-info-value">
-              <span className="pos-badge pos-badge-primary">
-                {formatRemainingTime(remainingTime)}
-              </span>
-            </div>
-          </div>
-        </div>
-
-        {/* Cụm nút thao tác phía dưới */}
-        <div className="pos-actions-row">
-          <button
-            type="button"
-            className="pos-btn pos-btn-primary"
-            onClick={onSalesClick}
-            id="btn-pos-sales"
-          >
-            <ShoppingCart size={17} />
-            <span>Bán hàng</span>
-          </button>
-
-          <button
-            type="button"
-            className="pos-btn pos-btn-secondary"
-            onClick={handleReload}
-            disabled={isRefreshing}
-            id="btn-pos-reload"
-          >
-            <RotateCw size={17} className={isRefreshing ? 'spin-icon' : ''} />
-            <span>Tải lại</span>
-          </button>
-
-          <button
-            type="button"
-            className="pos-btn pos-btn-warning"
-            onClick={() => setShowCloseModal(true)}
-            id="btn-pos-close-shift"
-            title="Đóng kết thúc phiên làm việc của nhân viên"
-          >
-            <PowerOff size={17} />
-            <span>Kết phiên</span>
-          </button>
-
-          <button
-            type="button"
-            className="pos-btn pos-btn-danger"
-            onClick={onLogout}
-            id="btn-pos-logout"
-          >
-            <LogOut size={17} />
-            <span>Đăng xuất</span>
-          </button>
-        </div>
-      </div>
+          <footer className="shift-actions"><button type="button" onClick={handleReload} disabled={isRefreshing} id="btn-pos-reload"><RefreshCw size={16} className={isRefreshing?'spin-icon':''}/><span>Làm mới dữ liệu</span></button><div><button type="button" className="close-shift" onClick={()=>setShowCloseModal(true)} id="btn-pos-close-shift"><PowerOff size={16}/><span>Kết phiên</span></button><button type="button" className="logout" onClick={onLogout} id="btn-pos-logout"><LogOut size={16}/><span>Đăng xuất</span></button></div></footer>
+        </main>
+      </section>
 
       {/* Modal xác nhận kết phiên làm việc */}
       {showCloseModal && (

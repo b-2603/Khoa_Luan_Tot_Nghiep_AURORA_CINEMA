@@ -192,6 +192,28 @@ if ($action === 'ticket-pricing-policies') {
     jsonResponse(array('success' => false, 'message' => 'Phương thức không được hỗ trợ.'), 405);
 }
 
+if ($action === 'pos-staff') {
+    $controller->posStaff();
+}
+
+if ($action === 'pos-counter-roles') {
+    if ($requestMethod === 'GET') $controller->posCounterRoles();
+    jsonResponse(array('success' => false, 'message' => 'Phương thức không được hỗ trợ.'), 405);
+}
+
+if ($action === 'pos-staff-detail') {
+    if ($requestMethod === 'GET') $controller->posStaffDetail();
+    jsonResponse(array('success' => false, 'message' => 'Phương thức không được hỗ trợ.'), 405);
+}
+
+if ($action === 'pos-sessions') {
+    $controller->posSessions();
+}
+
+if ($action === 'pos-work-schedules') {
+    $controller->posWorkSchedules();
+}
+
 // Accept media in small pieces so WAMP's upload_max_filesize never rejects a
 // large trailer before PHP can handle it. The final file is validated again
 // after all pieces are assembled.

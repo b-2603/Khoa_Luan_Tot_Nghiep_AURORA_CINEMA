@@ -367,8 +367,11 @@ function aurora_ensure_sales_orders($db) {
         cashier_id INT UNSIGNED NOT NULL DEFAULT 0,
         subtotal DECIMAL(12,2) NOT NULL DEFAULT 0,
         discount_amount DECIMAL(12,2) NOT NULL DEFAULT 0,
+        voucher_code VARCHAR(40) NULL,
         total_amount DECIMAL(12,2) NOT NULL DEFAULT 0,
         payment_method VARCHAR(30) NOT NULL DEFAULT 'UNKNOWN',
+        amount_received DECIMAL(12,2) NOT NULL DEFAULT 0,
+        change_amount DECIMAL(12,2) NOT NULL DEFAULT 0,
         status VARCHAR(20) NOT NULL DEFAULT 'PAID',
         created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
         updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
@@ -389,6 +392,19 @@ function aurora_concession_catalog($db) {
 
 function aurora_ensure_vouchers($db) {
     return $db->query('SELECT 1 FROM vouchers LIMIT 1') !== false;
+}
+
+function aurora_ensure_online_payments($db) {
+    return $db->query("CREATE TABLE IF NOT EXISTS payments (
+        id BIGINT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
+        order_id BIGINT UNSIGNED NOT NULL,
+        method VARCHAR(20) NOT NULL,
+        amount DECIMAL(12,2) NOT NULL,
+        reference_code VARCHAR(80) NOT NULL DEFAULT '',
+        created_at DATETIME NOT NULL,
+        INDEX idx_payments_order (order_id),
+        UNIQUE KEY uq_payments_reference (reference_code)
+    ) ENGINE=InnoDB DEFAULT CHARSET=utf8");
 }
 
 function aurora_ensure_order_voucher_column($db) {
@@ -2336,7 +2352,11 @@ if ($resource === 'bookings') {
     $userId = aurora_require_user();
     $body = aurora_body();
     $showtimeId = isset($body['showtimeId']) ? (int)$body['showtimeId'] : 0;
-    $paymentMethod = isset($body['paymentMethod']) ? strtoupper(trim((string)$body['paymentMethod'])) : 'ONLINE';
+    $paymentMethod = isset($body['paymentMethod']) ? strtoupper(trim((string)$body['paymentMethod'])) : 'QR_VNPAY';
+    $allowedOnlinePaymentMethods = array('QR_VNPAY', 'QR_MOMO', 'QR_ZALOPAY');
+    if (!in_array($paymentMethod, $allowedOnlinePaymentMethods, true)) {
+        aurora_response(array('message' => 'Phương thức thanh toán không được hỗ trợ. Vui lòng chọn VNPay QR, MoMo hoặc ZaloPay.'), 422);
+    }
     $voucherCode = isset($body['voucherCode']) ? strtoupper(trim((string)$body['voucherCode'])) : '';
     if (strlen($voucherCode) > 40) aurora_response(array('message' => 'Mã ưu đãi không hợp lệ.'), 422);
     $seatIds = isset($body['seatIds']) && is_array($body['seatIds']) ? array_values(array_unique(array_map('intval', $body['seatIds']))) : array();
@@ -2364,6 +2384,9 @@ if ($resource === 'bookings') {
     }
     if (!aurora_ensure_sales_orders($db)) {
         aurora_response(array('message' => 'Không thể khởi tạo bảng đơn hàng tổng.'), 500);
+    }
+    if (!aurora_ensure_online_payments($db)) {
+        aurora_response(array('message' => 'Không thể chuẩn bị dữ liệu giao dịch thanh toán.'), 500);
     }
     if (!aurora_ensure_order_voucher_column($db)) {
         aurora_response(array('message' => 'Không thể chuẩn bị dữ liệu ưu đãi cho đơn hàng.'), 500);
@@ -2476,6 +2499,14 @@ if ($resource === 'bookings') {
         if (!$stmt) throw new Exception('Không thể lưu đơn hàng tổng.');
         $stmt->bind_param('siiddsdsd', $code, $bookingId, $userId, $subtotal, $discount, $voucherCode, $total, $paymentMethod, $total);
         if (!$stmt->execute()) throw new Exception('Không thể lưu đơn hàng tổng.');
+        $orderId = (int)$stmt->insert_id;
+        $stmt->close();
+        $paymentReference = 'AURPAY-' . date('ymd') . '-' . strtoupper(substr(md5($code . $paymentMethod . microtime(true)), 0, 10));
+        $stmt = $db->prepare('INSERT INTO payments (order_id, method, amount, reference_code, created_at) VALUES (?, ?, ?, ?, ?)');
+        if (!$stmt) throw new Exception('Không thể tạo giao dịch thanh toán.');
+        $stmt->bind_param('isdss', $orderId, $paymentMethod, $total, $paymentReference, $now);
+        if (!$stmt->execute()) throw new Exception('Không thể ghi nhận giao dịch thanh toán.');
+        $paymentId = (int)$stmt->insert_id;
         $stmt->close();
         if ($voucherCode !== '') {
             $voucherEsc = $db->real_escape_string($voucherCode);
@@ -2491,7 +2522,7 @@ if ($resource === 'bookings') {
         $pointsEarned = aurora_award_booking_points($db, $userId, $bookingId, $total);
         $db->commit();
         $db->autocommit(true);
-        aurora_response(array('booking' => array('id'=>$bookingId, 'code'=>$code, 'showtimeId'=>$showtimeId, 'seatIds'=>$seatIds, 'combos'=>$combos, 'subtotal'=>$subtotal, 'discountAmount'=>$discount, 'voucherCode'=>$voucherCode, 'totalAmount'=>$total, 'status'=>'PAID', 'pointsEarned'=>$pointsEarned), 'member' => aurora_public_user($db, $userId)), 201);
+        aurora_response(array('booking' => array('id'=>$bookingId, 'code'=>$code, 'showtimeId'=>$showtimeId, 'seatIds'=>$seatIds, 'combos'=>$combos, 'subtotal'=>$subtotal, 'discountAmount'=>$discount, 'voucherCode'=>$voucherCode, 'totalAmount'=>$total, 'status'=>'PAID', 'pointsEarned'=>$pointsEarned, 'payment'=>array('id'=>$paymentId,'method'=>$paymentMethod,'referenceCode'=>$paymentReference,'amount'=>$total,'status'=>'PAID','paidAt'=>$now)), 'member' => aurora_public_user($db, $userId)), 201);
     } catch (Exception $exception) {
         $db->rollback();
         $db->autocommit(true);
@@ -2738,6 +2769,7 @@ if ($resource === 'schedule_event') {
 // Params: movie_id (bắt buộc), date (yyyy-mm-dd, tuỳ chọn)
 if ($resource === 'movie_showtimes') {
     $movieId = isset($_GET['movie_id']) ? (int)$_GET['movie_id'] : 0;
+    $selectedShowtimeId = isset($_GET['selected_showtime_id']) ? (int)$_GET['selected_showtime_id'] : 0;
     if ($movieId < 1) aurora_response(array('message' => 'movie_id không hợp lệ.'), 422);
 
     $date = isset($_GET['date']) ? trim((string)$_GET['date']) : '';
@@ -2774,11 +2806,12 @@ if ($resource === 'movie_showtimes') {
     if (!$result) aurora_response(array('message' => $db->error), 500);
 
     $showtimes = array();
+    $selectedShowtime = null;
     while ($row = $result->fetch_assoc()) {
         $seatsTaken = (int)$row['seats_taken'];
         $totalSeats = (int)$row['total_seats'];
         $seatsLeft  = max(0, $totalSeats - $seatsTaken);
-        $showtimes[] = array(
+        $showtimeItem = array(
             'id'             => (int)$row['id'],
             'screen_id'      => (int)$row['screen_id'],
             'screen_name'    => $row['screen_name'],
@@ -2794,11 +2827,16 @@ if ($resource === 'movie_showtimes') {
             'status'         => $row['status'],
             'show_date'      => $row['show_date'],
         );
+        $showtimes[] = $showtimeItem;
+        if ($selectedShowtimeId > 0 && (int)$row['id'] === $selectedShowtimeId) $selectedShowtime = $showtimeItem;
     }
     aurora_response(array(
         'movie_id'        => $movieId,
+        'server_time'     => $visibilityNow,
         'available_dates' => $availableDates,
         'showtimes'       => $showtimes,
+        'selected_showtime'=> $selectedShowtime,
+        'selected_showtime_available' => $selectedShowtimeId < 1 ? null : $selectedShowtime !== null,
     ), 200);
 }
 
@@ -2821,8 +2859,13 @@ if ($resource === 'showtime_detail') {
     );
     if (!$stmt) aurora_response(array('message' => 'Lỗi truy vấn.'), 500);
     $stmt->bind_param('i', $showtimeId);
-    $stmt->execute();
-    $row = $stmt->get_result()->fetch_assoc();
+    if (!$stmt->execute()) { $stmt->close(); aurora_response(array('message' => 'Không thể tải chi tiết suất chiếu.'), 500); }
+    $stmt->store_result();
+    $showtimeDbId=$movieDbId=$screenDbId=$durationMinutes=$totalSeats=$theaterDbId=null;
+    $startsAt=$endsAt=$ticketPrice=$showtimeStatus=$movieTitle=$ageRating=$movieFormat=$movieGenre=$posterUrl=$screenName=$theaterName=$theaterAddress=$theaterCity=null;
+    $stmt->bind_result($showtimeDbId,$movieDbId,$screenDbId,$startsAt,$endsAt,$ticketPrice,$showtimeStatus,$movieTitle,$ageRating,$movieFormat,$movieGenre,$posterUrl,$durationMinutes,$screenName,$totalSeats,$theaterDbId,$theaterName,$theaterAddress,$theaterCity);
+    $row=null;
+    if($stmt->fetch())$row=array('id'=>$showtimeDbId,'movie_id'=>$movieDbId,'screen_id'=>$screenDbId,'starts_at'=>$startsAt,'ends_at'=>$endsAt,'ticket_price'=>$ticketPrice,'status'=>$showtimeStatus,'title'=>$movieTitle,'age_rating'=>$ageRating,'format'=>$movieFormat,'genre'=>$movieGenre,'poster_url'=>$posterUrl,'duration_minutes'=>$durationMinutes,'screen_name'=>$screenName,'total_seats'=>$totalSeats,'theater_id'=>$theaterDbId,'theater_name'=>$theaterName,'address'=>$theaterAddress,'city'=>$theaterCity);
     $stmt->close();
     if (!$row) aurora_response(array('message' => 'Suất chiếu không tồn tại.'), 404);
 
@@ -2924,8 +2967,13 @@ if ($resource === 'booking_detail') {
     $stmt = $db->prepare($sql);
     if (!$stmt) aurora_response(array('message' => 'Lỗi truy vấn.'), 500);
     $stmt->bind_param('ii', $bookingId, $userId);
-    $stmt->execute();
-    $row = $stmt->get_result()->fetch_assoc();
+    if(!$stmt->execute()){$stmt->close();aurora_response(array('message'=>'Không thể tải chi tiết đơn đặt vé.'),500);}
+    $stmt->store_result();
+    $bookingDbId=$totalAmount=$ticketPrice=$durationMinutes=null;
+    $bookingCode=$bookingStatus=$bookingCreatedAt=$startsAt=$endsAt=$movieTitle=$posterUrl=$ageRating=$movieFormat=$screenName=$theaterName=$theaterAddress=$theaterCity=$seatsRaw=$seatsDisplay=null;
+    $stmt->bind_result($bookingDbId,$bookingCode,$totalAmount,$bookingStatus,$bookingCreatedAt,$startsAt,$endsAt,$ticketPrice,$movieTitle,$posterUrl,$ageRating,$movieFormat,$durationMinutes,$screenName,$theaterName,$theaterAddress,$theaterCity,$seatsRaw,$seatsDisplay);
+    $row=null;
+    if($stmt->fetch())$row=array('id'=>$bookingDbId,'booking_code'=>$bookingCode,'total_amount'=>$totalAmount,'status'=>$bookingStatus,'created_at'=>$bookingCreatedAt,'starts_at'=>$startsAt,'ends_at'=>$endsAt,'ticket_price'=>$ticketPrice,'movie_title'=>$movieTitle,'poster_url'=>$posterUrl,'age_rating'=>$ageRating,'format'=>$movieFormat,'duration_minutes'=>$durationMinutes,'screen_name'=>$screenName,'theater_name'=>$theaterName,'theater_address'=>$theaterAddress,'city'=>$theaterCity,'seats_raw'=>$seatsRaw,'seats_display'=>$seatsDisplay);
     $stmt->close();
     if (!$row) aurora_response(array('message' => 'Không tìm thấy đơn đặt vé.'), 404);
 

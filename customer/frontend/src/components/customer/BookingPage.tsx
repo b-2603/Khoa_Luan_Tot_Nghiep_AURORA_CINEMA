@@ -28,8 +28,9 @@ type Showtime = {
   theater_id: number; theater_name: string; theater_address: string; city: string;
   starts_at: string; ends_at: string; ticket_price: number; status: string; show_date: string;
 };
-type PayMethod = 'cash' | 'qr_vnpay' | 'qr_momo' | 'qr_zalopay' | 'card';
+type PayMethod = 'qr_vnpay' | 'qr_momo' | 'qr_zalopay';
 type Combo = { id: string; name: string; price: number; description: string };
+type VoucherSuggestion = { id: number; code: string; name: string; discountType?: string; discountValue?: number };
 
 type Props = {
   movie: any;
@@ -469,6 +470,10 @@ export default function BookingPage({ movie, showtime: initShowtime, theater: in
   const [allShowtimes, setAllShowtimes] = useState<Showtime[]>([]);
   const [selectedShowtime, setSelectedShowtime] = useState<Showtime | null>(initShowtime || null);
   const [selectedTheater, setSelectedTheater] = useState(initTheater || initShowtime?.theater_name || '');
+  const [selectedTheaterId, setSelectedTheaterId] = useState<number>(Number(initShowtime?.theater_id || 0));
+  const [showtimesLoading, setShowtimesLoading] = useState(true);
+  const [showtimesError, setShowtimesError] = useState('');
+  const [showtimesReloadKey, setShowtimesReloadKey] = useState(0);
   const [seats, setSeats] = useState<Seat[]>([]);
   const [seatPricing, setSeatPricing] = useState<Record<string, number>>({});
   const [selectedSeatIds, setSelectedSeatIds] = useState<number[]>([]);
@@ -479,7 +484,8 @@ export default function BookingPage({ movie, showtime: initShowtime, theater: in
   const [voucherLoading, setVoucherLoading] = useState(false);
   const [comboQuantities, setComboQuantities] = useState<Record<string, number>>({});
   const [combos, setCombos] = useState<Combo[]>([]);
-  const [payMethod, setPayMethod] = useState<PayMethod>('cash');
+  const [voucherSuggestions, setVoucherSuggestions] = useState<VoucherSuggestion[]>([]);
+  const [payMethod, setPayMethod] = useState<PayMethod>('qr_vnpay');
   const [bookingResult, setBookingResult] = useState<any>(null);
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState('');
@@ -497,22 +503,49 @@ export default function BookingPage({ movie, showtime: initShowtime, theater: in
 
   useEffect(() => {
     fetch(`${API}?action=concessions`).then(r => r.json()).then(res => setCombos(Array.isArray(res.concessions) ? res.concessions : [])).catch(() => setCombos([]));
+    fetch(`${API}?action=promotions`, { credentials:'include', cache:'no-store' }).then(r => r.json()).then(res => setVoucherSuggestions(Array.isArray(res.promotions) ? res.promotions : [])).catch(() => setVoucherSuggestions([]));
   }, []);
 
   /* ── Load suất chiếu theo phim ── */
   useEffect(() => {
-    if (initShowtime) return;
-    fetch(`${API}?action=movie_showtimes&movie_id=${movie.id}`)
-      .then(r => r.json())
-      .then(res => {
-        if (res.available_dates?.length) {
-          setAvailableDates(res.available_dates);
-          setSelectedDate(res.available_dates[0]);
-        }
-        setAllShowtimes(res.showtimes || []);
+    let cancelled=false;
+    setShowtimesLoading(true);
+    setShowtimesError('');
+    fetch(`${API}?action=movie_showtimes&movie_id=${Number(movie.id)}${initShowtime?.id?`&selected_showtime_id=${Number(initShowtime.id)}`:''}`,{credentials:'include',cache:'no-store'})
+      .then(async r => {
+        const result=await r.json();
+        if(!r.ok)throw new Error(result.message||t('Không thể tải lịch chiếu.','Unable to load showtimes.',lang));
+        return result;
       })
-      .catch(() => {});
-  }, [movie.id]);
+      .then(res => {
+        if(cancelled)return;
+        const liveShowtimes:Array<Showtime>=Array.isArray(res.showtimes)?res.showtimes:[];
+        const liveDates:Array<string>=Array.isArray(res.available_dates)?res.available_dates:[];
+        setAvailableDates(liveDates);
+        setAllShowtimes(liveShowtimes);
+        const initialId=Number(initShowtime?.id||0);
+        const liveInitial=initialId?liveShowtimes.find(item=>Number(item.id)===initialId):undefined;
+        if(initialId&&liveInitial){
+          setSelectedShowtime(liveInitial);
+          setSelectedDate(liveInitial.show_date||liveInitial.starts_at.slice(0,10));
+          setSelectedTheater(liveInitial.theater_name);
+          setSelectedTheaterId(Number(liveInitial.theater_id));
+        }else{
+          const nextDate=selectedDate&&liveDates.includes(selectedDate)?selectedDate:(liveDates[0]||liveShowtimes[0]?.show_date||'');
+          setSelectedDate(nextDate);
+          if(initialId&&!liveInitial){
+            setSelectedShowtime(null);
+            setSelectedTheater('');
+            setSelectedTheaterId(0);
+            setStep(1);
+            setError(t('Suất chiếu đã chọn không còn mở bán. Vui lòng chọn suất khác.','The selected showtime is no longer available. Please choose another.',lang));
+          }
+        }
+      })
+      .catch(error=>{if(!cancelled){setAvailableDates([]);setAllShowtimes([]);setShowtimesError(error instanceof Error?error.message:t('Không thể tải lịch chiếu.','Unable to load showtimes.',lang));}})
+      .finally(()=>{if(!cancelled)setShowtimesLoading(false);});
+    return()=>{cancelled=true;};
+  }, [movie.id, initShowtime?.id, showtimesReloadKey]);
 
   /* ── Load ghế khi vào bước 2 (bảo toàn ghế đã chọn khi quay lại từ bước 3) ── */
   useEffect(() => {
@@ -567,7 +600,7 @@ export default function BookingPage({ movie, showtime: initShowtime, theater: in
   const showtimesForDate = allShowtimes.filter(s => s.show_date === selectedDate);
   const theatersForDate = [...new Map(showtimesForDate.map(s => [s.theater_id, s])).values()];
   const showtimesForTheater = showtimesForDate.filter(s =>
-    !selectedTheater || s.theater_name === selectedTheater
+    !selectedTheaterId || Number(s.theater_id) === selectedTheaterId
   );
 
   function pickShowtime(st: Showtime) {
@@ -579,7 +612,9 @@ export default function BookingPage({ movie, showtime: initShowtime, theater: in
     }
     setSelectedShowtime(st);
     setSelectedTheater(st.theater_name);
+    setSelectedTheaterId(Number(st.theater_id));
     setError('');
+    fetch(`${API}?action=theater_schedule_event`,{method:'POST',credentials:'include',headers:{'Content-Type':'application/json'},body:JSON.stringify({eventType:'SELECT_SHOWTIME',theaterId:Number(st.theater_id),showtimeId:Number(st.id),selectedDate:st.show_date})}).catch(()=>{});
     setStep(2);
     window.scrollTo({ top: 0, behavior:'smooth' });
   }
@@ -626,7 +661,7 @@ export default function BookingPage({ movie, showtime: initShowtime, theater: in
       const res = await fetch(`${API}?action=bookings`, {
         method:'POST', credentials:'include',
         headers:{'Content-Type':'application/json'},
-        body: JSON.stringify({ showtimeId: selectedShowtime.id, seatIds: selectedSeatIds, combos: comboItems.map(item => ({ id: item.combo.id, quantity: item.quantity })), voucherCode: voucherInfo ? voucherCode.trim().toUpperCase() : undefined }),
+        body: JSON.stringify({ showtimeId: selectedShowtime.id, seatIds: selectedSeatIds, combos: comboItems.map(item => ({ id: item.combo.id, quantity: item.quantity })), voucherCode: voucherInfo ? voucherCode.trim().toUpperCase() : undefined, paymentMethod: payMethod }),
       });
       const data = await res.json();
       if (!res.ok) { setError(data.message || t('Đặt vé thất bại.','Booking failed.',lang)); return; }
@@ -811,6 +846,7 @@ export default function BookingPage({ movie, showtime: initShowtime, theater: in
               combos={combos}
               onChangeCombo={(id: string, delta: number) => setComboQuantities(current => ({ ...current, [id]: Math.max(0, Math.min(10, (current[id] || 0) + delta)) }))}
               voucherCode={voucherCode} setVoucherCode={setVoucherCode}
+              voucherSuggestions={voucherSuggestions}
               voucherInfo={voucherInfo} voucherError={voucherError} voucherLoading={voucherLoading}
               onApplyVoucher={applyVoucher} onRemoveVoucher={() => { setVoucherInfo(null); setVoucherCode(''); }}
               payMethod={payMethod} setPayMethod={setPayMethod}
@@ -838,9 +874,11 @@ export default function BookingPage({ movie, showtime: initShowtime, theater: in
               allShowtimes={allShowtimes} showtimesForDate={showtimesForDate}
               theatersForDate={theatersForDate}
               selectedTheater={selectedTheater} setSelectedTheater={setSelectedTheater}
+              selectedTheaterId={selectedTheaterId} setSelectedTheaterId={setSelectedTheaterId}
               showtimesForTheater={showtimesForTheater}
               selectedShowtime={selectedShowtime} onPickShowtime={pickShowtime}
-              error={error}
+              error={error} showtimesLoading={showtimesLoading} showtimesError={showtimesError}
+              onReload={()=>setShowtimesReloadKey(key=>key+1)}
             />
           )}
         </main>
@@ -861,8 +899,8 @@ export default function BookingPage({ movie, showtime: initShowtime, theater: in
 }
 
 /* ═══════════════════════════════ STEP 1 ═══════════════════════════════ */
-function ShowtimeStep({ lang, movie, availableDates, selectedDate, setSelectedDate, allShowtimes, showtimesForDate, theatersForDate, selectedTheater, setSelectedTheater, showtimesForTheater, selectedShowtime, onPickShowtime, error }: any) {
-  const noShowtimes = availableDates.length === 0 && allShowtimes.length === 0;
+function ShowtimeStep({ lang, movie, availableDates, selectedDate, setSelectedDate, allShowtimes, showtimesForDate, theatersForDate, selectedTheater, setSelectedTheater, selectedTheaterId, setSelectedTheaterId, showtimesForTheater, selectedShowtime, onPickShowtime, error, showtimesLoading, showtimesError, onReload }: any) {
+  const noShowtimes = !showtimesLoading&&!showtimesError&&availableDates.length === 0 && allShowtimes.length === 0;
 
   return (
     <div style={{ maxWidth:860 }}>
@@ -877,7 +915,16 @@ function ShowtimeStep({ lang, movie, availableDates, selectedDate, setSelectedDa
         )}
       </div>
 
-      {noShowtimes ? (
+      {showtimesLoading ? (
+        <div style={{padding:'28px',background:'#fff',border:'1px solid #e2e8f0',borderRadius:14,display:'grid',gap:12}}>
+          <div style={{display:'flex',alignItems:'center',gap:9,color:'#47627f',fontSize:13,fontWeight:700}}><RefreshCw size={17} style={{animation:'spin 1s linear infinite'}}/>{t('Đang đồng bộ lịch chiếu từ Aurora DB…','Syncing showtimes from Aurora DB…',lang)}</div>
+          {[1,2,3].map(item=><div key={item} style={{height:48,borderRadius:9,background:'linear-gradient(90deg,#f1f5f9,#f8fafc,#f1f5f9)'}}/>)}
+        </div>
+      ) : showtimesError ? (
+        <div style={{textAlign:'center',padding:'48px 20px',background:'#fff',border:'1px solid #fecaca',borderRadius:14}}>
+          <AlertCircle size={36} color="#dc2626" style={{margin:'0 auto 10px'}}/><b style={{display:'block',color:'#7f1d1d',fontSize:14}}>{t('Chưa thể tải lịch chiếu','Unable to load showtimes',lang)}</b><p style={{margin:'6px 0 16px',color:'#64748b',fontSize:12}}>{showtimesError}</p><button type="button" onClick={onReload} style={{display:'inline-flex',alignItems:'center',gap:6,padding:'9px 15px',border:0,borderRadius:8,color:'#fff',background:'#173b65',fontWeight:800,cursor:'pointer'}}><RefreshCw size={14}/>{t('Thử tải lại','Try again',lang)}</button>
+        </div>
+      ) : noShowtimes ? (
         <div style={{ textAlign:'center', padding:'60px 20px', background:'#fff', borderRadius:14 }}>
           <Film size={40} color="#cbd5e1" style={{ margin:'0 auto 12px' }} />
           <p style={{ color:'#94a3b8', fontSize:14 }}>{t('Hiện chưa có suất chiếu nào.','No showtimes available.',lang)}</p>
@@ -911,16 +958,16 @@ function ShowtimeStep({ lang, movie, availableDates, selectedDate, setSelectedDa
               </h2>
               <div style={{ display:'flex', gap:8, flexWrap:'wrap' }}>
                 <button
-                  onClick={() => setSelectedTheater('')}
-                  style={{ padding:'7px 16px', borderRadius:20, border: !selectedTheater ? 'none' : '1px solid #e2e8f0', background: !selectedTheater ? '#0d1b2e' : '#fff', color: !selectedTheater ? '#f4c04a' : '#475569', fontSize:12, fontWeight:700, cursor:'pointer' }}
+                  onClick={() => {setSelectedTheater('');setSelectedTheaterId(0);}}
+                  style={{ padding:'7px 16px', borderRadius:20, border: !selectedTheaterId ? 'none' : '1px solid #e2e8f0', background: !selectedTheaterId ? '#0d1b2e' : '#fff', color: !selectedTheaterId ? '#f4c04a' : '#475569', fontSize:12, fontWeight:700, cursor:'pointer' }}
                 >
                   {t('Tất cả rạp','All cinemas',lang)}
                 </button>
                 {theatersForDate.map((t: Showtime) => (
                   <button
                     key={t.theater_id}
-                    onClick={() => setSelectedTheater(t.theater_name)}
-                    style={{ padding:'7px 16px', borderRadius:20, border: selectedTheater===t.theater_name ? 'none' : '1px solid #e2e8f0', background: selectedTheater===t.theater_name ? '#0d1b2e' : '#fff', color: selectedTheater===t.theater_name ? '#f4c04a' : '#475569', fontSize:12, fontWeight:700, cursor:'pointer' }}
+                    onClick={() => {setSelectedTheater(t.theater_name);setSelectedTheaterId(Number(t.theater_id));}}
+                    style={{ padding:'7px 16px', borderRadius:20, border: selectedTheaterId===Number(t.theater_id) ? 'none' : '1px solid #e2e8f0', background: selectedTheaterId===Number(t.theater_id) ? '#0d1b2e' : '#fff', color: selectedTheaterId===Number(t.theater_id) ? '#f4c04a' : '#475569', fontSize:12, fontWeight:700, cursor:'pointer' }}
                   >
                     {t.theater_name}
                   </button>
@@ -1204,7 +1251,7 @@ function SeatStep({ lang, movie, showtime, theater, seats, seatsLoading, seatRow
 function PaymentStep({
   lang, movie, showtime, theater, selectedSeats, subtotal, discount, totalFinal,
   comboItems, comboTotal, comboQuantities, combos, onChangeCombo,
-  voucherCode, setVoucherCode, voucherInfo, voucherError, voucherLoading,
+  voucherCode, setVoucherCode, voucherSuggestions, voucherInfo, voucherError, voucherLoading,
   onApplyVoucher, onRemoveVoucher, payMethod, setPayMethod, user, error, onBack
 }: any) {
   const ticketPrice = showtime.ticket_price;
@@ -1230,26 +1277,12 @@ function PaymentStep({
       badge: null,
       icon: <Zap size={20} color="#0068ff" />,
     },
-    {
-      id: 'card',
-      title: t('Thẻ ATM / Visa / Mastercard', 'ATM / Visa / Mastercard', lang),
-      desc: t('Thẻ nội địa NAPAS & thẻ quốc tế', 'Domestic NAPAS & International cards', lang),
-      badge: null,
-      icon: <CreditCard size={20} color="#0d1b2e" />,
-    },
-    {
-      id: 'cash',
-      title: t('Tiền mặt tại quầy', 'Cash at counter', lang),
-      desc: t('Nhận vé và thanh toán tại quầy trước giờ chiếu 15 phút', 'Pay at cinema counter 15m before showtime', lang),
-      badge: null,
-      icon: <Ticket size={20} color="#d97706" />,
-    },
   ];
 
   return (
-    <div className="payment-step" style={{ maxWidth: 1000, margin: '0 auto', display: 'flex', flexDirection: 'column', gap: 20 }}>
+    <div className="payment-step checkout-shell">
       {/* Top Navigation & Seats Status */}
-      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', flexWrap: 'wrap', gap: 12 }}>
+      <div className="checkout-toolbar">
         <button
           type="button"
           onClick={onBack}
@@ -1282,9 +1315,9 @@ function PaymentStep({
       </div>
 
       {/* TOP 2-COLUMN GRID */}
-      <div className="payment-top-grid">
+      <div className="payment-top-grid checkout-primary-column">
         {/* CARD 1: THÔNG TIN ĐẶT VÉ */}
-        <div className="aurora-booking-card" style={{ padding: '22px 24px', display: 'flex', flexDirection: 'column', gap: 16 }}>
+        <div className="aurora-booking-card checkout-booking-card" style={{ padding: '22px 24px', display: 'flex', flexDirection: 'column', gap: 16 }}>
           <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
             <h2 style={{ fontSize: 13.5, fontWeight: 900, textTransform: 'uppercase', letterSpacing: 0.5, color: '#0d1b2e', margin: 0, display: 'flex', alignItems: 'center', gap: 7 }}>
               <Ticket size={16} color="#f4c04a" /> {t('Thông tin đặt vé', 'Booking summary', lang)}
@@ -1372,7 +1405,7 @@ function PaymentStep({
         </div>
 
         {/* CARD 2: COMBO BẮP NƯỚC */}
-        <div className="aurora-booking-card" style={{ padding: '22px 24px', background: 'linear-gradient(180deg, #fffdf8, #ffffff)', border: '1px solid #fde68a' }}>
+        <div className="aurora-booking-card checkout-combo-card" style={{ padding: '22px 24px', background: 'linear-gradient(180deg, #fffdf8, #ffffff)', border: '1px solid #fde68a' }}>
           <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 4 }}>
             <h2 style={{ fontSize: 13.5, fontWeight: 900, textTransform: 'uppercase', letterSpacing: 0.5, color: '#0d1b2e', margin: 0, display: 'flex', alignItems: 'center', gap: 7 }}>
               🍿 {t('Combo bắp nước', 'Popcorn & drinks', lang)}
@@ -1451,6 +1484,7 @@ function PaymentStep({
                 </div>
               );
             })}
+            {!combos.length && <div className="checkout-empty-products"><span>🍿</span><b>{t('Chưa có combo đang mở bán', 'No combos currently available', lang)}</b><small>{t('Danh mục sẽ hiển thị khi hàng hóa được kích hoạt trong Aurora DB.', 'Items appear when activated in Aurora DB.', lang)}</small></div>}
           </div>
 
           {comboTotal > 0 && (
@@ -1463,7 +1497,7 @@ function PaymentStep({
       </div>
 
       {/* CARD 3: MÃ GIẢM GIÁ */}
-      <div className="aurora-booking-card" style={{ padding: '20px 24px' }}>
+      <div className="aurora-booking-card checkout-voucher-card" style={{ padding: '20px 24px' }}>
         <h2 style={{ fontSize: 13.5, fontWeight: 900, textTransform: 'uppercase', letterSpacing: 0.5, color: '#0d1b2e', margin: '0 0 14px', display: 'flex', alignItems: 'center', gap: 7 }}>
           <Gift size={16} color="#f4c04a" /> {t('Mã giảm giá', 'Promo code & Vouchers', lang)}
         </h2>
@@ -1499,7 +1533,7 @@ function PaymentStep({
                   value={voucherCode}
                   onChange={e => setVoucherCode(e.target.value.toUpperCase())}
                   onKeyDown={e => e.key === 'Enter' && onApplyVoucher()}
-                  placeholder={t('Nhập mã voucher (vd: AURORA10, AURORA50K...)', 'Enter promo code (e.g. AURORA10)', lang)}
+                  placeholder={t('Nhập mã voucher từ mục Ưu đãi', 'Enter a code from Current Offers', lang)}
                   style={{
                     width: '100%', padding: '11px 16px',
                     border: '1.5px solid #e2e8f0', borderRadius: 10,
@@ -1533,12 +1567,7 @@ function PaymentStep({
             {/* Quick coupon tags */}
             <div style={{ marginTop: 12, display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
               <span style={{ fontSize: 11.5, color: '#64748b', fontWeight: 600 }}>💡 {t('Thử mã:', 'Try promo codes:', lang)}</span>
-              {[
-                { code: 'AURORA10', desc: 'Giảm 10%' },
-                { code: 'AURORA50K', desc: '-50.000đ' },
-                { code: 'WELCOME', desc: '-20.000đ' },
-                { code: 'GOLD20', desc: 'VIP 20%' },
-              ].map(p => (
+              {(voucherSuggestions as VoucherSuggestion[]).slice(0, 4).map(p => (
                 <button
                   key={p.code}
                   type="button"
@@ -1562,7 +1591,7 @@ function PaymentStep({
                   }}
                 >
                   <span>{p.code}</span>
-                  <span style={{ fontSize: 9.5, opacity: 0.75 }}>({p.desc})</span>
+                  <span style={{ fontSize: 9.5, opacity: 0.75 }}>({p.name})</span>
                 </button>
               ))}
             </div>
@@ -1577,7 +1606,7 @@ function PaymentStep({
       </div>
 
       {/* CARD 4: PHƯƠNG THỨC THANH TOÁN */}
-      <div className="aurora-booking-card" style={{ padding: '22px 24px' }}>
+      <div className="aurora-booking-card checkout-payment-card" style={{ padding: '22px 24px' }}>
         <h2 style={{ fontSize: 13.5, fontWeight: 900, textTransform: 'uppercase', letterSpacing: 0.5, color: '#0d1b2e', margin: '0 0 16px', display: 'flex', alignItems: 'center', gap: 7 }}>
           <CreditCard size={16} color="#f4c04a" /> {t('Phương thức thanh toán', 'Payment method', lang)}
         </h2>
@@ -1588,6 +1617,7 @@ function PaymentStep({
             return (
               <label
                 key={pm.id}
+                className={`checkout-payment-option ${isChecked ? 'active' : ''}`}
                 style={{
                   display: 'flex', alignItems: 'center', gap: 14,
                   padding: '14px 18px', borderRadius: 12,
@@ -1635,7 +1665,7 @@ function PaymentStep({
 
         {/* QR simulator helper */}
         {payMethod.startsWith('qr_') && (
-          <div style={{ marginTop: 16, padding: '20px', background: '#f8fafc', borderRadius: 12, border: '1px dashed #cbd5e1', display: 'flex', alignItems: 'center', gap: 18 }}>
+          <div className="checkout-qr-note" style={{ marginTop: 16, padding: '20px', background: '#f8fafc', borderRadius: 12, border: '1px dashed #cbd5e1', display: 'flex', alignItems: 'center', gap: 18 }}>
             <div style={{ width: 84, height: 84, background: '#ffffff', border: '1px solid #e2e8f0', borderRadius: 10, display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0, boxShadow: '0 2px 8px rgba(0,0,0,0.05)' }}>
               <QrCode size={56} color="#0d1b2e" />
             </div>
@@ -1661,7 +1691,7 @@ function PaymentStep({
 
       {/* CARD 5: THÔNG TIN NGƯỜI ĐẶT */}
       {user && (
-        <div className="aurora-booking-card" style={{ padding: '20px 24px' }}>
+        <div className="aurora-booking-card checkout-customer-card" style={{ padding: '20px 24px' }}>
           <h2 style={{ fontSize: 13.5, fontWeight: 900, textTransform: 'uppercase', letterSpacing: 0.5, color: '#0d1b2e', margin: '0 0 14px', display: 'flex', alignItems: 'center', gap: 7 }}>
             <User size={16} color="#f4c04a" /> {t('Thông tin người đặt vé', 'Customer information', lang)}
           </h2>
@@ -1684,7 +1714,7 @@ function PaymentStep({
       )}
 
       {/* CARD 6: BẢNG TỔNG KẾT THANH TOÁN */}
-      <div className="aurora-booking-card" style={{ padding: '20px 24px', background: '#f8fafc' }}>
+      <div className="aurora-booking-card checkout-totals-card" style={{ padding: '20px 24px', background: '#f8fafc' }}>
         <div style={{ fontSize: 13.5, fontWeight: 900, textTransform: 'uppercase', letterSpacing: 0.5, color: '#0d1b2e', marginBottom: 14 }}>
           {t('Chi tiết thanh toán đơn hàng', 'Order payment breakdown', lang)}
         </div>
@@ -1781,6 +1811,8 @@ function SuccessStep({ booking, movie, showtime, theater, selectedSeats, totalFi
             { label:t('Phòng','Screen',lang), val: showtime?.screen_name, big:false, gold:false },
             { label:t('Ngày','Date',lang), val: fmtDateFull(showtime?.starts_at||'', lang), big:false, gold:false },
             { label:t('Tổng tiền','Total',lang), val: fmtMoney(totalFinal), big:false, gold:true },
+            { label:t('Thanh toán','Payment',lang), val: String(booking.payment?.method||'').replace('QR_',''), big:false, gold:false },
+            { label:t('Mã giao dịch','Transaction ID',lang), val: booking.payment?.referenceCode||'—', big:false, gold:false },
           ].map(r => (
             <div key={r.label}>
               <div style={{ fontSize:10, fontWeight:600, color:'#94a3b8', textTransform:'uppercase', letterSpacing:0.5, marginBottom:4 }}>{r.label}</div>

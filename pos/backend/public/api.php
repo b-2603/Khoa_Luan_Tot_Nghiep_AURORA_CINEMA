@@ -58,17 +58,18 @@ function passwordMatches($password, $hash) {
 }
 
 function findPosUser($db, $username) {
-    $stmt = $db->prepare('SELECT id, username, password_hash, full_name, role, status, theater_id, counter_code FROM pos_users WHERE username = ? LIMIT 1');
+    $stmt = $db->prepare("SELECT pu.id,pu.username,pu.password_hash,pu.full_name,pu.role,pu.status,pu.theater_id,pu.counter_code,pu.counter_role_code,COALESCE(cr.name,'Box Ticket'),COALESCE(cr.can_sell_tickets,1),COALESCE(cr.can_sell_concessions,1),COALESCE(cr.can_redeem_online_booking,0),COALESCE(cr.can_sell_merchandise,0) FROM pos_users pu LEFT JOIN pos_counter_roles cr ON cr.code=pu.counter_role_code WHERE pu.username=? LIMIT 1");
     if (!$stmt) return null;
     $stmt->bind_param('s', $username);
     $stmt->execute();
     $id = null; $foundUsername = null; $passwordHash = null; $fullName = null; $role = null; $status = null; $assignedTheaterId = 1; $counterCode = 'AURORA BOX 02';
-    $stmt->bind_result($id, $foundUsername, $passwordHash, $fullName, $role, $status, $assignedTheaterId, $counterCode);
+    $counterRoleCode=null;$counterRoleName=null;$canTickets=0;$canConcessions=0;$canRedeem=0;$canMerchandise=0;
+    $stmt->bind_result($id, $foundUsername, $passwordHash, $fullName, $role, $status, $assignedTheaterId, $counterCode,$counterRoleCode,$counterRoleName,$canTickets,$canConcessions,$canRedeem,$canMerchandise);
     $found = $stmt->fetch();
     $stmt->close();
     if (!$found) return null;
     if (!$assignedTheaterId) $assignedTheaterId = 1;
-    return array('id' => (int)$id, 'username' => $foundUsername, 'password_hash' => $passwordHash, 'full_name' => $fullName, 'role' => $role, 'status' => $status, 'theater_id' => $assignedTheaterId, 'counter_code' => $counterCode);
+    return array('id'=>(int)$id,'username'=>$foundUsername,'password_hash'=>$passwordHash,'full_name'=>$fullName,'role'=>$role,'status'=>$status,'theater_id'=>$assignedTheaterId,'counter_code'=>$counterCode,'counter_role_code'=>$counterRoleCode,'counter_role_name'=>$counterRoleName,'capabilities'=>array('sell_tickets'=>(int)$canTickets===1,'sell_concessions'=>(int)$canConcessions===1,'redeem_online_booking'=>(int)$canRedeem===1,'sell_merchandise'=>(int)$canMerchandise===1));
 }
 
 
@@ -85,11 +86,56 @@ function posUser() {
     return isset($_SESSION['pos_user']) ? $_SESSION['pos_user'] : null;
 }
 
+function posCapabilitiesForAreas($salesAreas) {
+    if (!is_array($salesAreas)) $salesAreas = explode(',', (string)$salesAreas);
+    $areas = array_map('trim', $salesAreas);
+    return array(
+        'sell_tickets' => in_array('box_office', $areas, true),
+        'sell_concessions' => in_array('concession', $areas, true),
+        'redeem_online_booking' => in_array('concession', $areas, true) || in_array('customer_service', $areas, true),
+        'sell_merchandise' => in_array('merchandise', $areas, true)
+    );
+}
+
+function posAreaLabel($salesAreas) {
+    if (!is_array($salesAreas)) $salesAreas = explode(',', (string)$salesAreas);
+    $labels = array('box_office'=>'Quầy vé','concession'=>'Bắp nước','merchandise'=>'Hàng hóa','customer_service'=>'Hỗ trợ khách');
+    $selected = array();
+    foreach ($salesAreas as $area) {
+        $area = trim($area);
+        if (isset($labels[$area])) $selected[] = $labels[$area];
+    }
+    return $selected ? implode(', ', $selected) : 'Không có khu vực được cấp';
+}
+
 function requirePosUser() {
+    global $db;
     if (empty($_SESSION['pos_user'])) {
         jsonResponse(array('success' => false, 'message' => 'Phiên đăng nhập quầy đã hết hạn.'), 401);
     }
-    return $_SESSION['pos_user'];
+    $user = $_SESSION['pos_user'];
+    $shift = $user['role'] !== 'admin' && isset($db) ? posAuthorizedShift($db, (int)$user['id']) : null;
+    if ($user['role'] !== 'admin' && !$shift) {
+        unset($_SESSION['pos_shift_id']);
+        unset($_SESSION['pos_user']);
+        jsonResponse(array(
+            'success' => false,
+            'code' => 'SHIFT_AUTHORIZATION_REQUIRED',
+            'message' => 'Phiên làm việc đã kết thúc hoặc chưa được cấp lại. Vui lòng liên hệ Admin Rạp hoặc Supervisor để mở phiên mới.'
+        ), 403);
+    }
+    if ($user['role'] !== 'admin') {
+        $user['capabilities'] = posCapabilitiesForAreas($shift['sales_areas']);
+        $user['counter_role_name'] = posAreaLabel($shift['sales_areas']);
+        $_SESSION['pos_user'] = $user;
+    }
+    return $user;
+}
+
+function requirePosCapability($capability) {
+    $user=requirePosUser();
+    if (empty($user['capabilities'][$capability]) && $user['role']!=='admin') jsonResponse(array('success'=>false,'message'=>'Phiên hiện tại không được cấp khu vực nghiệp vụ cần thiết.'),403);
+    return $user;
 }
 
 function ensurePosSalesTables($db) {
@@ -152,12 +198,16 @@ function ensurePosSalesTables($db) {
     return true;
 }
 
-function posComboCatalog($db) {
+function posComboCatalog($db, $user = null) {
     $catalog = array();
-    $result = $db->query("SELECT sku, name, price FROM products WHERE status='active' AND stock_quantity > 0 ORDER BY name");
+    $allowed=array();
+    if (!$user || !empty($user['capabilities']['sell_concessions']) || $user['role']==='admin') $allowed[]="LOWER(category) IN ('concession','f&b','food','beverage')";
+    if (!$user || !empty($user['capabilities']['sell_merchandise']) || $user['role']==='admin') $allowed[]="LOWER(category) IN ('merchandise','merchandising')";
+    if (!$allowed) return $catalog;
+    $result = $db->query("SELECT sku,name,price,category,stock_quantity FROM products WHERE status='active' AND stock_quantity>0 AND (".implode(' OR ',$allowed).") ORDER BY category,name");
     if (!$result) return $catalog;
     while ($row = $result->fetch_assoc()) {
-        $catalog[$row['sku']] = array('name' => $row['name'], 'price' => (float)$row['price']);
+        $catalog[$row['sku']] = array('name'=>$row['name'],'price'=>(float)$row['price'],'category'=>$row['category'],'stock_quantity'=>(int)$row['stock_quantity']);
     }
     return $catalog;
 }
@@ -175,15 +225,19 @@ function posTableColumnExists($db, $table, $column) {
 
 function ensurePosAuthenticationSchema($db) {
     $queries = array(
+        "CREATE TABLE IF NOT EXISTS pos_counter_roles (code VARCHAR(30) NOT NULL PRIMARY KEY,name VARCHAR(80) NOT NULL,description VARCHAR(255) NOT NULL,can_sell_tickets TINYINT(1) NOT NULL DEFAULT 0,can_sell_concessions TINYINT(1) NOT NULL DEFAULT 0,can_redeem_online_booking TINYINT(1) NOT NULL DEFAULT 0,can_sell_merchandise TINYINT(1) NOT NULL DEFAULT 0,is_active TINYINT(1) NOT NULL DEFAULT 1,sort_order INT NOT NULL DEFAULT 0,updated_at DATETIME NULL) ENGINE=InnoDB DEFAULT CHARSET=utf8 COLLATE=utf8_unicode_ci",
         "CREATE TABLE IF NOT EXISTS pos_users (
             id BIGINT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
             username VARCHAR(60) NOT NULL, password_hash VARCHAR(255) NOT NULL,
             full_name VARCHAR(120) NOT NULL, phone VARCHAR(20) NULL,
             role ENUM('cashier','supervisor','admin') NOT NULL DEFAULT 'cashier',
+            counter_role_code VARCHAR(30) NOT NULL DEFAULT 'box_ticket',
             status ENUM('active','inactive','locked') NOT NULL DEFAULT 'active',
             theater_id BIGINT UNSIGNED NOT NULL DEFAULT 1,
             counter_code VARCHAR(60) NOT NULL DEFAULT 'AURORA BOX 02',
-            last_login_at DATETIME NULL, created_at TIMESTAMP NULL DEFAULT CURRENT_TIMESTAMP,
+            last_login_at DATETIME NULL, issued_by_tms_user_id BIGINT UNSIGNED NULL,
+            issued_by_name VARCHAR(120) NULL, updated_by_tms_user_id BIGINT UNSIGNED NULL,
+            updated_by_name VARCHAR(120) NULL, created_at TIMESTAMP NULL DEFAULT CURRENT_TIMESTAMP,
             updated_at DATETIME NULL DEFAULT NULL, UNIQUE KEY uq_pos_users_username (username),
             KEY idx_pos_users_theater (theater_id)
         ) ENGINE=InnoDB DEFAULT CHARSET=utf8 COLLATE=utf8_unicode_ci",
@@ -198,19 +252,52 @@ function ensurePosAuthenticationSchema($db) {
         "CREATE TABLE IF NOT EXISTS pos_shifts (
             id BIGINT UNSIGNED AUTO_INCREMENT PRIMARY KEY, user_id BIGINT UNSIGNED NOT NULL,
             theater_id BIGINT UNSIGNED NOT NULL DEFAULT 1, cinema_name VARCHAR(120) NOT NULL,
-            counter VARCHAR(60) NOT NULL, initial_cash DECIMAL(12,2) NOT NULL DEFAULT 0,
+            counter VARCHAR(60) NOT NULL, sales_areas VARCHAR(255) NOT NULL DEFAULT 'box_office',
+            initial_cash DECIMAL(12,2) NOT NULL DEFAULT 0,
             cash_at_close DECIMAL(12,2) NULL, status ENUM('active','paused','closed') NOT NULL DEFAULT 'active',
             opened_at DATETIME NOT NULL, closed_at DATETIME NULL, notes TEXT NULL,
             created_at TIMESTAMP NULL DEFAULT CURRENT_TIMESTAMP, updated_at DATETIME NULL DEFAULT NULL,
             KEY idx_pos_shifts_user_status (user_id, status), KEY idx_pos_shifts_theater (theater_id)
+        ) ENGINE=InnoDB DEFAULT CHARSET=utf8 COLLATE=utf8_unicode_ci",
+        "CREATE TABLE IF NOT EXISTS pos_booking_redemptions (id BIGINT UNSIGNED AUTO_INCREMENT PRIMARY KEY,booking_id BIGINT UNSIGNED NOT NULL,theater_id BIGINT UNSIGNED NOT NULL,pos_user_id BIGINT UNSIGNED NOT NULL,pos_shift_id BIGINT UNSIGNED NULL,redeemed_at DATETIME NOT NULL,note VARCHAR(255) NULL,UNIQUE KEY uq_pos_booking_redemption (booking_id),KEY idx_pos_redemption_theater_date (theater_id,redeemed_at)) ENGINE=InnoDB DEFAULT CHARSET=utf8 COLLATE=utf8_unicode_ci",
+        "CREATE TABLE IF NOT EXISTS pos_work_schedules (
+            id BIGINT UNSIGNED AUTO_INCREMENT PRIMARY KEY, theater_id BIGINT UNSIGNED NOT NULL,
+            user_id BIGINT UNSIGNED NOT NULL, work_date DATE NOT NULL, start_time TIME NOT NULL,
+            end_time TIME NOT NULL, sales_areas VARCHAR(255) NOT NULL, counter VARCHAR(60) NOT NULL,
+            initial_cash DECIMAL(12,2) NOT NULL DEFAULT 0,
+            status ENUM('scheduled','confirmed','active','completed','cancelled') NOT NULL DEFAULT 'scheduled',
+            linked_shift_id BIGINT UNSIGNED NULL, notes VARCHAR(1000) NULL,
+            created_by_tms_user_id BIGINT UNSIGNED NULL, created_by_name VARCHAR(120) NOT NULL,
+            updated_by_tms_user_id BIGINT UNSIGNED NULL, updated_by_name VARCHAR(120) NULL,
+            created_at DATETIME NOT NULL, updated_at DATETIME NULL,
+            UNIQUE KEY uq_pos_work_assignment (theater_id,user_id,work_date,start_time),
+            KEY idx_pos_work_date_status (theater_id,work_date,status),
+            KEY idx_pos_work_counter (theater_id,counter,work_date)
         ) ENGINE=InnoDB DEFAULT CHARSET=utf8 COLLATE=utf8_unicode_ci"
     );
     foreach ($queries as $query) if (!$db->query($query)) return false;
+    if (!$db->query("INSERT INTO pos_counter_roles (code,name,description,can_sell_tickets,can_sell_concessions,can_redeem_online_booking,can_sell_merchandise,is_active,sort_order,updated_at) VALUES ('concession','Concession','Đổi vé online và bán bắp nước trực tiếp',0,1,1,0,1,10,NOW()),('box_ticket','Box Ticket','Bán vé tại quầy và bán kèm bắp nước',1,1,0,0,1,20,NOW()),('merchandise','Merchandise','Bán quà lưu niệm và sản phẩm phim',0,0,0,1,1,30,NOW()) ON DUPLICATE KEY UPDATE name=VALUES(name),description=VALUES(description),can_sell_tickets=VALUES(can_sell_tickets),can_sell_concessions=VALUES(can_sell_concessions),can_redeem_online_booking=VALUES(can_redeem_online_booking),can_sell_merchandise=VALUES(can_sell_merchandise),is_active=VALUES(is_active),sort_order=VALUES(sort_order),updated_at=NOW()")) return false;
     // Support an older POS database that was initialized before branch/counter fields existed.
     if (!posTableColumnExists($db, 'pos_users', 'theater_id') && !$db->query('ALTER TABLE pos_users ADD theater_id BIGINT UNSIGNED NOT NULL DEFAULT 1')) return false;
     if (!posTableColumnExists($db, 'pos_users', 'counter_code') && !$db->query("ALTER TABLE pos_users ADD counter_code VARCHAR(60) NOT NULL DEFAULT 'AURORA BOX 02'")) return false;
+    if (!posTableColumnExists($db, 'pos_users', 'counter_role_code') && !$db->query("ALTER TABLE pos_users ADD counter_role_code VARCHAR(30) NOT NULL DEFAULT 'box_ticket'")) return false;
     if (!posTableColumnExists($db, 'pos_users', 'last_login_at') && !$db->query('ALTER TABLE pos_users ADD last_login_at DATETIME NULL')) return false;
+    if (!posTableColumnExists($db, 'pos_users', 'employee_code') && !$db->query('ALTER TABLE pos_users ADD employee_code VARCHAR(30) NULL')) return false;
+    if (!posTableColumnExists($db, 'pos_users', 'issued_by_tms_user_id') && !$db->query('ALTER TABLE pos_users ADD issued_by_tms_user_id BIGINT UNSIGNED NULL')) return false;
+    if (!posTableColumnExists($db, 'pos_users', 'issued_by_name') && !$db->query('ALTER TABLE pos_users ADD issued_by_name VARCHAR(120) NULL')) return false;
+    if (!posTableColumnExists($db, 'pos_users', 'updated_by_tms_user_id') && !$db->query('ALTER TABLE pos_users ADD updated_by_tms_user_id BIGINT UNSIGNED NULL')) return false;
+    if (!posTableColumnExists($db, 'pos_users', 'updated_by_name') && !$db->query('ALTER TABLE pos_users ADD updated_by_name VARCHAR(120) NULL')) return false;
     if (!posTableColumnExists($db, 'pos_shifts', 'theater_id') && !$db->query('ALTER TABLE pos_shifts ADD theater_id BIGINT UNSIGNED NOT NULL DEFAULT 1')) return false;
+    if (!posTableColumnExists($db, 'pos_shifts', 'sales_areas') && !$db->query("ALTER TABLE pos_shifts ADD sales_areas VARCHAR(255) NOT NULL DEFAULT 'box_office'")) return false;
+    if (!posTableColumnExists($db, 'pos_shifts', 'expected_cash') && !$db->query('ALTER TABLE pos_shifts ADD expected_cash DECIMAL(12,2) NULL')) return false;
+    if (!posTableColumnExists($db, 'pos_shifts', 'cash_difference') && !$db->query('ALTER TABLE pos_shifts ADD cash_difference DECIMAL(12,2) NULL')) return false;
+    if (!posTableColumnExists($db, 'pos_shifts', 'close_note') && !$db->query('ALTER TABLE pos_shifts ADD close_note TEXT NULL')) return false;
+    if (!posTableColumnExists($db, 'pos_shifts', 'closed_by') && !$db->query('ALTER TABLE pos_shifts ADD closed_by VARCHAR(120) NULL')) return false;
+    if (!posTableColumnExists($db, 'pos_shifts', 'authorized_by_tms_user_id') && !$db->query('ALTER TABLE pos_shifts ADD authorized_by_tms_user_id BIGINT UNSIGNED NULL')) return false;
+    if (!posTableColumnExists($db, 'pos_shifts', 'authorized_by_name') && !$db->query('ALTER TABLE pos_shifts ADD authorized_by_name VARCHAR(120) NULL')) return false;
+    if (!posTableColumnExists($db, 'pos_shifts', 'authorized_by_role') && !$db->query('ALTER TABLE pos_shifts ADD authorized_by_role VARCHAR(30) NULL')) return false;
+    if (!posTableColumnExists($db, 'pos_shifts', 'work_schedule_id') && !$db->query('ALTER TABLE pos_shifts ADD work_schedule_id BIGINT UNSIGNED NULL')) return false;
+    if (posTableColumnExists($db, 'orders', 'id') && !posTableColumnExists($db, 'orders', 'pos_shift_id') && !$db->query('ALTER TABLE orders ADD pos_shift_id BIGINT UNSIGNED NULL')) return false;
 
     $cashierHash = 'sha256:aurora-pos-local-2026:' . hash('sha256', 'aurora-pos-local-2026:8888');
     $adminHash = 'sha256:aurora-pos-local-2026:' . hash('sha256', 'aurora-pos-local-2026:admin123');
@@ -244,8 +331,15 @@ function posCurrentShift($db, $userId) {
     return $found ? array('id'=>(int)$id, 'cinema_name'=>$cinema, 'counter'=>$counter, 'initial_cash'=>(float)$initial, 'status'=>$status, 'opened_at'=>$opened) : null;
 }
 
+function posAuthorizedShift($db, $userId) {
+    $stmt=$db->prepare("SELECT id,cinema_name,counter,initial_cash,status,opened_at,sales_areas FROM pos_shifts WHERE user_id=? AND status IN ('active','paused') AND authorized_by_tms_user_id IS NOT NULL AND authorized_by_role IN ('super_admin','cinema_admin','supervisor') ORDER BY id DESC LIMIT 1");
+    if(!$stmt)return null;$stmt->bind_param('i',$userId);$stmt->execute();
+    $id=null;$cinema=null;$counter=null;$initial=null;$status=null;$opened=null;$salesAreas=null;$stmt->bind_result($id,$cinema,$counter,$initial,$status,$opened,$salesAreas);$found=$stmt->fetch();$stmt->close();
+    return $found?array('id'=>(int)$id,'cinema_name'=>$cinema,'counter'=>$counter,'initial_cash'=>(float)$initial,'status'=>$status,'opened_at'=>$opened,'sales_areas'=>$salesAreas):null;
+}
+
 function posOpenShift($db, $user, $theater) {
-    $existing = posCurrentShift($db, (int)$user['id']);
+    $existing = $user['role']==='admin' ? posCurrentShift($db,(int)$user['id']) : posAuthorizedShift($db,(int)$user['id']);
     if ($existing) {
         if ($existing['status'] === 'paused') {
             $now = date('Y-m-d H:i:s'); $resume = $db->prepare("UPDATE pos_shifts SET status='active', updated_at=? WHERE id=?");
@@ -256,6 +350,9 @@ function posOpenShift($db, $user, $theater) {
         }
         return $existing;
     }
+    // Tài khoản bán hàng không được tự tạo phiên khi đăng nhập.
+    // Phiên phải được Admin Rạp/Supervisor cùng rạp cấp trước trong TMS.
+    if ($user['role'] !== 'admin') return null;
     $now = date('Y-m-d H:i:s'); $initialCash = 500000.00; $counter = $user['counter_code']; $cinema = $theater['name']; $theaterId = (int)$theater['id']; $userId = (int)$user['id'];
     $stmt = $db->prepare("INSERT INTO pos_shifts (user_id,theater_id,cinema_name,counter,initial_cash,status,opened_at,created_at,updated_at) VALUES (?, ?, ?, ?, ?, 'active', ?, ?, ?)");
     if (!$stmt) return null;
@@ -314,7 +411,14 @@ if ($action === 'login' && $requestMethod === 'POST') {
     $user['theater_name'] = $theater['name'];
     $user['theater_address'] = $theater['address'];
     $shift = posOpenShift($db, $user, $theater);
-    if (!$shift) jsonResponse(array('success' => false, 'message' => 'Không thể mở phiên làm việc tại quầy.'), 500);
+    if (!$shift) {
+        posLogAuthEvent($db, (int)$user['id'], $username, 'LOGIN_DENIED_NO_SHIFT', false);
+        jsonResponse(array('success'=>false,'message'=>'Tài khoản chưa có phiên bán hàng được cấp. Vui lòng liên hệ Admin Rạp hoặc Supervisor để mở lại phiên.'),403);
+    }
+    if ($user['role'] !== 'admin') {
+        $user['capabilities'] = posCapabilitiesForAreas($shift['sales_areas']);
+        $user['counter_role_name'] = posAreaLabel($shift['sales_areas']);
+    }
     unset($user['password_hash']);
     session_regenerate_id(true);
     $_SESSION['pos_user'] = $user;
@@ -403,12 +507,15 @@ if ($action === 'close_shift' && $requestMethod === 'POST') {
     $input = requestJson(); $cashAtClose = isset($input['cash_at_close']) ? (float)$input['cash_at_close'] : 0;
     if ($cashAtClose < 0) jsonResponse(array('success' => false, 'message' => 'Tiền mặt kết ca không hợp lệ.'), 422);
     $now = date('Y-m-d H:i:s');
-    $stmt = $db->prepare("UPDATE pos_shifts SET status='closed', cash_at_close=?, closed_at=?, updated_at=? WHERE id=? AND user_id=? AND status IN ('active','paused')");
+    $closedBy='POS: '.$user['full_name'];
+    $stmt = $db->prepare("UPDATE pos_shifts SET status='closed',cash_at_close=?,closed_at=?,closed_by=?,close_note='Nhân viên chủ động kết phiên tại POS',updated_at=? WHERE id=? AND user_id=? AND status IN ('active','paused')");
     if (!$stmt) jsonResponse(array('success' => false, 'message' => 'Không thể đóng ca.'), 500);
-    $userId = (int)$user['id']; $stmt->bind_param('dssii', $cashAtClose, $now, $now, $shiftId, $userId); $stmt->execute(); $affected = $stmt->affected_rows; $stmt->close();
+    $userId = (int)$user['id']; $stmt->bind_param('dsssii', $cashAtClose, $now, $closedBy, $now, $shiftId, $userId); $stmt->execute(); $affected = $stmt->affected_rows; $stmt->close();
     if ($affected < 1) jsonResponse(array('success' => false, 'message' => 'Ca làm việc đã được đóng hoặc không thuộc tài khoản hiện tại.'), 409);
+    $db->query("UPDATE pos_work_schedules SET status='completed',updated_at=NOW() WHERE linked_shift_id={$shiftId}");
     posLogAuthEvent($db, $userId, $user['username'], 'SHIFT_CLOSED', true);
     unset($_SESSION['pos_shift_id']);
+    unset($_SESSION['pos_user']);
     jsonResponse(array('success' => true, 'message' => 'Đã đóng ca và ghi nhận tiền mặt kết ca.', 'data' => array('shift_id' => $shiftId, 'cash_at_close' => $cashAtClose, 'closed_at' => $now)));
 }
 
@@ -424,7 +531,8 @@ if ($action === 'sales_catalog' && $requestMethod === 'GET') {
         jsonResponse(array('success' => false, 'message' => 'Ngày chiếu không hợp lệ.'), 422);
     }
 
-    $datesResult = $db->query("SELECT DISTINCT DATE(st.starts_at) AS show_date FROM showtimes st INNER JOIN screens s ON s.id = st.screen_id WHERE st.status = 'OPEN' AND st.starts_at >= NOW() AND s.theater_id = {$theaterId} ORDER BY show_date LIMIT 14");
+    $canSellTickets=!empty($posUser['capabilities']['sell_tickets']) || $posUser['role']==='admin';
+    $datesResult = $canSellTickets ? $db->query("SELECT DISTINCT DATE(st.starts_at) AS show_date FROM showtimes st INNER JOIN screens s ON s.id = st.screen_id WHERE st.status = 'OPEN' AND st.starts_at >= NOW() AND s.theater_id = {$theaterId} ORDER BY show_date LIMIT 14") : false;
     $dates = array();
     if ($datesResult) while ($dateRow = $datesResult->fetch_assoc()) $dates[] = $dateRow['show_date'];
     if ($requestedDate === '' && count($dates) > 0) $requestedDate = $dates[0];
@@ -453,13 +561,13 @@ if ($action === 'sales_catalog' && $requestMethod === 'GET') {
     }
 
     $combos = array();
-    foreach (posComboCatalog($db) as $code => $combo) $combos[] = array('code' => $code, 'name' => $combo['name'], 'price' => $combo['price']);
+    foreach (posComboCatalog($db,$posUser) as $code => $combo) $combos[] = array('code'=>$code,'name'=>$combo['name'],'price'=>$combo['price'],'category'=>$combo['category'],'stock_quantity'=>$combo['stock_quantity']);
     $theater = getPosTheater($db, $theaterId);
-    jsonResponse(array('success' => true, 'data' => array('theater' => $theater, 'dates' => $dates, 'selected_date' => $requestedDate, 'showtimes' => $showtimes, 'combos' => $combos)));
+    jsonResponse(array('success'=>true,'data'=>array('theater'=>$theater,'dates'=>$dates,'selected_date'=>$requestedDate,'showtimes'=>$showtimes,'combos'=>$combos,'products'=>$combos,'counter_role'=>array('code'=>$posUser['counter_role_code'],'name'=>$posUser['counter_role_name']),'capabilities'=>$posUser['capabilities'])));
 }
 
 if ($action === 'sales_seats' && $requestMethod === 'GET') {
-    $posUser = requirePosUser();
+    $posUser = requirePosCapability('sell_tickets');
     $theaterId = isset($posUser['theater_id']) ? (int)$posUser['theater_id'] : 1;
     $showtimeId = isset($_GET['showtime_id']) ? (int)$_GET['showtime_id'] : 0;
     if ($showtimeId < 1) jsonResponse(array('success' => false, 'message' => 'Suất chiếu không hợp lệ.'), 422);
@@ -483,10 +591,59 @@ if ($action === 'sales_seats' && $requestMethod === 'GET') {
     jsonResponse(array('success' => true, 'data' => array('showtime_id' => $showtimeId, 'seats' => $seats)));
 }
 
+if ($action === 'online_booking_lookup' && $requestMethod === 'GET') {
+    $posUser=requirePosCapability('redeem_online_booking');
+    $code=isset($_GET['code'])?strtoupper(trim((string)$_GET['code'])):'';
+    if (!preg_match('/^[A-Z0-9-]{5,30}$/',$code)) jsonResponse(array('success'=>false,'message'=>'Mã đặt vé không hợp lệ.'),422);
+    $safe=$db->real_escape_string($code);$theaterId=(int)$posUser['theater_id'];
+    $sql="SELECT b.id,b.booking_code,b.total_amount,b.status,b.created_at,st.starts_at,m.title movie_title,sc.name screen_name,t.name theater_name,u.full_name customer_name,u.phone customer_phone,GROUP_CONCAT(CONCAT(s.seat_row,s.seat_number) ORDER BY s.seat_row,s.seat_number SEPARATOR ', ') seats,(SELECT pr.redeemed_at FROM pos_booking_redemptions pr WHERE pr.booking_id=b.id LIMIT 1) redeemed_at FROM bookings b INNER JOIN showtimes st ON st.id=b.showtime_id INNER JOIN movies m ON m.id=st.movie_id INNER JOIN screens sc ON sc.id=st.screen_id INNER JOIN theaters t ON t.id=sc.theater_id LEFT JOIN users u ON u.id=b.user_id LEFT JOIN booking_seats bs ON bs.booking_id=b.id LEFT JOIN seats s ON s.id=bs.seat_id WHERE b.booking_code='{$safe}' AND sc.theater_id={$theaterId} GROUP BY b.id LIMIT 1";
+    $row=$db->query($sql);$booking=$row?$row->fetch_assoc():null;
+    if(!$booking)jsonResponse(array('success'=>false,'message'=>'Không tìm thấy vé online tại rạp này.'),404);
+    $booking['id']=(int)$booking['id'];$booking['total_amount']=(float)$booking['total_amount'];$booking['can_redeem']=$booking['status']==='PAID'&&empty($booking['redeemed_at']);
+    jsonResponse(array('success'=>true,'data'=>$booking));
+}
+
+if ($action === 'online_booking_redeem' && $requestMethod === 'POST') {
+    $posUser=requirePosCapability('redeem_online_booking');$shift=posCurrentShift($db,(int)$posUser['id']);
+    if(!$shift||$shift['status']!=='active')jsonResponse(array('success'=>false,'message'=>'Cần mở phiên bán hàng trước khi đổi vé.'),409);
+    $input=requestJson();$code=isset($input['code'])?strtoupper(trim((string)$input['code'])):'';$note=isset($input['note'])?trim((string)$input['note']):'';
+    $safe=$db->real_escape_string($code);$theaterId=(int)$posUser['theater_id'];
+    $result=$db->query("SELECT b.id,b.status FROM bookings b INNER JOIN showtimes st ON st.id=b.showtime_id INNER JOIN screens sc ON sc.id=st.screen_id WHERE b.booking_code='{$safe}' AND sc.theater_id={$theaterId} LIMIT 1");$booking=$result?$result->fetch_assoc():null;
+    if(!$booking)jsonResponse(array('success'=>false,'message'=>'Không tìm thấy vé online tại rạp này.'),404);
+    if($booking['status']!=='PAID')jsonResponse(array('success'=>false,'message'=>'Chỉ vé đã thanh toán mới được đổi tại quầy.'),409);
+    $bookingId=(int)$booking['id'];$userId=(int)$posUser['id'];$shiftId=(int)$shift['id'];$noteEsc=$db->real_escape_string(substr($note,0,255));
+    if(!$db->query("INSERT INTO pos_booking_redemptions (booking_id,theater_id,pos_user_id,pos_shift_id,redeemed_at,note) VALUES ({$bookingId},{$theaterId},{$userId},{$shiftId},NOW(),'{$noteEsc}')")){
+        if($db->errno===1062)jsonResponse(array('success'=>false,'message'=>'Vé này đã được đổi trước đó.'),409);
+        jsonResponse(array('success'=>false,'message'=>'Không thể ghi nhận đổi vé.'),500);
+    }
+    jsonResponse(array('success'=>true,'message'=>'Đã xác nhận vé online và ghi nhận trong aurora_db.','data'=>array('booking_id'=>$bookingId,'redeemed_at'=>date('Y-m-d H:i:s'))));
+}
+
+if ($action === 'product_order' && $requestMethod === 'POST') {
+    $posUser=requirePosUser();$canProducts=!empty($posUser['capabilities']['sell_concessions'])||!empty($posUser['capabilities']['sell_merchandise'])||$posUser['role']==='admin';
+    if(!$canProducts)jsonResponse(array('success'=>false,'message'=>'Vai trò hiện tại không có quyền bán sản phẩm.'),403);
+    $shift=posCurrentShift($db,(int)$posUser['id']);if(!$shift||$shift['status']!=='active')jsonResponse(array('success'=>false,'message'=>'Phiên bán hàng chưa hoạt động.'),409);
+    $input=requestJson();$itemsInput=isset($input['items'])&&is_array($input['items'])?$input['items']:array();$method=isset($input['payment_method'])?strtoupper((string)$input['payment_method']):'CASH';$received=isset($input['amount_received'])?(float)$input['amount_received']:0;
+    if(!in_array($method,array('CASH','CARD','TRANSFER'),true))jsonResponse(array('success'=>false,'message'=>'Phương thức thanh toán không hợp lệ.'),422);
+    $catalog=posComboCatalog($db,$posUser);$items=array();$total=0;
+    foreach($itemsInput as $requested){$code=is_array($requested)&&isset($requested['code'])?(string)$requested['code']:'';$quantity=is_array($requested)&&isset($requested['quantity'])?(int)$requested['quantity']:0;if($quantity>0&&$quantity<=20&&isset($catalog[$code])){$items[$code]=min(20,(isset($items[$code])?$items[$code]:0)+$quantity);}}
+    if(!$items)jsonResponse(array('success'=>false,'message'=>'Vui lòng chọn ít nhất một sản phẩm.'),422);
+    foreach($items as $code=>$quantity)$total+=$catalog[$code]['price']*$quantity;if($method!=='CASH')$received=$total;if($received<$total)jsonResponse(array('success'=>false,'message'=>'Số tiền khách đưa chưa đủ.'),422);$change=$received-$total;
+    $db->autocommit(false);try{$code='POS-'.strtoupper(substr(md5(uniqid((string)mt_rand(),true)),0,10));$cashierId=(int)$posUser['id'];$shiftId=(int)$shift['id'];$customerId=null;
+      $stmt=$db->prepare("INSERT INTO orders (booking_id,customer_id,cashier_id,pos_shift_id,order_code,channel,subtotal,discount_amount,total_amount,payment_method,amount_received,change_amount,status) VALUES (NULL,?,?,?,?, 'POS',?,0,?,?,?,?, 'PAID')");$stmt->bind_param('iiisddsdd',$customerId,$cashierId,$shiftId,$code,$total,$total,$method,$received,$change);if(!$stmt->execute())throw new Exception('Không thể lưu đơn hàng.');$orderId=(int)$stmt->insert_id;$stmt->close();
+      $itemStmt=$db->prepare("INSERT INTO order_items (order_id,item_type,item_code,item_name,quantity,unit_price,seat_id) VALUES (?,'COMBO',?,?,?,?,NULL)");$stockStmt=$db->prepare("UPDATE products SET stock_quantity=stock_quantity-? WHERE sku=? AND stock_quantity>=?");
+      foreach($items as $sku=>$quantity){$product=$catalog[$sku];$itemStmt->bind_param('issid',$orderId,$sku,$product['name'],$quantity,$product['price']);if(!$itemStmt->execute())throw new Exception('Không thể lưu sản phẩm.');$stockStmt->bind_param('isi',$quantity,$sku,$quantity);$stockStmt->execute();if($stockStmt->affected_rows<1)throw new Exception('Sản phẩm '.$product['name'].' không đủ tồn kho.');}$itemStmt->close();$stockStmt->close();
+      $pay=$db->prepare('INSERT INTO payments (order_id,method,amount,reference_code) VALUES (?,?,?,?)');$pay->bind_param('isds',$orderId,$method,$total,$code);if(!$pay->execute())throw new Exception('Không thể lưu thanh toán.');$pay->close();$db->commit();$db->autocommit(true);jsonResponse(array('success'=>true,'data'=>array('order_id'=>$orderId,'code'=>$code,'total'=>$total,'amount_received'=>$received,'change'=>$change,'payment_method'=>$method)),201);
+    }catch(Exception $e){$db->rollback();$db->autocommit(true);jsonResponse(array('success'=>false,'message'=>$e->getMessage()),409);}
+}
+
 if ($action === 'sales_order' && $requestMethod === 'POST') {
-    $posUser = requirePosUser();
+    $posUser = requirePosCapability('sell_tickets');
     $theaterId = isset($posUser['theater_id']) ? (int)$posUser['theater_id'] : 1;
     if (!ensurePosSalesTables($db)) jsonResponse(array('success' => false, 'message' => 'Không thể khởi tạo dữ liệu bán hàng.'), 500);
+    $activeShift = posCurrentShift($db, (int)$posUser['id']);
+    if (!$activeShift || $activeShift['status'] !== 'active') jsonResponse(array('success' => false, 'message' => 'Phiên bán hàng đã tạm dừng hoặc kết thúc. Vui lòng liên hệ Admin Rạp trước khi tiếp tục bán.'), 409);
+    $_SESSION['pos_shift_id'] = (int)$activeShift['id'];
     $input = requestJson();
     $showtimeId = isset($input['showtime_id']) ? (int)$input['showtime_id'] : 0;
     $seatIds = isset($input['seat_ids']) && is_array($input['seat_ids']) ? array_values(array_unique(array_map('intval', $input['seat_ids']))) : array();
@@ -499,7 +656,7 @@ if ($action === 'sales_order' && $requestMethod === 'POST') {
     if ($showtimeId < 1 || count($seatIds) < 1 || count($seatIds) > 12) jsonResponse(array('success' => false, 'message' => 'Vui lòng chọn suất chiếu và từ 1 đến 12 ghế.'), 422);
     if (!in_array($paymentMethod, array('CASH', 'CARD', 'TRANSFER'), true)) jsonResponse(array('success' => false, 'message' => 'Phương thức thanh toán không hợp lệ.'), 422);
 
-    $catalog = posComboCatalog($db); $combos = array();
+    $catalog = posComboCatalog($db,$posUser); $combos = array();
     foreach ($combosInput as $item) {
         $code = is_array($item) && isset($item['code']) ? (string)$item['code'] : '';
         $quantity = is_array($item) && isset($item['quantity']) ? (int)$item['quantity'] : 0;
@@ -549,7 +706,7 @@ if ($action === 'sales_order' && $requestMethod === 'POST') {
         foreach ($seatIds as $seatId) { $price = 0 + $ticketPrice; if ($seatInfo[$seatId]['type'] === 'VIP') $price += 20000; else if ($seatInfo[$seatId]['type'] === 'COUPLE') $price *= 2; if ($hasShowtimeColumn) { $seatStmt->bind_param('iiid', $bookingId, $showtimeId, $seatId, $price); } else { $seatStmt->bind_param('iid', $bookingId, $seatId, $price); } if (!$seatStmt->execute()) throw new Exception('Không thể giữ ghế.'); }
         $seatStmt->close();
 
-        $cashier = posUser(); $cashierId = (int)$cashier['id']; $stmt = $db->prepare("INSERT INTO orders (booking_id, customer_id, cashier_id, order_code, channel, subtotal, discount_amount, total_amount, payment_method, amount_received, change_amount, status) VALUES (?, ?, ?, ?, 'POS', ?, 0, ?, ?, ?, ?, 'PAID')"); $stmt->bind_param('iiisddsdd', $bookingId, $customerId, $cashierId, $code, $total, $total, $paymentMethod, $amountReceived, $change); if (!$stmt->execute()) throw new Exception('Không thể lưu đơn hàng.'); $orderId = (int)$stmt->insert_id; $stmt->close();
+        $cashier = posUser(); $cashierId = (int)$cashier['id']; $posShiftId = isset($_SESSION['pos_shift_id']) ? (int)$_SESSION['pos_shift_id'] : 0; $stmt = $db->prepare("INSERT INTO orders (booking_id, customer_id, cashier_id, pos_shift_id, order_code, channel, subtotal, discount_amount, total_amount, payment_method, amount_received, change_amount, status) VALUES (?, ?, ?, ?, ?, 'POS', ?, 0, ?, ?, ?, ?, 'PAID')"); $stmt->bind_param('iiiisddsdd', $bookingId, $customerId, $cashierId, $posShiftId, $code, $total, $total, $paymentMethod, $amountReceived, $change); if (!$stmt->execute()) throw new Exception('Không thể lưu đơn hàng.'); $orderId = (int)$stmt->insert_id; $stmt->close();
         $itemStmt = $db->prepare('INSERT INTO order_items (order_id, item_type, item_code, item_name, quantity, unit_price, seat_id) VALUES (?, ?, ?, ?, ?, ?, ?)');
         foreach ($items as $item) { $itemStmt->bind_param('isssidi', $orderId, $item['type'], $item['code'], $item['name'], $item['quantity'], $item['price'], $item['seat_id']); if (!$itemStmt->execute()) throw new Exception('Không thể lưu chi tiết đơn hàng.'); }
         $itemStmt->close(); $reference = $code; $stmt = $db->prepare('INSERT INTO payments (order_id, method, amount, reference_code) VALUES (?, ?, ?, ?)'); $stmt->bind_param('isds', $orderId, $paymentMethod, $total, $reference); if (!$stmt->execute()) throw new Exception('Không thể lưu thanh toán.'); $stmt->close();
