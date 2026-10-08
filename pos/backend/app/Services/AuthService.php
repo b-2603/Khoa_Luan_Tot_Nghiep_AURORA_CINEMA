@@ -21,7 +21,7 @@ class AuthService
             throw new RuntimeException('Tên đăng nhập và mật khẩu không được để trống.');
         }
 
-        $statement = $this->connection->prepare('SELECT id, username, password_hash, full_name, role, status FROM pos_users WHERE username = ? LIMIT 1');
+        $statement = $this->connection->prepare('SELECT id, username, password_hash, full_name, role, status FROM users WHERE username = ? LIMIT 1');
         if (!$statement) {
             throw new RuntimeException('Không thể chuẩn bị truy vấn đăng nhập.');
         }
@@ -54,7 +54,7 @@ class AuthService
 
     public function getUserById(int $id): ?array
     {
-        $statement = $this->connection->prepare('SELECT id, username, full_name, role, status FROM pos_users WHERE id = ? LIMIT 1');
+        $statement = $this->connection->prepare('SELECT id, username, full_name, role, status FROM users WHERE id = ? LIMIT 1');
         if (!$statement) {
             return null;
         }

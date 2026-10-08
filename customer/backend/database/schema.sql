@@ -8,11 +8,53 @@ CREATE TABLE IF NOT EXISTS users (
   id BIGINT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
   full_name VARCHAR(120) NOT NULL,
   email VARCHAR(180) NOT NULL UNIQUE,
+  phone VARCHAR(20) NULL,
+  id_number VARCHAR(30) NULL,
+  birthday DATE NULL,
+  gender ENUM('male','female','other') NULL,
+  city VARCHAR(100) NULL,
+  district VARCHAR(100) NULL,
+  address VARCHAR(255) NULL,
   password_hash VARCHAR(255) NOT NULL,
   membership_level ENUM('STANDARD', 'SILVER', 'GOLD', 'PLATINUM') NOT NULL DEFAULT 'STANDARD',
   points INT UNSIGNED NOT NULL DEFAULT 0,
   created_at TIMESTAMP NULL DEFAULT CURRENT_TIMESTAMP,
-    updated_at TIMESTAMP NULL
+  updated_at TIMESTAMP NULL
+) ENGINE=InnoDB;
+
+CREATE TABLE IF NOT EXISTS oauth_accounts (
+  id BIGINT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
+  user_id BIGINT UNSIGNED NOT NULL,
+  provider ENUM('google', 'facebook') NOT NULL,
+  provider_user_id VARCHAR(191) NOT NULL,
+  provider_email VARCHAR(180) NULL,
+  provider_name VARCHAR(120) NULL,
+  avatar_url VARCHAR(500) NULL,
+  created_at TIMESTAMP NULL DEFAULT CURRENT_TIMESTAMP,
+  updated_at TIMESTAMP NULL DEFAULT NULL,
+  last_login_at TIMESTAMP NULL DEFAULT NULL,
+  UNIQUE KEY uq_oauth_provider_identity (provider, provider_user_id),
+  UNIQUE KEY uq_oauth_user_provider (user_id, provider),
+  KEY idx_oauth_provider_email (provider_email),
+  CONSTRAINT fk_oauth_accounts_user FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
+) ENGINE=InnoDB;
+
+CREATE TABLE IF NOT EXISTS oauth_login_attempts (
+  id BIGINT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
+  provider ENUM('google', 'facebook') NOT NULL,
+  user_id BIGINT UNSIGNED NULL,
+  provider_user_id VARCHAR(191) NULL,
+  state_hash CHAR(64) NOT NULL,
+  status ENUM('started', 'succeeded', 'failed') NOT NULL DEFAULT 'started',
+  error_code VARCHAR(60) NULL,
+  error_message VARCHAR(255) NULL,
+  ip_address_hash CHAR(64) NULL,
+  user_agent VARCHAR(255) NULL,
+  created_at DATETIME NOT NULL,
+  completed_at DATETIME NULL,
+  KEY idx_oauth_attempt_provider_status (provider, status, created_at),
+  KEY idx_oauth_attempt_user (user_id, created_at),
+  CONSTRAINT fk_oauth_attempt_user FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE SET NULL
 ) ENGINE=InnoDB;
 
 CREATE TABLE IF NOT EXISTS theaters (
@@ -30,9 +72,10 @@ CREATE TABLE IF NOT EXISTS movies (
   description TEXT NULL,
   duration_minutes SMALLINT UNSIGNED NOT NULL,
   age_rating VARCHAR(10) NOT NULL DEFAULT 'P',
+  format VARCHAR(50) NOT NULL DEFAULT '2D Digital',
   poster_url VARCHAR(500) NULL,
   trailer_url VARCHAR(500) NULL,
-  status ENUM('COMING_SOON', 'NOW_SHOWING', 'ENDED') NOT NULL DEFAULT 'COMING_SOON',
+  status ENUM('COMING_SOON', 'NOW_SHOWING', 'SPECIAL_SHOWING', 'ENDED') NOT NULL DEFAULT 'COMING_SOON',
   release_date DATE NULL,
   created_at TIMESTAMP NULL DEFAULT CURRENT_TIMESTAMP,
     updated_at TIMESTAMP NULL
@@ -67,7 +110,9 @@ CREATE TABLE IF NOT EXISTS showtimes (
   status ENUM('OPEN', 'CLOSED', 'CANCELLED') NOT NULL DEFAULT 'OPEN',
   FOREIGN KEY (movie_id) REFERENCES movies(id) ON DELETE CASCADE,
   FOREIGN KEY (screen_id) REFERENCES screens(id) ON DELETE CASCADE,
-  INDEX idx_showtimes_start (starts_at)
+  INDEX idx_showtimes_start (starts_at),
+  INDEX idx_showtimes_movie_date (movie_id, starts_at),
+  INDEX idx_showtimes_screen_date (screen_id, starts_at)
 ) ENGINE=InnoDB;
 
 CREATE TABLE IF NOT EXISTS bookings (
@@ -80,17 +125,51 @@ CREATE TABLE IF NOT EXISTS bookings (
   created_at TIMESTAMP NULL DEFAULT CURRENT_TIMESTAMP,
     updated_at TIMESTAMP NULL,
   FOREIGN KEY (user_id) REFERENCES users(id),
-  FOREIGN KEY (showtime_id) REFERENCES showtimes(id)
+  FOREIGN KEY (showtime_id) REFERENCES showtimes(id),
+  INDEX idx_booking_seats_booking (booking_id)
+) ENGINE=InnoDB;
+
+-- Nội dung hiển thị cho trang giới thiệu từng cụm rạp customer.
+CREATE TABLE IF NOT EXISTS theater_profiles (
+  theater_id BIGINT UNSIGNED NOT NULL PRIMARY KEY,
+  hero_image_url VARCHAR(500) NULL,
+  short_description TEXT NULL,
+  short_description_en TEXT NULL,
+  description TEXT NULL,
+  description_en TEXT NULL,
+  highlights_json TEXT NULL,
+  highlights_en_json TEXT NULL,
+  facilities_json TEXT NULL,
+  facilities_en_json TEXT NULL,
+  opening_hours VARCHAR(120) NULL,
+  contact_phone VARCHAR(30) NULL,
+  map_url VARCHAR(500) NULL,
+  updated_at TIMESTAMP NULL,
+  CONSTRAINT fk_theater_profiles_theater FOREIGN KEY (theater_id) REFERENCES theaters(id) ON DELETE CASCADE
 ) ENGINE=InnoDB;
 
 CREATE TABLE IF NOT EXISTS booking_seats (
   id BIGINT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
   booking_id BIGINT UNSIGNED NOT NULL,
+  showtime_id BIGINT UNSIGNED NOT NULL,
   seat_id BIGINT UNSIGNED NOT NULL,
   price DECIMAL(10,2) NOT NULL DEFAULT 0,
   FOREIGN KEY (booking_id) REFERENCES bookings(id) ON DELETE CASCADE,
+  FOREIGN KEY (showtime_id) REFERENCES showtimes(id) ON DELETE CASCADE,
   FOREIGN KEY (seat_id) REFERENCES seats(id),
-  UNIQUE KEY unique_booked_seat (booking_id, seat_id)
+  UNIQUE KEY unique_booked_seat (showtime_id, seat_id)
+) ENGINE=InnoDB;
+
+CREATE TABLE IF NOT EXISTS booking_concessions (
+  id BIGINT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
+  booking_id BIGINT UNSIGNED NOT NULL,
+  item_code VARCHAR(50) NOT NULL,
+  item_name VARCHAR(160) NOT NULL,
+  quantity INT UNSIGNED NOT NULL,
+  unit_price DECIMAL(10,2) NOT NULL,
+  created_at TIMESTAMP NULL DEFAULT CURRENT_TIMESTAMP,
+  FOREIGN KEY (booking_id) REFERENCES bookings(id) ON DELETE CASCADE,
+  INDEX idx_booking_concessions_booking (booking_id)
 ) ENGINE=InnoDB;
 
 CREATE TABLE IF NOT EXISTS promotions (
@@ -104,4 +183,66 @@ CREATE TABLE IF NOT EXISTS promotions (
   ends_at DATETIME NOT NULL,
   status ENUM('ACTIVE', 'INACTIVE', 'EXPIRED') NOT NULL DEFAULT 'ACTIVE',
   created_at TIMESTAMP NULL DEFAULT CURRENT_TIMESTAMP
+) ENGINE=InnoDB;
+
+CREATE TABLE IF NOT EXISTS orders (
+  id BIGINT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
+  order_code VARCHAR(30) NOT NULL UNIQUE,
+  channel VARCHAR(10) NOT NULL,
+  booking_id BIGINT UNSIGNED NULL,
+  customer_id BIGINT UNSIGNED NULL,
+  cashier_id BIGINT UNSIGNED NOT NULL DEFAULT 0,
+  subtotal DECIMAL(12,2) NOT NULL DEFAULT 0,
+  discount_amount DECIMAL(12,2) NOT NULL DEFAULT 0,
+  voucher_code VARCHAR(40) NULL,
+  total_amount DECIMAL(12,2) NOT NULL DEFAULT 0,
+  payment_method VARCHAR(30) NOT NULL DEFAULT 'UNKNOWN',
+  amount_received DECIMAL(12,2) NOT NULL DEFAULT 0,
+  change_amount DECIMAL(12,2) NOT NULL DEFAULT 0,
+  status VARCHAR(20) NOT NULL DEFAULT 'PAID',
+  created_at TIMESTAMP NULL DEFAULT CURRENT_TIMESTAMP,
+  updated_at TIMESTAMP NULL,
+  INDEX idx_orders_channel (channel),
+  INDEX idx_orders_created (created_at),
+  INDEX idx_orders_customer (customer_id)
+) ENGINE=InnoDB;
+
+CREATE TABLE IF NOT EXISTS payments (
+  id BIGINT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
+  order_id BIGINT UNSIGNED NOT NULL,
+  method VARCHAR(20) NOT NULL,
+  amount DECIMAL(12,2) NOT NULL,
+  reference_code VARCHAR(80) NOT NULL DEFAULT '',
+  created_at DATETIME NOT NULL,
+  INDEX idx_payments_order (order_id),
+  UNIQUE KEY uq_payments_reference (reference_code)
+) ENGINE=InnoDB;
+
+-- Nội dung trang Ưu đãi dùng chung với nghiệp vụ voucher trong TMS/POS.
+CREATE TABLE IF NOT EXISTS vouchers (
+  id BIGINT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
+  code VARCHAR(40) NOT NULL UNIQUE,
+  name VARCHAR(150) NOT NULL,
+  short_description VARCHAR(255) NULL,
+  details TEXT NULL,
+  terms_text TEXT NULL,
+  category VARCHAR(30) NOT NULL DEFAULT 'ticket',
+  audience VARCHAR(30) NOT NULL DEFAULT 'all',
+  badge_text VARCHAR(60) NULL,
+  theme_color VARCHAR(20) NOT NULL DEFAULT '#D99A1B',
+  image_url VARCHAR(500) NULL,
+  discount_type ENUM('percent','amount') NOT NULL DEFAULT 'percent',
+  discount_value DECIMAL(12,2) NOT NULL DEFAULT 0,
+  min_order_amount DECIMAL(12,2) NOT NULL DEFAULT 0,
+  max_discount DECIMAL(12,2) NOT NULL DEFAULT 0,
+  starts_at DATETIME NOT NULL,
+  ends_at DATETIME NOT NULL,
+  usage_limit INT UNSIGNED NOT NULL DEFAULT 0,
+  used_count INT UNSIGNED NOT NULL DEFAULT 0,
+  status ENUM('active','inactive','expired') NOT NULL DEFAULT 'active',
+  is_featured TINYINT(1) NOT NULL DEFAULT 0,
+  sort_order INT NOT NULL DEFAULT 0,
+  created_at TIMESTAMP NULL DEFAULT CURRENT_TIMESTAMP,
+  updated_at DATETIME NULL,
+  KEY idx_vouchers_customer (status, starts_at, ends_at, sort_order)
 ) ENGINE=InnoDB;
