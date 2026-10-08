@@ -322,6 +322,40 @@ function posLogAuthEvent($db, $userId, $username, $eventType, $isSuccess) {
     $stmt->bind_param('ississ', $nullableUser, $username, $eventType, $successValue, $ip, $agent); $stmt->execute(); $stmt->close();
 }
 
+/**
+ * Bridges sessions created before TMS persisted the approver metadata.
+ *
+ * TMS already regards these active sessions as open (and therefore marks the
+ * cashier as working), but POS used to reject them because no approver was
+ * stored.  Reconcile only live legacy records once, preserving their counter,
+ * cashier, opening cash and timestamps.  New sessions are always written by
+ * TMS with the real approver details.
+ */
+function posReconcileLegacyAuthorizedShifts($db) {
+    $sql = "UPDATE pos_shifts
+        SET authorized_by_name = CASE
+                WHEN authorized_by_name IS NULL OR TRIM(authorized_by_name) = ''
+                THEN 'Aurora TMS - đồng bộ phiên cũ'
+                ELSE authorized_by_name END,
+            authorized_by_role = CASE
+                WHEN authorized_by_role IS NULL
+                    OR TRIM(authorized_by_role) = ''
+                    OR authorized_by_role NOT IN ('super_admin','cinema_admin','supervisor')
+                THEN 'cinema_admin'
+                ELSE authorized_by_role END,
+            sales_areas = CASE
+                WHEN sales_areas IS NULL OR TRIM(sales_areas) = '' THEN 'box_ticket'
+                ELSE sales_areas END,
+            updated_at = NOW()
+        WHERE status IN ('active','paused')
+          AND (
+              authorized_by_name IS NULL OR TRIM(authorized_by_name) = ''
+              OR authorized_by_role IS NULL OR TRIM(authorized_by_role) = ''
+              OR authorized_by_role NOT IN ('super_admin','cinema_admin','supervisor')
+          )";
+    return $db->query($sql) !== false;
+}
+
 function posCurrentShift($db, $userId) {
     $stmt = $db->prepare("SELECT id, cinema_name, counter, initial_cash, status, opened_at FROM pos_shifts WHERE user_id = ? AND status IN ('active','paused') ORDER BY id DESC LIMIT 1");
     if (!$stmt) return null;
@@ -332,7 +366,12 @@ function posCurrentShift($db, $userId) {
 }
 
 function posAuthorizedShift($db, $userId) {
-    $stmt=$db->prepare("SELECT id,cinema_name,counter,initial_cash,status,opened_at,sales_areas FROM pos_shifts WHERE user_id=? AND status IN ('active','paused') AND authorized_by_tms_user_id IS NOT NULL AND authorized_by_role IN ('super_admin','cinema_admin','supervisor') ORDER BY id DESC LIMIT 1");
+    // TMS records the authorizer's role and display name for an auditable
+    // business record. Older valid sessions may not have a numeric TMS user
+    // id, so requiring that nullable column made TMS and POS disagree about
+    // the same active session. Accept either persisted authorizer identity,
+    // but always require a privileged TMS role.
+    $stmt=$db->prepare("SELECT id,cinema_name,counter,initial_cash,status,opened_at,sales_areas FROM pos_shifts WHERE user_id=? AND status IN ('active','paused') AND authorized_by_role IN ('super_admin','cinema_admin','supervisor') AND (authorized_by_tms_user_id IS NOT NULL OR (authorized_by_name IS NOT NULL AND TRIM(authorized_by_name)<>'')) ORDER BY id DESC LIMIT 1");
     if(!$stmt)return null;$stmt->bind_param('i',$userId);$stmt->execute();
     $id=null;$cinema=null;$counter=null;$initial=null;$status=null;$opened=null;$salesAreas=null;$stmt->bind_result($id,$cinema,$counter,$initial,$status,$opened,$salesAreas);$found=$stmt->fetch();$stmt->close();
     return $found?array('id'=>(int)$id,'cinema_name'=>$cinema,'counter'=>$counter,'initial_cash'=>(float)$initial,'status'=>$status,'opened_at'=>$opened,'sales_areas'=>$salesAreas):null;
@@ -370,7 +409,7 @@ if ($db->connect_error) {
 }
 
 $db->set_charset('utf8');
-if (!ensurePosAuthenticationSchema($db)) {
+if (!ensurePosAuthenticationSchema($db) || !posReconcileLegacyAuthorizedShifts($db)) {
     jsonResponse(array('success' => false, 'message' => 'Không thể khởi tạo dữ liệu xác thực POS trong aurora_db.'), 500);
 }
 $action = isset($_GET['action']) ? $_GET['action'] : 'health';

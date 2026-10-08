@@ -1,9 +1,9 @@
-import { useState, useEffect, FormEvent } from 'react';
+import { useState, useEffect, FormEvent, useRef } from 'react';
 import {
   User, Mail, Phone, CreditCard, Calendar, MapPin,
   Lock, Eye, EyeOff, Check, AlertCircle, ChevronRight,
   Star, Ticket, Gift, Shield, Edit3, Save, X, Clock3, ReceiptText,
-  CheckCircle, Tag, Sparkles
+  CheckCircle, Tag, Sparkles, Camera, Upload, Loader2
 } from 'lucide-react';
 
 const API_URL = 'http://localhost/AURORA%20CINEMA/customer/backend/public/api.php';
@@ -22,11 +22,29 @@ type Profile = {
   membershipLevel: string;
   points: number;
   createdAt: string | null;
+  avatarUrl?: string | null;
+};
+
+type MembershipCard = {
+  cardNumber: string;
+  status: 'ACTIVE' | string;
+  membershipLevel: string;
+  activatedAt: string;
+  expiresAt: string;
+  totalSpent: number;
+  pointsAccumulated: number;
+  pointsUsed: number;
+  pointsAvailable: number;
+  pointsExpiring: number;
+  nextLevel: string | null;
+  nextThreshold: number | null;
+  pointsToNextLevel: number;
+  expiryNote: string;
 };
 
 type AccountPageProps = {
-  authUser: { fullName: string; email: string } | null;
-  onUserUpdate?: (user: { fullName: string; email: string }) => void;
+  authUser: { fullName: string; email: string; avatarUrl?: string | null } | null;
+  onUserUpdate?: (user: { fullName: string; email: string; avatarUrl?: string | null }) => void;
   initialTab?: string;
 };
 
@@ -138,7 +156,11 @@ export default function AccountPage({ authUser, onUserUpdate, initialTab = 'info
   const [pwdError, setPwdError] = useState('');
   const [bookings, setBookings] = useState<any[]>([]);
   const [bookingsLoading, setBookingsLoading] = useState(false);
+  const [membershipCard, setMembershipCard] = useState<MembershipCard | null>(null);
+  const [membershipLoading, setMembershipLoading] = useState(false);
   const [voucherCode, setVoucherCode] = useState('');
+  const [avatarUploading, setAvatarUploading] = useState(false);
+  const avatarInputRef = useRef<HTMLInputElement>(null);
 
   useEffect(() => setActiveTab(initialTab), [initialTab]);
 
@@ -172,6 +194,16 @@ export default function AccountPage({ authUser, onUserUpdate, initialTab = 'info
       .then(data => setBookings(data.bookings || []))
       .catch(() => setBookings([]))
       .finally(() => setBookingsLoading(false));
+  }, [activeTab]);
+
+  useEffect(() => {
+    if (activeTab !== 'member') return;
+    setMembershipLoading(true);
+    fetch(`${API_URL}?action=membership_card`, { credentials: 'include' })
+      .then(r => r.ok ? r.json() : Promise.reject())
+      .then(data => setMembershipCard(data.card || null))
+      .catch(() => setMembershipCard(null))
+      .finally(() => setMembershipLoading(false));
   }, [activeTab]);
 
   async function handleSave(e: FormEvent) {
@@ -213,28 +245,51 @@ export default function AccountPage({ authUser, onUserUpdate, initialTab = 'info
     finally { setSavingPwd(false); }
   }
 
+  async function handleAvatarUpload(file?: File) {
+    if (!file) return;
+    setErrorMsg(''); setSuccessMsg('');
+    if (!['image/jpeg', 'image/png', 'image/webp'].includes(file.type)) { setErrorMsg('Chỉ hỗ trợ ảnh JPG, PNG hoặc WebP.'); return; }
+    if (file.size > 5 * 1024 * 1024) { setErrorMsg('Ảnh đại diện phải nhỏ hơn hoặc bằng 5 MB.'); return; }
+    setAvatarUploading(true);
+    try {
+      const formData = new FormData(); formData.append('avatar', file);
+      const response = await fetch(`${API_URL}?action=profile_avatar`, { method:'POST', credentials:'include', body:formData });
+      const data = await response.json();
+      if (!response.ok) throw new Error(data.message || 'Không thể tải ảnh đại diện lên.');
+      const avatarUrl = String(data.avatarUrl || '');
+      setProfile(current => current ? { ...current, avatarUrl } : current);
+      if (data.user && onUserUpdate) onUserUpdate(data.user);
+      setSuccessMsg('Đã cập nhật ảnh đại diện.');
+      window.setTimeout(() => setSuccessMsg(''), 4000);
+    } catch (error) { setErrorMsg(error instanceof Error ? error.message : 'Không thể tải ảnh đại diện lên.'); }
+    finally { setAvatarUploading(false); if (avatarInputRef.current) avatarInputRef.current.value = ''; }
+  }
+
   const memberLevel = profile?.membershipLevel || 'STANDARD';
   const memberCfg = MEMBERSHIP_CONFIG[memberLevel] || MEMBERSHIP_CONFIG.STANDARD;
   const avatarLetter = (authUser?.fullName || fullName || 'A').charAt(0).toUpperCase();
+  const avatarUrl = profile?.avatarUrl || authUser?.avatarUrl || '';
 
   return (
     <div style={{ minHeight: '100vh', background: 'linear-gradient(180deg,#f0f4f8 0%,#eef0f4 100%)', fontFamily: "'Inter','Segoe UI',Arial,sans-serif" }}>
 
       {/* Page Header */}
       <div style={{ background: 'linear-gradient(135deg,#0d1b2e 0%,#1a3050 100%)', padding: '32px 20px 56px', position: 'relative', overflow: 'hidden' }}>
+        <input ref={avatarInputRef} type="file" accept="image/jpeg,image/png,image/webp" onChange={event => void handleAvatarUpload(event.target.files?.[0])} style={{ display:'none' }} />
         <div style={{ position: 'absolute', top: -40, right: -40, width: 200, height: 200, borderRadius: '50%', background: 'rgba(244,192,74,0.07)' }} />
         <div style={{ position: 'absolute', bottom: -60, left: -30, width: 180, height: 180, borderRadius: '50%', background: 'rgba(244,192,74,0.05)' }} />
         <div style={{ maxWidth: 1100, margin: '0 auto', display: 'flex', alignItems: 'center', gap: 20, position: 'relative' }}>
-          <div style={{
+          <button type="button" onClick={() => avatarInputRef.current?.click()} title="Thay ảnh đại diện" style={{
             width: 72, height: 72, borderRadius: '50%',
             background: 'linear-gradient(135deg,#f4c04a 0%,#e8a020 100%)',
             display: 'flex', alignItems: 'center', justifyContent: 'center',
             fontSize: 30, fontWeight: 800, color: '#0d1b2e',
             border: '3px solid rgba(244,192,74,0.4)',
-            boxShadow: '0 8px 24px rgba(0,0,0,0.3)', flexShrink: 0
+            boxShadow: '0 8px 24px rgba(0,0,0,0.3)', flexShrink: 0, padding: 0, overflow: 'hidden', cursor: 'pointer', position: 'relative'
           }}>
-            {avatarLetter}
-          </div>
+            {avatarUrl ? <img src={avatarUrl} alt="Ảnh đại diện" style={{ width:'100%', height:'100%', objectFit:'cover' }} /> : avatarLetter}
+            <span style={{ position:'absolute', right:0, bottom:0, display:'grid', width:24, height:24, placeItems:'center', borderRadius:'50%', color:'#fff', background:'#0d1b2e', border:'2px solid #f4c04a' }}><Camera size={12}/></span>
+          </button>
           <div>
             <div style={{ fontSize: 22, fontWeight: 800, color: '#fff', marginBottom: 4 }}>
               {authUser?.fullName || fullName || 'Người dùng'}
@@ -296,6 +351,14 @@ export default function AccountPage({ authUser, onUserUpdate, initialTab = 'info
                       <AlertCircle size={16} />{errorMsg}
                     </div>
                   )}
+
+                  <section style={{ display:'flex', alignItems:'center', gap:18, padding:18, marginBottom:28, border:'1px solid #dbe7f4', borderRadius:14, background:'linear-gradient(120deg,#f8fbff,#fff)' }}>
+                    <button type="button" disabled={avatarUploading} onClick={() => avatarInputRef.current?.click()} style={{ position:'relative', display:'grid', width:82, height:82, flex:'0 0 82px', placeItems:'center', overflow:'hidden', border:'3px solid #fff', borderRadius:'50%', color:'#17375e', background:'linear-gradient(135deg,#f8d271,#e8a020)', boxShadow:'0 8px 18px rgba(31,74,123,.18)', cursor:avatarUploading?'wait':'pointer', padding:0 }}>
+                      {avatarUrl ? <img src={avatarUrl} alt="Ảnh đại diện" style={{ width:'100%', height:'100%', objectFit:'cover' }} /> : <span style={{ fontSize:28, fontWeight:850 }}>{avatarLetter}</span>}
+                      <span style={{ position:'absolute', right:1, bottom:1, display:'grid', width:27, height:27, placeItems:'center', border:'2px solid #fff', borderRadius:'50%', color:'#fff', background:'#1d5fae' }}>{avatarUploading ? <Loader2 size={13} style={{ animation:'spin .8s linear infinite' }} /> : <Camera size={13}/>}</span>
+                    </button>
+                    <div style={{ minWidth:0, flex:1 }}><div style={{ display:'flex', alignItems:'center', gap:7, color:'#183858', fontSize:14, fontWeight:850 }}><Camera size={16} color="#d99216"/> Ảnh đại diện</div><p style={{ margin:'5px 0 10px', color:'#718399', fontSize:12, lineHeight:1.5 }}>Ảnh sẽ hiển thị trên hồ sơ và thanh điều hướng tài khoản của bạn.</p><div style={{ display:'flex', alignItems:'center', flexWrap:'wrap', gap:8 }}><button type="button" disabled={avatarUploading} onClick={() => avatarInputRef.current?.click()} style={{ display:'inline-flex', alignItems:'center', gap:6, minHeight:32, padding:'0 11px', border:'1px solid #9fc0e5', borderRadius:8, color:'#165a9f', background:'#fff', fontSize:12, fontWeight:750, cursor:avatarUploading?'wait':'pointer' }}>{avatarUploading ? <Loader2 size={14} style={{ animation:'spin .8s linear infinite' }}/> : <Upload size={14}/>} {avatarUploading ? 'Đang tải ảnh...' : avatarUrl ? 'Thay ảnh' : 'Tải ảnh lên'}</button><small style={{ color:'#8b9aae', fontSize:10.5 }}>JPG, PNG hoặc WebP · tối đa 5 MB · tối thiểu 80×80 px</small></div></div>
+                  </section>
 
                   {/* Section: Cá nhân */}
                   <SectionTitle>THÔNG TIN CÁ NHÂN</SectionTitle>
@@ -403,52 +466,42 @@ export default function AccountPage({ authUser, onUserUpdate, initialTab = 'info
           {/* ── TAB: THẺ THÀNH VIÊN ── */}
           {activeTab === 'member' && (
             <div style={{ padding: 32 }}>
-              {/* Membership card */}
-              <div style={{
-                borderRadius: 20, padding: '32px 28px',
-                background: 'linear-gradient(135deg,#0d1b2e 0%,#1a3050 60%,#0f2540 100%)',
-                position: 'relative', overflow: 'hidden', marginBottom: 24,
-                boxShadow: '0 16px 48px rgba(13,27,46,0.35)'
-              }}>
-                <div style={{ position: 'absolute', top: -30, right: -30, width: 160, height: 160, borderRadius: '50%', background: 'rgba(244,192,74,0.10)' }} />
-                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: 24 }}>
-                  <div>
-                    <div style={{ fontSize: 11, letterSpacing: 3, color: '#f4c04a', fontWeight: 800, marginBottom: 4 }}>AURORA CINEMA</div>
-                    <div style={{ fontSize: 22, fontWeight: 900, color: '#fff' }}>Thẻ Thành Viên</div>
-                  </div>
-                  <span style={{ fontSize: 12, fontWeight: 800, padding: '5px 14px', borderRadius: 20, background: `linear-gradient(135deg,${memberCfg.color},${memberCfg.color}bb)`, color: memberLevel === 'PLATINUM' ? '#0d1b2e' : '#fff' }}>
-                    ⭐ {memberCfg.label.toUpperCase()}
-                  </span>
+              {membershipLoading && !membershipCard ? <LoadingState text="Đang cấp và tải thông tin thẻ thành viên..." /> : <>
+              <div style={{ borderRadius: 20, padding: '30px 28px', background: 'linear-gradient(135deg,#0d1b2e,#1a3050 60%,#0f2540)', position: 'relative', overflow: 'hidden', marginBottom: 20, boxShadow: '0 16px 48px rgba(13,27,46,.35)' }}>
+                <div style={{ position:'absolute', width:220, height:220, border:'34px solid rgba(244,192,74,.10)', borderRadius:'50%', right:-68, top:-92 }} />
+                <div style={{ display:'flex', justifyContent:'space-between', gap:16, position:'relative', flexWrap:'wrap' }}>
+                  <div><div style={{ fontSize:11, letterSpacing:3, color:'#f4c04a', fontWeight:800 }}>AURORA CINEMA</div><div style={{ fontSize:23, color:'#fff', fontWeight:900, marginTop:5 }}>Thẻ Thành Viên</div></div>
+                  <span style={{ alignSelf:'flex-start', fontSize:12, fontWeight:800, padding:'7px 13px', borderRadius:22, background:'rgba(255,255,255,.16)', color:'#fff' }}>✦ {MEMBERSHIP_CONFIG[membershipCard?.membershipLevel || memberLevel]?.label.toUpperCase() || 'THÀNH VIÊN'}</span>
                 </div>
-                <div style={{ fontSize: 24, fontWeight: 800, color: '#fff', marginBottom: 4, letterSpacing: 0.5 }}>{profile?.fullName || authUser?.fullName}</div>
-                <div style={{ fontSize: 13, color: '#94a3b8', marginBottom: 20 }}>{authUser?.email}</div>
-                <div style={{ display: 'flex', gap: 28 }}>
-                  <div>
-                    <div style={{ fontSize: 10, color: '#64748b', letterSpacing: 1, fontWeight: 600, marginBottom: 2 }}>ĐIỂM TÍCH LŨY</div>
-                    <div style={{ fontSize: 22, fontWeight: 900, color: '#f4c04a' }}>{profile?.points || 0}</div>
-                  </div>
-                  {profile?.createdAt && (
-                    <div>
-                      <div style={{ fontSize: 10, color: '#64748b', letterSpacing: 1, fontWeight: 600, marginBottom: 2 }}>THÀNH VIÊN TỪ</div>
-                      <div style={{ fontSize: 14, fontWeight: 700, color: '#fff' }}>
-                        {new Date(profile.createdAt).toLocaleDateString('vi-VN', { month: 'long', year: 'numeric' })}
-                      </div>
-                    </div>
-                  )}
+                <div style={{ position:'relative', marginTop:28, fontSize:24, fontWeight:900, color:'#fff' }}>{profile?.fullName || authUser?.fullName || 'Khách hàng Aurora'}</div>
+                <div style={{ position:'relative', marginTop:5, fontSize:13, color:'#b8c6d8' }}>{profile?.email || authUser?.email}</div>
+                <div style={{ position:'relative', marginTop:24, display:'flex', gap:32, flexWrap:'wrap' }}>
+                  <div><div style={{ fontSize:10, letterSpacing:1.1, fontWeight:800, color:'#9fb1c6' }}>MÃ THẺ TỰ ĐỘNG</div><div style={{ marginTop:5, color:'#f4c04a', fontSize:18, fontWeight:900, letterSpacing:1.5, fontFamily:'monospace' }}>{membershipCard?.cardNumber || '—'}</div></div>
+                  <div><div style={{ fontSize:10, letterSpacing:1.1, fontWeight:800, color:'#9fb1c6' }}>ĐIỂM KHẢ DỤNG</div><div style={{ marginTop:5, color:'#fff', fontSize:18, fontWeight:900 }}>{membershipCard?.pointsAvailable ?? profile?.points ?? 0} điểm</div></div>
+                  <div><div style={{ fontSize:10, letterSpacing:1.1, fontWeight:800, color:'#9fb1c6' }}>TRẠNG THÁI</div><div style={{ marginTop:5, color:'#86efac', fontSize:14, fontWeight:800 }}>● ĐANG HOẠT ĐỘNG</div></div>
                 </div>
               </div>
-              {/* Progress */}
-              {memberCfg.next && (
+              <div style={{ border:'1px solid #e5ebf2', borderRadius:16, overflow:'hidden', marginBottom:20, background:'#fff' }}>
+                <div style={{ padding:'16px 20px', borderBottom:'1px solid #edf1f5', fontWeight:800, color:'#0d1b2e' }}>Thông tin thẻ và điểm thưởng</div>
+                <div style={{ display:'grid', gridTemplateColumns:'repeat(3,minmax(0,1fr))' }}>
+                  {[
+                    ['Số thẻ', membershipCard?.cardNumber || 'Đang cấp'], ['Hạng thẻ', MEMBERSHIP_CONFIG[membershipCard?.membershipLevel || memberLevel]?.label || 'Thành Viên'], ['Ngày kích hoạt', formatShortDate(membershipCard?.activatedAt)],
+                    ['Tổng chi tiêu', formatMoney(membershipCard?.totalSpent || 0)], ['Điểm tích lũy', `${membershipCard?.pointsAccumulated ?? 0} điểm`], ['Điểm đã dùng', `${membershipCard?.pointsUsed ?? 0} điểm`],
+                    ['Điểm khả dụng', `${membershipCard?.pointsAvailable ?? profile?.points ?? 0} điểm`], ['Điểm sắp hết hạn', `${membershipCard?.pointsExpiring ?? 0} điểm`], ['Hạn thẻ', formatShortDate(membershipCard?.expiresAt)]
+                  ].map(([label, value]) => <div key={label} style={{ padding:'16px 20px', borderRight:'1px solid #edf1f5', borderBottom:'1px solid #edf1f5' }}><div style={{ fontSize:10.5, color:'#7b8ba0', fontWeight:800, letterSpacing:.5 }}>{label.toUpperCase()}</div><div style={{ marginTop:6, color:'#172b4d', fontSize:14, fontWeight:800 }}>{value}</div></div>)}
+                </div>
+              </div>
+              {(membershipCard?.nextLevel || memberCfg.next) && (
                 <div style={{ background: '#fff', borderRadius: 14, padding: 20, border: '1px solid #e8edf4', marginBottom: 20 }}>
                   <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: 10 }}>
-                    <span style={{ fontSize: 13.5, fontWeight: 700, color: '#0d1b2e' }}>Tiến đến hạng {MEMBERSHIP_CONFIG[memberCfg.next]?.label}</span>
-                    <span style={{ fontSize: 12, color: '#64748b' }}>{profile?.points || 0} / {memberCfg.nextPoints} điểm</span>
+                    <span style={{ fontSize: 13.5, fontWeight: 700, color: '#0d1b2e' }}>Tiến đến hạng {MEMBERSHIP_CONFIG[membershipCard?.nextLevel || memberCfg.next || '']?.label}</span>
+                    <span style={{ fontSize: 12, color: '#64748b' }}>{membershipCard?.pointsAvailable ?? profile?.points ?? 0} / {membershipCard?.nextThreshold || memberCfg.nextPoints} điểm</span>
                   </div>
                   <div style={{ background: '#f1f5f9', borderRadius: 99, height: 8, overflow: 'hidden' }}>
-                    <div style={{ height: '100%', borderRadius: 99, background: 'linear-gradient(90deg,#f4c04a,#e8a020)', width: `${Math.min(100, ((profile?.points || 0) / memberCfg.nextPoints) * 100)}%`, transition: 'width 1s ease' }} />
+                    <div style={{ height: '100%', borderRadius: 99, background: 'linear-gradient(90deg,#f4c04a,#e8a020)', width: `${Math.min(100, ((membershipCard?.pointsAvailable ?? profile?.points ?? 0) / (membershipCard?.nextThreshold || memberCfg.nextPoints)) * 100)}%`, transition: 'width 1s ease' }} />
                   </div>
                   <div style={{ fontSize: 12, color: '#64748b', marginTop: 8 }}>
-                    Cần thêm <strong style={{ color: '#f4c04a' }}>{Math.max(0, memberCfg.nextPoints - (profile?.points || 0))}</strong> điểm để lên hạng
+                    Cần thêm <strong style={{ color: '#f4c04a' }}>{membershipCard?.pointsToNextLevel ?? Math.max(0, memberCfg.nextPoints - (profile?.points || 0))}</strong> điểm để lên hạng
                   </div>
                 </div>
               )}
@@ -468,6 +521,7 @@ export default function AccountPage({ authUser, onUserUpdate, initialTab = 'info
                   </div>
                 ))}
               </div>
+              </>}
             </div>
           )}
 
@@ -532,6 +586,12 @@ export default function AccountPage({ authUser, onUserUpdate, initialTab = 'info
 /* ─── Small helper sub-components ── */
 function formatMoney(value: number | string) {
   return `${Number(value || 0).toLocaleString('vi-VN')}đ`;
+}
+
+function formatShortDate(value?: string | null) {
+  if (!value) return '—';
+  const date = new Date(value.replace(' ', 'T'));
+  return Number.isNaN(date.getTime()) ? '—' : date.toLocaleDateString('vi-VN');
 }
 
 function formatDateTime(value: string) {

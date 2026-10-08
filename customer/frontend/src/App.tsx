@@ -118,7 +118,7 @@ export default function App() {
   const [heroPaused, setHeroPaused] = useState(false);
   const [chatMsg, setChatMsg] = useState('');
   const [authMode, setAuthMode] = useState<'login' | 'register' | null>(null);
-  const [authUser, setAuthUser] = useState<{ fullName: string; email: string; membershipLevel?: string; points?: number } | null>(null);
+  const [authUser, setAuthUser] = useState<{ fullName: string; email: string; membershipLevel?: string; points?: number; avatarUrl?: string | null } | null>(null);
   const [oauthError, setOauthError] = useState('');
   const [oauthNotice, setOauthNotice] = useState('');
   const [moviesList, setMoviesList] = useState<any[]>([]);
@@ -715,7 +715,7 @@ export default function App() {
                     display: 'flex', alignItems: 'center', justifyContent: 'center',
                     fontSize: 13, fontWeight: 800, color: '#0d1b2e', flexShrink: 0
                   }}>
-                    {authUser.fullName.charAt(0).toUpperCase()}
+                    {authUser.avatarUrl ? <img src={authUser.avatarUrl} alt="Ảnh đại diện" style={{width:'100%',height:'100%',objectFit:'cover'}}/> : authUser.fullName.charAt(0).toUpperCase()}
                   </div>
                   <span style={{ fontSize: 13, fontWeight: 600, color: '#1a2332', maxWidth: 110, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
                     {authUser.fullName.split(' ').slice(-1)[0]}
@@ -801,7 +801,7 @@ export default function App() {
                             fontSize: 18, fontWeight: 800, color: '#0d1b2e',
                             border: '2px solid rgba(244,192,74,0.5)', flexShrink: 0
                           }}>
-                            {authUser.fullName.charAt(0).toUpperCase()}
+                            {authUser.avatarUrl ? <img src={authUser.avatarUrl} alt="Ảnh đại diện" style={{width:'100%',height:'100%',objectFit:'cover'}}/> : authUser.fullName.charAt(0).toUpperCase()}
                           </div>
                           <div style={{ flex: 1, minWidth: 0 }}>
                             <div style={{ fontSize: 14, fontWeight: 700, color: '#fff', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>

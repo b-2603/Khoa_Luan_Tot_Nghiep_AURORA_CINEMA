@@ -957,6 +957,39 @@ function aurora_membership_level($points) {
     return 'STANDARD';
 }
 
+// A membership card is a durable record in aurora_db, not a number assembled
+// in the browser. It is created lazily for existing customers.
+function aurora_ensure_membership_card_schema($db) {
+    return $db->query("CREATE TABLE IF NOT EXISTS customer_membership_cards (
+        id BIGINT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
+        user_id BIGINT UNSIGNED NOT NULL,
+        card_number VARCHAR(32) NOT NULL,
+        activated_at DATETIME NOT NULL,
+        expires_at DATE NOT NULL,
+        created_at DATETIME NOT NULL,
+        updated_at DATETIME NOT NULL,
+        UNIQUE KEY uq_membership_card_user (user_id),
+        UNIQUE KEY uq_membership_card_number (card_number)
+    ) ENGINE=InnoDB DEFAULT CHARSET=utf8") !== false;
+}
+
+function aurora_membership_card_for_user($db, $userId) {
+    $userId = (int)$userId;
+    if (!aurora_ensure_membership_card_schema($db)) return null;
+    $existing = $db->query("SELECT card_number, activated_at, expires_at FROM customer_membership_cards WHERE user_id={$userId} LIMIT 1");
+    if ($existing && ($card = $existing->fetch_assoc())) return $card;
+    for ($attempt = 0; $attempt < 5; $attempt++) {
+        $number = 'AUR' . date('ym') . str_pad((string)$userId, 7, '0', STR_PAD_LEFT) . strtoupper(substr(sha1(uniqid((string)mt_rand(), true)), 0, 5));
+        $safeNumber = $db->real_escape_string($number);
+        $inserted = $db->query("INSERT IGNORE INTO customer_membership_cards (user_id, card_number, activated_at, expires_at, created_at, updated_at) VALUES ({$userId}, '{$safeNumber}', NOW(), DATE_ADD(CURDATE(), INTERVAL 5 YEAR), NOW(), NOW())");
+        if ($inserted !== false) {
+            $created = $db->query("SELECT card_number, activated_at, expires_at FROM customer_membership_cards WHERE user_id={$userId} LIMIT 1");
+            if ($created && ($card = $created->fetch_assoc())) return $card;
+        }
+    }
+    return null;
+}
+
 function aurora_award_booking_points($db, $userId, $bookingId, $amount) {
     $earned = max(0, (int)floor(((float)$amount) / 1000));
     if ($earned < 1) return 0;
@@ -1133,12 +1166,13 @@ function aurora_password_verify($password, $hash) {
 }
 
 function aurora_public_user($db, $id) {
-    $stmt = $db->prepare('SELECT id, full_name, email, membership_level, points FROM users WHERE id = ?');
+    aurora_ensure_profile_avatar_schema($db);
+    $stmt = $db->prepare('SELECT id, full_name, email, membership_level, points, avatar_url FROM users WHERE id = ?');
     if (!$stmt) return null;
     $stmt->bind_param('i', $id);
     $stmt->execute();
-    $uid = null; $fullName = null; $email = null; $membershipLevel = null; $points = null;
-    $stmt->bind_result($uid, $fullName, $email, $membershipLevel, $points);
+    $uid = null; $fullName = null; $email = null; $membershipLevel = null; $points = null; $avatarUrl = null;
+    $stmt->bind_result($uid, $fullName, $email, $membershipLevel, $points, $avatarUrl);
     $found = $stmt->fetch();
     $stmt->close();
     if (!$found) return null;
@@ -1148,7 +1182,19 @@ function aurora_public_user($db, $id) {
         'email'           => $email,
         'membershipLevel' => $membershipLevel,
         'points'          => (int) $points,
+        'avatarUrl'       => $avatarUrl,
     );
+}
+
+// Avatar URLs are profile data stored in aurora_db; the image file itself is
+// kept outside the database in a public, user-scoped upload directory.
+function aurora_ensure_profile_avatar_schema($db) {
+    static $ready = null;
+    if ($ready !== null) return $ready;
+    $column = $db->query("SHOW COLUMNS FROM users LIKE 'avatar_url'");
+    if ($column && $column->num_rows > 0) { $ready = true; return true; }
+    $ready = (bool)$db->query("ALTER TABLE users ADD COLUMN avatar_url VARCHAR(500) NULL");
+    return $ready;
 }
 
 // ── OAuth helpers (Google/Facebook) ──────────────────────────────────────────
@@ -2536,30 +2582,31 @@ if ($resource === 'bookings') {
 if ($resource === 'profile') {
     $userId = isset($_SESSION['aurora_user_id']) ? (int) $_SESSION['aurora_user_id'] : null;
     if (!$userId) aurora_response(array('message' => 'Vui lòng đăng nhập.'), 401);
+    aurora_ensure_profile_avatar_schema($db);
 
-    $stmt = $db->prepare('SELECT id, full_name, email, phone, id_number, birthday, gender, city, district, address, membership_level, points, created_at FROM users WHERE id = ?');
+    $stmt = $db->prepare('SELECT id, full_name, email, phone, id_number, birthday, gender, city, district, address, avatar_url, membership_level, points, created_at FROM users WHERE id = ?');
     if (!$stmt) {
         // Columns might not exist yet — fall back to basic fields
-        $stmt2 = $db->prepare('SELECT id, full_name, email, membership_level, points, created_at FROM users WHERE id = ?');
+        $stmt2 = $db->prepare('SELECT id, full_name, email, membership_level, points, created_at, avatar_url FROM users WHERE id = ?');
         $stmt2->bind_param('i', $userId);
         $stmt2->execute();
-        $uid = null; $fullName = null; $email = null; $ml = null; $pts = null; $ca = null;
-        $stmt2->bind_result($uid, $fullName, $email, $ml, $pts, $ca);
+        $uid = null; $fullName = null; $email = null; $ml = null; $pts = null; $ca = null; $avatarFallback = null;
+        $stmt2->bind_result($uid, $fullName, $email, $ml, $pts, $ca, $avatarFallback);
         $stmt2->fetch();
         $stmt2->close();
         aurora_response(array('profile' => array(
             'id' => (int)$uid, 'fullName' => $fullName, 'email' => $email,
             'phone' => null, 'idNumber' => null, 'birthday' => null,
-            'gender' => null, 'city' => null, 'district' => null, 'address' => null,
+            'gender' => null, 'city' => null, 'district' => null, 'address' => null, 'avatarUrl' => $avatarFallback,
             'membershipLevel' => $ml, 'points' => (int)$pts, 'createdAt' => $ca,
         )), 200);
     }
     $stmt->bind_param('i', $userId);
     $stmt->execute();
     $uid = null; $fullName = null; $email = null; $phone = null; $idNumber = null;
-    $birthday = null; $gender = null; $city = null; $district = null; $address = null;
+    $birthday = null; $gender = null; $city = null; $district = null; $address = null; $avatarUrl = null;
     $membershipLevel = null; $points = null; $createdAt = null;
-    $stmt->bind_result($uid, $fullName, $email, $phone, $idNumber, $birthday, $gender, $city, $district, $address, $membershipLevel, $points, $createdAt);
+    $stmt->bind_result($uid, $fullName, $email, $phone, $idNumber, $birthday, $gender, $city, $district, $address, $avatarUrl, $membershipLevel, $points, $createdAt);
     $found = $stmt->fetch();
     $stmt->close();
     if (!$found) aurora_response(array('message' => 'Tài khoản không tồn tại.'), 404);
@@ -2568,9 +2615,79 @@ if ($resource === 'profile') {
         'id' => (int) $uid, 'fullName' => $fullName, 'email' => $email,
         'phone' => $phone, 'idNumber' => $idNumber, 'birthday' => $birthday,
         'gender' => $gender, 'city' => $city, 'district' => $district,
-        'address' => $address, 'membershipLevel' => $membershipLevel,
+        'address' => $address, 'avatarUrl' => $avatarUrl, 'membershipLevel' => $membershipLevel,
         'points' => (int) $points, 'createdAt' => $createdAt,
     )), 200);
+}
+
+// ── /membership_card (GET) ─────────────────────────────────────────────────
+// Provides source-of-truth card information from aurora_db.
+if ($resource === 'membership_card') {
+    aurora_method('GET');
+    $userId = aurora_require_user();
+    $card = aurora_membership_card_for_user($db, $userId);
+    if (!$card) aurora_response(array('message' => 'Không thể cấp thẻ thành viên trong aurora_db.'), 500);
+
+    $userResult = $db->query("SELECT membership_level, points FROM users WHERE id=".(int)$userId." LIMIT 1");
+    if (!$userResult || !($user = $userResult->fetch_assoc())) aurora_response(array('message' => 'Tài khoản không tồn tại.'), 404);
+    $totalSpent = 0.0;
+    $ordersTable = $db->query("SHOW TABLES LIKE 'orders'");
+    if ($ordersTable && $ordersTable->num_rows) {
+        $spentResult = $db->query("SELECT COALESCE(SUM(total_amount), 0) AS total FROM orders WHERE customer_id=".(int)$userId." AND status='PAID'");
+        if ($spentResult && ($spent = $spentResult->fetch_assoc())) $totalSpent = (float)$spent['total'];
+    }
+    $earned = 0; $used = 0;
+    if (aurora_ensure_loyalty_schema($db)) {
+        $pointsResult = $db->query("SELECT COALESCE(SUM(CASE WHEN points_change > 0 THEN points_change ELSE 0 END),0) AS earned, COALESCE(SUM(CASE WHEN points_change < 0 THEN -points_change ELSE 0 END),0) AS used FROM loyalty_point_transactions WHERE user_id=".(int)$userId);
+        if ($pointsResult && ($pointRow = $pointsResult->fetch_assoc())) { $earned = (int)$pointRow['earned']; $used = (int)$pointRow['used']; }
+    }
+    $available = max(0, (int)$user['points']);
+    $earned = max($earned, $available + $used); // supports customers created before the ledger
+    $level = $user['membership_level'] ?: aurora_membership_level($available);
+    $thresholds = array('STANDARD'=>500, 'SILVER'=>2000, 'GOLD'=>5000);
+    $nextNames = array('STANDARD'=>'SILVER', 'SILVER'=>'GOLD', 'GOLD'=>'PLATINUM');
+    $nextThreshold = isset($thresholds[$level]) ? $thresholds[$level] : null;
+    aurora_response(array('card' => array(
+        'cardNumber' => $card['card_number'], 'status' => 'ACTIVE', 'membershipLevel' => $level,
+        'activatedAt' => $card['activated_at'], 'expiresAt' => $card['expires_at'], 'totalSpent' => $totalSpent,
+        'pointsAccumulated' => $earned, 'pointsUsed' => $used, 'pointsAvailable' => $available,
+        'pointsExpiring' => 0, 'nextLevel' => isset($nextNames[$level]) ? $nextNames[$level] : null,
+        'nextThreshold' => $nextThreshold, 'pointsToNextLevel' => $nextThreshold === null ? 0 : max(0, $nextThreshold - $available),
+        'expiryNote' => 'Điểm chưa có lịch hết hạn.'
+    )), 200);
+}
+
+// ── /profile_avatar (POST multipart/form-data) ───────────────────────────────
+if ($resource === 'profile_avatar') {
+    aurora_method('POST');
+    $userId = aurora_require_user();
+    if (!aurora_ensure_profile_avatar_schema($db)) aurora_response(array('message'=>'Không thể chuẩn bị hồ sơ ảnh đại diện trong aurora_db.'), 500);
+    if (!isset($_FILES['avatar']) || !is_array($_FILES['avatar'])) aurora_response(array('message'=>'Vui lòng chọn một ảnh đại diện.'), 422);
+    $file = $_FILES['avatar'];
+    if ((int)$file['error'] !== UPLOAD_ERR_OK) aurora_response(array('message'=>'Tải ảnh lên không thành công. Vui lòng thử lại.'), 422);
+    if ((int)$file['size'] < 1 || (int)$file['size'] > 5 * 1024 * 1024) aurora_response(array('message'=>'Ảnh đại diện phải nhỏ hơn hoặc bằng 5 MB.'), 422);
+    $image = @getimagesize($file['tmp_name']);
+    $mime = $image && isset($image['mime']) ? $image['mime'] : '';
+    $extensions = array('image/jpeg'=>'jpg', 'image/png'=>'png', 'image/webp'=>'webp');
+    if (!isset($extensions[$mime])) aurora_response(array('message'=>'Chỉ hỗ trợ ảnh JPG, PNG hoặc WebP.'), 422);
+    if ((int)$image[0] < 80 || (int)$image[1] < 80 || (int)$image[0] > 6000 || (int)$image[1] > 6000) aurora_response(array('message'=>'Ảnh cần có kích thước từ 80×80 đến 6000×6000 px.'), 422);
+    $directory = __DIR__.DIRECTORY_SEPARATOR.'uploads'.DIRECTORY_SEPARATOR.'avatars';
+    if (!is_dir($directory) && !@mkdir($directory, 0755, true)) aurora_response(array('message'=>'Không thể tạo thư mục lưu ảnh.'), 500);
+    $filename = 'avatar_'.$userId.'_'.substr(sha1(uniqid((string)$userId, true).mt_rand()), 0, 24).'.'.$extensions[$mime];
+    $destination = $directory.DIRECTORY_SEPARATOR.$filename;
+    if (!move_uploaded_file($file['tmp_name'], $destination)) aurora_response(array('message'=>'Không thể lưu ảnh đại diện trên máy chủ.'), 500);
+    $scriptPath = isset($_SERVER['SCRIPT_NAME']) ? dirname($_SERVER['SCRIPT_NAME']) : '/AURORA%20CINEMA/customer/backend/public';
+    $avatarUrl = rtrim(str_replace('\\', '/', $scriptPath), '/').'/uploads/avatars/'.rawurlencode($filename);
+    $oldUrl = '';
+    $old = $db->query('SELECT avatar_url FROM users WHERE id='.(int)$userId.' LIMIT 1');
+    if ($old && ($oldRow = $old->fetch_assoc())) $oldUrl = isset($oldRow['avatar_url']) ? (string)$oldRow['avatar_url'] : '';
+    $urlEsc = $db->real_escape_string($avatarUrl); $nowEsc = $db->real_escape_string(aurora_vietnam_now());
+    if (!$db->query("UPDATE users SET avatar_url='{$urlEsc}', updated_at='{$nowEsc}' WHERE id=".(int)$userId)) { @unlink($destination); aurora_response(array('message'=>'Không thể lưu đường dẫn ảnh trong aurora_db.'), 500); }
+    if (preg_match('/\/uploads\/avatars\/(avatar_'.(int)$userId.'_[A-Za-z0-9]+\.(jpg|png|webp))$/', $oldUrl, $matches)) {
+        $oldPath = $directory.DIRECTORY_SEPARATOR.$matches[1];
+        if (is_file($oldPath) && $oldPath !== $destination) @unlink($oldPath);
+    }
+    aurora_response(array('message'=>'Đã cập nhật ảnh đại diện.', 'avatarUrl'=>$avatarUrl, 'user'=>aurora_public_user($db, $userId)), 200);
 }
 
 // ── /profile_update (POST) ────────────────────────────────────────────────────

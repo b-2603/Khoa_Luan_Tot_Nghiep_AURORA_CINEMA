@@ -49,10 +49,6 @@ function timeOf(value: string) {
   return String(value || '').slice(11, 16);
 }
 
-function money(value: unknown) {
-  return `${Number(value || 0).toLocaleString('vi-VN')}đ`;
-}
-
 function ratingClass(value: unknown) {
   return `rating-${String(value || 'P').toLowerCase()}`;
 }
@@ -189,7 +185,7 @@ export default function TheaterSchedulePage({ theaters, movies, selectedTheaterI
                   <span><b>{timeOf(showtime.starts_at)}</b><small>{timeOf(showtime.ends_at)}</small></span>
                   <em>{showtime.screen_name}</em>
                   <i><Users size={12}/>{availability === 'SOLD_OUT' ? t('Hết ghế', 'Sold out') : `${showtime.seats_left} ${t('ghế', 'seats')}`}</i>
-                  <strong>{money(showtime.ticket_price)}</strong>
+                  {Number(showtime.ticket_price || 0) > 0 && <strong>{Number(showtime.ticket_price).toLocaleString('vi-VN')}đ</strong>}
                   <ChevronRight size={15}/>
                 </button>;
               })}</div>

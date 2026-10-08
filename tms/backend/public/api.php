@@ -201,6 +201,11 @@ if ($action === 'pos-counter-roles') {
     jsonResponse(array('success' => false, 'message' => 'Phương thức không được hỗ trợ.'), 405);
 }
 
+if ($action === 'pos-counters') {
+    if ($requestMethod === 'GET') $controller->posCounters();
+    jsonResponse(array('success' => false, 'message' => 'Phương thức không được hỗ trợ.'), 405);
+}
+
 if ($action === 'pos-staff-detail') {
     if ($requestMethod === 'GET') $controller->posStaffDetail();
     jsonResponse(array('success' => false, 'message' => 'Phương thức không được hỗ trợ.'), 405);
@@ -208,6 +213,10 @@ if ($action === 'pos-staff-detail') {
 
 if ($action === 'pos-sessions') {
     $controller->posSessions();
+}
+
+if ($action === 'pos-session-report') {
+    $controller->posSessionReport();
 }
 
 if ($action === 'pos-work-schedules') {
@@ -542,12 +551,16 @@ if ($action === 'me') {
     jsonResponse(array('success' => true, 'data' => $user));
 }
 
-if ($action === 'roles' || $action === 'permissions') {
-    jsonResponse(array(
-        'success' => true,
-        'roles' => array_values(AdminController::getRoleDefinitions()),
-        'matrix' => AdminController::getPermissionsMatrix()
-    ));
+if ($action === 'roles') {
+    requireAdmin();
+    jsonResponse(array('success' => true, 'roles' => array_values(AdminController::getRoleDefinitions())));
+}
+
+if ($action === 'permissions') {
+    requireAdmin();
+    if ($requestMethod === 'GET') $controller->permissionMatrix();
+    if ($requestMethod === 'POST' || $requestMethod === 'PUT') $controller->savePermissionMatrix();
+    jsonResponse(array('success'=>false, 'message'=>'Phương thức không được hỗ trợ cho ma trận phân quyền.'), 405);
 }
 
 if ($action === 'users') {
@@ -573,6 +586,7 @@ if ($action === 'customer-account-status') {
 
 if ($action === 'dashboard') {
     requireAdmin();
+    $controller->requireRbacPermission('dashboard', false);
     $controller->dashboard();
 }
 
@@ -584,6 +598,15 @@ if ($action === 'cinema-schedule-board') {
 if ($action === 'schedule-movies') {
     if ($requestMethod === 'GET') $controller->scheduleMovies();
     jsonResponse(array('success' => false, 'message' => 'Phương thức không được hỗ trợ cho danh sách phim lập lịch.'), 405);
+}
+
+if ($action === 'schedule-availability') {
+    if ($requestMethod === 'POST') {
+        requireAdmin();
+        $controller->requireRbacPermission('schedules', true);
+        $controller->scheduleAvailability();
+    }
+    jsonResponse(array('success' => false, 'message' => 'Phương thức không được hỗ trợ cho kiểm tra khung giờ trống.'), 405);
 }
 
 if ($action === 'movie-plan-detail') {
@@ -607,6 +630,8 @@ if ($action === 'revenue') {
 }
 
 if ($action === 'transactions') {
+    requireAdmin();
+    $controller->requireRbacPermission('transactions_refunds', $requestMethod !== 'GET');
     if ($requestMethod === 'POST') {
         $controller->createTransaction();
     }
@@ -614,6 +639,8 @@ if ($action === 'transactions') {
 }
 
 if ($action === 'refunds') {
+    requireAdmin();
+    $controller->requireRbacPermission('transactions_refunds', $requestMethod !== 'GET');
     if ($requestMethod === 'POST' || $requestMethod === 'PUT') {
         $controller->updateRefund();
     }
@@ -635,6 +662,8 @@ if ($action === 'cinema-system-overview' && $requestMethod === 'GET') {
 }
 
 if ($action === 'report' || $action === 'reports') {
+    requireAdmin();
+    $controller->requireRbacPermission('reports', false);
     $controller->report();
 }
 
@@ -685,6 +714,16 @@ if ($action === 'movies-import' && $requestMethod === 'POST') {
 
 $resources = array('movies', 'screens', 'schedules', 'staff', 'ticket-types', 'products', 'vouchers', 'customers', 'theaters', 'promotions', 'audit-logs', 'system-configs', 'transactions', 'refunds', 'movie-plans', 'movie-allocations');
 if (in_array($action, $resources, true)) {
+    $rbacResourceKeys = array(
+        'movies'=>'movies', 'screens'=>'screens', 'schedules'=>'schedules', 'staff'=>'staff',
+        'ticket-types'=>'ticket_types', 'products'=>'products', 'vouchers'=>'vouchers',
+        'promotions'=>'vouchers', 'customers'=>'customers', 'transactions'=>'transactions_refunds',
+        'refunds'=>'transactions_refunds', 'system-configs'=>'settings', 'audit-logs'=>'settings'
+    );
+    if (isset($rbacResourceKeys[$action])) {
+        requireAdmin();
+        $controller->requireRbacPermission($rbacResourceKeys[$action], $requestMethod !== 'GET');
+    }
     if ($requestMethod === 'GET') {
         $controller->listResource($action);
     }
