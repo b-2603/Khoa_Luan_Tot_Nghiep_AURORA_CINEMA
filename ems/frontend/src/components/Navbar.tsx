@@ -1,0 +1,82 @@
+import React from 'react';
+import { User } from '../types';
+import { Film, Bot, LogOut } from 'lucide-react';
+import { logoutUser } from '../services/storage';
+
+interface NavbarProps {
+  currentUser: User;
+  onUserChange: (user: User | null) => void;
+  onOpenAiAssistant: () => void;
+  onOpenAiKeyClick?: () => void;
+}
+
+export const Navbar: React.FC<NavbarProps> = ({
+  currentUser,
+  onUserChange,
+  onOpenAiAssistant,
+}) => {
+
+  const handleLogout = () => {
+    logoutUser();
+    onUserChange(null);
+  };
+
+  return (
+    <header className="glass-nav sticky top-0 z-40 px-4 lg:px-8 py-3 flex items-center justify-between shadow-sm bg-white/95 border-b border-slate-200">
+      {/* Brand & Logo */}
+      <div className="flex items-center gap-3">
+        <div className="w-10 h-10 rounded-2xl bg-gradient-to-tr from-amber-500 via-purple-600 to-cyan-500 p-0.5 shadow-md shadow-amber-500/20">
+          <div className="w-full h-full bg-slate-950 rounded-[14px] flex items-center justify-center">
+            <Film className="w-5 h-5 text-amber-400" />
+          </div>
+        </div>
+        <div>
+          <div className="flex items-center gap-2">
+            <h1 className="font-black text-lg tracking-wide bg-gradient-to-r from-amber-600 via-purple-600 to-cyan-600 bg-clip-text text-transparent">
+              AURORA CINEMAS
+            </h1>
+            <span className="px-2 py-0.5 text-[10px] font-bold uppercase tracking-wider rounded-full bg-cyan-50 text-cyan-700 border border-cyan-200">
+              EMS AI v2.6
+            </span>
+          </div>
+          <p className="text-xs text-slate-500 font-medium">Hệ thống QL Nhân sự & Đào tạo Rạp Phim</p>
+        </div>
+      </div>
+
+      {/* Right Controls */}
+      <div className="flex items-center gap-3">
+        {/* AI Assistant Button */}
+        <button
+          onClick={onOpenAiAssistant}
+          className="flex items-center gap-1.5 px-3.5 py-1.5 text-xs font-bold bg-gradient-to-r from-purple-600 to-cyan-600 hover:from-purple-500 hover:to-cyan-500 text-white rounded-xl shadow-md transition cursor-pointer"
+        >
+          <Bot className="w-4 h-4 text-cyan-100 animate-pulse" />
+          <span>Trợ Lý AI</span>
+        </button>
+
+        {/* User Info Capsule */}
+        <div className="flex items-center gap-2.5 pl-2 border-l border-slate-200">
+          <img
+            src={currentUser.avatar}
+            alt={currentUser.name}
+            className="w-9 h-9 rounded-xl object-cover ring-2 ring-amber-500/30"
+          />
+          <div className="hidden sm:block text-left">
+            <div className="text-xs font-bold text-slate-900 leading-tight">{currentUser.name}</div>
+            <div className="text-[10px] text-amber-700 font-semibold">{currentUser.staffCode}</div>
+          </div>
+        </div>
+
+        {/* Logout Button */}
+        <button
+          onClick={handleLogout}
+          className="flex items-center gap-1.5 px-3 py-1.5 text-slate-600 hover:text-red-700 hover:bg-red-50 rounded-xl border border-slate-200 hover:border-red-200 text-xs font-bold transition cursor-pointer shadow-2xs"
+          title="Đăng xuất khỏi hệ thống"
+        >
+          <LogOut className="w-4 h-4 text-red-500" />
+          <span className="hidden sm:inline">Đăng xuất</span>
+        </button>
+      </div>
+    </header>
+  );
+};
