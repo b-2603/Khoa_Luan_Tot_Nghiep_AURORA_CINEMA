@@ -484,6 +484,13 @@ export interface TheaterItem {
   city: string;
 }
 
+interface ScheduleTheaterItem extends TheaterItem {
+  screen_count: number;
+  allocated_movie_count: number;
+  active_showtime_count: number;
+  next_showtime_at?: string | null;
+}
+
 interface DashboardData {
   date: string;
   revenue_source: 'orders' | 'transactions' | 'revenue_logs';
@@ -675,6 +682,8 @@ export default function App() {
   const [movieAllocations, setMovieAllocations] = useState<MovieAllocation[]>([]);
   const [moviesList, setMoviesList] = useState<MovieItem[]>([]);
   const [scheduleMoviesList, setScheduleMoviesList] = useState<ScheduleMovieItem[]>([]);
+  const [scheduleTheatersList, setScheduleTheatersList] = useState<ScheduleTheaterItem[]>([]);
+  const [scheduleTheatersLoading, setScheduleTheatersLoading] = useState(false);
   const [theatersList, setTheatersList] = useState<TheaterItem[]>([]);
   const [theatersLoading, setTheatersLoading] = useState(false);
   const [theatersError, setTheatersError] = useState('');
@@ -1023,9 +1032,25 @@ export default function App() {
     }
   };
 
-  const loadScheduleMovies = async () => {
+  const loadScheduleTheaters = async () => {
+    setScheduleTheatersLoading(true);
     try {
-      const res = await fetch(`${API_BASE}?action=schedule-movies`, { credentials: 'include', cache: 'no-store' });
+      const res = await fetch(`${API_BASE}?action=schedule-theaters`, { credentials:'include', cache:'no-store' });
+      const data = await res.json();
+      if (!res.ok || !data.success) throw new Error(data.message || 'Không thể tải danh sách rạp.');
+      setScheduleTheatersList(Array.isArray(data.data) ? data.data.map((item: ScheduleTheaterItem) => ({ ...item, screen_count:Number(item.screen_count || 0), allocated_movie_count:Number(item.allocated_movie_count || 0), active_showtime_count:Number(item.active_showtime_count || 0) })) : []);
+    } catch (error) {
+      setScheduleTheatersList([]);
+      console.error('Error loading schedule theaters:', error);
+    } finally { setScheduleTheatersLoading(false); }
+  };
+
+  const loadScheduleMovies = async (theaterId = scheduleTheaterFilter) => {
+    if (currentUser?.role === 'super_admin' && theaterId <= 0) { setScheduleMoviesList([]); return; }
+    try {
+      const params = new URLSearchParams({ action:'schedule-movies' });
+      if (currentUser?.role === 'super_admin') params.set('theater_id', String(theaterId));
+      const res = await fetch(`${API_BASE}?${params.toString()}`, { credentials: 'include', cache: 'no-store' });
       const data = await res.json();
       if (!res.ok || !data.success) throw new Error(data.message || 'Không thể tải phim đã phân bổ.');
       setScheduleMoviesList(Array.isArray(data.data) ? data.data : []);
@@ -1036,6 +1061,11 @@ export default function App() {
   };
 
   const loadSchedules = async (options: { showError?: boolean; page?: number } = {}) => {
+    if (!scheduleMovieId || (currentUser?.role === 'super_admin' && scheduleTheaterFilter <= 0)) {
+      setSchedulesList([]);
+      setSchedulesLoading(false);
+      return false;
+    }
     const requestId = ++scheduleLoadSequence.current;
     setSchedulesLoading(true);
     try {
@@ -1044,7 +1074,7 @@ export default function App() {
       if (scheduleDateFilter) params.set('date', scheduleDateFilter);
       if (scheduleStatusFilter !== 'all') params.set('status', scheduleStatusFilter);
       if (scheduleMovieId > 0) params.set('movie_id', String(scheduleMovieId));
-      if (currentUser?.role === 'super_admin' && scheduleTheaterFilter > 0) params.set('theater_id', String(scheduleTheaterFilter));
+      if (currentUser?.role === 'super_admin') params.set('theater_id', String(scheduleTheaterFilter));
       const res = await fetch(`${API_BASE}?${params.toString()}`, { credentials: 'include', cache: 'no-store' });
       const data = await res.json();
       if (!res.ok || !data.success || !Array.isArray(data.data)) throw new Error(data.message || 'Không thể tải lịch chiếu.');
@@ -1560,7 +1590,8 @@ export default function App() {
       loadMoviePlans();
       loadMovieAllocations();
       loadMovies();
-      loadScheduleMovies();
+      if (currentUser.role === 'super_admin') loadScheduleTheaters();
+      else loadScheduleMovies();
       loadTheaters();
       loadTicketTypes();
       loadPricingPolicies();
@@ -2040,6 +2071,10 @@ export default function App() {
     return Array.from(unique.values()).sort((left, right) => left.title.localeCompare(right.title, 'vi'));
   };
 
+  const getScheduleScreens = () => currentUser?.role === 'super_admin'
+    ? screensList.filter(screen => Number(screen.theater_id) === Number(scheduleTheaterFilter))
+    : screensList;
+
   const applyScheduleDate = (showDate: string) => {
     setScheduleForm(previous => {
       const options = getScheduleMovieOptions(showDate);
@@ -2074,7 +2109,7 @@ export default function App() {
     try {
       const response = await fetch(`${API_BASE}?action=schedule-availability`, {
         method:'POST', credentials:'include', headers:{'Content-Type':'application/json'},
-        body:JSON.stringify({ movie_id:movieId, screen_id:screenId, show_date:showDate, exclude_showtime_id:scheduleForm.id || 0, slot_key:slotKey, draft_slots:scheduleForm.time_slots })
+        body:JSON.stringify({ movie_id:movieId, screen_id:screenId, show_date:showDate, theater_id:currentUser?.role === 'super_admin' ? scheduleTheaterFilter : undefined, exclude_showtime_id:scheduleForm.id || 0, slot_key:slotKey, draft_slots:scheduleForm.time_slots })
       });
       const result = await response.json();
       if (!response.ok || !result.success || !result.data) return;
@@ -2107,6 +2142,10 @@ export default function App() {
   }, [showScheduleModal, scheduleForm.id, scheduleForm.movie_id, scheduleForm.show_date, scheduleSlotSignature]);
 
   const openNewSchedule = (preferredMovieId = 0) => {
+    if (currentUser?.role === 'super_admin' && scheduleTheaterFilter <= 0) {
+      setSystemNotice({ message:'Vui lòng chọn rạp trước khi tạo suất chiếu.', type:'warning' });
+      return;
+    }
     let scheduleDate = localIsoDate(1);
     const preferredMovie = preferredMovieId ? scheduleMoviesList.find(movie => Number(movie.id) === Number(preferredMovieId)) : undefined;
     if (preferredMovie?.allocated_start_date && scheduleDate < preferredMovie.allocated_start_date) scheduleDate = preferredMovie.allocated_start_date;
@@ -2115,7 +2154,8 @@ export default function App() {
       return;
     }
     const availableMovies = getScheduleMovieOptions(scheduleDate);
-    if (!screensList.length) {
+    const scheduleScreens = getScheduleScreens();
+    if (!scheduleScreens.length) {
       alert('Chưa có phòng chiếu thuộc rạp của bạn trong aurora_db.');
       return;
     }
@@ -2131,7 +2171,7 @@ export default function App() {
     const defaultStart = '09:00';
     const endTime = calculateScheduleEndTime(defaultStart, firstMovie.id);
     const initialTicketIds = ticketTypesList.length ? [ticketTypesList[0].id] : [];
-    setScheduleForm({ id: 0, movie_id: firstMovie.id, screen_ids: [screensList[0].id], ticket_type_ids: initialTicketIds, show_date: scheduleDate, start_time: defaultStart, end_time: endTime, time_slots: [{ key: 'slot-1', screen_id: screensList[0].id, start_time: defaultStart, end_time: endTime }], ticket_price: getEffectiveTicketPrice(ticketTypesList[0], scheduleDate, defaultStart), operational_note: '', status: 'scheduled' });
+    setScheduleForm({ id: 0, movie_id: firstMovie.id, screen_ids: [scheduleScreens[0].id], ticket_type_ids: initialTicketIds, show_date: scheduleDate, start_time: defaultStart, end_time: endTime, time_slots: [{ key: 'slot-1', screen_id: scheduleScreens[0].id, start_time: defaultStart, end_time: endTime }], ticket_price: getEffectiveTicketPrice(ticketTypesList[0], scheduleDate, defaultStart), operational_note: '', status: 'scheduled' });
     setShowScheduleModal(true);
   };
 
@@ -2142,6 +2182,12 @@ export default function App() {
       : preferredDate;
 
     setActive('schedules');
+    if (currentUser?.role === 'super_admin') {
+      setScheduleTheaterFilter(Number(allocation.theater_id));
+      setScheduleMovieId(Number(allocation.movie_id));
+      void loadScheduleMovies(Number(allocation.theater_id));
+      return;
+    }
     setScheduleMovieId(Number(allocation.movie_id));
     setScheduleView('active');
     setSchedulePage(1);
@@ -2194,7 +2240,7 @@ export default function App() {
         method: 'POST',
         credentials: 'include',
         headers: { 'Content-Type': 'application/json', 'X-TMS-User': currentUser?.username || 'admin_rap' },
-        body: JSON.stringify(scheduleForm),
+        body: JSON.stringify({ ...scheduleForm, theater_id:currentUser?.role === 'super_admin' ? scheduleTheaterFilter : undefined }),
       });
       const result = await response.json();
       if (!response.ok || !result.success) throw new Error(result.message || 'Không thể lưu suất chiếu.');
@@ -2211,7 +2257,7 @@ export default function App() {
       method: 'DELETE',
       credentials: 'include',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ ids }),
+      body: JSON.stringify({ ids, theater_id:currentUser?.role === 'super_admin' ? scheduleTheaterFilter : undefined }),
     });
     const result = await response.json().catch(() => ({ success: false, message: 'Phản hồi máy chủ không hợp lệ.' }));
     if (!response.ok || !result.success) {
@@ -3815,8 +3861,8 @@ export default function App() {
       const scheduleBusy = scheduleBulkDeleting || schedulesLoading;
       const summary = scheduleMeta.summary;
       const isSystemSchedule = role === 'super_admin';
-      const selectedScheduleTheater = theatersList.find(theater => Number(theater.id) === scheduleTheaterFilter);
-      const scheduleScopeName = selectedScheduleTheater?.name || 'Toàn bộ hệ thống Aurora';
+      const selectedScheduleTheater = scheduleTheatersList.find(theater => Number(theater.id) === scheduleTheaterFilter) || theatersList.find(theater => Number(theater.id) === scheduleTheaterFilter);
+      const scheduleScopeName = selectedScheduleTheater?.name || currentUser?.theater_name || 'Rạp phụ trách';
       const pageStart = scheduleMeta.total ? (scheduleMeta.page - 1) * scheduleMeta.per_page + 1 : 0;
       const pageEnd = Math.min(scheduleMeta.page * scheduleMeta.per_page, scheduleMeta.total);
       const viewOptions: Array<{id:ScheduleView; label:string; count?:number}> = [
@@ -3845,11 +3891,34 @@ export default function App() {
       const chooseScheduleMovie = (movieId:number) => {
         setScheduleMovieId(movieId); setSchedulePage(1); setScheduleView('active'); setScheduleDateFilter(''); setScheduleStatusFilter('all'); setScheduleSearch(''); setSelectedScheduleIds([]);
       };
+      const chooseScheduleTheater = (theaterId:number) => {
+        setScheduleTheaterFilter(theaterId); setScheduleMovieId(0); setSchedulePage(1); setScheduleSearch(''); setSchedulesList([]); setSelectedScheduleIds([]);
+        void loadScheduleMovies(theaterId);
+      };
+      const changeScheduleTheater = () => {
+        setScheduleTheaterFilter(0); setScheduleMovieId(0); setScheduleMoviesList([]); setSchedulesList([]); setScheduleSearch(''); setSelectedScheduleIds([]);
+      };
+      if (isSystemSchedule && !scheduleTheaterFilter) return <div className="schedule-theater-hub">
+        <section className="schedule-flow-header">
+          <div><span className="schedule-flow-icon"><CalendarDays size={22}/></span><div><small>ĐIỀU PHỐI LỊCH CHIẾU</small><h2>Chọn rạp cần xem lịch</h2><p>Mỗi không gian chỉ hiển thị phim, phòng và suất chiếu thuộc đúng rạp.</p></div></div>
+          <nav aria-label="Các bước xem lịch chiếu"><span className="active"><b>1</b> Chọn rạp</span><i/><span><b>2</b> Chọn phim</span><i/><span><b>3</b> Xem lịch</span></nav>
+        </section>
+        <section className="schedule-theater-directory">
+          <header><div><small>HỆ THỐNG AURORA CINEMA</small><h3>Danh sách cụm rạp</h3><p>Số liệu được cập nhật trực tiếp từ aurora_db.</p></div><button type="button" className="account-refresh-btn" disabled={scheduleTheatersLoading} onClick={()=>void loadScheduleTheaters()}><RefreshCw size={15}/>{scheduleTheatersLoading?'Đang tải…':'Làm mới'}</button></header>
+          <div className="schedule-theater-grid">{scheduleTheatersList.map(theater=><button type="button" className="schedule-theater-card" key={theater.id} onClick={()=>chooseScheduleTheater(Number(theater.id))}>
+            <span className="schedule-theater-card-icon"><Building2 size={22}/></span><span className="schedule-theater-card-copy"><small>{theater.city || 'Aurora Cinema'}</small><b>{theater.name}</b><em><MapPin size={13}/>{theater.address || 'Địa chỉ đang cập nhật'}</em></span>
+            <span className="schedule-theater-card-metrics"><i><b>{theater.allocated_movie_count}</b><small>Phim</small></i><i><b>{theater.active_showtime_count}</b><small>Suất</small></i><i><b>{theater.screen_count}</b><small>Phòng</small></i></span>
+            <span className="schedule-theater-card-action">Chọn rạp <span>→</span></span>
+          </button>)}</div>
+          {!scheduleTheatersLoading&&!scheduleTheatersList.length&&<div className="movie-schedule-empty"><Building2 size={32}/><b>Chưa có cụm rạp để lập lịch</b><p>Vui lòng kiểm tra dữ liệu theaters trong aurora_db.</p></div>}
+        </section>
+      </div>;
       if (!scheduleMovieId) return <div className="movie-schedule-hub">
+        {isSystemSchedule&&<section className="schedule-selected-theater"><div><span><Building2 size={19}/></span><div><small>RẠP ĐANG CHỌN</small><b>{scheduleScopeName}</b><p>{selectedScheduleTheater?.address || selectedScheduleTheater?.city || 'Aurora Cinema'}</p></div></div><nav aria-label="Tiến trình"><span className="done"><b>✓</b> Chọn rạp</span><i/><span className="active"><b>2</b> Chọn phim</span><i/><span><b>3</b> Xem lịch</span></nav><button type="button" onClick={changeScheduleTheater}>Đổi rạp</button></section>}
         <section className="movie-schedule-overview">
           <div className="movie-schedule-overview-title"><span><Clapperboard size={19}/></span><div><small>LỊCH CHIẾU</small><h2>Điều phối suất chiếu</h2><p>Chọn phim bên dưới để xem và cập nhật lịch.</p></div></div>
-          <div className="movie-schedule-overview-metrics" aria-label="Tổng quan lịch chiếu"><span><b>{movieCards.length}</b><small>Phim phân bổ</small></span><span><b>{scheduleMeta.total.toLocaleString('vi-VN')}</b><small>Suất đang mở</small></span><span><b>{summary.active_rooms}</b><small>Phòng hoạt động</small></span></div>
-          <div className="movie-schedule-overview-actions"><span className="movie-schedule-db"><i/>Aurora DB</span><button type="button" className="tms-btn tms-btn-outline" disabled={schedulesLoading} onClick={()=>void Promise.all([loadScheduleMovies(),loadSchedules({showError:false})])}><RefreshCw size={15}/> {schedulesLoading ? 'Đang tải…' : 'Tải lại'}</button>{canEdit&&<button type="button" className="tms-btn tms-btn-primary" onClick={()=>openNewSchedule()}><Plus size={16}/> Tạo suất</button>}</div>
+          <div className="movie-schedule-overview-metrics" aria-label="Tổng quan lịch chiếu"><span><b>{movieCards.length}</b><small>Phim phân bổ</small></span><span><b>{movieCards.reduce((sum,movie)=>sum+Number(movie.active_schedule_count||0),0).toLocaleString('vi-VN')}</b><small>Suất đang mở</small></span><span><b>{movieCards.reduce((sum,movie)=>sum+Number(movie.active_screen_count||0),0)}</b><small>Lượt dùng phòng</small></span></div>
+          <div className="movie-schedule-overview-actions"><span className="movie-schedule-db"><i/>Aurora DB</span><button type="button" className="tms-btn tms-btn-outline" disabled={schedulesLoading} onClick={()=>void loadScheduleMovies(scheduleTheaterFilter)}><RefreshCw size={15}/> Tải lại</button></div>
         </section>
         <section className="movie-schedule-catalog-head"><div><span>THƯ VIỆN PHIM ĐƯỢC PHÂN BỔ</span><h3>Phim đang sẵn sàng lên lịch</h3><p>Nhấp vào thẻ phim để mở danh sách suất chiếu chi tiết.</p></div><label className="movie-catalog-search"><Search size={16}/><input value={scheduleSearch} onChange={event=>setScheduleSearch(event.target.value)} placeholder="Tìm phim, thể loại..."/></label></section>
         <section className="movie-schedule-card-grid">
@@ -3869,8 +3938,8 @@ export default function App() {
           </section>
           {isSystemSchedule && <section className="schedule-system-scope">
             <div className="schedule-scope-intro"><span><Globe size={20}/></span><div><small>PHẠM VI ĐIỀU PHỐI</small><b>{scheduleScopeName}</b><p>{scheduleTheaterFilter ? `${selectedScheduleTheater?.address || selectedScheduleTheater?.city || 'Dữ liệu cụm rạp đã chọn'}` : `Tổng hợp lịch từ ${theatersList.length} cụm rạp trong aurora_db`}</p></div></div>
-            <label className="schedule-theater-selector"><span>Chọn cụm rạp</span><div><Building2 size={16}/><select value={scheduleTheaterFilter} disabled={scheduleBusy} onChange={event => { setScheduleTheaterFilter(Number(event.target.value)); setSchedulePage(1); setSelectedScheduleIds([]); }}><option value={0}>Tất cả cụm rạp</option>{theatersList.map(theater=><option key={theater.id} value={theater.id}>{theater.name}{theater.city ? ` · ${theater.city}` : ''}</option>)}</select><ChevronDown size={15}/></div></label>
-            <div className="schedule-scope-stats"><span><small>Rạp hiển thị</small><b>{scheduleTheaterFilter ? `1 / ${theatersList.length}` : `${theatersList.length} / ${theatersList.length}`}</b></span><span><small>Suất phù hợp</small><b>{scheduleMeta.total.toLocaleString('vi-VN')} suất</b></span><span className="live"><i/><small>Trạng thái dữ liệu</small><b>{schedulesLoading ? 'Đang cập nhật' : 'Đã đồng bộ'}</b></span></div>
+            <div className="schedule-scope-stats"><span><small>Phạm vi</small><b>01 rạp</b></span><span><small>Suất phù hợp</small><b>{scheduleMeta.total.toLocaleString('vi-VN')} suất</b></span><span className="live"><i/><small>Dữ liệu</small><b>{schedulesLoading ? 'Đang cập nhật' : 'Đã đồng bộ'}</b></span></div>
+            <button type="button" className="schedule-change-theater" disabled={scheduleBusy} onClick={changeScheduleTheater}><Building2 size={15}/> Đổi rạp</button>
           </section>}
           <section className="schedule-kpi-grid"><article><CalendarDays size={18}/><span>Suất sắp chiếu<b>{summary.scheduled.toLocaleString('vi-VN')}</b></span></article><article><ShowtimeIcon size={18}/><span>Đang chiếu<b>{summary.running.toLocaleString('vi-VN')}</b></span></article><article><Users size={18}/><span>Ghế đã đặt<b>{summary.booked_seats.toLocaleString('vi-VN')}</b></span></article><article><Building2 size={18}/><span>Phòng đang vận hành<b>{summary.active_rooms.toLocaleString('vi-VN')}</b></span></article></section>
           <div className="tms-card-table schedule-management-table">
@@ -4966,8 +5035,8 @@ export default function App() {
                       <p><CheckCircle2 size={13}/> Suất mới ưu tiên ngày kế tiếp; backend kiểm tra thời gian phân bổ, xung đột và đệm dọn phòng 10 phút trong <b>aurora_db</b>.</p>
                     </div>
                     <div className="schedule-turnaround-notice"><span><ShieldCheck size={18}/></span><div><b>Khoảng chuyển ca được bảo vệ</b><p>Mỗi phòng cần tối thiểu <strong>10 phút</strong> sau khi phim kết thúc để nhân viên vệ sinh, kiểm tra thiết bị và chuẩn bị đón khách cho suất kế tiếp.</p></div><em>10 PHÚT</em></div>
-                    <div className="schedule-time-slot-list">{scheduleForm.time_slots.map((slot, index) => { const availability=scheduleSlotAvailability[slot.key]; return <div className="schedule-time-slot-row" key={slot.key}><span className="schedule-time-slot-number">{index + 1}</span><div><label className="tms-form-label">Phòng chiếu <em>*</em></label><select required className="tms-form-select" value={slot.screen_id || 0} onChange={e => { const screenId=Number(e.target.value); const slots=scheduleForm.time_slots.map(item=>item.key===slot.key?{...item,screen_id:screenId}:item); setScheduleForm({...scheduleForm,time_slots:slots,screen_ids:Array.from(new Set(slots.map(item=>item.screen_id).filter(Boolean)))}); }}><option value={0} disabled>Chọn phòng</option>{screensList.map(s=><option key={s.id} value={s.id}>{screenDisplayName(s.name,s.id)} · {s.total_seats} ghế</option>)}</select><small>{screensList.find(s=>Number(s.id)===Number(slot.screen_id))?.screen_type || 'Phòng đang hoạt động'}</small>{availability?.suggested && <span className="schedule-free-slot"><CheckCircle2 size={12}/> Đã chọn khung trống {availability.suggested.start}–{availability.suggested.end}</span>}</div><div><label className="tms-form-label">Giờ bắt đầu <em>*</em></label><div className="schedule-clock-control"><select aria-label="Giờ bắt đầu" value={String(slot.start_time).slice(0,2)} onChange={event=>updateScheduleSlotStart(slot.key,`${event.target.value}:${String(slot.start_time).slice(3,5)}`)}>{Array.from({length:24},(_,hour)=>String(hour).padStart(2,'0')).map(hour=><option key={hour}>{hour}</option>)}</select><i>:</i><select aria-label="Phút bắt đầu" value={String(slot.start_time).slice(3,5)} onChange={event=>updateScheduleSlotStart(slot.key,`${String(slot.start_time).slice(0,2)}:${event.target.value}`)}>{Array.from(new Set([...Array.from({length:12},(_,minute)=>String(minute*5).padStart(2,'0')),String(slot.start_time).slice(3,5)])).sort().map(minute=><option key={minute}>{minute}</option>)}</select><b>24H</b></div><small>Định dạng 24 giờ</small>{availability?.occupied?.length ? <span className="schedule-busy-slots">Đã bận: {availability.occupied.filter(item=>item.source==='saved').map(item=>`${item.start}–${item.end}`).join(', ') || 'suất đang thêm'}</span> : <span className="schedule-busy-slots free">Phòng còn trống trong ngày</span>}</div><div><label className="tms-form-label">Giờ kết thúc tự động</label><output>{slot.end_time}</output><small>{(scheduleMoviesList.find(movie => Number(movie.id) === Number(scheduleForm.movie_id)) || moviesList.find(movie => Number(movie.id) === Number(scheduleForm.movie_id)))?.duration_minutes || 0} phút</small></div>{!scheduleForm.id && <button type="button" className="schedule-time-slot-remove" disabled={scheduleForm.time_slots.length === 1} aria-label="Xóa suất chiếu" onClick={() => { const slots = scheduleForm.time_slots.filter(item => item.key !== slot.key); setScheduleForm({...scheduleForm, time_slots:slots, screen_ids:Array.from(new Set(slots.map(item=>item.screen_id).filter(Boolean))), start_time:slots[0].start_time, end_time:slots[0].end_time}); }}><Trash2 size={15}/></button>}</div>; })}</div>
-                    {!scheduleForm.id && <button type="button" className="schedule-time-slot-add" onClick={() => { const last = scheduleForm.time_slots[scheduleForm.time_slots.length - 1]; const date = new Date(`2000-01-01T${last.end_time}:00`); date.setMinutes(date.getMinutes() + 15); const start = date.toTimeString().slice(0,5); const slot = { key:`slot-${Date.now()}`, screen_id:last.screen_id || screensList[0]?.id || 0, start_time:start, end_time:calculateScheduleEndTime(start, scheduleForm.movie_id) }; const slots=[...scheduleForm.time_slots,slot]; setScheduleForm({...scheduleForm, time_slots:slots, screen_ids:Array.from(new Set(slots.map(item=>item.screen_id).filter(Boolean)))}); }}><Plus size={15}/> Thêm suất chiếu</button>}
+                    <div className="schedule-time-slot-list">{scheduleForm.time_slots.map((slot, index) => { const availability=scheduleSlotAvailability[slot.key]; const scheduleRooms=getScheduleScreens(); return <div className="schedule-time-slot-row" key={slot.key}><span className="schedule-time-slot-number">{index + 1}</span><div><label className="tms-form-label">Phòng chiếu <em>*</em></label><select required className="tms-form-select" value={slot.screen_id || 0} onChange={e => { const screenId=Number(e.target.value); const slots=scheduleForm.time_slots.map(item=>item.key===slot.key?{...item,screen_id:screenId}:item); setScheduleForm({...scheduleForm,time_slots:slots,screen_ids:Array.from(new Set(slots.map(item=>item.screen_id).filter(Boolean)))}); }}><option value={0} disabled>Chọn phòng</option>{scheduleRooms.map(s=><option key={s.id} value={s.id}>{screenDisplayName(s.name,s.id)} · {s.total_seats} ghế</option>)}</select><small>{scheduleRooms.find(s=>Number(s.id)===Number(slot.screen_id))?.screen_type || 'Phòng đang hoạt động'}</small>{availability?.suggested && <span className="schedule-free-slot"><CheckCircle2 size={12}/> Đã chọn khung trống {availability.suggested.start}–{availability.suggested.end}</span>}</div><div><label className="tms-form-label">Giờ bắt đầu <em>*</em></label><div className="schedule-clock-control"><select aria-label="Giờ bắt đầu" value={String(slot.start_time).slice(0,2)} onChange={event=>updateScheduleSlotStart(slot.key,`${event.target.value}:${String(slot.start_time).slice(3,5)}`)}>{Array.from({length:24},(_,hour)=>String(hour).padStart(2,'0')).map(hour=><option key={hour}>{hour}</option>)}</select><i>:</i><select aria-label="Phút bắt đầu" value={String(slot.start_time).slice(3,5)} onChange={event=>updateScheduleSlotStart(slot.key,`${String(slot.start_time).slice(0,2)}:${event.target.value}`)}>{Array.from(new Set([...Array.from({length:12},(_,minute)=>String(minute*5).padStart(2,'0')),String(slot.start_time).slice(3,5)])).sort().map(minute=><option key={minute}>{minute}</option>)}</select><b>24H</b></div><small>Định dạng 24 giờ</small>{availability?.occupied?.length ? <span className="schedule-busy-slots">Đã bận: {availability.occupied.filter(item=>item.source==='saved').map(item=>`${item.start}–${item.end}`).join(', ') || 'suất đang thêm'}</span> : <span className="schedule-busy-slots free">Phòng còn trống trong ngày</span>}</div><div><label className="tms-form-label">Giờ kết thúc tự động</label><output>{slot.end_time}</output><small>{(scheduleMoviesList.find(movie => Number(movie.id) === Number(scheduleForm.movie_id)) || moviesList.find(movie => Number(movie.id) === Number(scheduleForm.movie_id)))?.duration_minutes || 0} phút</small></div>{!scheduleForm.id && <button type="button" className="schedule-time-slot-remove" disabled={scheduleForm.time_slots.length === 1} aria-label="Xóa suất chiếu" onClick={() => { const slots = scheduleForm.time_slots.filter(item => item.key !== slot.key); setScheduleForm({...scheduleForm, time_slots:slots, screen_ids:Array.from(new Set(slots.map(item=>item.screen_id).filter(Boolean))), start_time:slots[0].start_time, end_time:slots[0].end_time}); }}><Trash2 size={15}/></button>}</div>; })}</div>
+                    {!scheduleForm.id && <button type="button" className="schedule-time-slot-add" onClick={() => { const last = scheduleForm.time_slots[scheduleForm.time_slots.length - 1]; const date = new Date(`2000-01-01T${last.end_time}:00`); date.setMinutes(date.getMinutes() + 15); const start = date.toTimeString().slice(0,5); const slot = { key:`slot-${Date.now()}`, screen_id:last.screen_id || getScheduleScreens()[0]?.id || 0, start_time:start, end_time:calculateScheduleEndTime(start, scheduleForm.movie_id) }; const slots=[...scheduleForm.time_slots,slot]; setScheduleForm({...scheduleForm, time_slots:slots, screen_ids:Array.from(new Set(slots.map(item=>item.screen_id).filter(Boolean)))}); }}><Plus size={15}/> Thêm suất chiếu</button>}
                     <div className="schedule-section-heading pricing"><DollarSign size={16}/><div><b>Loại vé áp dụng & ghi chú</b><small>Chọn một hoặc nhiều loại vé đang có trong Aurora DB.</small></div></div>
                     <div className="schedule-editor-grid"><div className="tms-form-group ticket-type-picker"><label className="tms-form-label">Loại vé áp dụng <em>*</em></label><div className="ticket-type-select-list">{ticketTypesList.length ? ticketTypesList.map(ticketType => { const available = isTicketAvailableForSchedule(ticketType, scheduleForm.show_date, scheduleForm.start_time); const effectivePrice = getEffectiveTicketPrice(ticketType, scheduleForm.show_date, scheduleForm.start_time); return <label key={ticketType.id} className={`${scheduleForm.ticket_type_ids.includes(Number(ticketType.id)) ? 'selected' : ''} ${available ? '' : 'disabled'}`}><input type="checkbox" disabled={!available} checked={scheduleForm.ticket_type_ids.includes(Number(ticketType.id))} onChange={() => { const checked = scheduleForm.ticket_type_ids.includes(Number(ticketType.id)); const nextIds = checked ? scheduleForm.ticket_type_ids.filter(id => id !== Number(ticketType.id)) : [...scheduleForm.ticket_type_ids, Number(ticketType.id)]; const selectedPrices = ticketTypesList.filter(item => nextIds.includes(Number(item.id))).map(item => getEffectiveTicketPrice(item, scheduleForm.show_date, scheduleForm.start_time)); setScheduleForm({...scheduleForm, ticket_type_ids:nextIds, ticket_price:selectedPrices.length ? Math.min(...selectedPrices) : 0}); }}/><span><b>{ticketType.name}</b><small>{available ? ticketType.code : `${ticketType.code} · Không áp dụng`}</small></span><strong>{available ? effectivePrice === 0 ? 'Miễn phí' : `${effectivePrice.toLocaleString('vi-VN')} ₫` : '—'}</strong><Check size={15}/></label>; }) : <span className="ticket-type-loading">Chưa có loại vé hoạt động trong Aurora DB.</span>}</div></div><div className="tms-form-group"><label className="tms-form-label">Ghi chú vận hành</label><input maxLength={500} className="tms-form-input" value={scheduleForm.operational_note} onChange={e => setScheduleForm({...scheduleForm,operational_note:e.target.value})} placeholder="Ví dụ: Ưu tiên quầy vé 1, kiểm tra kính 3D"/></div></div>
                   </section>

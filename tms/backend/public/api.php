@@ -600,6 +600,11 @@ if ($action === 'schedule-movies') {
     jsonResponse(array('success' => false, 'message' => 'Phương thức không được hỗ trợ cho danh sách phim lập lịch.'), 405);
 }
 
+if ($action === 'schedule-theaters') {
+    if ($requestMethod === 'GET') $controller->scheduleTheaters();
+    jsonResponse(array('success' => false, 'message' => 'Phương thức không được hỗ trợ cho danh sách rạp lập lịch.'), 405);
+}
+
 if ($action === 'schedule-availability') {
     if ($requestMethod === 'POST') {
         requireAdmin();

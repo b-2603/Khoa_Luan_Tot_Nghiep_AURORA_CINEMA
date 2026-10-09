@@ -1692,19 +1692,22 @@ class AdminController
         if ($resource === 'schedules') {
             $scope = $this->enforceCinemaScope('sc');
             if ($scope !== '') $where[] = $scope;
+            if ($role === 'super_admin') {
+                $requestedTheaterId = isset($_GET['theater_id']) ? (int)$_GET['theater_id'] : 0;
+                if ($requestedTheaterId <= 0) {
+                    jsonResponse(array('success' => false, 'message' => 'Vui lòng chọn rạp trước khi xem lịch chiếu.'), 422);
+                }
+                if (!(int)$this->scalar("SELECT COUNT(*) FROM theaters WHERE id={$requestedTheaterId}")) {
+                    jsonResponse(array('success' => false, 'message' => 'Cụm rạp được chọn không tồn tại trong aurora_db.'), 422);
+                }
+                $where[] = 'sc.theater_id = ' . $requestedTheaterId;
+            }
             if (isset($_GET['movie_id']) && (int)$_GET['movie_id'] > 0) {
                 $requestedMovieId = (int)$_GET['movie_id'];
                 if (!(int)$this->scalar("SELECT COUNT(*) FROM movies WHERE id={$requestedMovieId}")) {
                     jsonResponse(array('success' => false, 'message' => 'Phim được chọn không tồn tại trong aurora_db.'), 422);
                 }
                 $where[] = 's.movie_id = ' . $requestedMovieId;
-            }
-            if ($role === 'super_admin' && isset($_GET['theater_id']) && (int)$_GET['theater_id'] > 0) {
-                $requestedTheaterId = (int)$_GET['theater_id'];
-                if (!(int)$this->scalar("SELECT COUNT(*) FROM theaters WHERE id={$requestedTheaterId}")) {
-                    jsonResponse(array('success' => false, 'message' => 'Cụm rạp được chọn không tồn tại trong aurora_db.'), 422);
-                }
-                $where[] = 'sc.theater_id = ' . $requestedTheaterId;
             }
         }
         if ($resource === 'theaters') {
@@ -1845,6 +1848,8 @@ class AdminController
             $summary = $summaryResult ? $summaryResult->fetch_assoc() : array();
             $bookedWhere = array("b.status NOT IN ('CANCELLED','EXPIRED')");
             if ($summaryScope !== '') $bookedWhere[] = $summaryScope;
+            if (isset($requestedMovieId) && $requestedMovieId > 0) $bookedWhere[] = 's.movie_id=' . $requestedMovieId;
+            if ($role === 'super_admin' && isset($requestedTheaterId) && $requestedTheaterId > 0) $bookedWhere[] = 'sc.theater_id=' . $requestedTheaterId;
             $summary['booked_seats'] = (int)$this->scalar("SELECT COUNT(bs.id) FROM booking_seats bs INNER JOIN bookings b ON b.id=bs.booking_id INNER JOIN showtimes s ON s.id=b.showtime_id INNER JOIN screens sc ON sc.id=s.screen_id WHERE ".implode(' AND ', $bookedWhere));
             jsonResponse(array(
                 'success' => true,
@@ -2216,6 +2221,48 @@ class AdminController
      * to a published plan and its allocation must have been accepted by the
      * cinema before it can be offered by the schedule editor.
      */
+    /**
+     * Return the cinema workspaces available to the schedule module. Counts
+     * come directly from aurora_db so the selection screen is operational,
+     * not a hard-coded directory.
+     */
+    public function scheduleTheaters()
+    {
+        requireAdmin();
+        $role = $this->getCurrentRole();
+        if (!in_array($role, array('super_admin', 'cinema_admin', 'supervisor'), true)) {
+            jsonResponse(array('success' => false, 'message' => 'Bạn không có quyền xem phạm vi rạp lập lịch.'), 403);
+        }
+        $this->ensureCinemaOwnershipSchema();
+        $this->ensurePlanningSchema();
+        $where = array('1=1');
+        if ($role !== 'super_admin') {
+            $theaterId = $this->getCurrentTheaterId();
+            if ($theaterId <= 0) jsonResponse(array('success' => false, 'message' => 'Tài khoản chưa được gán rạp phụ trách.'), 403);
+            $where[] = 't.id=' . $theaterId;
+        }
+        $sql = "SELECT t.id, t.name, t.address, t.city,
+                       (SELECT COUNT(*) FROM screens sc WHERE sc.theater_id=t.id) screen_count,
+                       (SELECT COUNT(DISTINCT ma.movie_id)
+                          FROM movie_allocations ma
+                          INNER JOIN movie_plans mp ON mp.id=ma.plan_id
+                         WHERE ma.theater_id=t.id
+                           AND ma.status IN ('confirmed','deploying')
+                           AND mp.status IN ('published','in_progress')) allocated_movie_count,
+                       (SELECT COUNT(*) FROM showtimes st
+                          INNER JOIN screens active_sc ON active_sc.id=st.screen_id
+                         WHERE active_sc.theater_id=t.id
+                           AND st.status='OPEN' AND st.ends_at>=NOW()) active_showtime_count,
+                       (SELECT MIN(st.starts_at) FROM showtimes st
+                          INNER JOIN screens next_sc ON next_sc.id=st.screen_id
+                         WHERE next_sc.theater_id=t.id
+                           AND st.status='OPEN' AND st.starts_at>=NOW()) next_showtime_at
+                  FROM theaters t
+                 WHERE " . implode(' AND ', $where) . "
+                 ORDER BY t.city ASC, t.name ASC";
+        jsonResponse(array('success' => true, 'data' => $this->rows($sql)));
+    }
+
     public function scheduleMovies()
     {
         requireAdmin();
@@ -2228,7 +2275,14 @@ class AdminController
             "mp.status IN ('published','in_progress')",
             "ma.status IN ('confirmed','deploying')"
         );
-        if ($role === 'cinema_admin' || $role === 'supervisor') {
+        if ($role === 'super_admin') {
+            $theaterId = isset($_GET['theater_id']) ? (int)$_GET['theater_id'] : 0;
+            if ($theaterId <= 0) jsonResponse(array('success' => false, 'message' => 'Vui lòng chọn rạp trước khi chọn phim.'), 422);
+            if (!(int)$this->scalar("SELECT COUNT(*) FROM theaters WHERE id={$theaterId}")) {
+                jsonResponse(array('success' => false, 'message' => 'Cụm rạp được chọn không tồn tại trong aurora_db.'), 422);
+            }
+            $where[] = 'ma.theater_id = ' . $theaterId;
+        } else if ($role === 'cinema_admin' || $role === 'supervisor') {
             $theaterId = $this->getCurrentTheaterId();
             if ($theaterId <= 0) {
                 jsonResponse(array('success' => false, 'message' => 'Tài khoản chưa được gán rạp phụ trách.'), 403);
@@ -2352,6 +2406,13 @@ class AdminController
         $role = $this->getCurrentRole();
         if (!in_array($role, array('super_admin', 'cinema_admin'), true)) jsonResponse(array('success' => false, 'message' => 'Chỉ Admin Tổng hoặc Admin Rạp mới có quyền lập suất chiếu.'), 403);
         $input = requestJson();
+        $selectedTheaterId = $role === 'super_admin'
+            ? (isset($input['theater_id']) ? (int)$input['theater_id'] : 0)
+            : $this->getCurrentTheaterId();
+        if ($selectedTheaterId <= 0) jsonResponse(array('success' => false, 'message' => 'Vui lòng chọn rạp trước khi lưu lịch chiếu.'), 422);
+        if (!(int)$this->scalar("SELECT COUNT(*) FROM theaters WHERE id={$selectedTheaterId}")) {
+            jsonResponse(array('success' => false, 'message' => 'Cụm rạp được chọn không tồn tại trong aurora_db.'), 422);
+        }
         $id = isset($_GET['id']) ? (int)$_GET['id'] : (isset($input['id']) ? (int)$input['id'] : 0);
         $wasUpdate = $id > 0;
         $legacyScreenIds = isset($input['screen_ids']) && is_array($input['screen_ids']) ? array_values(array_unique(array_filter(array_map('intval', $input['screen_ids'])))) : array();
@@ -2376,10 +2437,9 @@ class AdminController
         if (empty($ticketTypeIds)) jsonResponse(array('success' => false, 'message' => 'Vui lòng chọn ít nhất một loại vé áp dụng cho suất chiếu.'), 400);
         $this->ensureTicketPricingSchema();
         if ($id > 0 && count($rawSlots) !== 1) jsonResponse(array('success' => false, 'message' => 'Một lần chỉnh sửa chỉ áp dụng cho một suất chiếu.'), 400);
-        $screenScope = $this->enforceCinemaScope();
         $screenSql = implode(',', $screenIds);
         $dateEsc = $this->db->real_escape_string($showDate);
-        $screens = $this->rows('SELECT id, name, total_seats, theater_id FROM screens WHERE id IN ('.$screenSql.')' . ($screenScope !== '' ? ' AND '.$screenScope : ''));
+        $screens = $this->rows('SELECT id, name, total_seats, theater_id FROM screens WHERE id IN ('.$screenSql.') AND theater_id='.$selectedTheaterId);
         $movie = $this->rows('SELECT id, duration_minutes FROM movies WHERE id=' . $movieId);
         if (count($screens) !== count($screenIds) || !$movie) jsonResponse(array('success' => false, 'message' => 'Phim hoặc một trong các phòng chiếu không tồn tại hoặc không thuộc phạm vi rạp của bạn.'), 400);
         $this->ensurePlanningSchema();
@@ -2465,7 +2525,7 @@ class AdminController
             $canonicalStatus = $status === 'cancelled' ? 'CANCELLED' : ($status === 'finished' ? 'CLOSED' : 'OPEN');
             if ($id > 0) {
                 $slot=$slots[0]; $screen = $screenMap[(int)$slot['screen_id']];
-                $old = $this->rows('SELECT id FROM showtimes WHERE id=' . $id . ' FOR UPDATE');
+                $old = $this->rows('SELECT st.id FROM showtimes st INNER JOIN screens old_sc ON old_sc.id=st.screen_id WHERE st.id=' . $id . ' AND old_sc.theater_id=' . $selectedTheaterId . ' FOR UPDATE');
                 if (!$old) throw new Exception('Không tìm thấy suất chiếu cần cập nhật.');
                 $startsAt=$showDate.' '.$slot['start'].':00'; $endsAt=$showDate.' '.$slot['end'].':00';
                 $this->executeMovieStatement('UPDATE showtimes SET screen_id=?, movie_id=?, starts_at=?, ends_at=?, ticket_price=?, status=? WHERE id=?', 'iissdsi', array((int)$screen['id'], $movieId, $startsAt, $endsAt, (float)$slot['price'], $canonicalStatus, $id)); $created[]=array('id'=>$id,'slot'=>$slot);
@@ -2487,7 +2547,7 @@ class AdminController
         }
         // A saved showtime is an operational action. Re-evaluate every related
         // allocation immediately so its deployment checklist reflects Aurora DB.
-        $allocations = $this->rows('SELECT ma.*, m.poster_url, m.trailer_url FROM movie_allocations ma LEFT JOIN movies m ON m.id=ma.movie_id WHERE ma.movie_id=' . $movieId);
+        $allocations = $this->rows('SELECT ma.*, m.poster_url, m.trailer_url FROM movie_allocations ma LEFT JOIN movies m ON m.id=ma.movie_id WHERE ma.movie_id=' . $movieId . ' AND ma.theater_id=' . $selectedTheaterId);
         foreach ($allocations as $allocation) $this->syncMovieAllocationTasks($allocation, $allocation);
         $actor = !empty($_SESSION['tms_user']['full_name']) ? $this->db->real_escape_string($_SESSION['tms_user']['full_name']) : 'Admin Rạp';
         $createdIds=array(); foreach($created as $item) { $createdId=(int)$item['id']; $createdIds[]=$createdId; $this->db->query("INSERT INTO schedule_operation_logs (showtime_id, action_name, performed_by, created_at) VALUES ({$createdId}, '".($wasUpdate ? 'updated' : 'created')."', '{$actor}', NOW())"); }
@@ -2504,6 +2564,10 @@ class AdminController
         $role = $this->getCurrentRole();
         if (!in_array($role, array('super_admin', 'cinema_admin'), true)) jsonResponse(array('success'=>false, 'message'=>'Chỉ Admin Tổng hoặc Admin Rạp được lập lịch chiếu.'), 403);
         $input = requestJson();
+        $selectedTheaterId = $role === 'super_admin'
+            ? (isset($input['theater_id']) ? (int)$input['theater_id'] : 0)
+            : $this->getCurrentTheaterId();
+        if ($selectedTheaterId <= 0) jsonResponse(array('success'=>false, 'message'=>'Vui lòng chọn rạp trước khi tìm khung giờ trống.'), 422);
         $movieId = isset($input['movie_id']) ? (int)$input['movie_id'] : 0;
         $screenId = isset($input['screen_id']) ? (int)$input['screen_id'] : 0;
         $date = isset($input['show_date']) ? trim((string)$input['show_date']) : '';
@@ -2512,8 +2576,7 @@ class AdminController
         if (!$movieId || !$screenId || !preg_match('/^\d{4}-\d{2}-\d{2}$/', $date)) jsonResponse(array('success'=>false, 'message'=>'Thiếu phim, phòng hoặc ngày chiếu để tìm khung giờ trống.'), 422);
         $dateParts = explode('-', $date);
         if (!checkdate((int)$dateParts[1], (int)$dateParts[2], (int)$dateParts[0])) jsonResponse(array('success'=>false, 'message'=>'Ngày chiếu không hợp lệ.'), 422);
-        $scope = $this->enforceCinemaScope();
-        $screen = $this->row('SELECT id,name,theater_id FROM screens WHERE id='.$screenId.($scope !== '' ? ' AND '.$scope : '').' LIMIT 1');
+        $screen = $this->row('SELECT id,name,theater_id FROM screens WHERE id='.$screenId.' AND theater_id='.$selectedTheaterId.' LIMIT 1');
         $movie = $this->row('SELECT id,duration_minutes FROM movies WHERE id='.$movieId.' LIMIT 1');
         if (!$screen || !$movie || (int)$movie['duration_minutes'] < 1) jsonResponse(array('success'=>false, 'message'=>'Phim hoặc phòng chiếu không hợp lệ trong phạm vi rạp của bạn.'), 422);
         $dateEsc = $this->db->real_escape_string($date);
@@ -2697,7 +2760,16 @@ class AdminController
             if (count($ids) < 1) jsonResponse(array('success' => false, 'message' => 'Vui lòng chọn ít nhất một suất chiếu cần xóa.'), 422);
             $requestedIds = $ids;
 
-            $scope = $this->enforceCinemaScope('sc');
+            if ($role === 'super_admin') {
+                $selectedTheaterId = isset($input['theater_id']) ? (int)$input['theater_id'] : 0;
+                if ($selectedTheaterId <= 0) jsonResponse(array('success' => false, 'message' => 'Vui lòng chọn rạp trước khi xóa lịch chiếu.'), 422);
+                if (!(int)$this->scalar("SELECT COUNT(*) FROM theaters WHERE id={$selectedTheaterId}")) {
+                    jsonResponse(array('success' => false, 'message' => 'Cụm rạp được chọn không tồn tại trong aurora_db.'), 422);
+                }
+                $scope = 'sc.theater_id=' . $selectedTheaterId;
+            } else {
+                $scope = $this->enforceCinemaScope('sc');
+            }
             $this->ensureSchedulePublishSchema();
             $this->ensureScheduleDeleteIntegrity();
             if (!$this->beginDbTransaction()) jsonResponse(array('success' => false, 'message' => 'Không thể bắt đầu giao dịch xóa lịch chiếu.'), 500);
