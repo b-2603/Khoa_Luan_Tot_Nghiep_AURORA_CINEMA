@@ -1,309 +1,111 @@
+@import "tailwindcss";
+
 :root {
-  font-family: 'Inter', 'Segoe UI', Arial, sans-serif;
-  --bg: #eef3f2;
-  --card-bg: #ffffff;
-  --border: #d8e1df;
-  --text: #19333a;
-  --muted: #6a7b7d;
-  --primary: #e0a12b;
-  --primary-dark: #c78312;
-  --input-bg: #f7faf9;
-  --aurora-logo: url('/aurora-logo.svg');
-}
-
-* {
-  box-sizing: border-box;
-}
-
-html, body, #root {
-  margin: 0;
-  min-height: 100%;
-  width: 100%;
-  overflow-x: hidden;
-  font-family: 'Inter', 'Segoe UI', Arial, sans-serif;
-  background: var(--bg);
-  color: var(--text);
+  --bg-primary: #f8fafc;
+  --bg-secondary: #ffffff;
+  --bg-card: #ffffff;
+  --bg-card-hover: #f1f5f9;
+  --border-color: #e2e8f0;
+  --accent-gold: #d97706;
+  --accent-cyan: #0284c7;
+  --accent-purple: #7c3aed;
+  --accent-pink: #db2777;
+  --text-primary: #0f172a;
+  --text-secondary: #475569;
 }
 
 body {
-  min-height: 100vh;
-}
-
-button, input {
-  font: inherit;
-}
-
-/* ========================================================
-   1. MÀN HÌNH ĐĂNG NHẬP BAN ĐẦU EMS
-   ======================================================== */
-.ems-page {
-  min-height: 100vh;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  background: linear-gradient(135deg, #e9f1ef 0%, #f6f4ed 100%);
-  padding: 24px;
-}
-
-.ems-card {
-  width: min(100%, 480px);
-  background: var(--card-bg);
-  border: 1px solid var(--border);
-  border-radius: 16px;
-  box-shadow: 0 20px 55px rgba(25, 51, 58, 0.12);
-  padding: 38px 42px 24px;
-  position: relative;
-  overflow: hidden;
-}
-
-.ems-card::before {
-  content: '';
-  position: absolute;
-  inset: 0 0 auto;
-  height: 5px;
-  background: var(--primary);
-}
-
-.brand {
   margin: 0;
-  text-align: center;
-  color: var(--text);
-  font-size: 1.7rem;
-  font-weight: 700;
-  letter-spacing: 0.08em;
-}
-
-.title {
-  margin: 24px 0 8px;
-  text-align: center;
-  font-size: clamp(1.6rem, 2.5vw, 2.1rem);
-  line-height: 1.2;
-  color: var(--text);
-  font-weight: 700;
-}
-
-.subtitle {
-  margin: 0;
-  text-align: center;
-  color: var(--muted);
-  font-size: 0.95rem;
-  line-height: 1.5;
-}
-
-.divider {
-  height: 1px;
-  background: var(--border);
-  margin: 25px 0 18px;
-}
-
-.ems-alert-error {
-  background: #fef2f2;
-  border: 1px solid #fecaca;
-  color: #b91c1c;
-  padding: 10px 14px;
-  border-radius: 8px;
-  font-size: 0.88rem;
-  margin-bottom: 15px;
-  text-align: center;
-}
-
-.ems-alert-success {
-  background: #ecfdf5;
-  border: 1px solid #a7f3d0;
-  color: #065f46;
-  padding: 10px 14px;
-  border-radius: 8px;
-  font-size: 0.88rem;
-  margin-bottom: 15px;
-  text-align: center;
-  font-weight: 600;
-}
-
-.login-form {
-  display: flex;
-  flex-direction: column;
-}
-
-.field-label {
-  margin: 12px 0 8px;
-  font-weight: 700;
-  font-size: 0.9rem;
-  color: var(--text);
-}
-
-.input-wrap {
-  display: flex;
-  align-items: center;
-  width: 100%;
-  background: var(--input-bg);
-  border: 1px solid var(--border);
-  border-radius: 10px;
-  padding: 0 14px;
-  min-height: 54px;
-  transition: border-color 0.2s ease, box-shadow 0.2s ease, background 0.2s ease;
-}
-
-.input-wrap:focus-within {
-  background: #ffffff;
-  border-color: var(--primary);
-  box-shadow: 0 0 0 3px rgba(224, 161, 43, 0.16);
-}
-
-.icon {
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  width: 24px;
-  color: #809294;
-  margin-right: 10px;
-}
-
-.input-wrap input {
-  flex: 1;
-  border: none;
-  background: transparent;
-  outline: none;
-  color: var(--text);
-  font-size: 0.98rem;
-  min-width: 0;
-}
-
-.input-wrap input::placeholder {
-  color: #91a0a0;
-}
-
-.login-button {
-  margin-top: 24px;
-  border: none;
-  border-radius: 10px;
-  background: linear-gradient(180deg, var(--primary) 0%, var(--primary-dark) 100%);
-  color: #fff;
-  font-weight: 700;
-  font-size: 0.98rem;
-  letter-spacing: 0.06em;
-  min-height: 54px;
-  cursor: pointer;
-  transition: transform 0.15s ease, box-shadow 0.15s ease;
-  box-shadow: 0 8px 18px rgba(199, 131, 18, 0.22);
-}
-
-.login-button:hover {
-  transform: translateY(-1px);
-  box-shadow: 0 10px 22px rgba(199, 131, 18, 0.3);
-}
-
-.login-button:active {
-  transform: translateY(0);
-}
-
-.login-button:disabled {
-  opacity: 0.7;
-  cursor: not-allowed;
-}
-
-.footer {
-  text-align: center;
-  margin-top: 26px;
-  color: var(--muted);
-  font-size: 0.78rem;
-}
-
-/* ========================================================
-   2. BẢNG ĐIỀU KHIỂN EMS SAU KHI ĐĂNG NHẬP
-   ======================================================== */
-.ems-dashboard-page {
-  font-family: 'Inter', 'Segoe UI', Arial, sans-serif;
+  font-family: 'Plus Jakarta Sans', system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Oxygen, Ubuntu, Cantarell, sans-serif;
+  background-color: #f8fafc;
+  color: #0f172a;
   min-height: 100vh;
-  background: #f3f6fb;
-  padding: 32px;
+  overflow-x: hidden;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
 }
 
-.ems-dashboard-container {
-  max-width: 1200px;
-  margin: 0 auto;
+/* Chuẩn hóa font chữ tiếng Việt cho bằng khen & chứng chỉ */
+.font-serif,
+.certificate-serif {
+  font-family: 'Merriweather', 'Playfair Display', Georgia, Cambria, 'Times New Roman', serif !important;
+  text-rendering: optimizeLegibility;
 }
 
-.ems-dashboard-header {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  margin-bottom: 24px;
-  background: #ffffff;
-  padding: 16px 24px;
-  border-radius: 14px;
-  box-shadow: 0 4px 14px rgba(15, 23, 42, 0.04);
+.font-cinzel {
+  font-family: 'Cinzel', serif !important;
+}
+
+.certificate-name {
+  font-family: 'Plus Jakarta Sans', system-ui, -apple-system, sans-serif !important;
+  letter-spacing: 0.05em;
+  text-rendering: optimizeLegibility;
+}
+
+/* Custom Scrollbar */
+::-webkit-scrollbar {
+  width: 8px;
+  height: 8px;
+}
+::-webkit-scrollbar-track {
+  background: #f1f5f9;
+}
+::-webkit-scrollbar-thumb {
+  background: #cbd5e1;
+  border-radius: 4px;
+}
+::-webkit-scrollbar-thumb:hover {
+  background: #94a3b8;
+}
+
+/* Bright Glass Panel */
+.glass-panel {
+  background: rgba(255, 255, 255, 0.95);
+  backdrop-filter: blur(16px);
+  -webkit-backdrop-filter: blur(16px);
   border: 1px solid #e2e8f0;
+  box-shadow: 0 10px 30px -5px rgba(0, 0, 0, 0.05);
 }
 
-.ems-btn-logout {
-  display: inline-flex;
-  align-items: center;
-  gap: 6px;
-  padding: 8px 16px;
-  background: #fee2e2;
-  color: #b91c1c;
-  border: 1px solid #fecaca;
-  border-radius: 8px;
-  font-size: 13px;
-  font-weight: 600;
-  cursor: pointer;
-  transition: all 0.2s;
+.glass-nav {
+  background: rgba(255, 255, 255, 0.95);
+  backdrop-filter: blur(16px);
+  border-bottom: 1px solid #e2e8f0;
 }
 
-.ems-btn-logout:hover {
-  background: #dc2626;
-  color: #ffffff;
-  border-color: #dc2626;
+.aurora-glow-gold {
+  box-shadow: 0 10px 25px -5px rgba(217, 119, 6, 0.2);
 }
 
-@media (max-width: 640px) {
-  .ems-page {
-    align-items: flex-start;
-    padding: 16px 12px;
-  }
-
-  .ems-card {
-    padding: 30px 20px 20px;
-  }
-
-  .ems-dashboard-page {
-    padding: 16px 12px;
-  }
-
-  .ems-dashboard-header {
-    align-items: stretch;
-    flex-direction: column;
-    gap: 16px;
-    padding: 16px;
-  }
-
-  .ems-dashboard-header > div:last-child {
-    justify-content: space-between;
-    gap: 10px !important;
-  }
-
-  .ems-dashboard-header > div:last-child > div:first-child {
-    min-width: 0;
-    overflow-wrap: anywhere;
-    text-align: left !important;
-  }
-
-  .ems-dashboard-header .shared-brand {
-    max-width: 100%;
-  }
+.aurora-glow-cyan {
+  box-shadow: 0 10px 25px -5px rgba(2, 132, 199, 0.2);
 }
 
-@media (max-width: 420px) {
-  .ems-card {
-    padding-inline: 16px;
-  }
+.aurora-glow-purple {
+  box-shadow: 0 10px 25px -5px rgba(124, 58, 237, 0.2);
+}
 
-  .ems-dashboard-header > div:last-child {
-    align-items: stretch !important;
-    flex-direction: column;
-  }
+/* Custom Badges */
+.badge-gold {
+  background: #fffbeb;
+  color: #b45309;
+  border: 1px solid #fde68a;
+}
 
-  .ems-btn-logout {
-    justify-content: center;
-  }
+.badge-cyan {
+  background: #f0f9ff;
+  color: #0369a1;
+  border: 1px solid #bae6fd;
+}
+
+.badge-green {
+  background: #ecfdf5;
+  color: #047857;
+  border: 1px solid #a7f3d0;
+}
+
+.badge-purple {
+  background: #f5f3ff;
+  color: #6d28d9;
+  border: 1px solid #ddd6fe;
 }
