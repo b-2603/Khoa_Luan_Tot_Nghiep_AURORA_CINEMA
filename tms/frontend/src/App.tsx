@@ -269,7 +269,7 @@ interface ScheduleItem { id: number; screen_id: number; movie_id: number; theate
 type ScheduleView = 'active' | 'upcoming' | 'history' | 'all';
 interface ScheduleMeta { page: number; per_page: number; total: number; total_pages: number; view: ScheduleView; theater_id?: number; summary: { scheduled: number; running: number; finished: number; active_rooms: number; booked_seats: number; theaters: number; }; }
 interface ScheduleDeleteError extends Error { blockedIds?: number[]; }
-interface ScheduleSlotAvailability { occupied: Array<{ source:'saved'|'draft'; id:number; start:string; end:string }>; suggestions: Array<{ start:string; end:string }>; suggested?: { start:string; end:string } | null; duration_minutes?: number; turnaround_minutes?: number; }
+interface ScheduleSlotAvailability { screen?: { id:number; name:string }; requested?: { start:string; end:string; available:boolean; conflict?: { source:'saved'|'draft'; id:number; start:string; end:string } | null } | null; occupied: Array<{ source:'saved'|'draft'; id:number; start:string; end:string }>; suggestions: Array<{ start:string; end:string }>; suggested?: { start:string; end:string } | null; duration_minutes?: number; turnaround_minutes?: number; }
 const canDeleteSchedule = (schedule: ScheduleItem) => Number(schedule.can_delete) === 1;
 const scheduleDeleteBlockLabel = (schedule: ScheduleItem) => schedule.delete_block_reason === 'has_booking_history'
   ? 'Suất chiếu đã có lịch sử đặt vé'
@@ -778,9 +778,11 @@ export default function App() {
   const [selectedScheduleIds, setSelectedScheduleIds] = useState<number[]>([]);
   const [scheduleBulkDeleting, setScheduleBulkDeleting] = useState(false);
   const [scheduleSlotAvailability, setScheduleSlotAvailability] = useState<Record<string, ScheduleSlotAvailability>>({});
-  // Records the room for which a slot's time was explicitly accepted/edited.
-  // Availability can refresh freely without resetting an operator's choice.
-  const scheduleSlotTimeLockedForRoom = useRef<Record<string, number>>({});
+  // Only a time explicitly changed by the operator is protected from automatic
+  // suggestions. A server suggestion must never mark a conflicting default as
+  // manually accepted.
+  const scheduleSlotManuallyEdited = useRef<Record<string, boolean>>({});
+  const scheduleAvailabilitySequence = useRef<Record<string, number>>({});
   const [schedulesLoading, setSchedulesLoading] = useState(false);
   const scheduleLoadSequence = useRef(0);
   const [showScheduleModal, setShowScheduleModal] = useState(false);
@@ -2098,46 +2100,67 @@ export default function App() {
   };
 
   const updateScheduleSlotStart = (slotKey: string, startTime: string) => {
-    const currentSlot = scheduleForm.time_slots.find(item => item.key === slotKey);
-    if (currentSlot?.screen_id) scheduleSlotTimeLockedForRoom.current[slotKey] = Number(currentSlot.screen_id);
+    scheduleSlotManuallyEdited.current[slotKey] = true;
     const slots = scheduleForm.time_slots.map(item => item.key === slotKey ? { ...item, start_time: startTime, end_time: calculateScheduleEndTime(startTime, scheduleForm.movie_id) } : item);
     setScheduleForm({ ...scheduleForm, time_slots: slots, start_time: slots[0].start_time, end_time: slots[0].end_time });
   };
 
+  const acceptScheduleSuggestion = (slotKey: string, suggestion: { start:string; end:string }) => {
+    delete scheduleSlotManuallyEdited.current[slotKey];
+    setScheduleForm(current => {
+      const slots = current.time_slots.map(slot => slot.key === slotKey ? { ...slot, start_time:suggestion.start, end_time:suggestion.end } : slot);
+      return { ...current, time_slots:slots, start_time:slots[0]?.start_time || current.start_time, end_time:slots[0]?.end_time || current.end_time };
+    });
+  };
+
   const suggestScheduleSlot = async (slotKey: string, screenId: number, showDate = scheduleForm.show_date, movieId = scheduleForm.movie_id) => {
     if (!slotKey || !screenId || !movieId || !showDate) return;
+    const slot = scheduleForm.time_slots.find(item => item.key === slotKey);
+    if (!slot) return;
+    const requestedStart = slot.start_time;
+    const requestSequence = (scheduleAvailabilitySequence.current[slotKey] || 0) + 1;
+    scheduleAvailabilitySequence.current[slotKey] = requestSequence;
     try {
       const response = await fetch(`${API_BASE}?action=schedule-availability`, {
         method:'POST', credentials:'include', headers:{'Content-Type':'application/json'},
-        body:JSON.stringify({ movie_id:movieId, screen_id:screenId, show_date:showDate, theater_id:currentUser?.role === 'super_admin' ? scheduleTheaterFilter : undefined, exclude_showtime_id:scheduleForm.id || 0, slot_key:slotKey, draft_slots:scheduleForm.time_slots })
+        body:JSON.stringify({ movie_id:movieId, screen_id:screenId, show_date:showDate, requested_start_time:requestedStart, theater_id:currentUser?.role === 'super_admin' ? scheduleTheaterFilter : undefined, exclude_showtime_id:scheduleForm.id || 0, slot_key:slotKey, draft_slots:scheduleForm.time_slots })
       });
       const result = await response.json();
       if (!response.ok || !result.success || !result.data) return;
+      if (scheduleAvailabilitySequence.current[slotKey] !== requestSequence) return;
       const availability = result.data as ScheduleSlotAvailability;
       setScheduleSlotAvailability(current => ({ ...current, [slotKey]:availability }));
-      if (!availability.suggested) return;
+      if (availability.requested?.available || !availability.suggested || scheduleSlotManuallyEdited.current[slotKey]) return;
       setScheduleForm(current => {
         if (current.show_date !== showDate || Number(current.movie_id) !== Number(movieId)) return current;
-        // Do not overwrite a manual selection. A fresh slot (or a changed room)
-        // receives one suggestion only; subsequent availability reloads are read-only.
-        if (scheduleSlotTimeLockedForRoom.current[slotKey] === Number(screenId)) return current;
-        const slots = current.time_slots.map(slot => slot.key === slotKey && Number(slot.screen_id) === Number(screenId)
-          ? { ...slot, start_time:availability.suggested!.start, end_time:availability.suggested!.end }
-          : slot);
-        if (!slots.some(slot => slot.key === slotKey && Number(slot.screen_id) === Number(screenId))) return current;
-        scheduleSlotTimeLockedForRoom.current[slotKey] = Number(screenId);
+        const currentSlot = current.time_slots.find(item => item.key === slotKey);
+        if (!currentSlot || Number(currentSlot.screen_id) !== Number(screenId) || currentSlot.start_time !== requestedStart) return current;
+        const slots = current.time_slots.map(item => item.key === slotKey
+          ? { ...item, start_time:availability.suggested!.start, end_time:availability.suggested!.end }
+          : item);
         return { ...current, time_slots:slots, start_time:slots[0]?.start_time || current.start_time, end_time:slots[0]?.end_time || current.end_time };
       });
     } catch { /* saveSchedule remains the server-side guard if the check is temporarily unavailable */ }
   };
 
-  const scheduleSlotSignature = scheduleForm.time_slots.map(slot => `${slot.key}:${slot.screen_id}`).join('|');
+  const scheduleSlotSignature = scheduleForm.time_slots.map(slot => `${slot.key}:${slot.screen_id}:${slot.start_time}`).join('|');
+  const scheduleAvailabilityPending = showScheduleModal && scheduleForm.time_slots.some(slot => {
+    const availability = scheduleSlotAvailability[slot.key];
+    return !availability?.requested || availability.requested.start !== slot.start_time || Number(availability.screen?.id || 0) !== Number(slot.screen_id);
+  });
+  const scheduleHasConflicts = scheduleForm.time_slots.some(slot => {
+    const availability = scheduleSlotAvailability[slot.key];
+    return availability?.requested?.start === slot.start_time && Number(availability.screen?.id || 0) === Number(slot.screen_id) && !availability.requested.available;
+  });
   useEffect(() => {
-    if (!showScheduleModal) scheduleSlotTimeLockedForRoom.current = {};
+    if (!showScheduleModal) {
+      scheduleSlotManuallyEdited.current = {};
+      scheduleAvailabilitySequence.current = {};
+      setScheduleSlotAvailability({});
+    }
   }, [showScheduleModal]);
   useEffect(() => {
-    if (!showScheduleModal || scheduleForm.id || !scheduleForm.movie_id || !scheduleForm.show_date) return;
-    setScheduleSlotAvailability({});
+    if (!showScheduleModal || !scheduleForm.movie_id || !scheduleForm.show_date) return;
     scheduleForm.time_slots.filter(slot => Number(slot.screen_id) > 0).forEach(slot => { void suggestScheduleSlot(slot.key, Number(slot.screen_id), scheduleForm.show_date, scheduleForm.movie_id); });
   }, [showScheduleModal, scheduleForm.id, scheduleForm.movie_id, scheduleForm.show_date, scheduleSlotSignature]);
 
@@ -2171,6 +2194,9 @@ export default function App() {
     const defaultStart = '09:00';
     const endTime = calculateScheduleEndTime(defaultStart, firstMovie.id);
     const initialTicketIds = ticketTypesList.length ? [ticketTypesList[0].id] : [];
+    scheduleSlotManuallyEdited.current = {};
+    scheduleAvailabilitySequence.current = {};
+    setScheduleSlotAvailability({});
     setScheduleForm({ id: 0, movie_id: firstMovie.id, screen_ids: [scheduleScreens[0].id], ticket_type_ids: initialTicketIds, show_date: scheduleDate, start_time: defaultStart, end_time: endTime, time_slots: [{ key: 'slot-1', screen_id: scheduleScreens[0].id, start_time: defaultStart, end_time: endTime }], ticket_price: getEffectiveTicketPrice(ticketTypesList[0], scheduleDate, defaultStart), operational_note: '', status: 'scheduled' });
     setShowScheduleModal(true);
   };
@@ -2234,6 +2260,10 @@ export default function App() {
 
   const handleSaveSchedule = async (e: FormEvent) => {
     e.preventDefault();
+    if (scheduleAvailabilityPending || scheduleHasConflicts) {
+      setSystemNotice({ message:scheduleHasConflicts ? 'Khung giờ đang chọn bị trùng. Vui lòng dùng khung giờ trống được đề xuất.' : 'Hệ thống đang kiểm tra phòng và khung giờ với Aurora DB.', type:'warning' });
+      return;
+    }
     try {
       const endpoint = scheduleForm.id ? `${API_BASE}?action=schedules&id=${scheduleForm.id}` : `${API_BASE}?action=schedules`;
       const response = await fetch(endpoint, {
@@ -5035,7 +5065,7 @@ export default function App() {
                       <p><CheckCircle2 size={13}/> Suất mới ưu tiên ngày kế tiếp; backend kiểm tra thời gian phân bổ, xung đột và đệm dọn phòng 10 phút trong <b>aurora_db</b>.</p>
                     </div>
                     <div className="schedule-turnaround-notice"><span><ShieldCheck size={18}/></span><div><b>Khoảng chuyển ca được bảo vệ</b><p>Mỗi phòng cần tối thiểu <strong>10 phút</strong> sau khi phim kết thúc để nhân viên vệ sinh, kiểm tra thiết bị và chuẩn bị đón khách cho suất kế tiếp.</p></div><em>10 PHÚT</em></div>
-                    <div className="schedule-time-slot-list">{scheduleForm.time_slots.map((slot, index) => { const availability=scheduleSlotAvailability[slot.key]; const scheduleRooms=getScheduleScreens(); return <div className="schedule-time-slot-row" key={slot.key}><span className="schedule-time-slot-number">{index + 1}</span><div><label className="tms-form-label">Phòng chiếu <em>*</em></label><select required className="tms-form-select" value={slot.screen_id || 0} onChange={e => { const screenId=Number(e.target.value); const slots=scheduleForm.time_slots.map(item=>item.key===slot.key?{...item,screen_id:screenId}:item); setScheduleForm({...scheduleForm,time_slots:slots,screen_ids:Array.from(new Set(slots.map(item=>item.screen_id).filter(Boolean)))}); }}><option value={0} disabled>Chọn phòng</option>{scheduleRooms.map(s=><option key={s.id} value={s.id}>{screenDisplayName(s.name,s.id)} · {s.total_seats} ghế</option>)}</select><small>{scheduleRooms.find(s=>Number(s.id)===Number(slot.screen_id))?.screen_type || 'Phòng đang hoạt động'}</small>{availability?.suggested && <span className="schedule-free-slot"><CheckCircle2 size={12}/> Đã chọn khung trống {availability.suggested.start}–{availability.suggested.end}</span>}</div><div><label className="tms-form-label">Giờ bắt đầu <em>*</em></label><div className="schedule-clock-control"><select aria-label="Giờ bắt đầu" value={String(slot.start_time).slice(0,2)} onChange={event=>updateScheduleSlotStart(slot.key,`${event.target.value}:${String(slot.start_time).slice(3,5)}`)}>{Array.from({length:24},(_,hour)=>String(hour).padStart(2,'0')).map(hour=><option key={hour}>{hour}</option>)}</select><i>:</i><select aria-label="Phút bắt đầu" value={String(slot.start_time).slice(3,5)} onChange={event=>updateScheduleSlotStart(slot.key,`${String(slot.start_time).slice(0,2)}:${event.target.value}`)}>{Array.from(new Set([...Array.from({length:12},(_,minute)=>String(minute*5).padStart(2,'0')),String(slot.start_time).slice(3,5)])).sort().map(minute=><option key={minute}>{minute}</option>)}</select><b>24H</b></div><small>Định dạng 24 giờ</small>{availability?.occupied?.length ? <span className="schedule-busy-slots">Đã bận: {availability.occupied.filter(item=>item.source==='saved').map(item=>`${item.start}–${item.end}`).join(', ') || 'suất đang thêm'}</span> : <span className="schedule-busy-slots free">Phòng còn trống trong ngày</span>}</div><div><label className="tms-form-label">Giờ kết thúc tự động</label><output>{slot.end_time}</output><small>{(scheduleMoviesList.find(movie => Number(movie.id) === Number(scheduleForm.movie_id)) || moviesList.find(movie => Number(movie.id) === Number(scheduleForm.movie_id)))?.duration_minutes || 0} phút</small></div>{!scheduleForm.id && <button type="button" className="schedule-time-slot-remove" disabled={scheduleForm.time_slots.length === 1} aria-label="Xóa suất chiếu" onClick={() => { const slots = scheduleForm.time_slots.filter(item => item.key !== slot.key); setScheduleForm({...scheduleForm, time_slots:slots, screen_ids:Array.from(new Set(slots.map(item=>item.screen_id).filter(Boolean))), start_time:slots[0].start_time, end_time:slots[0].end_time}); }}><Trash2 size={15}/></button>}</div>; })}</div>
+                    <div className="schedule-time-slot-list">{scheduleForm.time_slots.map((slot, index) => { const availability=scheduleSlotAvailability[slot.key]; const scheduleRooms=getScheduleScreens(); const selectedTimeChecked=availability?.requested?.start===slot.start_time&&Number(availability.screen?.id||0)===Number(slot.screen_id); return <div className={`schedule-time-slot-row ${selectedTimeChecked&&!availability?.requested?.available?'conflict':''}`} key={slot.key}><span className="schedule-time-slot-number">{index + 1}</span><div><label className="tms-form-label">Phòng chiếu <em>*</em></label><select required className="tms-form-select" value={slot.screen_id || 0} onChange={e => { const screenId=Number(e.target.value); delete scheduleSlotManuallyEdited.current[slot.key]; setScheduleSlotAvailability(current=>{const next={...current};delete next[slot.key];return next;}); const slots=scheduleForm.time_slots.map(item=>item.key===slot.key?{...item,screen_id:screenId}:item); setScheduleForm({...scheduleForm,time_slots:slots,screen_ids:Array.from(new Set(slots.map(item=>item.screen_id).filter(Boolean)))}); }}><option value={0} disabled>Chọn phòng</option>{scheduleRooms.map(s=><option key={s.id} value={s.id}>{screenDisplayName(s.name,s.id)} · {s.total_seats} ghế</option>)}</select><small>{scheduleRooms.find(s=>Number(s.id)===Number(slot.screen_id))?.screen_type || 'Phòng đang hoạt động'}</small>{selectedTimeChecked&&availability?.requested?.available&&<span className="schedule-free-slot"><CheckCircle2 size={12}/> Khung giờ {availability.requested.start}–{availability.requested.end} còn trống</span>}</div><div><label className="tms-form-label">Giờ bắt đầu <em>*</em></label><div className="schedule-clock-control"><select aria-label="Giờ bắt đầu" value={String(slot.start_time).slice(0,2)} onChange={event=>updateScheduleSlotStart(slot.key,`${event.target.value}:${String(slot.start_time).slice(3,5)}`)}>{Array.from({length:24},(_,hour)=>String(hour).padStart(2,'0')).map(hour=><option key={hour}>{hour}</option>)}</select><i>:</i><select aria-label="Phút bắt đầu" value={String(slot.start_time).slice(3,5)} onChange={event=>updateScheduleSlotStart(slot.key,`${String(slot.start_time).slice(0,2)}:${event.target.value}`)}>{Array.from(new Set([...Array.from({length:12},(_,minute)=>String(minute*5).padStart(2,'0')),String(slot.start_time).slice(3,5)])).sort().map(minute=><option key={minute}>{minute}</option>)}</select><b>24H</b></div><small>Định dạng 24 giờ</small>{selectedTimeChecked&&!availability?.requested?.available?<span className="schedule-slot-conflict"><AlertTriangle size={12}/> Giờ này bị trùng{availability?.suggested&&<button type="button" onClick={()=>acceptScheduleSuggestion(slot.key,availability.suggested!)}>Dùng {availability.suggested.start}–{availability.suggested.end}</button>}</span>:availability?.occupied?.length?<span className="schedule-busy-slots">Đã bận: {availability.occupied.filter(item=>item.source==='saved').map(item=>`${item.start}–${item.end}`).join(', ') || 'suất đang thêm'}</span>:<span className="schedule-busy-slots free">Phòng còn trống trong ngày</span>}</div><div><label className="tms-form-label">Giờ kết thúc tự động</label><output>{slot.end_time}</output><small>{(scheduleMoviesList.find(movie => Number(movie.id) === Number(scheduleForm.movie_id)) || moviesList.find(movie => Number(movie.id) === Number(scheduleForm.movie_id)))?.duration_minutes || 0} phút</small></div>{!scheduleForm.id && <button type="button" className="schedule-time-slot-remove" disabled={scheduleForm.time_slots.length === 1} aria-label="Xóa suất chiếu" onClick={() => { const slots = scheduleForm.time_slots.filter(item => item.key !== slot.key); setScheduleForm({...scheduleForm, time_slots:slots, screen_ids:Array.from(new Set(slots.map(item=>item.screen_id).filter(Boolean))), start_time:slots[0].start_time, end_time:slots[0].end_time}); }}><Trash2 size={15}/></button>}</div>; })}</div>
                     {!scheduleForm.id && <button type="button" className="schedule-time-slot-add" onClick={() => { const last = scheduleForm.time_slots[scheduleForm.time_slots.length - 1]; const date = new Date(`2000-01-01T${last.end_time}:00`); date.setMinutes(date.getMinutes() + 15); const start = date.toTimeString().slice(0,5); const slot = { key:`slot-${Date.now()}`, screen_id:last.screen_id || getScheduleScreens()[0]?.id || 0, start_time:start, end_time:calculateScheduleEndTime(start, scheduleForm.movie_id) }; const slots=[...scheduleForm.time_slots,slot]; setScheduleForm({...scheduleForm, time_slots:slots, screen_ids:Array.from(new Set(slots.map(item=>item.screen_id).filter(Boolean)))}); }}><Plus size={15}/> Thêm suất chiếu</button>}
                     <div className="schedule-section-heading pricing"><DollarSign size={16}/><div><b>Loại vé áp dụng & ghi chú</b><small>Chọn một hoặc nhiều loại vé đang có trong Aurora DB.</small></div></div>
                     <div className="schedule-editor-grid"><div className="tms-form-group ticket-type-picker"><label className="tms-form-label">Loại vé áp dụng <em>*</em></label><div className="ticket-type-select-list">{ticketTypesList.length ? ticketTypesList.map(ticketType => { const available = isTicketAvailableForSchedule(ticketType, scheduleForm.show_date, scheduleForm.start_time); const effectivePrice = getEffectiveTicketPrice(ticketType, scheduleForm.show_date, scheduleForm.start_time); return <label key={ticketType.id} className={`${scheduleForm.ticket_type_ids.includes(Number(ticketType.id)) ? 'selected' : ''} ${available ? '' : 'disabled'}`}><input type="checkbox" disabled={!available} checked={scheduleForm.ticket_type_ids.includes(Number(ticketType.id))} onChange={() => { const checked = scheduleForm.ticket_type_ids.includes(Number(ticketType.id)); const nextIds = checked ? scheduleForm.ticket_type_ids.filter(id => id !== Number(ticketType.id)) : [...scheduleForm.ticket_type_ids, Number(ticketType.id)]; const selectedPrices = ticketTypesList.filter(item => nextIds.includes(Number(item.id))).map(item => getEffectiveTicketPrice(item, scheduleForm.show_date, scheduleForm.start_time)); setScheduleForm({...scheduleForm, ticket_type_ids:nextIds, ticket_price:selectedPrices.length ? Math.min(...selectedPrices) : 0}); }}/><span><b>{ticketType.name}</b><small>{available ? ticketType.code : `${ticketType.code} · Không áp dụng`}</small></span><strong>{available ? effectivePrice === 0 ? 'Miễn phí' : `${effectivePrice.toLocaleString('vi-VN')} ₫` : '—'}</strong><Check size={15}/></label>; }) : <span className="ticket-type-loading">Chưa có loại vé hoạt động trong Aurora DB.</span>}</div></div><div className="tms-form-group"><label className="tms-form-label">Ghi chú vận hành</label><input maxLength={500} className="tms-form-input" value={scheduleForm.operational_note} onChange={e => setScheduleForm({...scheduleForm,operational_note:e.target.value})} placeholder="Ví dụ: Ưu tiên quầy vé 1, kiểm tra kính 3D"/></div></div>
@@ -5069,7 +5099,7 @@ export default function App() {
                   </aside>
                 </div>
               </div>
-              <div className="tms-modal-footer schedule-editor-footer"><span><ShieldCheck size={15}/> Máy chủ kiểm tra phân bổ phim và xung đột riêng cho từng phòng, khung giờ.</span><div><button type="button" className="tms-btn tms-btn-outline" onClick={() => setShowScheduleModal(false)}>Hủy</button><button type="submit" className="tms-btn tms-btn-primary" disabled={!scheduleForm.movie_id || !scheduleForm.ticket_type_ids.length || !scheduleForm.time_slots.length || scheduleForm.time_slots.some(slot=>!slot.screen_id)}><CalendarCheck size={16}/>{scheduleForm.id ? 'Lưu thay đổi' : `Tạo ${scheduleForm.time_slots.length} suất chiếu`}</button></div></div>
+              <div className="tms-modal-footer schedule-editor-footer"><span className={scheduleHasConflicts?'conflict':''}>{scheduleHasConflicts?<AlertTriangle size={15}/>:<ShieldCheck size={15}/>} {scheduleHasConflicts?'Hãy dùng khung giờ trống trước khi lưu.':scheduleAvailabilityPending?'Đang kiểm tra khung giờ với Aurora DB…':'Tất cả khung giờ đã được Aurora DB xác nhận còn trống.'}</span><div><button type="button" className="tms-btn tms-btn-outline" onClick={() => setShowScheduleModal(false)}>Hủy</button><button type="submit" className="tms-btn tms-btn-primary" disabled={scheduleAvailabilityPending || scheduleHasConflicts || !scheduleForm.movie_id || !scheduleForm.ticket_type_ids.length || !scheduleForm.time_slots.length || scheduleForm.time_slots.some(slot=>!slot.screen_id)}><CalendarCheck size={16}/>{scheduleForm.id ? 'Lưu thay đổi' : `Tạo ${scheduleForm.time_slots.length} suất chiếu`}</button></div></div>
             </form>
           </div>
         </div>

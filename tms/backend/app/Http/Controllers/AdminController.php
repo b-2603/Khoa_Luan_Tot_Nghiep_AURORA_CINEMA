@@ -2573,6 +2573,7 @@ class AdminController
         $date = isset($input['show_date']) ? trim((string)$input['show_date']) : '';
         $excludeId = isset($input['exclude_showtime_id']) ? (int)$input['exclude_showtime_id'] : 0;
         $currentSlotKey = isset($input['slot_key']) ? trim((string)$input['slot_key']) : '';
+        $requestedStart = isset($input['requested_start_time']) ? substr(trim((string)$input['requested_start_time']), 0, 5) : '';
         if (!$movieId || !$screenId || !preg_match('/^\d{4}-\d{2}-\d{2}$/', $date)) jsonResponse(array('success'=>false, 'message'=>'Thiếu phim, phòng hoặc ngày chiếu để tìm khung giờ trống.'), 422);
         $dateParts = explode('-', $date);
         if (!checkdate((int)$dateParts[1], (int)$dateParts[2], (int)$dateParts[0])) jsonResponse(array('success'=>false, 'message'=>'Ngày chiếu không hợp lệ.'), 422);
@@ -2597,6 +2598,32 @@ class AdminController
         usort($occupied, array('AdminController', 'compareScheduleSlots'));
         $duration = (int)$movie['duration_minutes'];
         $turnaroundMinutes = 10;
+        $requested = null;
+        if (preg_match('/^\d{2}:\d{2}$/', $requestedStart)) {
+            $requestedHour = (int)substr($requestedStart, 0, 2);
+            $requestedMinutePart = (int)substr($requestedStart, 3, 2);
+            if ($requestedHour <= 23 && $requestedMinutePart <= 59) {
+            $requestedMinute = $requestedHour * 60 + $requestedMinutePart;
+            $requestedEndMinute = $requestedMinute + $duration;
+            $requestedAvailable = $requestedMinute >= 0 && $requestedEndMinute <= 1440;
+            $requestedConflict = null;
+            foreach ($occupied as $busy) {
+                $busyStart = ((int)substr($busy['start'],0,2))*60 + (int)substr($busy['start'],3,2);
+                $busyEnd = ((int)substr($busy['end'],0,2))*60 + (int)substr($busy['end'],3,2);
+                if ($requestedMinute < $busyEnd + $turnaroundMinutes && $requestedEndMinute > $busyStart - $turnaroundMinutes) {
+                    $requestedAvailable = false;
+                    $requestedConflict = $busy;
+                    break;
+                }
+            }
+            $requested = array(
+                'start' => $requestedStart,
+                'end' => $requestedEndMinute <= 1440 ? sprintf('%02d:%02d', (int)floor($requestedEndMinute / 60), $requestedEndMinute % 60) : '',
+                'available' => $requestedAvailable,
+                'conflict' => $requestedConflict
+            );
+            }
+        }
         $suggestions = array();
         // Operating window: 09:00-24:00. In 5-minute increments so the
         // selected time always remains usable by the editor's 24-hour picker.
@@ -2614,7 +2641,7 @@ class AdminController
             }
             if ($free) $suggestions[] = array('start'=>$candidateStart, 'end'=>$candidateEnd);
         }
-        jsonResponse(array('success'=>true, 'data'=>array('screen'=>array('id'=>(int)$screen['id'], 'name'=>$screen['name']), 'date'=>$date, 'duration_minutes'=>$duration, 'turnaround_minutes'=>$turnaroundMinutes, 'occupied'=>$occupied, 'suggestions'=>$suggestions, 'suggested'=>count($suggestions) ? $suggestions[0] : null)));
+        jsonResponse(array('success'=>true, 'data'=>array('screen'=>array('id'=>(int)$screen['id'], 'name'=>$screen['name']), 'date'=>$date, 'duration_minutes'=>$duration, 'turnaround_minutes'=>$turnaroundMinutes, 'requested'=>$requested, 'occupied'=>$occupied, 'suggestions'=>$suggestions, 'suggested'=>count($suggestions) ? $suggestions[0] : null)));
     }
 
     private function ensureSchedulePublishSchema()
