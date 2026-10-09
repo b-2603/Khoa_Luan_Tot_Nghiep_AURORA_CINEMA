@@ -3929,10 +3929,6 @@ export default function App() {
         setScheduleTheaterFilter(0); setScheduleMovieId(0); setScheduleMoviesList([]); setSchedulesList([]); setScheduleSearch(''); setSelectedScheduleIds([]);
       };
       if (isSystemSchedule && !scheduleTheaterFilter) return <div className="schedule-theater-hub">
-        <section className="schedule-flow-header">
-          <div><span className="schedule-flow-icon"><CalendarDays size={22}/></span><div><small>ĐIỀU PHỐI LỊCH CHIẾU</small><h2>Chọn rạp cần xem lịch</h2><p>Mỗi không gian chỉ hiển thị phim, phòng và suất chiếu thuộc đúng rạp.</p></div></div>
-          <nav aria-label="Các bước xem lịch chiếu"><span className="active"><b>1</b> Chọn rạp</span><i/><span><b>2</b> Chọn phim</span><i/><span><b>3</b> Xem lịch</span></nav>
-        </section>
         <section className="schedule-theater-directory">
           <header><div><small>HỆ THỐNG AURORA CINEMA</small><h3>Danh sách cụm rạp</h3></div><button type="button" className="account-refresh-btn" disabled={scheduleTheatersLoading} onClick={()=>void loadScheduleTheaters()}><RefreshCw size={15}/>{scheduleTheatersLoading?'Đang tải…':'Làm mới'}</button></header>
           <div className="schedule-theater-grid">{scheduleTheatersList.map(theater=><button type="button" className="schedule-theater-card" key={theater.id} onClick={()=>chooseScheduleTheater(Number(theater.id))}>
