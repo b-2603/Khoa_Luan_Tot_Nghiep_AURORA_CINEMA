@@ -1,0 +1,10 @@
+{
+  "name": "aurora-cinemas-ems",
+  "version": "1.0.0",
+  "private": true,
+  "description": "AURORA CINEMAS EMS - Cinema Management System with AI Integration",
+  "scripts": {
+    "dev": "npm --prefix frontend run dev",
+    "build": "npm --prefix frontend run build"
+  }
+}
