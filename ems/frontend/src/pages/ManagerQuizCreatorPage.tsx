@@ -57,12 +57,12 @@ export const ManagerQuizCreatorPage: React.FC = () => {
       {/* Header */}
       <div className="border-b border-slate-200 pb-4">
         <div className="flex items-center gap-2">
-          <h2 className="text-xl font-bold text-slate-900">Tạo Bài Kiểm Tra & Khóa Học CTKM bằng AI</h2>
+          <h2 className="text-xl font-bold text-slate-900">Tạo Bài Kiểm Tra & Khóa Học Nghiệp Vụ</h2>
           <span className="text-[10px] font-bold px-2.5 py-0.5 rounded-full bg-purple-50 text-purple-700 border border-purple-200">
-            ✨ Trợ Lý AI
+            ✨ Soạn Đề Tự Động
           </span>
         </div>
-        <p className="text-xs text-slate-500 mt-1">Sử dụng Trợ lý AI (OpenAI GPT-4o) để tự động khởi tạo câu hỏi trắc nghiệm nghiệp vụ rạp phim từ tài liệu & chương trình khuyến mãi</p>
+        <p className="text-xs text-slate-500 mt-1">Khởi tạo câu hỏi trắc nghiệm nghiệp vụ từ nội dung khóa học.</p>
       </div>
 
       {/* Main Form */}
@@ -90,9 +90,8 @@ export const ManagerQuizCreatorPage: React.FC = () => {
           <div className="flex items-center justify-between">
             <label className="text-xs font-bold text-purple-900 flex items-center gap-1.5">
               <Sparkles className="w-4 h-4 text-amber-600" />
-              <span>Chủ Đề Hoặc Nội Dung Cần AI Tạo Câu Hỏi (OpenAI Prompt):</span>
+              <span>Chủ đề hoặc nội dung cần tạo câu hỏi:</span>
             </label>
-            <span className="text-[10px] text-purple-700 font-bold">GPT-4o-mini Live</span>
           </div>
 
           <textarea
@@ -111,12 +110,12 @@ export const ManagerQuizCreatorPage: React.FC = () => {
             {isAiGenerating ? (
               <>
                 <RefreshCw className="w-4 h-4 animate-spin" />
-                <span>OpenAI đang sinh tự động câu hỏi trắc nghiệm...</span>
+                <span>Đang tự động khởi tạo bộ câu hỏi trắc nghiệm...</span>
               </>
             ) : (
               <>
                 <Sparkles className="w-4 h-4 text-amber-200" />
-                <span>Khởi Tạo Câu Hỏi Tự Động Bằng AI</span>
+                <span>Khởi Tạo Bộ Câu Hỏi Tự Động</span>
               </>
             )}
           </button>
@@ -126,7 +125,7 @@ export const ManagerQuizCreatorPage: React.FC = () => {
         {generatedQuestions.length > 0 && (
           <div className="space-y-4 pt-2">
             <h3 className="font-bold text-sm text-slate-900 flex items-center justify-between">
-              <span>Danh sách câu hỏi AI vừa tạo ({generatedQuestions.length})</span>
+              <span>Danh sách câu hỏi vừa khởi tạo ({generatedQuestions.length})</span>
               <span className="text-xs text-emerald-700 font-bold">Sẵn sàng xuất bản</span>
             </h3>
 
@@ -160,7 +159,7 @@ export const ManagerQuizCreatorPage: React.FC = () => {
                   </div>
 
                   <div className="text-[10px] text-slate-500 italic pt-1 border-t border-slate-200">
-                    💡 Giải thích AI: {q.explanation}
+                    💡 Hướng dẫn đáp án: {q.explanation}
                   </div>
                 </div>
               ))}

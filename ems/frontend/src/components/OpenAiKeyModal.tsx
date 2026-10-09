@@ -39,22 +39,10 @@ export const OpenAiKeyModal: React.FC<OpenAiKeyModalProps> = ({ isOpen, onClose 
           </div>
           <div>
             <h3 className="font-bold text-base text-white">Cấu hình OpenAI API Key</h3>
-            <p className="text-xs text-slate-400">Dành cho tính năng AI Tạo Quiz & Xếp Lịch Tự Động</p>
+            <p className="text-xs text-slate-400">Dành cho tính năng Soạn Đề Khảo Thí & Phân Ca Tự Động</p>
           </div>
         </div>
 
-        <div className="p-3 bg-slate-800/60 border border-slate-700/60 rounded-xl text-xs text-slate-300 mb-4 space-y-1">
-          <div className="flex items-center gap-1.5 font-semibold text-amber-400">
-            <Info className="w-4 h-4 shrink-0" />
-            <span>Lưu ý đối với Khóa luận tốt nghiệp:</span>
-          </div>
-          <p>
-            Hệ thống đã tích hợp **Smart AI Engine tự động (Offline Fallback)**. Ngay cả khi **không có Key**, hệ thống vẫn chạy demo mượt mà 100%!
-          </p>
-          <p>
-            Nếu bạn nhập API Key hợp lệ (`sk-...`), hệ thống sẽ gọi trực tiếp OpenAI GPT-4o-mini Live.
-          </p>
-        </div>
 
         <form onSubmit={handleSave} className="space-y-4">
           <div>

@@ -115,12 +115,20 @@ bổ phim thuộc rạp đó.
 | Thu ngân / quản trị demo | `0328754062` | `8888` |
 | Quản trị demo | `admin` | `admin123` |
 
-### EMS — Employee Management System
+### EMS — Employee Management System (Hệ Thống Quản Lý Nhân Sự & Đào Tạo)
 
-| Vai trò | Tên đăng nhập | Mật khẩu |
-|---|---|---|
-| Ban Giám đốc | `0328754062` | `8888` |
-| Trưởng phòng Nhân sự | `admin` | `admin123` |
+> **Cơ chế đăng nhập nội bộ:**
+> - **Tên đăng nhập:** Mã nhân viên chính là **Số điện thoại (SĐT)** của nhân sự.
+> - **Mật khẩu khởi tạo mặc định:** `8888` (có thể đổi mật khẩu sau khi đăng nhập trong trang Hồ Sơ).
+> - **Quy định cấp phát:** Tài khoản nhân viên do Quản lý Nhân sự tạo; Tài khoản quản lý do Admin tổng cấp.
+
+| Vai trò / Bộ phận | Họ và Tên | Mã NV (Số Điện Thoại) | Mật khẩu mặc định | Ghi chú quyền hạn |
+|---|---|---|---|---|
+| **Quản lý Nhân sự & Đào tạo** | Phạm Thu Hương | `0988888888` | `8888` | Toàn quyền quản trị nhân sự, duyệt ca, xếp lịch AI, tạo khóa học & đề thi |
+| **Nhân viên Vé & CSKH** | Nguyễn Văn Minh | `0901234567` | `8888` | Chấm công Face ID, xem ca làm, đăng ký ca, học tập & thi định kỳ |
+| **Nhân viên Bắp nước Popcorn** | Trần Thị Mai | `0912345678` | `8888` | Chấm công Face ID, xem ca làm, đăng ký ca, học tập & thi định kỳ |
+| **Nhân viên Kỹ thuật Chiếu phim** | Lê Hoàng Nam | `0923456789` | `8888` | Chấm công Face ID, xem ca làm, đăng ký ca, học tập & thi định kỳ |
+| **Nhân viên Phục vụ** | Nguyễn Trần Thái Bảo | `0395852972` | `8888` | Tài khoản nhân sự hoạt động tại rạp |
 
 ### Customer — Website khách hàng
 

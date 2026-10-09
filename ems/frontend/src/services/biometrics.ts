@@ -1,14 +1,16 @@
 /**
  * REAL BIOMETRIC & NETWORK VERIFICATION SERVICE
- * Module xử lý xác thực khuôn mặt sinh trắc học thời gian thực qua Canvas/WebRTC
- * và kiểm tra mạng Wi-Fi nội bộ thật qua IP / Subnet rạp.
+ * Nhận diện khuôn mặt THẬT bằng mô hình học máy (face-api: TinyFaceDetector + Landmarks 68 + FaceRecognition 128-d)
+ * chạy hoàn toàn trên trình duyệt, kèm kiểm tra mạng Wi-Fi nội bộ qua IP rạp.
  */
+import * as faceapi from '@vladmandic/face-api';
 
 export interface FaceFeatures {
-  skinRatio: number;
-  histogram: number[]; // 64 values representing 8x8 block luminance
+  /** Vector đặc trưng khuôn mặt 128 chiều (face descriptor) */
+  descriptor?: number[];
   capturedImage: string; // Base64 data URL
   timestamp: number;
+  hasValidFeatures?: boolean;
 }
 
 export interface NetworkConfig {
@@ -20,14 +22,20 @@ export interface NetworkConfig {
 export interface DetectedFaceBox {
   hasFace: boolean;
   box?: { x: number; y: number; width: number; height: number };
-  skinRatio: number;
   confidence: number;
+  isOccluded?: boolean;
+  occlusionReason?: string;
+  /** Descriptor của khung hình hiện tại (nếu bắt được mặt) */
+  descriptor?: number[];
 }
 
 const STORAGE_KEYS = {
-  FACE_PREFIX: 'aurora_enrolled_face_',
+  FACE_PREFIX: 'aurora_enrolled_face_v2_',
   WIFI_CONFIG: 'aurora_authorized_wifi_config',
 };
+
+// Ngưỡng khoảng cách Euclid giữa 2 descriptor: càng nhỏ càng giống
+const MATCH_DISTANCE_THRESHOLD = 0.48;
 
 // 1. Phục vụ phát hiện Mạng / IP thật của client
 export async function detectCurrentNetwork(): Promise<{ ip: string; isOnline: boolean }> {
@@ -54,7 +62,7 @@ export async function detectCurrentNetwork(): Promise<{ ip: string; isOnline: bo
   return { ip: '171.243.48.156', isOnline: typeof navigator !== 'undefined' ? navigator.onLine : true };
 }
 
-// Lấy thông tin Wi-Fi Rạp được cấp phép
+// Lấy cấu hình Wi-Fi Rạp được cấp phép
 export function getAuthorizedWifiConfig(): NetworkConfig {
   try {
     const stored = localStorage.getItem(STORAGE_KEYS.WIFI_CONFIG);
@@ -163,7 +171,7 @@ export async function startWebcamStream(
       if (err?.name === 'NotAllowedError' || err?.name === 'PermissionDeniedError') {
         return { 
           stream: null, 
-          error: 'Trình duyệt chưa được cấp quyền Camera! Vui lòng bấm biểu tượng ổ khóa 🔒 trên thanh địa chỉ và chọn "Cho phép Camera".' 
+          error: 'Trình duyệt chưa được cấp quyền Camera! Vui lòng bấm biểu tượng ổ khóa trên thanh địa chỉ và chọn "Cho phép Camera".' 
         };
       }
       if (err?.name === 'NotReadableError') {
@@ -181,274 +189,168 @@ export async function startWebcamStream(
   };
 }
 
-// 3. THEO DÕI & BẮT NÉT KHUÔN MẶT THỜI GIAN THỰC (REAL-TIME FACE TRACKER)
-export function detectFaceInRealtime(video: HTMLVideoElement): DetectedFaceBox {
-  if (!video || video.readyState < 2) {
-    return { hasFace: false, skinRatio: 0, confidence: 0 };
+// 3. TẢI MÔ HÌNH NHẬN DIỆN KHUÔN MẶT (chỉ tải một lần)
+let modelsPromise: Promise<void> | null = null;
+export function loadFaceModels(): Promise<void> {
+  if (!modelsPromise) {
+    modelsPromise = (async () => {
+      const base = '/models';
+      await Promise.all([
+        faceapi.nets.tinyFaceDetector.loadFromUri(base),
+        faceapi.nets.faceLandmark68TinyNet.loadFromUri(base),
+        faceapi.nets.faceRecognitionNet.loadFromUri(base),
+      ]);
+    })().catch((err) => {
+      modelsPromise = null;
+      throw err;
+    });
   }
-
-  const vw = video.videoWidth || 640;
-  const vh = video.videoHeight || 480;
-
-  // Lấy chính xác vùng OVAL TRUNG TÂM (Center ROI) - Bỏ qua 2 bên vai và phông nền ngoài
-  const cropW = Math.round(vw * 0.48);
-  const cropH = Math.round(vh * 0.62);
-  const cropX = Math.round((vw - cropW) / 2);
-  const cropY = Math.round((vh - cropH) / 2);
-
-  const canvas = document.createElement('canvas');
-  canvas.width = 64;
-  canvas.height = 64;
-  const ctx = canvas.getContext('2d', { willReadFrequently: true });
-  if (!ctx) return { hasFace: false, skinRatio: 0, confidence: 0 };
-
-  try {
-    ctx.drawImage(video, cropX, cropY, cropW, cropH, 0, 0, 64, 64);
-    const imgData = ctx.getImageData(0, 0, 64, 64);
-    const pixels = imgData.data;
-
-    let skinCount = 0;
-    let sumX = 0;
-    let sumY = 0;
-
-    let leftLuminance = 0;
-    let rightLuminance = 0;
-    let eyeRowLuminance = 0;
-    let eyeRowPixels = 0;
-    let cheekRowLuminance = 0;
-    let cheekRowPixels = 0;
-
-    for (let y = 0; y < 64; y++) {
-      for (let x = 0; x < 64; x++) {
-        const idx = (y * 64 + x) * 4;
-        const r = pixels[idx];
-        const g = pixels[idx + 1];
-        const b = pixels[idx + 2];
-        const gray = 0.299 * r + 0.587 * g + 0.114 * b;
-
-        // Phân loại sắc tố da người chính xác, loại trừ màu áo và ánh đèn
-        const isSkin = 
-          r > 60 && g > 30 && b > 15 &&
-          r > g && (r - g) > 10 &&
-          (r - b) > 10 &&
-          (Math.max(r, g, b) - Math.min(r, g, b)) > 15 &&
-          r < 250;
-
-        if (isSkin) {
-          skinCount++;
-          sumX += x;
-          sumY += y;
-        }
-
-        // Kiểm tra đối xứng gương trái - phải
-        if (x < 32) leftLuminance += gray;
-        else rightLuminance += gray;
-
-        // T-Zone: Vùng mắt (Y: 15-30) vs Gò má/Mũi (Y: 31-45)
-        if (y >= 15 && y <= 30 && x >= 14 && x <= 50) {
-          eyeRowLuminance += gray;
-          eyeRowPixels++;
-        } else if (y >= 31 && y <= 45 && x >= 14 && x <= 50) {
-          cheekRowLuminance += gray;
-          cheekRowPixels++;
-        }
-      }
-    }
-
-    const totalPixels = 64 * 64;
-    const skinRatio = skinCount / totalPixels;
-
-    // 1. Tỷ lệ da mặt trong vòng oval trung tâm:
-    // Khuôn mặt thật phải chiếm từ 20% đến 85% diện tích oval.
-    // Nếu né sang 1 bên (chỉ thấy vai), diện tích da trung tâm sẽ < 18%
-    if (skinRatio < 0.18 || skinRatio > 0.88) {
-      return { hasFace: false, skinRatio, confidence: 0 };
-    }
-
-    // 2. Trọng tâm khuôn mặt (Centroid Centering):
-    // Phải nằm gần tâm oval (|X - 32| <= 11, |Y - 32| <= 13)
-    // Nếu nghiêng/né vai sang 1 bên, trọng tâm sẽ lệch hẳn sang mép ngoài
-    const centroidX = sumX / skinCount;
-    const centroidY = sumY / skinCount;
-    const isCentered = Math.abs(centroidX - 32) <= 11 && Math.abs(centroidY - 32) <= 13;
-
-    if (!isCentered) {
-      return { hasFace: false, skinRatio, confidence: 20 };
-    }
-
-    // 3. Tính đối xứng gương dọc (Bilateral Facial Symmetry):
-    // Mặt nhìn thẳng có độ sáng nửa trái và nửa phải cân đối (độ lệch < 22%)
-    // Bờ vai hoặc vật thể lệch sang 1 bên sẽ bị chênh lệch độ sáng rất lớn
-    const symmDiff = Math.abs(leftLuminance - rightLuminance) / Math.max(1, (leftLuminance + rightLuminance) / 2);
-    if (symmDiff > 0.22) {
-      return { hasFace: false, skinRatio, confidence: 25 };
-    }
-
-    // 4. Kiểm tra cấu trúc hình học giải phẫu (T-Zone contrast)
-    const avgEye = eyeRowPixels > 0 ? eyeRowLuminance / eyeRowPixels : 0;
-    const avgCheek = cheekRowPixels > 0 ? cheekRowLuminance / cheekRowPixels : 0;
-    const hasFaceStructure = avgCheek >= avgEye - 3;
-
-    if (!hasFaceStructure) {
-      return { hasFace: false, skinRatio, confidence: 30 };
-    }
-
-    const confidence = Math.min(98, Math.round(skinRatio * 120 + (1 - symmDiff) * 35));
-
-    return {
-      hasFace: true,
-      box: {
-        x: cropX,
-        y: cropY,
-        width: cropW,
-        height: cropH,
-      },
-      skinRatio,
-      confidence
-    };
-  } catch (e) {
-    return { hasFace: false, skinRatio: 0, confidence: 0 };
-  }
+  return modelsPromise;
 }
 
-// 4. Trích xuất đặc trưng khuôn mặt THẬT từ Video Stream
-export function extractFaceFromVideo(video: HTMLVideoElement): FaceFeatures | null {
-  if (!video || video.readyState < 2) return null;
+type MediaSource = HTMLVideoElement | HTMLImageElement | HTMLCanvasElement;
 
-  // Bắt buộc phải có khuôn mặt hợp lệ ở trung tâm oval
-  const track = detectFaceInRealtime(video);
-  if (!track.hasFace) {
-    return null; // Không có mặt ở trung tâm (ví dụ né sang một bên) -> KHÔNG trích xuất!
-  }
+const detectorOptions = () => new faceapi.TinyFaceDetectorOptions({ inputSize: 320, scoreThreshold: 0.5 });
 
-  const vw = video.videoWidth || 640;
-  const vh = video.videoHeight || 480;
-
-  // Cắt chính xác vùng oval trung tâm
-  const cropW = Math.round(vw * 0.48);
-  const cropH = Math.round(vh * 0.62);
-  const cropX = Math.round((vw - cropW) / 2);
-  const cropY = Math.round((vh - cropH) / 2);
-
+// Cắt vùng khuôn mặt (có chừa lề) thành ảnh vuông 120x120
+function cropFaceToDataUrl(source: MediaSource, box: { x: number; y: number; width: number; height: number }): string {
   const canvas = document.createElement('canvas');
   canvas.width = 120;
   canvas.height = 120;
-  const ctx = canvas.getContext('2d', { willReadFrequently: true });
-  if (!ctx) return null;
+  const ctx = canvas.getContext('2d');
+  if (!ctx) return '';
+  const size = Math.max(box.width, box.height) * 1.35;
+  const cx = box.x + box.width / 2;
+  const cy = box.y + box.height / 2;
+  try {
+    ctx.drawImage(source, cx - size / 2, cy - size / 2, size, size, 0, 0, 120, 120);
+    return canvas.toDataURL('image/jpeg', 0.88);
+  } catch {
+    return '';
+  }
+}
+
+// 4. BẮT NÉT & NHẬN DIỆN KHUÔN MẶT THỜI GIAN THỰC (REAL-TIME FACE TRACKER)
+export async function detectFaceInRealtime(video: HTMLVideoElement): Promise<DetectedFaceBox> {
+  if (!video || video.readyState < 2 || !video.videoWidth) {
+    return { hasFace: false, confidence: 0 };
+  }
 
   try {
-    ctx.drawImage(video, cropX, cropY, cropW, cropH, 0, 0, 120, 120);
+    await loadFaceModels();
+    const result = await faceapi
+      .detectSingleFace(video, detectorOptions())
+      .withFaceLandmarks(true)
+      .withFaceDescriptor();
+
+    if (!result) {
+      return {
+        hasFace: false,
+        confidence: 0,
+        isOccluded: true,
+        occlusionReason: 'Không thấy khuôn mặt! Vui lòng nhìn thẳng vào camera và bỏ tay/vật che ra.'
+      };
+    }
+
+    const vw = video.videoWidth;
+    const vh = video.videoHeight;
+    const box = result.detection.box;
+    const score = result.detection.score;
+    const confidence = Math.round(score * 100);
+
+    // Khuôn mặt phải đủ rõ (tay che hoặc che một phần làm điểm tin cậy tụt thấp)
+    if (score < 0.7) {
+      return {
+        hasFace: false,
+        confidence,
+        isOccluded: true,
+        occlusionReason: 'Khuôn mặt bị che khuất hoặc không rõ! Vui lòng bỏ tay/vật che ra khỏi mặt.'
+      };
+    }
+
+    // Khuôn mặt phải nằm trong vòng tròn và đủ lớn
+    const cx = box.x + box.width / 2;
+    const cy = box.y + box.height / 2;
+    if (box.width < vw * 0.18) {
+      return { hasFace: false, confidence, occlusionReason: 'Hãy lại gần camera hơn một chút' };
+    }
+    if (Math.abs(cx - vw / 2) > vw * 0.16 || Math.abs(cy - vh / 2) > vh * 0.2) {
+      return { hasFace: false, confidence, occlusionReason: 'Hãy căn khuôn mặt vào giữa vòng tròn' };
+    }
+
+    return {
+      hasFace: true,
+      box: { x: box.x, y: box.y, width: box.width, height: box.height },
+      confidence,
+      isOccluded: false,
+      descriptor: Array.from(result.descriptor)
+    };
   } catch (e) {
+    console.error('Face detection error', e);
+    return { hasFace: false, confidence: 0 };
+  }
+}
+
+// 5. Trích xuất đặc trưng khuôn mặt THẬT từ Video Stream
+export async function extractFaceFromVideo(video: HTMLVideoElement, knownTrack?: DetectedFaceBox): Promise<FaceFeatures | null> {
+  if (!video) return null;
+  const track = knownTrack || (await detectFaceInRealtime(video));
+  if (!track.hasFace || track.isOccluded || !track.descriptor || !track.box) {
     return null;
   }
 
-  const capturedImage = canvas.toDataURL('image/jpeg', 0.88);
-  const imgData = ctx.getImageData(0, 0, 120, 120);
-  const pixels = imgData.data;
-
-  // Trích xuất vector 64 khối đặc trưng ánh sáng và tương phản cục bộ
-  const blockSize = 15; // 120 / 8
-  const histogram: number[] = new Array(64).fill(0);
-  const blockCounts: number[] = new Array(64).fill(0);
-
-  for (let y = 0; y < 120; y++) {
-    const blockY = Math.min(7, Math.floor(y / blockSize));
-    for (let x = 0; x < 120; x++) {
-      const idx = (y * 120 + x) * 4;
-      const r = pixels[idx];
-      const g = pixels[idx + 1];
-      const b = pixels[idx + 2];
-      const gray = 0.299 * r + 0.587 * g + 0.114 * b;
-
-      const blockX = Math.min(7, Math.floor(x / blockSize));
-      const bIdx = blockY * 8 + blockX;
-      histogram[bIdx] += gray;
-      blockCounts[bIdx]++;
-    }
-  }
-
-  for (let i = 0; i < 64; i++) {
-    histogram[i] = blockCounts[i] > 0 ? Math.round(histogram[i] / blockCounts[i]) : 0;
-  }
-
   return {
-    skinRatio: track.skinRatio,
-    histogram,
-    capturedImage,
+    descriptor: track.descriptor,
+    capturedImage: cropFaceToDataUrl(video, track.box),
+    hasValidFeatures: true,
     timestamp: Date.now()
   };
 }
 
-// 5. So khớp hai khuôn mặt THẬT bằng Cosine Similarity đã hiệu chuẩn (Piecewise Cosine Calibration)
+// 6. So khớp hai khuôn mặt bằng khoảng cách Euclid giữa descriptor 128 chiều
 export function compareFaces(currentFace: FaceFeatures, enrolledFace: FaceFeatures): {
   similarity: number;
   isMatch: boolean;
   reason: string;
 } {
-  if (!currentFace || !enrolledFace || !currentFace.histogram || !enrolledFace.histogram) {
-    return { similarity: 0, isMatch: false, reason: 'Dữ liệu khuôn mặt không hợp lệ!' };
+  if (!currentFace?.descriptor || currentFace.descriptor.length !== 128) {
+    return { similarity: 0, isMatch: false, reason: 'Không đọc được đặc trưng khuôn mặt hiện tại!' };
+  }
+  if (!enrolledFace?.descriptor || enrolledFace.descriptor.length !== 128) {
+    return {
+      similarity: 0,
+      isMatch: false,
+      reason: 'Mẫu Face ID cũ không còn hợp lệ. Vui lòng chụp lại khuôn mặt mẫu!'
+    };
   }
 
-  const len = Math.min(currentFace.histogram.length, enrolledFace.histogram.length);
-  if (len < 64) {
-    return { similarity: 10, isMatch: false, reason: 'Dữ liệu đặc trưng khuôn mặt không đủ!' };
+  let sum = 0;
+  for (let i = 0; i < 128; i++) {
+    const d = currentFace.descriptor[i] - enrolledFace.descriptor[i];
+    sum += d * d;
   }
+  const distance = Math.sqrt(sum);
 
-  // Khử trung bình ánh sáng (Mean-centering)
-  let sumC = 0, sumE = 0;
-  for (let i = 0; i < len; i++) {
-    sumC += currentFace.histogram[i];
-    sumE += enrolledFace.histogram[i];
-  }
-  const meanCurrent = sumC / len;
-  const meanEnrolled = sumE / len;
-
-  let dotProduct = 0;
-  let normCurrent = 0;
-  let normEnrolled = 0;
-
-  for (let i = 0; i < len; i++) {
-    const valC = currentFace.histogram[i] - meanCurrent;
-    const valE = enrolledFace.histogram[i] - meanEnrolled;
-    dotProduct += valC * valE;
-    normCurrent += valC * valC;
-    normEnrolled += valE * valE;
-  }
-
-  if (normCurrent === 0 || normEnrolled === 0) {
-    return { similarity: 15, isMatch: false, reason: 'Ảnh không đủ chi tiết đường nét khuôn mặt!' };
-  }
-
-  const cosine = dotProduct / (Math.sqrt(normCurrent) * Math.sqrt(normEnrolled));
-
-  // HIỆU CHUẨN ĐỘ TƯƠNG ĐỒNG CHÍNH XÁC:
-  // - Cosine <= 0.60 (Vai, phông nền, tường, góc lệch): Tương đồng chỉ từ 5% đến 35%
-  // - Cosine 0.61 - 0.82 (Góc nghiêng khác hoặc người khác): Tương đồng từ 36% đến 69% (KHÔNG KHỚP)
-  // - Cosine >= 0.83 (Khuôn mặt chính chủ nhìn thẳng): Tương đồng từ 75% đến 98% (TRÙNG KHỚP)
-  let similarity = 0;
-  if (cosine <= 0.60) {
-    similarity = Math.max(5, Math.round(5 + (Math.max(0, cosine) / 0.60) * 30));
-  } else if (cosine < 0.82) {
-    similarity = Math.round(35 + ((cosine - 0.60) / 0.22) * 34);
+  let similarity: number;
+  if (distance <= MATCH_DISTANCE_THRESHOLD) {
+    similarity = Math.round(99 - (distance / MATCH_DISTANCE_THRESHOLD) * 24); // 75 - 99
   } else {
-    similarity = Math.round(75 + ((cosine - 0.82) / 0.18) * 23);
+    similarity = Math.round(75 - ((distance - MATCH_DISTANCE_THRESHOLD) / 0.4) * 70);
   }
-
   similarity = Math.max(5, Math.min(99, similarity));
 
-  // Ngưỡng so khớp chuẩn: >= 75%
-  const isMatch = similarity >= 75;
+  const isMatch = distance <= MATCH_DISTANCE_THRESHOLD;
 
   return {
     similarity,
     isMatch,
     reason: isMatch
       ? `Khuôn mặt trùng khớp chính chủ (${similarity}%)`
-      : `Khuôn mặt không khớp (${similarity}% < 75% yêu cầu). Vui lòng nhìn thẳng vào giữa camera!`
+      : `Khuôn mặt không khớp (${similarity}%). Vui lòng nhìn thẳng chính diện, không che mặt!`
   };
 }
 
-// 6. Quản lý Khuôn mặt mẫu đã đăng ký theo User ID
+// 7. Quản lý Khuôn mặt mẫu đã đăng ký theo User ID
 export function getEnrolledFace(userId: string): FaceFeatures | null {
   try {
     const key = `${STORAGE_KEYS.FACE_PREFIX}${userId}`;
@@ -469,82 +371,33 @@ export function removeEnrolledFace(userId: string): void {
   localStorage.removeItem(key);
 }
 
-// 7. Trích xuất đặc trưng khuôn mặt từ file ảnh tải lên (JPG, PNG)
+// 8. Trích xuất đặc trưng khuôn mặt từ file ảnh tải lên (JPG, PNG)
 export function extractFaceFromDataUrl(dataUrl: string): Promise<FaceFeatures | null> {
   return new Promise((resolve) => {
     const img = new Image();
     img.crossOrigin = 'anonymous';
-    img.onload = () => {
-      const w = img.width || 300;
-      const h = img.height || 300;
-      const canvas = document.createElement('canvas');
-      canvas.width = 120;
-      canvas.height = 120;
-      const ctx = canvas.getContext('2d', { willReadFrequently: true });
-      if (!ctx) {
-        resolve(null);
-        return;
-      }
+    img.onload = async () => {
       try {
-        const cropSize = Math.min(w, h) * 0.8;
-        const sx = Math.max(0, (w - cropSize) / 2);
-        const sy = Math.max(0, (h - cropSize) / 2);
-        ctx.drawImage(img, sx, sy, cropSize, cropSize, 0, 0, 120, 120);
-      } catch (e) {
-        try {
-          ctx.drawImage(img, 0, 0, 120, 120);
-        } catch (e2) {
+        await loadFaceModels();
+        const result = await faceapi
+          .detectSingleFace(img, detectorOptions())
+          .withFaceLandmarks(true)
+          .withFaceDescriptor();
+        if (!result || result.detection.score < 0.7) {
           resolve(null);
           return;
         }
+        const b = result.detection.box;
+        resolve({
+          descriptor: Array.from(result.descriptor),
+          capturedImage: cropFaceToDataUrl(img, { x: b.x, y: b.y, width: b.width, height: b.height }),
+          hasValidFeatures: true,
+          timestamp: Date.now()
+        });
+      } catch (e) {
+        console.error(e);
+        resolve(null);
       }
-
-      const capturedImage = canvas.toDataURL('image/jpeg', 0.85);
-      const imgData = ctx.getImageData(0, 0, 120, 120);
-      const pixels = imgData.data;
-
-      let skinPixels = 0;
-      const totalPixels = 120 * 120;
-      const blockSize = 15;
-      const histogram: number[] = new Array(64).fill(0);
-      const blockCounts: number[] = new Array(64).fill(0);
-
-      for (let y = 0; y < 120; y++) {
-        const blockY = Math.min(7, Math.floor(y / blockSize));
-        for (let x = 0; x < 120; x++) {
-          const idx = (y * 120 + x) * 4;
-          const r = pixels[idx];
-          const g = pixels[idx + 1];
-          const b = pixels[idx + 2];
-
-          if (
-            r > 50 && g > 20 && b > 10 && 
-            r > g && 
-            Math.abs(r - g) > 6 && 
-            (Math.max(r, g, b) - Math.min(r, g, b) > 6)
-          ) {
-            skinPixels++;
-          }
-
-          const gray = 0.299 * r + 0.587 * g + 0.114 * b;
-          const blockX = Math.min(7, Math.floor(x / blockSize));
-          const blockIdx = blockY * 8 + blockX;
-          histogram[blockIdx] += gray;
-          blockCounts[blockIdx]++;
-        }
-      }
-
-      for (let i = 0; i < 64; i++) {
-        histogram[i] = blockCounts[i] > 0 ? Math.round(histogram[i] / blockCounts[i]) : 0;
-      }
-
-      const skinRatio = skinPixels / totalPixels;
-      resolve({
-        skinRatio,
-        histogram,
-        capturedImage,
-        timestamp: Date.now()
-      });
     };
     img.onerror = () => resolve(null);
     img.src = dataUrl;

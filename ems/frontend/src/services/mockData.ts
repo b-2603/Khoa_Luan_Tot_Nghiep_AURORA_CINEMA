@@ -9,7 +9,7 @@ export const INITIAL_SHIFTS: Shift[] = [
 export const INITIAL_USERS: User[] = [
   {
     id: 'usr-1',
-    staffCode: 'AR-STAFF-001',
+    staffCode: '0901234567',
     name: 'Nguyễn Văn Minh',
     email: 'minh.nguyen@auroracinema.vn',
     role: 'staff',
@@ -22,7 +22,7 @@ export const INITIAL_USERS: User[] = [
   },
   {
     id: 'usr-2',
-    staffCode: 'AR-STAFF-002',
+    staffCode: '0912345678',
     name: 'Trần Thị Mai',
     email: 'mai.tran@auroracinema.vn',
     role: 'staff',
@@ -35,7 +35,7 @@ export const INITIAL_USERS: User[] = [
   },
   {
     id: 'usr-3',
-    staffCode: 'AR-STAFF-003',
+    staffCode: '0923456789',
     name: 'Lê Hoàng Nam',
     email: 'nam.le@auroracinema.vn',
     role: 'staff',
@@ -48,7 +48,7 @@ export const INITIAL_USERS: User[] = [
   },
   {
     id: 'usr-mgr',
-    staffCode: 'AR-MGR-001',
+    staffCode: '0988888888',
     name: 'Phạm Thu Hương (Training Manager)',
     email: 'huong.pham@auroracinema.vn',
     role: 'manager',

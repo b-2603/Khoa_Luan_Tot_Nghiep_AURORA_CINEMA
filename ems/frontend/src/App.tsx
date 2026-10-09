@@ -86,6 +86,7 @@ export function App() {
             />
           )}
           {activeTab === 'shift-view' && <StaffShiftViewPage currentUser={currentUser} />}
+          {activeTab === 'manager-scheduler' && <ManagerShiftSchedulerPage />}
           {activeTab === 'attendance' && (
             <AttendancePage 
               currentUser={currentUser} 

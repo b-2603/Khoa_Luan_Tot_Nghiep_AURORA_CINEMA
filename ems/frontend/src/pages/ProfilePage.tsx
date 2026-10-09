@@ -1,8 +1,9 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { User } from '../types';
-import { Mail, Phone, Calendar, Shield, Award, Star, Camera, ShieldCheck, CheckCircle2, AlertTriangle, RefreshCw, Trash2, X, Sparkles, Upload, Image, Link as LinkIcon, Check } from 'lucide-react';
+import { Mail, Phone, Calendar, Shield, Award, Star, Camera, ShieldCheck, CheckCircle2, AlertTriangle, RefreshCw, Trash2, X, Sparkles, Upload, Image, Link as LinkIcon, Check, Lock, Key } from 'lucide-react';
 import { getCertificates, updateUser } from '../services/storage';
 import { updateEmployee } from '../services/apiClient';
+import { changePasswordApi } from '../services/authApi';
 import { getEnrolledFace, saveEnrolledFace, removeEnrolledFace, startWebcamStream, extractFaceFromVideo, FaceFeatures } from '../services/biometrics';
 
 const PRESET_AVATARS = [
@@ -30,6 +31,7 @@ export const ProfilePage: React.FC<ProfilePageProps> = ({ currentUser, onUpdateU
   const [cameraError, setCameraError] = useState(false);
   const [cameraErrorMessage, setCameraErrorMessage] = useState('');
   const [toast, setToast] = useState<{ message: string; type: 'success' | 'info' | 'error' } | null>(null);
+  const [capturedPreview, setCapturedPreview] = useState<string | null>(null);
 
   // Profile Avatar Modal State (Đổi ảnh hồ sơ theo ý thích)
   const [isAvatarModalOpen, setIsAvatarModalOpen] = useState(false);
@@ -39,6 +41,55 @@ export const ProfilePage: React.FC<ProfilePageProps> = ({ currentUser, onUpdateU
 
   const videoRef = useRef<HTMLVideoElement | null>(null);
   const mediaStreamRef = useRef<MediaStream | null>(null);
+
+  // Change Password State
+  const [currentPassword, setCurrentPassword] = useState('');
+  const [newPassword, setNewPassword] = useState('');
+  const [confirmPassword, setConfirmPassword] = useState('');
+  const [passLoading, setPassLoading] = useState(false);
+  const [passErrorMsg, setPassErrorMsg] = useState('');
+  const [passSuccessMsg, setPassSuccessMsg] = useState('');
+
+  const handleChangePassword = async (e: React.FormEvent) => {
+    e.preventDefault();
+    setPassErrorMsg('');
+    setPassSuccessMsg('');
+
+    if (!currentPassword.trim()) {
+      setPassErrorMsg('Vui lòng nhập mật khẩu hiện tại (mặc định 8888).');
+      return;
+    }
+    if (!newPassword.trim()) {
+      setPassErrorMsg('Vui lòng nhập mật khẩu mới.');
+      return;
+    }
+    if (newPassword.length < 4) {
+      setPassErrorMsg('Mật khẩu mới phải có ít nhất 4 ký tự.');
+      return;
+    }
+    if (newPassword !== confirmPassword) {
+      setPassErrorMsg('Xác nhận mật khẩu mới không trùng khớp.');
+      return;
+    }
+
+    setPassLoading(true);
+    try {
+      const res = await changePasswordApi(currentUser.id, currentPassword.trim(), newPassword.trim());
+      if (res.success) {
+        setPassSuccessMsg(res.message);
+        setCurrentPassword('');
+        setNewPassword('');
+        setConfirmPassword('');
+        showNotification(res.message, 'success');
+      } else {
+        setPassErrorMsg(res.message);
+      }
+    } catch (err) {
+      setPassErrorMsg('Có lỗi xảy ra khi đổi mật khẩu.');
+    } finally {
+      setPassLoading(false);
+    }
+  };
 
   const showNotification = (message: string, type: 'success' | 'info' | 'error' = 'success') => {
     setToast({ message, type });
@@ -79,8 +130,10 @@ export const ProfilePage: React.FC<ProfilePageProps> = ({ currentUser, onUpdateU
 
   useEffect(() => {
     if (isFaceModalOpen) {
+      setCapturedPreview(null);
       initCamera();
     } else {
+      setCapturedPreview(null);
       if (mediaStreamRef.current) {
         mediaStreamRef.current.getTracks().forEach(t => t.stop());
         mediaStreamRef.current = null;
@@ -121,17 +174,17 @@ export const ProfilePage: React.FC<ProfilePageProps> = ({ currentUser, onUpdateU
     reader.readAsDataURL(file);
   };
 
-  // Capture and save face to Face ID biometric system (Chỉ lưu sinh trắc học hệ thống, KHÔNG đè ảnh hồ sơ)
-  const handleCaptureAndSaveFace = () => {
+  // Capture and save face to Face ID biometric system (Hiển thị ảnh vừa chụp lên modal)
+  const handleCaptureAndSaveFace = async () => {
     const video = videoRef.current;
     if (!video || !cameraReady) {
       alert('Camera chưa sẵn sàng!');
       return;
     }
 
-    const face = extractFaceFromVideo(video);
+    const face = await extractFaceFromVideo(video);
     if (!face) {
-      alert('Không nhận được khung hình từ camera. Hãy nhìn thẳng vào camera và thử lại!');
+      alert('Chưa nhận diện được khuôn mặt thật. Hãy nhìn thẳng vào giữa vòng tròn, bỏ tay/vật che ra và thử lại!');
       return;
     }
 
@@ -139,8 +192,9 @@ export const ProfilePage: React.FC<ProfilePageProps> = ({ currentUser, onUpdateU
     saveEnrolledFace(currentUser.id, face);
     setEnrolledFace(face);
 
-    setIsFaceModalOpen(false);
-    showNotification(`Đã lưu dữ liệu Face ID của ${currentUser.name} vào hệ thống! Bạn có thể tự do đổi ảnh hồ sơ tùy ý.`, 'success');
+    // 2. Hiển thị ảnh vừa chụp lên modal để người dùng kiểm tra rõ ràng
+    setCapturedPreview(face.capturedImage);
+    showNotification(`Đã chụp và lưu thành công Face ID cho ${currentUser.name}!`, 'success');
   };
 
   // Remove face
@@ -172,7 +226,7 @@ export const ProfilePage: React.FC<ProfilePageProps> = ({ currentUser, onUpdateU
       <div className="flex items-center justify-between border-b border-slate-200 pb-4">
         <div>
           <h2 className="text-xl font-bold text-slate-900">Xem Hồ Sơ Nhân Viên</h2>
-          <p className="text-xs text-slate-500 mt-1">Thông tin cá nhân, chức vụ, bộ phận và dữ liệu sinh trắc học Face ID</p>
+          <p className="text-xs text-slate-500 mt-1">Thông tin tài khoản và hồ sơ nhân sự</p>
         </div>
       </div>
 
@@ -284,18 +338,16 @@ export const ProfilePage: React.FC<ProfilePageProps> = ({ currentUser, onUpdateU
                 </h3>
                 {enrolledFace ? (
                   <span className="px-2.5 py-0.5 rounded-full bg-emerald-100 text-emerald-800 font-bold text-[10px] border border-emerald-300">
-                    ✓ Đã Được Quản Lý Kích Hoạt
+                    ✓ Đã Kích Hoạt
                   </span>
                 ) : (
                   <span className="px-2.5 py-0.5 rounded-full bg-amber-100 text-amber-800 font-bold text-[10px] border border-amber-300">
-                    ⚠️ Chưa Được Quản Lý Kích Hoạt
+                    Chưa Kích Hoạt
                   </span>
                 )}
               </div>
               <p className="text-xs text-slate-500 mt-1 max-w-xl">
-                {currentUser.role === 'staff'
-                  ? 'Dữ liệu Face ID được bảo mật chống gian lận điểm danh. Chỉ Quản lý rạp (Manager/HR) mới có quyền chụp và kích hoạt Face ID cho nhân viên.'
-                  : 'Dữ liệu khuôn mặt mẫu được dùng để so khớp sinh trắc học khi Check-in / Check-out tại rạp để chống điểm danh hộ.'}
+                Dữ liệu khuôn mặt phục vụ nhận diện khi điểm danh ca làm việc.
               </p>
             </div>
           </div>
@@ -305,7 +357,7 @@ export const ProfilePage: React.FC<ProfilePageProps> = ({ currentUser, onUpdateU
             {currentUser.role === 'staff' ? (
               <div className="flex items-center gap-2 px-3.5 py-2 bg-slate-100 border border-slate-200 rounded-xl text-slate-600 text-xs font-semibold">
                 <ShieldCheck className="w-4 h-4 text-purple-600 shrink-0" />
-                <span>{enrolledFace ? 'Quyền do Quản lý quản lý' : 'Liên hệ Quản lý để kích hoạt'}</span>
+                <span>{enrolledFace ? 'Đã kích hoạt' : 'Chưa kích hoạt'}</span>
               </div>
             ) : !enrolledFace ? (
               <button
@@ -313,7 +365,7 @@ export const ProfilePage: React.FC<ProfilePageProps> = ({ currentUser, onUpdateU
                 className="w-full sm:w-auto px-5 py-2.5 bg-purple-600 hover:bg-purple-700 active:bg-purple-800 text-white font-extrabold text-xs rounded-xl shadow-md flex items-center justify-center gap-2 transition cursor-pointer"
               >
                 <Camera className="w-4 h-4 text-amber-300" />
-                📸 Mở Camera Đăng Ký Gương Mặt Ngay
+                📸 Đăng Ký Gương Mặt
               </button>
             ) : (
               <div className="flex items-center gap-2 w-full sm:w-auto">
@@ -350,9 +402,7 @@ export const ProfilePage: React.FC<ProfilePageProps> = ({ currentUser, onUpdateU
               </div>
               <div className="text-[11px] text-emerald-700 font-semibold flex items-center gap-1">
                 <CheckCircle2 className="w-3.5 h-3.5" />
-                {currentUser.role === 'staff'
-                  ? 'Đã được Quản lý kích hoạt: Sẵn sàng dùng để tự động quét nhận diện tại trang Điểm Danh'
-                  : 'Sẵn sàng sử dụng để Quét Chấm Công tại mục "Điểm Danh & Chấm Công"'}
+                Đã kích hoạt Face ID trong hệ thống
               </div>
             </div>
           </div>
@@ -370,7 +420,7 @@ export const ProfilePage: React.FC<ProfilePageProps> = ({ currentUser, onUpdateU
 
         {certs.length === 0 ? (
           <div className="text-center py-6 text-xs text-slate-500">
-            Chưa có chứng chỉ nào. Hãy làm bài kiểm tra nghiệp vụ hàng tháng để nhận chứng chỉ điện tử!
+            Chưa có chứng chỉ nào trong hồ sơ.
           </div>
         ) : (
           <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
@@ -390,6 +440,95 @@ export const ProfilePage: React.FC<ProfilePageProps> = ({ currentUser, onUpdateU
             ))}
           </div>
         )}
+      </div>
+
+      {/* BẢO MẬT & ĐỔI MẬT KHẨU TÀI KHOẢN NỘI BỘ */}
+      <div className="bg-white border border-slate-200 rounded-3xl p-6 md:p-8 shadow-sm">
+        <div className="flex items-center justify-between border-b border-slate-100 pb-4 mb-5">
+          <div className="flex items-center gap-3">
+            <div className="p-2.5 bg-amber-500/10 text-amber-700 rounded-2xl">
+              <Lock className="w-5 h-5 text-amber-600" />
+            </div>
+            <div>
+              <h3 className="font-bold text-base text-slate-900">Bảo Mật & Đổi Mật Khẩu</h3>
+              <p className="text-xs text-slate-500 mt-0.5">
+                Mật khẩu ban đầu mặc định là <strong className="text-amber-700 font-mono">8888</strong>. Bạn có thể thay đổi mật khẩu mới tại đây.
+              </p>
+            </div>
+          </div>
+        </div>
+
+        <form onSubmit={handleChangePassword} className="max-w-xl space-y-4">
+          <div>
+            <label className="block text-xs font-bold text-slate-700 mb-1 flex items-center justify-between">
+              <span>Mật Khẩu Hiện Tại *</span>
+              <span className="text-[10px] text-amber-600 font-semibold">Mặc định: 8888</span>
+            </label>
+            <input
+              type="password"
+              required
+              placeholder="Nhập mật khẩu hiện tại (mặc định 8888)"
+              value={currentPassword}
+              onChange={(e) => setCurrentPassword(e.target.value)}
+              className="w-full px-3.5 py-2.5 bg-slate-50 border border-slate-200 rounded-xl text-xs text-slate-900 focus:outline-none focus:border-indigo-500 focus:bg-white transition"
+            />
+          </div>
+
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+            <div>
+              <label className="block text-xs font-bold text-slate-700 mb-1">
+                Mật Khẩu Mới *
+              </label>
+              <input
+                type="password"
+                required
+                placeholder="Tối thiểu 4 ký tự"
+                value={newPassword}
+                onChange={(e) => setNewPassword(e.target.value)}
+                className="w-full px-3.5 py-2.5 bg-slate-50 border border-slate-200 rounded-xl text-xs text-slate-900 focus:outline-none focus:border-indigo-500 focus:bg-white transition"
+              />
+            </div>
+
+            <div>
+              <label className="block text-xs font-bold text-slate-700 mb-1">
+                Xác Nhận Mật Khẩu Mới *
+              </label>
+              <input
+                type="password"
+                required
+                placeholder="Nhập lại mật khẩu mới"
+                value={confirmPassword}
+                onChange={(e) => setConfirmPassword(e.target.value)}
+                className="w-full px-3.5 py-2.5 bg-slate-50 border border-slate-200 rounded-xl text-xs text-slate-900 focus:outline-none focus:border-indigo-500 focus:bg-white transition"
+              />
+            </div>
+          </div>
+
+          {passErrorMsg && (
+            <div className="p-3 bg-red-50 border border-red-200 rounded-xl text-xs text-red-700 font-semibold flex items-center gap-2">
+              <AlertTriangle className="w-4 h-4 text-red-500 shrink-0" />
+              <span>{passErrorMsg}</span>
+            </div>
+          )}
+
+          {passSuccessMsg && (
+            <div className="p-3 bg-emerald-50 border border-emerald-200 rounded-xl text-xs text-emerald-800 font-bold flex items-center gap-2">
+              <CheckCircle2 className="w-4 h-4 text-emerald-600 shrink-0" />
+              <span>{passSuccessMsg}</span>
+            </div>
+          )}
+
+          <div className="pt-1">
+            <button
+              type="submit"
+              disabled={passLoading}
+              className="px-6 py-2.5 bg-indigo-600 hover:bg-indigo-700 active:bg-indigo-800 disabled:opacity-50 text-white font-extrabold text-xs rounded-xl shadow-md transition cursor-pointer flex items-center gap-2"
+            >
+              <Key className="w-4 h-4" />
+              <span>{passLoading ? 'Đang cập nhật...' : 'Cập Nhật Mật Khẩu Mới'}</span>
+            </button>
+          </div>
+        </form>
       </div>
 
       {/* MODAL MỞ CAMERA ĐĂNG KÝ GƯƠNG MẶT FACE ID TRỰC TIẾP */}
@@ -420,67 +559,122 @@ export const ProfilePage: React.FC<ProfilePageProps> = ({ currentUser, onUpdateU
               <span>Camera đang dùng: <strong className="text-purple-700">{activeCameraName || 'Camera tích hợp của thiết bị này'}</strong></span>
             </div>
 
-            {/* Camera Viewport */}
-            <div className="relative bg-slate-950 rounded-2xl overflow-hidden h-64 flex items-center justify-center border-2 border-slate-800 shadow-inner">
-              <video
-                ref={videoRef}
-                autoPlay
-                playsInline
-                muted
-                className="w-full h-full object-cover transform -scale-x-100 block"
-              />
-
-              {/* Error if camera blocked */}
-              {cameraError && (
-                <div className="absolute inset-0 bg-slate-950/95 flex flex-col items-center justify-center p-4 text-center z-20">
-                  <AlertTriangle className="w-10 h-10 text-amber-500 mb-2" />
-                  <span className="text-xs text-rose-300 font-semibold mb-2 leading-relaxed max-w-sm">
-                    {cameraErrorMessage || 'Không thể truy cập camera!'}
-                  </span>
-                  <button
-                    type="button"
-                    onClick={initCamera}
-                    className="px-4 py-2 bg-cyan-600 hover:bg-cyan-700 text-white font-bold text-xs rounded-xl shadow-sm transition flex items-center gap-1.5"
-                  >
-                    <RefreshCw className="w-3.5 h-3.5" />
-                    Thử Lại Kết Nối Camera
-                  </button>
+            {/* Camera Viewport or Captured Photo Preview */}
+            {capturedPreview ? (
+              <div className="relative bg-slate-950 rounded-2xl overflow-hidden p-6 flex flex-col items-center justify-center border-2 border-emerald-500 shadow-xl animate-in fade-in zoom-in-95 duration-200">
+                <div className="relative mb-3">
+                  <img
+                    src={capturedPreview}
+                    alt="Ảnh Face ID vừa chụp"
+                    className="w-36 h-44 rounded-[40%] object-cover ring-4 ring-emerald-400 shadow-[0_0_30px_rgba(52,211,153,0.7)]"
+                  />
+                  <div className="absolute -bottom-2 -right-2 bg-emerald-500 text-white p-1.5 rounded-full shadow-lg ring-2 ring-white">
+                    <CheckCircle2 className="w-5 h-5" />
+                  </div>
                 </div>
-              )}
 
-              {/* Neon oval frame */}
-              {!cameraError && (
-                <div className="absolute inset-0 pointer-events-none flex items-center justify-center z-10">
-                  <div className="w-44 h-52 rounded-[45%] border-2 border-purple-400 shadow-[0_0_25px_rgba(168,85,247,0.8)]" />
+                <div className="text-center">
+                  <div className="text-emerald-400 font-extrabold text-sm flex items-center justify-center gap-1.5">
+                    <Sparkles className="w-4 h-4 text-amber-300" />
+                    Đã Chụp & Lưu Face ID Thành Công!
+                  </div>
+                  <p className="text-slate-300 text-xs mt-1">
+                    Khuôn mặt của <strong className="text-white">{currentUser.name}</strong> đã được đồng bộ vào hệ thống điểm danh rạp.
+                  </p>
                 </div>
-              )}
+              </div>
+            ) : (
+              <div className="relative bg-slate-950 rounded-2xl overflow-hidden h-64 flex items-center justify-center border-2 border-slate-800 shadow-inner">
+                <video
+                  ref={videoRef}
+                  autoPlay
+                  playsInline
+                  muted
+                  className="w-full h-full object-cover transform -scale-x-100 block"
+                />
 
-              {/* Instruction tag */}
-              {!cameraError && (
-                <div className="absolute bottom-2.5 px-3 py-1 bg-slate-900/85 backdrop-blur-md rounded-full text-[11px] font-semibold text-white border border-slate-700/80 z-20">
-                  Nhìn thẳng vào khung hình và bấm "Chụp & Lưu Gương Mặt" bên dưới
-                </div>
-              )}
-            </div>
+                {/* Error if camera blocked */}
+                {cameraError && (
+                  <div className="absolute inset-0 bg-slate-950/95 flex flex-col items-center justify-center p-4 text-center z-20">
+                    <AlertTriangle className="w-10 h-10 text-amber-500 mb-2" />
+                    <span className="text-xs text-rose-300 font-semibold mb-2 leading-relaxed max-w-sm">
+                      {cameraErrorMessage || 'Không thể truy cập camera!'}
+                    </span>
+                    <button
+                      type="button"
+                      onClick={initCamera}
+                      className="px-4 py-2 bg-cyan-600 hover:bg-cyan-700 text-white font-bold text-xs rounded-xl shadow-sm transition flex items-center gap-1.5 cursor-pointer"
+                    >
+                      <RefreshCw className="w-3.5 h-3.5" />
+                      Thử Lại Kết Nối Camera
+                    </button>
+                  </div>
+                )}
+
+                {/* Neon oval frame */}
+                {!cameraError && (
+                  <div className="absolute inset-0 pointer-events-none flex items-center justify-center z-10">
+                    <div className="w-44 h-52 rounded-[45%] border-2 border-purple-400 shadow-[0_0_25px_rgba(168,85,247,0.8)]" />
+                  </div>
+                )}
+
+                {/* Instruction tag */}
+                {!cameraError && (
+                  <div className="absolute bottom-2.5 px-3 py-1 bg-slate-900/85 backdrop-blur-md rounded-full text-[11px] font-semibold text-white border border-slate-700/80 z-20">
+                    Nhìn thẳng chính diện vào khung hình
+                  </div>
+                )}
+              </div>
+            )}
 
             {/* Modal Actions */}
-            <div className="flex items-center justify-end gap-3 pt-4 border-t border-slate-100 mt-4">
-              <button
-                type="button"
-                onClick={() => setIsFaceModalOpen(false)}
-                className="px-4 py-2.5 border border-slate-200 text-slate-600 hover:bg-slate-100 text-xs font-semibold rounded-xl transition"
-              >
-                Hủy Bỏ
-              </button>
+            <div className="flex items-center justify-between gap-3 pt-4 border-t border-slate-100 mt-4">
+              {capturedPreview ? (
+                <>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setCapturedPreview(null);
+                      initCamera();
+                    }}
+                    className="px-4 py-2.5 bg-slate-100 hover:bg-slate-200 text-slate-700 font-bold text-xs rounded-xl transition flex items-center gap-1.5 cursor-pointer"
+                  >
+                    <RefreshCw className="w-4 h-4 text-purple-600" />
+                    Chụp Lại Ảnh Khác
+                  </button>
 
-              <button
-                type="button"
-                onClick={handleCaptureAndSaveFace}
-                className="px-6 py-2.5 bg-purple-600 hover:bg-purple-700 active:bg-purple-800 text-white font-extrabold text-xs rounded-xl shadow-md flex items-center gap-2 transition cursor-pointer"
-              >
-                <Camera className="w-4 h-4 text-amber-300" />
-                Lưu Dữ Liệu Face ID Vào Hệ Thống
-              </button>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setIsFaceModalOpen(false);
+                      setCapturedPreview(null);
+                    }}
+                    className="px-6 py-2.5 bg-emerald-600 hover:bg-emerald-700 active:bg-emerald-800 text-white font-extrabold text-xs rounded-xl shadow-md flex items-center gap-2 transition cursor-pointer"
+                  >
+                    <Check className="w-4 h-4" />
+                    Hoàn Tất & Đóng
+                  </button>
+                </>
+              ) : (
+                <>
+                  <button
+                    type="button"
+                    onClick={() => setIsFaceModalOpen(false)}
+                    className="px-4 py-2.5 border border-slate-200 text-slate-600 hover:bg-slate-100 text-xs font-semibold rounded-xl transition cursor-pointer"
+                  >
+                    Hủy Bỏ
+                  </button>
+
+                  <button
+                    type="button"
+                    onClick={handleCaptureAndSaveFace}
+                    className="px-6 py-2.5 bg-purple-600 hover:bg-purple-700 active:bg-purple-800 text-white font-extrabold text-xs rounded-xl shadow-md flex items-center gap-2 transition cursor-pointer"
+                  >
+                    <Camera className="w-4 h-4 text-amber-300" />
+                    Chụp & Lưu Gương Mặt
+                  </button>
+                </>
+              )}
             </div>
           </div>
         </div>
@@ -497,7 +691,6 @@ export const ProfilePage: React.FC<ProfilePageProps> = ({ currentUser, onUpdateU
                 </div>
                 <div>
                   <h3 className="font-bold text-slate-900 text-base">Đổi Ảnh Đại Diện Hồ Sơ</h3>
-                  <p className="text-xs text-slate-500">Tùy ý đổi ảnh cá nhân (không làm ảnh hưởng dữ liệu Face ID)</p>
                 </div>
               </div>
               <button

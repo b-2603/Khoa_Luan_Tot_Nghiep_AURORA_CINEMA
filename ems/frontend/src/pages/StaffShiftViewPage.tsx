@@ -39,13 +39,13 @@ export const StaffShiftViewPage: React.FC<StaffShiftViewPageProps> = ({ currentU
         <div>
           <h2 className="text-xl font-bold text-slate-900">Lịch Phân Ca Làm Việc Chính Thức</h2>
           <p className="text-xs text-slate-500 mt-1">
-            Lịch phân công nhiệm vụ chính thức đã được Quản lý & Trợ lý AI xuất bản cho cụm rạp Aurora Cinemas.
+            Lịch phân công ca làm việc chính thức.
           </p>
         </div>
 
         <div className="flex items-center gap-2 bg-emerald-50 border border-emerald-200 px-3.5 py-1.5 rounded-xl text-xs text-emerald-800 font-semibold shrink-0">
           <CheckCircle2 className="w-4 h-4 text-emerald-600" />
-          <span>Lịch Đã Chốt & Đồng Bộ Với Chấm Công</span>
+          <span>Lịch Chính Thức</span>
         </div>
       </div>
 
@@ -57,7 +57,7 @@ export const StaffShiftViewPage: React.FC<StaffShiftViewPageProps> = ({ currentU
             <span>{mySchedules.length}</span>
             <span className="text-xs font-normal text-slate-400">ca trực</span>
           </div>
-          <div className="text-[11px] text-slate-500 mt-1">Tương đương ~{mySchedules.length * 8} giờ làm việc tiêu chuẩn</div>
+          <div className="text-[11px] text-slate-500 mt-1">Tương đương ~{mySchedules.length * 8} giờ làm việc</div>
         </div>
 
         <div className="bg-white border border-slate-200 rounded-2xl p-4 shadow-sm">
@@ -66,16 +66,16 @@ export const StaffShiftViewPage: React.FC<StaffShiftViewPageProps> = ({ currentU
             <ThumbsUp className="w-5 h-5 text-purple-600" />
             <span>100% Khớp</span>
           </div>
-          <div className="text-[11px] text-purple-600 mt-1">AI đã ưu tiên đúng ca bạn đã đăng ký</div>
+          <div className="text-[11px] text-purple-600 mt-1">Khớp nguyện vọng đã đăng ký</div>
         </div>
 
         <div className="bg-white border border-slate-200 rounded-2xl p-4 shadow-sm">
-          <div className="text-xs text-slate-500 font-medium">Quy định chấm công ca trực</div>
+          <div className="text-xs text-slate-500 font-medium">Thời gian điểm danh</div>
           <div className="text-xs font-bold text-slate-800 mt-1.5 flex items-center gap-1.5">
             <Clock className="w-4 h-4 text-amber-500" />
-            <span>Check-in trước giờ trực 5 phút</span>
+            <span>Đầu mỗi ca trực</span>
           </div>
-          <div className="text-[11px] text-slate-500 mt-1">Tại máy POS hoặc mục Chấm công trên ứng dụng</div>
+          <div className="text-[11px] text-slate-500 mt-1">Tại khu vực điểm danh của rạp</div>
         </div>
       </div>
 
@@ -84,7 +84,7 @@ export const StaffShiftViewPage: React.FC<StaffShiftViewPageProps> = ({ currentU
           <Calendar className="w-12 h-12 text-slate-400 mx-auto" />
           <h3 className="font-bold text-sm text-slate-700">Chưa Có Lịch Phân Ca Tuần Này</h3>
           <p className="text-xs text-slate-500 max-w-sm mx-auto">
-            Vui lòng đăng ký nguyện vọng ca làm việc tại mục "Đăng ký lịch làm việc" để Quản lý và Trợ lý AI xếp lịch chính thức.
+            Chưa có lịch làm việc được phân công trong tuần này.
           </p>
         </div>
       ) : (

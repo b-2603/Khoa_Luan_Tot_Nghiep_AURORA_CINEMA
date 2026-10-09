@@ -61,15 +61,15 @@ export const DashboardPage: React.FC<DashboardPageProps> = ({ currentUser, onNav
           <div>
             <div className="inline-flex items-center gap-2 px-3.5 py-1 rounded-full bg-amber-50 text-amber-800 text-xs font-bold border border-amber-200 mb-3">
               <Sparkles className="w-3.5 h-3.5 text-amber-600" />
-              <span>AURORA CINEMAS EMS ENGINE AI</span>
+              <span>HỆ THỐNG QUẢN TRỊ NHÂN SỰ NỘI BỘ</span>
             </div>
             <h2 className="text-2xl md:text-3xl font-black text-slate-900">
               Xin chào, {currentUser.name}! 👋
             </h2>
             <p className="text-xs md:text-sm text-slate-600 mt-1 max-w-xl font-medium">
               {isManager 
-                ? 'Bảng điều khiển Quản trị Đào tạo & Nhân sự Aurora Cinema. Hệ thống AI đang sẵn sàng hỗ trợ xếp lịch ca làm việc và khởi tạo đề thi trắc nghiệm nghiệp vụ.'
-                : 'Chào mừng bạn đến với Cổng đào tạo & Nhân sự Aurora Cinema. Hãy kiểm tra lịch phân ca tuần này và hoàn thành bài đánh giá định kỳ hàng tháng.'}
+                ? 'Hệ thống quản lý phân ca, chấm công Face ID và đào tạo nhân sự rạp.'
+                : 'Theo dõi ca trực cá nhân, lịch làm việc và bài kiểm tra nghiệp vụ rạp.'}
             </p>
           </div>
 
@@ -77,10 +77,10 @@ export const DashboardPage: React.FC<DashboardPageProps> = ({ currentUser, onNav
             {isManager ? (
               <button
                 onClick={() => onNavigate('manager-scheduler')}
-                className="px-5 py-2.5 bg-gradient-to-r from-purple-600 to-amber-500 text-white font-extrabold text-xs rounded-xl shadow-md hover:opacity-90 flex items-center gap-2 transition cursor-pointer"
+                className="px-5 py-2.5 bg-gradient-to-r from-purple-600 to-indigo-600 text-white font-extrabold text-xs rounded-xl shadow-md hover:opacity-90 flex items-center gap-2 transition cursor-pointer"
               >
                 <Sparkles className="w-4 h-4 text-amber-200" />
-                <span>AI Xếp Lịch Phân Ca</span>
+                <span>Duyệt Ca & Xếp Lịch Làm Việc</span>
               </button>
             ) : (
               <button
@@ -228,7 +228,7 @@ export const DashboardPage: React.FC<DashboardPageProps> = ({ currentUser, onNav
 
       {/* Quick Access Use Case Cards */}
       <div>
-        <h3 className="text-sm font-bold text-slate-900 mb-3">Truy Cập Nhanh Chức Năng Hệ Thống (Quick Access)</h3>
+        <h3 className="text-sm font-bold text-slate-900 mb-3">Truy Cập Nhanh</h3>
         <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-6 gap-3">
           <button
             onClick={() => onNavigate(isManager ? 'employees' : 'courses')}
@@ -250,8 +250,8 @@ export const DashboardPage: React.FC<DashboardPageProps> = ({ currentUser, onNav
             onClick={() => onNavigate(isManager ? 'manager-scheduler' : 'certificates')}
             className="p-3.5 bg-white border border-slate-200 hover:border-amber-400 hover:shadow-md rounded-2xl text-left transition group shadow-xs cursor-pointer"
           >
-            <div className="font-bold text-xs text-slate-900 group-hover:text-amber-600">{isManager ? 'Xếp Lịch AI' : 'Xem Chứng Chỉ'}</div>
-            <div className="text-[10px] text-slate-500 mt-1">{isManager ? 'Phân ca tự động' : 'Kho chứng chỉ QR'}</div>
+            <div className="font-bold text-xs text-slate-900 group-hover:text-amber-600">{isManager ? 'Xếp Lịch Ca Làm' : 'Xem Chứng Chỉ'}</div>
+            <div className="text-[10px] text-slate-500 mt-1">{isManager ? 'Phân ca nhân sự' : 'Kho chứng chỉ QR'}</div>
           </button>
 
           <button
@@ -274,8 +274,8 @@ export const DashboardPage: React.FC<DashboardPageProps> = ({ currentUser, onNav
             onClick={() => onNavigate(isManager ? 'manager-quiz-creator' : 'profile')}
             className="p-3.5 bg-white border border-slate-200 hover:border-amber-400 hover:shadow-md rounded-2xl text-left transition group shadow-xs cursor-pointer"
           >
-            <div className="font-bold text-xs text-slate-900 group-hover:text-amber-600">{isManager ? 'Soạn Đề Thi AI' : 'Hồ Sơ Cá Nhân'}</div>
-            <div className="text-[10px] text-slate-500 mt-1">{isManager ? 'Trợ lý AI CTKM' : 'Thông tin nhân viên'}</div>
+            <div className="font-bold text-xs text-slate-900 group-hover:text-amber-600">{isManager ? 'Soạn Đề Khảo Thí' : 'Hồ Sơ Cá Nhân'}</div>
+            <div className="text-[10px] text-slate-500 mt-1">{isManager ? 'Khóa học & đề thi' : 'Thông tin nhân viên'}</div>
           </button>
         </div>
       </div>

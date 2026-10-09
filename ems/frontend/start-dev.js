@@ -194,7 +194,8 @@ async function main() {
   log('Frontend', `Starting Vite Dev Server...\n`, colors.cyan);
 
   const viteBin = path.resolve(__dirname, 'node_modules', 'vite', 'bin', 'vite.js');
-  const viteArgs = [viteBin, '--host'];
+  const userArgs = process.argv.slice(2).filter((arg) => arg !== '--');
+  const viteArgs = [viteBin, '--host', ...userArgs];
 
   const viteProc = spawn(process.execPath, viteArgs, {
     cwd: __dirname,

@@ -165,8 +165,8 @@ export const AttendanceExceptionsPage: React.FC<AttendanceExceptionsPageProps> =
           </div>
           <p className="text-xs text-slate-500 mt-1">
             {isManager 
-              ? 'Phê duyệt giải trình đi muộn, đơn xin nghỉ phép và yêu cầu đổi ca. Đơn được duyệt sẽ tự động cập nhật miễn trừ trên Bảng Chấm Công.'
-              : 'Theo dõi tiến độ duyệt đơn giải trình của Quản lý. Khi được duyệt, ca làm việc của bạn sẽ được miễn trừ lỗi đi muộn.'
+              ? 'Phê duyệt giải trình đi muộn, đơn xin nghỉ phép và yêu cầu đổi ca.'
+              : 'Theo dõi tiến độ duyệt đơn giải trình cá nhân.'
             }
           </p>
         </div>
@@ -192,36 +192,14 @@ export const AttendanceExceptionsPage: React.FC<AttendanceExceptionsPageProps> =
         </div>
       </div>
 
-      {/* Luồng giải thích rõ ràng "Đơn đi đâu?" */}
-      <div className="p-4 bg-amber-500/10 border border-amber-300 rounded-2xl flex flex-col md:flex-row md:items-center justify-between gap-3 shadow-xs">
-        <div className="flex items-start gap-3">
-          <div className="p-2 bg-amber-500 text-slate-950 rounded-xl shrink-0 font-bold">
-            <AlertCircle className="w-5 h-5" />
-          </div>
-          <div className="text-xs text-slate-700 leading-relaxed">
-            <strong className="text-slate-900 block font-bold mb-0.5">
-              {isManager 
-                ? 'Quy trình xử lý ngoại lệ rạp Aurora Cinema:' 
-                : 'Đơn giải trình của bạn sẽ đi đâu sau khi gửi?'}
-            </strong>
-            {isManager ? (
-              <span>
-                Nhân viên bị đi muộn / lệch ca sẽ gửi đơn giải trình tại đây. Bạn bấm <strong>[Phê Duyệt]</strong> để chấp thuận, hệ thống sẽ tự động gỡ phạt và ghi chú miễn trừ ngay trên danh sách chấm công của nhân sự đó.
-              </span>
-            ) : (
-              <span>
-                Đơn giải trình của bạn được gửi trực tiếp đến tab <strong>"Xử Lý Ngoại Lệ Chấm Công"</strong> của <strong>Quản lý Rạp</strong>. Sau khi Quản lý nhấn <strong>Phê Duyệt</strong>, ca làm việc đi muộn của bạn sẽ được đánh dấu <em>✓ Đã duyệt miễn trừ</em> trên trang Chấm Công!
-              </span>
-            )}
+      {isManager && pendingCount > 0 && (
+        <div className="p-3.5 bg-amber-500/10 border border-amber-300 rounded-2xl flex items-center justify-between text-xs font-bold text-amber-900 shadow-xs">
+          <div className="flex items-center gap-2">
+            <AlertCircle className="w-4 h-4 text-amber-600" />
+            <span>Có {pendingCount} đơn giải trình đang chờ bạn phê duyệt.</span>
           </div>
         </div>
-
-        {isManager && pendingCount > 0 && (
-          <div className="shrink-0 flex items-center gap-2 px-3 py-1.5 bg-amber-500 text-slate-950 font-bold text-xs rounded-xl animate-pulse">
-            <span>Có {pendingCount} đơn chờ bạn duyệt</span>
-          </div>
-        )}
-      </div>
+      )}
 
       {/* Stats Cards */}
       <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
