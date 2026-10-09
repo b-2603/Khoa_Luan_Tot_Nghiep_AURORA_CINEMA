@@ -3342,7 +3342,9 @@ class AdminController
         $theaters = $this->rows("SELECT th.id,th.name,th.address,th.city,'' phone,'active' status,
             COUNT(DISTINCT sc.id) total_screens,COALESCE(SUM(sc.total_seats),0) total_seats,
             COALESCE(SUM(CASE WHEN sc.status='active' THEN 1 ELSE 0 END),0) active_screens,
-            COALESCE((SELECT u.full_name FROM users u WHERE u.theater_id=th.id AND u.role='cinema_admin' AND u.status='active' ORDER BY u.id LIMIT 1),'Chưa phân công') admin_name,
+            COALESCE((SELECT u.full_name FROM users u WHERE u.theater_id=th.id AND u.role='cinema_admin' AND u.status='active'
+                ORDER BY CASE WHEN u.username='admin_rap' OR u.username LIKE 'admin_rap_%' THEN 0 ELSE 1 END,
+                    u.updated_at DESC,u.id DESC LIMIT 1),'Chưa phân công') admin_name,
             (SELECT COUNT(*) FROM showtimes st INNER JOIN screens day_sc ON day_sc.id=st.screen_id WHERE day_sc.theater_id=th.id AND DATE(st.starts_at)='{$dateEsc}' AND st.status<>'CANCELLED') showtimes,
             (SELECT COUNT(*) FROM showtimes st INNER JOIN screens run_sc ON run_sc.id=st.screen_id WHERE run_sc.theater_id=th.id AND DATE(st.starts_at)='{$dateEsc}' AND st.status='OPEN' AND NOW() BETWEEN st.starts_at AND st.ends_at) running_showtimes,
             (SELECT COUNT(*) FROM booking_seats bs INNER JOIN bookings b ON b.id=bs.booking_id INNER JOIN showtimes st ON st.id=b.showtime_id INNER JOIN screens book_sc ON book_sc.id=st.screen_id WHERE book_sc.theater_id=th.id AND DATE(st.starts_at)='{$dateEsc}' AND b.status NOT IN ('CANCELLED','EXPIRED')) booked_seats,
