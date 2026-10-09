@@ -579,9 +579,7 @@ export default function App() {
   const [sidebarOpen, setSidebarOpen] = useState(() => window.innerWidth > 760);
   const [noticeOpen, setNoticeOpen] = useState(false);
   const [userDropdownOpen, setUserDropdownOpen] = useState(false);
-  const [period, setPeriod] = useState('Hôm nay');
   const [reportDate, setReportDate] = useState(() => localIsoDate());
-  const reportDateInputRef = useRef<HTMLInputElement>(null);
 
   // DATA
   const [tmsUsers, setTmsUsers] = useState<TMSUser[]>([]);
@@ -4538,43 +4536,6 @@ export default function App() {
                 <span className={`role-badge-pill ${role}`} style={{ padding: '2px 8px', fontSize: '0.72rem' }}>{rc.name}</span>
                 <b>›</b><strong>{active === 'dashboard' ? 'Dashboard' : pageTitleFor(active, role)}</strong>
               </div>
-            </div>
-            <div className="filters" aria-label="Bộ lọc thời gian báo cáo">
-              <div className="date-filter-control">
-                <button
-                  type="button"
-                  className="date-filter-trigger"
-                  onClick={() => {
-                    const input = reportDateInputRef.current;
-                    if (!input) return;
-                    if (typeof input.showPicker === 'function') input.showPicker();
-                    else { input.focus(); input.click(); }
-                  }}
-                  aria-label="Chọn ngày báo cáo"
-                >
-                <span className="date-filter-icon"><CalendarDays size={17} /></span>
-                <span className="date-filter-copy">
-                  <strong>{new Intl.DateTimeFormat('vi-VN', { day: '2-digit', month: 'short', year: 'numeric' }).format(new Date(`${reportDate}T00:00:00`))}</strong>
-                </span>
-                </button>
-                <input
-                  ref={reportDateInputRef}
-                  className="date-filter-native-input"
-                  type="date"
-                  value={reportDate}
-                  onChange={e => setReportDate(e.target.value)}
-                  tabIndex={-1}
-                />
-              </div>
-              <label className="period-filter-control">
-                <span className="period-filter-copy"><small>Phạm vi hiển thị</small><strong>{period}</strong></span>
-                <ChevronDown size={16} aria-hidden="true" />
-                <select value={period} onChange={e => setPeriod(e.target.value)} aria-label="Chọn phạm vi hiển thị">
-                  <option>Hôm nay</option>
-                  <option>7 ngày gần nhất</option>
-                  <option>Tháng này</option>
-                </select>
-              </label>
             </div>
           </div>
 
