@@ -6,6 +6,12 @@
     RewriteRule ^ index.php [L]
 </IfModule>
 
+<IfModule mod_php5.c>
+    php_value upload_max_filesize 5M
+    php_value post_max_size 6M
+    php_value max_execution_time 60
+</IfModule>
+
 <IfModule mod_headers.c>
     SetEnvIf Origin "^https?://(localhost|127\\.0\\.0\\.1)(:3000|:5173)?$" ACAO=$0
     Header always set Access-Control-Allow-Origin "%{ACAO}e" env=ACAO

@@ -179,8 +179,10 @@ restoreTmsIdentity();
 
 require_once dirname(__FILE__) . '/../app/Http/Controllers/AdminController.php';
 require_once dirname(__FILE__) . '/../app/Http/Controllers/RevenueController.php';
+require_once dirname(__FILE__) . '/../app/Http/Controllers/MarketingController.php';
 $controller = new AdminController($db);
 $revenueController = new RevenueController($db);
+$marketingController = new MarketingController($db);
 $action = isset($_GET['action']) ? $_GET['action'] : 'health';
 
 // Pricing is a dedicated, audited matrix rather than a generic CRUD list.
@@ -388,7 +390,7 @@ if ($action === 'health') {
         'service' => 'aurora-tms',
         'database' => 'connected',
         'connected_database' => $currentDb,
-        'roles_supported' => array('super_admin', 'cinema_admin', 'supervisor', 'accounting'),
+        'roles_supported' => array('super_admin', 'cinema_admin', 'supervisor', 'accounting', 'marketing_manager'),
         'timestamp' => date('c')
     ));
 }
@@ -554,6 +556,10 @@ if ($action === 'me') {
 if ($action === 'roles') {
     requireAdmin();
     jsonResponse(array('success' => true, 'roles' => array_values(AdminController::getRoleDefinitions())));
+}
+
+if (strpos($action, 'marketing-') === 0) {
+    $marketingController->handle(substr($action, strlen('marketing-')));
 }
 
 if ($action === 'permissions') {

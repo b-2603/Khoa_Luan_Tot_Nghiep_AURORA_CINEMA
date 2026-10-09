@@ -357,6 +357,161 @@ function aurora_db() {
     return $db;
 }
 
+// Administrative units used by the customer profile are database-backed.
+// Importing is idempotent and only happens when the tables are empty.
+function aurora_ensure_administrative_catalog($db) {
+    $provinceTable = $db->query("CREATE TABLE IF NOT EXISTS administrative_provinces (
+        code CHAR(2) NOT NULL PRIMARY KEY,
+        name VARCHAR(100) NOT NULL,
+        full_name VARCHAR(150) NOT NULL,
+        code_name VARCHAR(100) NOT NULL,
+        dataset_version VARCHAR(30) NOT NULL,
+        sort_order SMALLINT UNSIGNED NOT NULL DEFAULT 0,
+        is_active TINYINT(1) NOT NULL DEFAULT 1,
+        created_at TIMESTAMP NULL DEFAULT CURRENT_TIMESTAMP,
+        updated_at DATETIME NULL,
+        UNIQUE KEY uq_administrative_province_name (name),
+        KEY idx_administrative_province_active (is_active, sort_order)
+    ) ENGINE=InnoDB DEFAULT CHARSET=utf8");
+    if (!$provinceTable) return false;
+
+    $districtTable = $db->query("CREATE TABLE IF NOT EXISTS administrative_districts (
+        code CHAR(3) NOT NULL PRIMARY KEY,
+        province_code CHAR(2) NOT NULL,
+        name VARCHAR(120) NOT NULL,
+        full_name VARCHAR(160) NOT NULL,
+        code_name VARCHAR(120) NOT NULL,
+        dataset_version VARCHAR(30) NOT NULL,
+        sort_order SMALLINT UNSIGNED NOT NULL DEFAULT 0,
+        is_active TINYINT(1) NOT NULL DEFAULT 1,
+        created_at TIMESTAMP NULL DEFAULT CURRENT_TIMESTAMP,
+        updated_at DATETIME NULL,
+        UNIQUE KEY uq_administrative_district_name (province_code, full_name),
+        KEY idx_administrative_district_province (province_code, is_active, sort_order),
+        CONSTRAINT fk_administrative_district_province FOREIGN KEY (province_code)
+            REFERENCES administrative_provinces(code) ON UPDATE CASCADE ON DELETE RESTRICT
+    ) ENGINE=InnoDB DEFAULT CHARSET=utf8");
+    if (!$districtTable) return false;
+
+    $countResult = $db->query('SELECT (SELECT COUNT(*) FROM administrative_provinces) AS province_total, (SELECT COUNT(*) FROM administrative_districts) AS district_total');
+    $countRow = $countResult ? $countResult->fetch_assoc() : false;
+    if ($countRow && (int)$countRow['province_total'] >= 63 && (int)$countRow['district_total'] >= 696) return true;
+
+    $catalogPath = dirname(dirname(__FILE__)).DIRECTORY_SEPARATOR.'database'.DIRECTORY_SEPARATOR.'vietnam_provinces_districts_v2.4.1.json';
+    if (!is_file($catalogPath)) return false;
+    $catalog = json_decode(file_get_contents($catalogPath), true);
+    if (!is_array($catalog) || count($catalog) < 63) return false;
+
+    $provinceSql = "INSERT INTO administrative_provinces
+        (code,name,full_name,code_name,dataset_version,sort_order,is_active,updated_at)
+        VALUES (?,?,?,?,?,?,1,NOW())
+        ON DUPLICATE KEY UPDATE name=VALUES(name),full_name=VALUES(full_name),code_name=VALUES(code_name),
+            dataset_version=VALUES(dataset_version),sort_order=VALUES(sort_order),is_active=1,updated_at=NOW()";
+    $districtSql = "INSERT INTO administrative_districts
+        (code,province_code,name,full_name,code_name,dataset_version,sort_order,is_active,updated_at)
+        VALUES (?,?,?,?,?,?,?,1,NOW())
+        ON DUPLICATE KEY UPDATE province_code=VALUES(province_code),name=VALUES(name),full_name=VALUES(full_name),
+            code_name=VALUES(code_name),dataset_version=VALUES(dataset_version),sort_order=VALUES(sort_order),is_active=1,updated_at=NOW()";
+    $provinceStmt = $db->prepare($provinceSql);
+    $districtStmt = $db->prepare($districtSql);
+    if (!$provinceStmt || !$districtStmt) return false;
+
+    $datasetVersion = 'VN-63-v2.4.1';
+    $provinceCode = $provinceName = $provinceFullName = $provinceCodeName = '';
+    $provinceOrder = 0;
+    $districtCode = $districtProvinceCode = $districtName = $districtFullName = $districtCodeName = '';
+    $districtOrder = 0;
+    $provinceStmt->bind_param('sssssi', $provinceCode, $provinceName, $provinceFullName, $provinceCodeName, $datasetVersion, $provinceOrder);
+    $districtStmt->bind_param('ssssssi', $districtCode, $districtProvinceCode, $districtName, $districtFullName, $districtCodeName, $datasetVersion, $districtOrder);
+
+    $db->autocommit(false);
+    foreach ($catalog as $province) {
+        $provinceCode = isset($province['code']) ? (string)$province['code'] : '';
+        $provinceName = isset($province['name']) ? (string)$province['name'] : '';
+        $provinceFullName = isset($province['fullName']) ? (string)$province['fullName'] : $provinceName;
+        $provinceCodeName = isset($province['codeName']) ? (string)$province['codeName'] : '';
+        $provinceOrder = isset($province['sortOrder']) ? (int)$province['sortOrder'] : 0;
+        if ($provinceCode === '' || $provinceName === '' || !$provinceStmt->execute()) {
+            $db->rollback(); $db->autocommit(true); $provinceStmt->close(); $districtStmt->close(); return false;
+        }
+        $districtProvinceCode = $provinceCode;
+        $districts = isset($province['districts']) && is_array($province['districts']) ? $province['districts'] : array();
+        foreach ($districts as $district) {
+            $districtCode = isset($district['code']) ? (string)$district['code'] : '';
+            $districtName = isset($district['name']) ? (string)$district['name'] : '';
+            $districtFullName = isset($district['fullName']) ? (string)$district['fullName'] : $districtName;
+            $districtCodeName = isset($district['codeName']) ? (string)$district['codeName'] : '';
+            $districtOrder = isset($district['sortOrder']) ? (int)$district['sortOrder'] : 0;
+            if ($districtCode === '' || $districtName === '' || !$districtStmt->execute()) {
+                $db->rollback(); $db->autocommit(true); $provinceStmt->close(); $districtStmt->close(); return false;
+            }
+        }
+    }
+    $provinceStmt->close();
+    $districtStmt->close();
+    $db->commit();
+    $db->autocommit(true);
+    return true;
+}
+
+function aurora_canonical_province($db, $city) {
+    $candidate = trim((string)$city);
+    if ($candidate === 'TP. Hồ Chí Minh') $candidate = 'Hồ Chí Minh';
+    if ($candidate === 'Thừa Thiên Huế') $candidate = 'Huế';
+    $stmt = $db->prepare('SELECT code,name FROM administrative_provinces WHERE is_active=1 AND (name=? OR full_name=?) LIMIT 1');
+    if (!$stmt) return false;
+    $stmt->bind_param('ss', $candidate, $candidate);
+    $stmt->execute();
+    $code = $name = null;
+    $stmt->bind_result($code, $name);
+    $found = $stmt->fetch();
+    $stmt->close();
+    if ($found) return array('code'=>(string)$code, 'name'=>(string)$name);
+
+    // Gracefully recover values previously damaged by latin1 columns, such
+    // as "Ti?n Giang", without accepting arbitrary free text.
+    if (strpos($candidate, '?') !== false) {
+        if (strpos($candidate, 'TP. ') === 0) $candidate = substr($candidate, 4);
+        $pattern = str_replace('?', '_', $candidate);
+        $fallback = $db->prepare('SELECT code,name FROM administrative_provinces WHERE is_active=1 AND (name LIKE ? OR full_name LIKE ?) ORDER BY code LIMIT 2');
+        if (!$fallback) return false;
+        $fallback->bind_param('ss', $pattern, $pattern);
+        $fallback->execute();
+        $fallbackCode = $fallbackName = null; $matches = array();
+        $fallback->bind_result($fallbackCode, $fallbackName);
+        while ($fallback->fetch()) $matches[] = array('code'=>(string)$fallbackCode, 'name'=>(string)$fallbackName);
+        $fallback->close();
+        if (count($matches) === 1) return $matches[0];
+    }
+    return false;
+}
+
+function aurora_canonical_district($db, $provinceCode, $district) {
+    $candidate = trim((string)$district);
+    $stmt = $db->prepare('SELECT full_name FROM administrative_districts WHERE province_code=? AND is_active=1 AND (full_name=? OR name=?) LIMIT 1');
+    if (!$stmt) return false;
+    $stmt->bind_param('sss', $provinceCode, $candidate, $candidate);
+    $stmt->execute();
+    $fullName = null;
+    $stmt->bind_result($fullName);
+    $found = $stmt->fetch();
+    $stmt->close();
+    if ($found) return (string)$fullName;
+    if (strpos($candidate, '?') !== false) {
+        $pattern = str_replace('?', '_', $candidate);
+        $fallback = $db->prepare('SELECT full_name FROM administrative_districts WHERE province_code=? AND is_active=1 AND (full_name LIKE ? OR name LIKE ?) ORDER BY code LIMIT 2');
+        if (!$fallback) return false;
+        $fallback->bind_param('sss', $provinceCode, $pattern, $pattern);
+        $fallback->execute();
+        $fallbackName = null; $matches = array();
+        $fallback->bind_result($fallbackName);
+        while ($fallback->fetch()) $matches[] = (string)$fallbackName;
+        $fallback->close();
+        if (count($matches) === 1) return $matches[0];
+    }
+    return false;
+}
+
 function aurora_ensure_sales_orders($db) {
     return $db->query("CREATE TABLE IF NOT EXISTS orders (
         id BIGINT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
@@ -458,6 +613,41 @@ $resource = isset($parts[0]) && $parts[0] !== '' ? $parts[0] : (isset($_GET['act
 if ($resource === 'health') {
     $db->query('SELECT 1');
     aurora_response(array('status' => 'ok', 'service' => 'aurora-customer-api', 'database' => $db->errno ? 'error' : 'ok'), 200);
+}
+
+if ($resource === 'address_provinces') {
+    aurora_method('GET');
+    if (!aurora_ensure_administrative_catalog($db)) aurora_response(array('message'=>'Không thể chuẩn bị danh mục tỉnh/thành trong aurora_db.'), 500);
+    $result = $db->query('SELECT code,name,full_name FROM administrative_provinces WHERE is_active=1 ORDER BY sort_order,name');
+    if (!$result) aurora_response(array('message'=>'Không thể tải danh mục tỉnh/thành.'), 500);
+    $provinces = array();
+    while ($row = $result->fetch_assoc()) {
+        $aliases = array();
+        if ($row['name'] === 'Hồ Chí Minh') $aliases[] = 'TP. Hồ Chí Minh';
+        if ($row['name'] === 'Huế') $aliases[] = 'Thừa Thiên Huế';
+        $provinces[] = array('code'=>$row['code'], 'name'=>$row['name'], 'fullName'=>$row['full_name'], 'aliases'=>$aliases);
+    }
+    aurora_response(array('provinces'=>$provinces, 'source'=>'aurora_db', 'datasetVersion'=>'VN-63-v2.4.1'), 200);
+}
+
+if ($resource === 'address_districts') {
+    aurora_method('GET');
+    if (!aurora_ensure_administrative_catalog($db)) aurora_response(array('message'=>'Không thể chuẩn bị danh mục quận/huyện trong aurora_db.'), 500);
+    $provinceCode = isset($_GET['province_code']) ? trim((string)$_GET['province_code']) : '';
+    if (!preg_match('/^\d{2}$/', $provinceCode)) aurora_response(array('message'=>'Mã tỉnh/thành không hợp lệ.'), 422);
+    $provinceCodeEsc = $db->real_escape_string($provinceCode);
+    $provinceResult = $db->query("SELECT code FROM administrative_provinces WHERE code='{$provinceCodeEsc}' AND is_active=1 LIMIT 1");
+    if (!$provinceResult || !$provinceResult->num_rows) aurora_response(array('message'=>'Không tìm thấy tỉnh/thành đã chọn.'), 404);
+    $stmt = $db->prepare('SELECT code,full_name FROM administrative_districts WHERE province_code=? AND is_active=1 ORDER BY sort_order,full_name');
+    if (!$stmt) aurora_response(array('message'=>'Không thể tải danh mục quận/huyện.'), 500);
+    $stmt->bind_param('s', $provinceCode);
+    $stmt->execute();
+    $code = $fullName = null;
+    $stmt->bind_result($code, $fullName);
+    $districts = array();
+    while ($stmt->fetch()) $districts[] = array('code'=>(string)$code, 'name'=>(string)$fullName);
+    $stmt->close();
+    aurora_response(array('provinceCode'=>$provinceCode, 'districts'=>$districts, 'source'=>'aurora_db'), 200);
 }
 
 if ($resource === 'movies') {
@@ -960,17 +1150,39 @@ function aurora_membership_level($points) {
 // A membership card is a durable record in aurora_db, not a number assembled
 // in the browser. It is created lazily for existing customers.
 function aurora_ensure_membership_card_schema($db) {
-    return $db->query("CREATE TABLE IF NOT EXISTS customer_membership_cards (
+    $created = $db->query("CREATE TABLE IF NOT EXISTS customer_membership_cards (
         id BIGINT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
         user_id BIGINT UNSIGNED NOT NULL,
-        card_number VARCHAR(32) NOT NULL,
+        card_number BIGINT UNSIGNED NOT NULL,
         activated_at DATETIME NOT NULL,
         expires_at DATE NOT NULL,
         created_at DATETIME NOT NULL,
         updated_at DATETIME NOT NULL,
         UNIQUE KEY uq_membership_card_user (user_id),
         UNIQUE KEY uq_membership_card_number (card_number)
-    ) ENGINE=InnoDB DEFAULT CHARSET=utf8") !== false;
+    ) ENGINE=InnoDB DEFAULT CHARSET=utf8");
+    if (!$created) return false;
+
+    // Older installations stored values such as AUR26100000016EB3E2. Convert
+    // every existing card to a stable 19-digit number before enforcing a
+    // numeric database column. Format: YYMM + 13-digit user id + 2 checksums.
+    $columnResult = $db->query("SHOW COLUMNS FROM customer_membership_cards LIKE 'card_number'");
+    $column = $columnResult ? $columnResult->fetch_assoc() : false;
+    $columnType = $column && isset($column['Type']) ? strtolower((string)$column['Type']) : '';
+    if (strpos($columnType, 'bigint') !== 0) {
+        $numberSql = "CONCAT(DATE_FORMAT(activated_at,'%y%m'),LPAD(user_id,13,'0'),LPAD(MOD(CRC32(CONCAT('aurora-member-',DATE_FORMAT(activated_at,'%y%m'),LPAD(user_id,13,'0'))),100),2,'0'))";
+        if (!$db->query("UPDATE customer_membership_cards SET card_number={$numberSql}, updated_at=NOW()")) return false;
+        if (!$db->query('ALTER TABLE customer_membership_cards MODIFY card_number BIGINT UNSIGNED NOT NULL')) return false;
+    }
+    return true;
+}
+
+function aurora_numeric_membership_number($userId) {
+    $userPart = str_pad((string)(int)$userId, 13, '0', STR_PAD_LEFT);
+    if (strlen($userPart) > 13) $userPart = substr($userPart, -13);
+    $base = date('ym').$userPart;
+    $crc = sprintf('%u', crc32('aurora-member-'.$base));
+    return $base.str_pad(substr($crc, -2), 2, '0', STR_PAD_LEFT);
 }
 
 function aurora_membership_card_for_user($db, $userId) {
@@ -978,14 +1190,12 @@ function aurora_membership_card_for_user($db, $userId) {
     if (!aurora_ensure_membership_card_schema($db)) return null;
     $existing = $db->query("SELECT card_number, activated_at, expires_at FROM customer_membership_cards WHERE user_id={$userId} LIMIT 1");
     if ($existing && ($card = $existing->fetch_assoc())) return $card;
-    for ($attempt = 0; $attempt < 5; $attempt++) {
-        $number = 'AUR' . date('ym') . str_pad((string)$userId, 7, '0', STR_PAD_LEFT) . strtoupper(substr(sha1(uniqid((string)mt_rand(), true)), 0, 5));
-        $safeNumber = $db->real_escape_string($number);
-        $inserted = $db->query("INSERT IGNORE INTO customer_membership_cards (user_id, card_number, activated_at, expires_at, created_at, updated_at) VALUES ({$userId}, '{$safeNumber}', NOW(), DATE_ADD(CURDATE(), INTERVAL 5 YEAR), NOW(), NOW())");
-        if ($inserted !== false) {
-            $created = $db->query("SELECT card_number, activated_at, expires_at FROM customer_membership_cards WHERE user_id={$userId} LIMIT 1");
-            if ($created && ($card = $created->fetch_assoc())) return $card;
-        }
+    $number = aurora_numeric_membership_number($userId);
+    $safeNumber = $db->real_escape_string($number);
+    $inserted = $db->query("INSERT IGNORE INTO customer_membership_cards (user_id, card_number, activated_at, expires_at, created_at, updated_at) VALUES ({$userId}, '{$safeNumber}', NOW(), DATE_ADD(CURDATE(), INTERVAL 5 YEAR), NOW(), NOW())");
+    if ($inserted !== false) {
+        $created = $db->query("SELECT card_number, activated_at, expires_at FROM customer_membership_cards WHERE user_id={$userId} LIMIT 1");
+        if ($created && ($card = $created->fetch_assoc())) return $card;
     }
     return null;
 }
@@ -1155,8 +1365,9 @@ if ($resource === 'seat_hold') {
 function aurora_password_hash($password) {
     $chars = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789./';
     $salt = '';
+    $bytes = function_exists('openssl_random_pseudo_bytes') ? openssl_random_pseudo_bytes(22) : false;
     for ($i = 0; $i < 22; $i++) {
-        $salt .= $chars[mt_rand(0, 63)];
+        $salt .= $chars[$bytes !== false ? (ord($bytes[$i]) % 64) : mt_rand(0, 63)];
     }
     return crypt($password, '$2y$10$' . $salt);
 }
@@ -1165,8 +1376,166 @@ function aurora_password_verify($password, $hash) {
     return crypt($password, $hash) === $hash;
 }
 
+function aurora_ensure_password_reset_schema($db) {
+    $created = $db->query("CREATE TABLE IF NOT EXISTS customer_password_reset_requests (
+        id BIGINT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
+        user_id BIGINT UNSIGNED NULL,
+        selector CHAR(40) NOT NULL,
+        lookup_hash CHAR(64) NOT NULL,
+        code_hash CHAR(64) NOT NULL,
+        reset_token_hash CHAR(64) NULL,
+        status ENUM('pending','verified','used','expired','locked') NOT NULL DEFAULT 'pending',
+        attempts_remaining TINYINT UNSIGNED NOT NULL DEFAULT 5,
+        delivery_status ENUM('development','sent','failed','not_applicable') NOT NULL DEFAULT 'not_applicable',
+        ip_address_hash CHAR(64) NOT NULL,
+        user_agent VARCHAR(255) NULL,
+        expires_at DATETIME NOT NULL,
+        verified_until DATETIME NULL,
+        requested_at DATETIME NOT NULL,
+        verified_at DATETIME NULL,
+        completed_at DATETIME NULL,
+        UNIQUE KEY uq_password_reset_selector (selector),
+        KEY idx_password_reset_lookup (lookup_hash, requested_at),
+        KEY idx_password_reset_user (user_id, status, requested_at),
+        KEY idx_password_reset_ip (ip_address_hash, requested_at),
+        CONSTRAINT fk_password_reset_user FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
+    ) ENGINE=InnoDB DEFAULT CHARSET=utf8 COLLATE=utf8_unicode_ci");
+    if (!$created) return false;
+    $column = $db->query("SHOW COLUMNS FROM users LIKE 'password_changed_at'");
+    if ((!$column || !$column->num_rows) && !$db->query('ALTER TABLE users ADD COLUMN password_changed_at DATETIME NULL')) return false;
+    return true;
+}
+
+function aurora_password_reset_hash($value, $selector) {
+    $pepper = aurora_env('APP_KEY', 'aurora-cinema-password-reset');
+    return hash_hmac('sha256', (string)$selector.'|'.(string)$value, $pepper);
+}
+
+function aurora_password_reset_code() {
+    if (function_exists('openssl_random_pseudo_bytes')) {
+        $bytes = openssl_random_pseudo_bytes(4);
+        if ($bytes !== false) {
+            $parts = unpack('Nvalue', $bytes);
+            return str_pad((string)($parts['value'] % 1000000), 6, '0', STR_PAD_LEFT);
+        }
+    }
+    return str_pad((string)mt_rand(0, 999999), 6, '0', STR_PAD_LEFT);
+}
+
+function aurora_password_reset_send_email($email, $name, $code, $isConfirmation) {
+    if (!filter_var($email, FILTER_VALIDATE_EMAIL)) return false;
+    $from = aurora_env('MAIL_FROM_ADDRESS', 'no-reply@auroracinema.local');
+    if (!filter_var($from, FILTER_VALIDATE_EMAIL)) $from = 'no-reply@auroracinema.local';
+    $headers = "From: Aurora Cinema <".$from.">\r\n";
+    $headers .= "Reply-To: ".$from."\r\n";
+    $headers .= "Content-Type: text/plain; charset=UTF-8\r\n";
+    if ($isConfirmation) {
+        $subject = 'Aurora Cinema - Mat khau da duoc thay doi';
+        $message = "Xin chao ".$name.",\r\n\r\nMat khau Aurora cua ban vua duoc thay doi thanh cong.\r\nNeu ban khong thuc hien thao tac nay, vui long lien he Aurora Cinema ngay.\r\n\r\nAurora Cinema";
+    } else {
+        $subject = 'Aurora Cinema - Ma xac minh dat lai mat khau';
+        $message = "Xin chao ".$name.",\r\n\r\nMa xac minh dat lai mat khau cua ban la: ".$code."\r\nMa co hieu luc trong 10 phut va chi duoc su dung mot lan.\r\nNeu ban khong yeu cau, hay bo qua email nay.\r\n\r\nAurora Cinema";
+    }
+    return @mail($email, $subject, wordwrap($message, 70, "\r\n"), $headers);
+}
+
+function aurora_ensure_profile_schema($db) {
+    static $ready = null;
+    if ($ready !== null) return $ready;
+
+    $schemaResult = $db->query("SELECT DEFAULT_CHARACTER_SET_NAME AS charset_name FROM information_schema.SCHEMATA WHERE SCHEMA_NAME='aurora_db' LIMIT 1");
+    $schemaRow = $schemaResult ? $schemaResult->fetch_assoc() : false;
+    if (!$schemaRow || strtolower((string)$schemaRow['charset_name']) !== 'utf8') {
+        if (!$db->query('ALTER DATABASE aurora_db CHARACTER SET utf8 COLLATE utf8_general_ci')) { $ready = false; return false; }
+    }
+    $tableStatus = $db->query("SHOW TABLE STATUS LIKE 'users'");
+    $tableRow = $tableStatus ? $tableStatus->fetch_assoc() : false;
+    $collation = $tableRow && isset($tableRow['Collation']) ? strtolower((string)$tableRow['Collation']) : '';
+    if (strpos($collation, 'utf8') !== 0 && !$db->query('ALTER TABLE users CONVERT TO CHARACTER SET utf8 COLLATE utf8_general_ci')) {
+        $ready = false; return false;
+    }
+
+    $definitions = array(
+        'phone' => 'VARCHAR(20) NULL',
+        'id_number' => 'VARCHAR(30) NULL',
+        'birthday' => 'DATE NULL',
+        'gender' => "ENUM('male','female','other') NULL",
+        'city' => 'VARCHAR(100) CHARACTER SET utf8 COLLATE utf8_general_ci NULL',
+        'district' => 'VARCHAR(100) CHARACTER SET utf8 COLLATE utf8_general_ci NULL',
+        'address' => 'VARCHAR(255) CHARACTER SET utf8 COLLATE utf8_general_ci NULL',
+        'avatar_url' => 'VARCHAR(500) CHARACTER SET utf8 COLLATE utf8_general_ci NULL'
+    );
+    foreach ($definitions as $columnName => $definition) {
+        $column = $db->query("SHOW COLUMNS FROM users LIKE '".$db->real_escape_string($columnName)."'");
+        if ((!$column || !$column->num_rows) && !$db->query("ALTER TABLE users ADD COLUMN {$columnName} {$definition}")) {
+            $ready = false; return false;
+        }
+    }
+
+    $cityColumn = $db->query("SHOW FULL COLUMNS FROM users LIKE 'city'");
+    $cityRow = $cityColumn ? $cityColumn->fetch_assoc() : false;
+    $birthdayColumn = $db->query("SHOW COLUMNS FROM users LIKE 'birthday'");
+    $birthdayRow = $birthdayColumn ? $birthdayColumn->fetch_assoc() : false;
+    if (!$cityRow || strpos(strtolower((string)$cityRow['Collation']), 'utf8') !== 0 || strtoupper((string)$cityRow['Null']) !== 'YES' || !$birthdayRow || strtoupper((string)$birthdayRow['Null']) !== 'YES') {
+        $normalized = $db->query("ALTER TABLE users
+            MODIFY full_name VARCHAR(120) CHARACTER SET utf8 COLLATE utf8_general_ci NOT NULL,
+            MODIFY phone VARCHAR(20) NULL,
+            MODIFY id_number VARCHAR(30) NULL,
+            MODIFY birthday DATE NULL,
+            MODIFY gender ENUM('male','female','other') NULL,
+            MODIFY city VARCHAR(100) CHARACTER SET utf8 COLLATE utf8_general_ci NULL,
+            MODIFY district VARCHAR(100) CHARACTER SET utf8 COLLATE utf8_general_ci NULL,
+            MODIFY address VARCHAR(255) CHARACTER SET utf8 COLLATE utf8_general_ci NULL,
+            MODIFY avatar_url VARCHAR(500) CHARACTER SET utf8 COLLATE utf8_general_ci NULL,
+            MODIFY updated_at DATETIME NULL");
+        if (!$normalized) { $ready = false; return false; }
+    }
+
+    // Recover values damaged by the legacy latin1 columns from aurora_db's
+    // authoritative administrative catalogue. These statements are safe to
+    // run repeatedly and do not invent location names.
+    if (aurora_ensure_administrative_catalog($db)) {
+        $db->query("UPDATE users u INNER JOIN administrative_provinces p ON p.code='79' SET u.city=p.name WHERE u.city LIKE 'TP. H? Ch%'");
+        $db->query("UPDATE users u INNER JOIN administrative_provinces p ON p.code='82' SET u.city=p.name WHERE u.city='Ti?n Giang'");
+        $db->query("UPDATE users u INNER JOIN administrative_districts d ON d.code='760' SET u.district=d.full_name WHERE u.district='Qu?n 1'");
+        $db->query("UPDATE users u INNER JOIN administrative_districts d ON d.code_name='cho_gao' SET u.district=d.full_name WHERE u.district='Huy?n Ch? G?o'");
+    }
+    $ready = true;
+    return true;
+}
+
+function aurora_public_asset_url($value) {
+    $url = trim((string)$value);
+    if ($url === '' || preg_match('#^(https?:)?//#i', $url) || preg_match('#^(data|blob):#i', $url)) return $url;
+
+    $https = isset($_SERVER['HTTPS']) && $_SERVER['HTTPS'] !== '' && strtolower((string)$_SERVER['HTTPS']) !== 'off';
+    $scheme = $https ? 'https' : 'http';
+    $host = isset($_SERVER['HTTP_HOST']) ? trim((string)$_SERVER['HTTP_HOST']) : 'localhost';
+    if ($host === '' || !preg_match('/^[A-Za-z0-9.\-:\[\]]+$/', $host)) $host = 'localhost';
+    return $scheme.'://'.$host.'/'.ltrim($url, '/');
+}
+
+function aurora_profile_for_user($db, $id) {
+    if (!aurora_ensure_profile_schema($db)) return null;
+    $stmt = $db->prepare('SELECT id,full_name,email,phone,id_number,birthday,gender,city,district,address,avatar_url,membership_level,points,created_at FROM users WHERE id=? LIMIT 1');
+    if (!$stmt) return null;
+    $stmt->bind_param('i', $id);
+    $stmt->execute();
+    $uid = $fullName = $email = $phone = $idNumber = $birthday = $gender = $city = $district = $address = $avatarUrl = $membershipLevel = $points = $createdAt = null;
+    $stmt->bind_result($uid,$fullName,$email,$phone,$idNumber,$birthday,$gender,$city,$district,$address,$avatarUrl,$membershipLevel,$points,$createdAt);
+    $found = $stmt->fetch();
+    $stmt->close();
+    if (!$found) return null;
+    return array(
+        'id'=>(int)$uid, 'fullName'=>$fullName, 'email'=>$email, 'phone'=>$phone,
+        'idNumber'=>$idNumber, 'birthday'=>$birthday, 'gender'=>$gender, 'city'=>$city,
+        'district'=>$district, 'address'=>$address, 'avatarUrl'=>aurora_public_asset_url($avatarUrl),
+        'membershipLevel'=>$membershipLevel, 'points'=>(int)$points, 'createdAt'=>$createdAt
+    );
+}
+
 function aurora_public_user($db, $id) {
-    aurora_ensure_profile_avatar_schema($db);
+    aurora_ensure_profile_schema($db);
     $stmt = $db->prepare('SELECT id, full_name, email, membership_level, points, avatar_url FROM users WHERE id = ?');
     if (!$stmt) return null;
     $stmt->bind_param('i', $id);
@@ -1182,19 +1551,70 @@ function aurora_public_user($db, $id) {
         'email'           => $email,
         'membershipLevel' => $membershipLevel,
         'points'          => (int) $points,
-        'avatarUrl'       => $avatarUrl,
+        'avatarUrl'       => aurora_public_asset_url($avatarUrl),
     );
 }
 
 // Avatar URLs are profile data stored in aurora_db; the image file itself is
 // kept outside the database in a public, user-scoped upload directory.
 function aurora_ensure_profile_avatar_schema($db) {
-    static $ready = null;
-    if ($ready !== null) return $ready;
-    $column = $db->query("SHOW COLUMNS FROM users LIKE 'avatar_url'");
-    if ($column && $column->num_rows > 0) { $ready = true; return true; }
-    $ready = (bool)$db->query("ALTER TABLE users ADD COLUMN avatar_url VARCHAR(500) NULL");
-    return $ready;
+    return aurora_ensure_profile_schema($db);
+}
+
+function aurora_ensure_avatar_upload_schema($db) {
+    $created = $db->query("CREATE TABLE IF NOT EXISTS customer_avatar_uploads (
+        id BIGINT UNSIGNED NOT NULL AUTO_INCREMENT,
+        user_id BIGINT UNSIGNED NOT NULL,
+        avatar_url VARCHAR(500) NOT NULL,
+        storage_name VARCHAR(255) NOT NULL,
+        original_name VARCHAR(255) NOT NULL,
+        mime_type VARCHAR(50) NOT NULL,
+        byte_size INT UNSIGNED NOT NULL,
+        image_width INT UNSIGNED NOT NULL,
+        image_height INT UNSIGNED NOT NULL,
+        source_width INT UNSIGNED NULL,
+        source_height INT UNSIGNED NULL,
+        crop_offset_x DECIMAL(7,4) NULL,
+        crop_offset_y DECIMAL(7,4) NULL,
+        crop_zoom DECIMAL(7,4) NULL,
+        crop_output_size INT UNSIGNED NULL,
+        status ENUM('ACTIVE','REPLACED','DELETED') NOT NULL DEFAULT 'ACTIVE',
+        created_at DATETIME NOT NULL,
+        deleted_at DATETIME NULL,
+        PRIMARY KEY (id),
+        KEY idx_customer_avatar_user_status (user_id, status),
+        CONSTRAINT fk_customer_avatar_user FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
+    ) ENGINE=InnoDB DEFAULT CHARSET=utf8 COLLATE=utf8_unicode_ci");
+    if (!$created) return false;
+    $definitions = array(
+        'source_width' => 'INT UNSIGNED NULL',
+        'source_height' => 'INT UNSIGNED NULL',
+        'crop_offset_x' => 'DECIMAL(7,4) NULL',
+        'crop_offset_y' => 'DECIMAL(7,4) NULL',
+        'crop_zoom' => 'DECIMAL(7,4) NULL',
+        'crop_output_size' => 'INT UNSIGNED NULL'
+    );
+    foreach ($definitions as $columnName => $definition) {
+        $column = $db->query("SHOW COLUMNS FROM customer_avatar_uploads LIKE '".$db->real_escape_string($columnName)."'");
+        if ((!$column || !$column->num_rows) && !$db->query("ALTER TABLE customer_avatar_uploads ADD COLUMN {$columnName} {$definition}")) return false;
+    }
+    return true;
+}
+
+function aurora_avatar_upload_error($code) {
+    if ($code === UPLOAD_ERR_INI_SIZE || $code === UPLOAD_ERR_FORM_SIZE) return 'Ảnh vượt quá giới hạn 5 MB.';
+    if ($code === UPLOAD_ERR_PARTIAL) return 'Ảnh chỉ được tải lên một phần. Vui lòng thử lại.';
+    if ($code === UPLOAD_ERR_NO_FILE) return 'Vui lòng chọn một ảnh đại diện.';
+    if ($code === UPLOAD_ERR_NO_TMP_DIR) return 'Máy chủ thiếu thư mục tạm để nhận ảnh.';
+    if ($code === UPLOAD_ERR_CANT_WRITE) return 'Máy chủ không thể ghi tệp ảnh.';
+    if (defined('UPLOAD_ERR_EXTENSION') && $code === UPLOAD_ERR_EXTENSION) return 'Tải ảnh bị chặn bởi cấu hình PHP.';
+    return 'Tải ảnh lên không thành công. Vui lòng thử lại.';
+}
+
+function aurora_avatar_storage_path($avatarUrl, $directory) {
+    $path = parse_url((string)$avatarUrl, PHP_URL_PATH);
+    if (!$path || !preg_match('/\/uploads\/avatars\/(avatar_[0-9]+_[A-Za-z0-9]+\.(jpg|png))$/i', $path, $matches)) return '';
+    return $directory.DIRECTORY_SEPARATOR.$matches[1];
 }
 
 // ── OAuth helpers (Google/Facebook) ──────────────────────────────────────────
@@ -1243,9 +1663,6 @@ function aurora_oauth_config($provider, $db = null) {
         global $db;
     }
     $provider = strtolower((string) $provider);
-    $sandboxSetting = $db ? aurora_get_system_config($db, 'oauth_sandbox_enabled', '1') : aurora_env('OAUTH_SANDBOX_ENABLED', '1');
-    $sandboxEnabled = ($sandboxSetting === '1' || $sandboxSetting === 'true' || $sandboxSetting === true || $sandboxSetting === 1);
-
     if ($provider === 'google') {
         $clientId = trim((string) ($db ? aurora_get_system_config($db, 'oauth_google_client_id', '') : aurora_env('GOOGLE_CLIENT_ID', '')));
         $clientSecret = trim((string) ($db ? aurora_get_system_config($db, 'oauth_google_client_secret', '') : aurora_env('GOOGLE_CLIENT_SECRET', '')));
@@ -1268,27 +1685,32 @@ function aurora_oauth_config($provider, $db = null) {
         );
     }
     if ($provider === 'facebook') {
-        $clientId = $db ? aurora_get_system_config($db, 'oauth_facebook_client_id', '') : aurora_env('FACEBOOK_CLIENT_ID', '');
-        $clientSecret = $db ? aurora_get_system_config($db, 'oauth_facebook_client_secret', '') : aurora_env('FACEBOOK_CLIENT_SECRET', '');
-        $redirectUri = $db ? aurora_get_system_config($db, 'oauth_facebook_redirect_uri', '') : aurora_env('FACEBOOK_REDIRECT_URI', '');
+        $clientId = trim((string) ($db ? aurora_get_system_config($db, 'oauth_facebook_client_id', '') : aurora_env('FACEBOOK_CLIENT_ID', '')));
+        $clientSecret = trim((string) ($db ? aurora_get_system_config($db, 'oauth_facebook_client_secret', '') : aurora_env('FACEBOOK_CLIENT_SECRET', '')));
+        $redirectUri = trim((string) ($db ? aurora_get_system_config($db, 'oauth_facebook_redirect_uri', '') : aurora_env('FACEBOOK_REDIRECT_URI', '')));
         if ($redirectUri === '') {
             $redirectUri = 'http://localhost/AURORA%20CINEMA/customer/backend/public/api.php?action=oauth_callback&provider=facebook';
         }
-        $version = preg_match('/^v[0-9]+\.[0-9]+$/', aurora_env('FACEBOOK_GRAPH_VERSION', 'v25.0'))
-            ? aurora_env('FACEBOOK_GRAPH_VERSION', 'v25.0') : 'v25.0';
-        $isLive = ($clientId !== '' && $clientSecret !== '' && strpos($clientId, 'demo') === false);
-        $isSandbox = !$isLive && $sandboxEnabled;
+        $configuredVersion = $db
+            ? aurora_get_system_config($db, 'oauth_facebook_graph_version', aurora_env('FACEBOOK_GRAPH_VERSION', 'v25.0'))
+            : aurora_env('FACEBOOK_GRAPH_VERSION', 'v25.0');
+        $version = preg_match('/^v[0-9]+\.[0-9]+$/', (string) $configuredVersion) ? (string) $configuredVersion : 'v25.0';
+        // Meta App IDs are numeric. Requiring a non-trivial secret prevents demo values
+        // from accidentally enabling a fake or unusable Facebook login flow.
+        $isLive = (bool) preg_match('/^[0-9]{6,30}$/', $clientId) && strlen($clientSecret) >= 16;
 
         return array(
             'client_id' => $clientId,
             'client_secret' => $clientSecret,
             'redirect_uri' => $redirectUri,
+            'graph_version' => $version,
             'is_live' => $isLive,
-            'is_sandbox' => $isSandbox,
-            'configured' => $isLive || $isSandbox,
-            'authorization_url' => $isLive ? ('https://www.facebook.com/' . $version . '/dialog/oauth') : 'http://localhost/AURORA%20CINEMA/customer/backend/public/api.php?action=oauth_consent&provider=facebook',
+            'is_sandbox' => false,
+            'configured' => $isLive,
+            'authorization_url' => 'https://www.facebook.com/' . $version . '/dialog/oauth',
             'token_url' => 'https://graph.facebook.com/' . $version . '/oauth/access_token',
             'profile_url' => 'https://graph.facebook.com/' . $version . '/me',
+            'debug_token_url' => 'https://graph.facebook.com/' . $version . '/debug_token',
         );
     }
     return null;
@@ -1431,6 +1853,27 @@ function aurora_oauth_http($url, $method, $fields, $accessToken) {
         return array('ok' => false, 'data' => $decoded, 'message' => $providerMessage);
     }
     return array('ok' => true, 'data' => $decoded);
+}
+
+function aurora_verify_facebook_access_token($config, $accessToken) {
+    $appAccessToken = $config['client_id'] . '|' . $config['client_secret'];
+    $result = aurora_oauth_http($config['debug_token_url'], 'GET', array(
+        'input_token' => $accessToken,
+        'access_token' => $appAccessToken,
+    ), '');
+    if (!$result['ok'] || empty($result['data']['data']) || !is_array($result['data']['data'])) {
+        return array('ok' => false, 'message' => 'Facebook không thể xác minh access token.');
+    }
+    $tokenData = $result['data']['data'];
+    $tokenAppId = isset($tokenData['app_id']) ? (string) $tokenData['app_id'] : '';
+    $tokenUserId = isset($tokenData['user_id']) ? (string) $tokenData['user_id'] : '';
+    if (empty($tokenData['is_valid']) || !aurora_oauth_safe_equals((string) $config['client_id'], $tokenAppId) || $tokenUserId === '') {
+        return array('ok' => false, 'message' => 'Access token Facebook không hợp lệ hoặc không thuộc Meta App Aurora.');
+    }
+    if (isset($tokenData['expires_at']) && (int) $tokenData['expires_at'] > 0 && (int) $tokenData['expires_at'] <= time()) {
+        return array('ok' => false, 'message' => 'Access token Facebook đã hết hạn.');
+    }
+    return array('ok' => true, 'user_id' => $tokenUserId);
 }
 
 function aurora_ensure_oauth_schema($db) {
@@ -1711,6 +2154,7 @@ if ($resource === 'oauth_configs') {
         $allowed = array(
             'oauth_google_client_id', 'oauth_google_client_secret', 'oauth_google_redirect_uri',
             'oauth_facebook_client_id', 'oauth_facebook_client_secret', 'oauth_facebook_redirect_uri',
+            'oauth_facebook_graph_version',
             'oauth_sandbox_enabled'
         );
         $stmt = $db->prepare("INSERT INTO system_configs (config_key, config_value, description, updated_at) VALUES (?, ?, '', NOW()) ON DUPLICATE KEY UPDATE config_value=VALUES(config_value), updated_at=NOW()");
@@ -1746,11 +2190,11 @@ if ($resource === 'oauth_start') {
         'state' => $state,
         'created_at' => time(),
         'attempt_id' => $attemptId,
-        'is_sandbox' => !empty($config['is_sandbox'])
+        'is_sandbox' => false,
+        'intent' => isset($_GET['intent']) && $_GET['intent'] === 'register' ? 'register' : 'login',
     );
 
-    if (!empty($config['is_live'])) {
-        if ($provider === 'google') {
+    if ($provider === 'google') {
             $pending['code_verifier'] = aurora_oauth_random_token();
             $parameters = array(
                 'client_id' => $config['client_id'],
@@ -1762,35 +2206,26 @@ if ($resource === 'oauth_start') {
                 'code_challenge_method' => 'S256',
                 'prompt' => 'select_account',
             );
-        } else {
+    } else {
             $parameters = array(
                 'client_id' => $config['client_id'],
                 'redirect_uri' => $config['redirect_uri'],
                 'response_type' => 'code',
                 'scope' => 'email,public_profile',
                 'state' => $state,
+                'return_scopes' => 'true',
             );
-        }
-        $_SESSION['aurora_oauth_' . $provider] = $pending;
-        aurora_response(array('provider' => $provider, 'authorizationUrl' => $config['authorization_url'] . '?' . http_build_query($parameters, '', '&')), 200);
-    } else {
-        $_SESSION['aurora_oauth_' . $provider] = $pending;
-        $parameters = array(
-            'action' => 'oauth_consent',
-            'provider' => $provider,
-            'state' => $state,
-        );
-        $consentUrl = 'http://localhost/AURORA%20CINEMA/customer/backend/public/api.php?' . http_build_query($parameters, '', '&');
-        aurora_response(array('provider' => $provider, 'authorizationUrl' => $consentUrl), 200);
     }
+    $_SESSION['aurora_oauth_' . $provider] = $pending;
+    aurora_response(array('provider' => $provider, 'authorizationUrl' => $config['authorization_url'] . '?' . http_build_query($parameters, '', '&')), 200);
 }
 
 // ── /oauth_consent ───────────────────────────────────────────────────────────
 if ($resource === 'oauth_consent') {
     aurora_method('GET');
     $provider = isset($_GET['provider']) ? strtolower(trim((string) $_GET['provider'])) : '';
-    if ($provider === 'google') {
-        aurora_oauth_redirect_error($provider, 'Đăng nhập Google yêu cầu xác thực trực tiếp qua Google OAuth 2.0.');
+    if (in_array($provider, array('google', 'facebook'), true)) {
+        aurora_oauth_redirect_error($provider, 'Aurora chỉ chấp nhận tài khoản ' . ucfirst($provider) . ' thật qua OAuth. Chế độ đăng nhập giả lập đã bị vô hiệu hóa.');
     }
     if ($provider !== 'facebook') {
         aurora_oauth_redirect_error('', 'Nhà cung cấp OAuth không hợp lệ.');
@@ -2141,8 +2576,8 @@ if ($resource === 'oauth_consent') {
 if ($resource === 'oauth_consent_confirm') {
     aurora_method('POST');
     $provider = isset($_POST['provider']) ? strtolower(trim((string) $_POST['provider'])) : '';
-    if ($provider === 'google') {
-        aurora_oauth_redirect_error($provider, 'Không chấp nhận hồ sơ Google giả lập. Vui lòng xác thực trực tiếp qua Google.');
+    if (in_array($provider, array('google', 'facebook'), true)) {
+        aurora_oauth_redirect_error($provider, 'Không chấp nhận hồ sơ ' . ucfirst($provider) . ' giả lập. Vui lòng xác thực bằng tài khoản thật.');
     }
     $state = isset($_POST['state']) ? (string) $_POST['state'] : '';
     $name = isset($_POST['name']) ? trim((string) $_POST['name']) : '';
@@ -2200,8 +2635,17 @@ if ($resource === 'oauth_callback') {
         aurora_oauth_redirect_error($provider, 'Đăng nhập ' . ucfirst($provider) . ' chưa được cấu hình trên máy chủ.');
     }
     if (isset($_GET['error'])) {
-        aurora_oauth_attempt_finish($db, $attemptId, 'failed', 0, '', 'access_denied', 'Khách hàng hủy hoặc từ chối đăng nhập.');
-        aurora_oauth_redirect_error($provider, 'Bạn đã hủy hoặc từ chối yêu cầu đăng nhập.');
+        $providerError = preg_replace('/[^a-zA-Z0-9_-]/', '', (string) $_GET['error']);
+        $providerError = $providerError !== '' ? substr($providerError, 0, 60) : 'oauth_rejected';
+        $providerDescription = isset($_GET['error_description'])
+            ? trim(preg_replace('/[\x00-\x1F\x7F]/', ' ', strip_tags((string) $_GET['error_description'])))
+            : '';
+        $isDenied = $providerError === 'access_denied' || (isset($_GET['error_code']) && (string) $_GET['error_code'] === '200');
+        $auditMessage = $providerDescription !== '' ? substr($providerDescription, 0, 220) : 'Nhà cung cấp OAuth từ chối yêu cầu.';
+        aurora_oauth_attempt_finish($db, $attemptId, 'failed', 0, '', $providerError, $auditMessage);
+        aurora_oauth_redirect_error($provider, $isDenied
+            ? 'Bạn đã hủy hoặc chưa cấp quyền đăng nhập cho Aurora.'
+            : ucfirst($provider) . ' từ chối yêu cầu xác thực. Vui lòng kiểm tra cấu hình OAuth và thử lại.');
     }
     $state = isset($_GET['state']) ? (string) $_GET['state'] : '';
     $code = isset($_GET['code']) ? (string) $_GET['code'] : '';
@@ -2242,13 +2686,17 @@ if ($resource === 'oauth_callback') {
             'grant_type' => 'authorization_code',
         );
         if ($provider === 'google' && !empty($pending['code_verifier'])) $tokenFields['code_verifier'] = $pending['code_verifier'];
-        $tokenResult = aurora_oauth_http($config['token_url'], 'POST', $tokenFields, '');
+        $tokenResult = aurora_oauth_http($config['token_url'], $provider === 'facebook' ? 'GET' : 'POST', $tokenFields, '');
         if (!$tokenResult['ok'] || empty($tokenResult['data']['access_token'])) {
-            $tokenErrorCode = !empty($tokenResult['data']['error']) && preg_match('/^[a-zA-Z0-9_-]{1,60}$/', (string)$tokenResult['data']['error'])
-                ? (string)$tokenResult['data']['error'] : 'token_exchange_failed';
-            $tokenErrorDetail = !empty($tokenResult['data']['error_description'])
-                ? (string)$tokenResult['data']['error_description']
-                : (!empty($tokenResult['message']) ? (string)$tokenResult['message'] : '');
+            $rawTokenError = isset($tokenResult['data']['error']) ? $tokenResult['data']['error'] : null;
+            $tokenErrorCode = is_array($rawTokenError) && isset($rawTokenError['code'])
+                ? 'facebook_' . preg_replace('/[^0-9]/', '', (string) $rawTokenError['code'])
+                : (is_string($rawTokenError) && preg_match('/^[a-zA-Z0-9_-]{1,60}$/', $rawTokenError) ? $rawTokenError : 'token_exchange_failed');
+            $tokenErrorDetail = is_array($rawTokenError) && !empty($rawTokenError['message'])
+                ? (string) $rawTokenError['message']
+                : (!empty($tokenResult['data']['error_description'])
+                    ? (string)$tokenResult['data']['error_description']
+                    : (!empty($tokenResult['message']) ? (string)$tokenResult['message'] : ''));
             $tokenErrorDetail = trim(preg_replace('/[\x00-\x1F\x7F]/', ' ', strip_tags($tokenErrorDetail)));
             $tokenErrorDetail = substr($tokenErrorDetail, 0, 180);
 
@@ -2260,6 +2708,8 @@ if ($resource === 'oauth_callback') {
                 $userMessage = 'Mã đăng nhập Google không còn hợp lệ (invalid_grant). Hãy bắt đầu đăng nhập mới; nếu vẫn lỗi, kiểm tra redirect URI và tạo lại Client Secret của đúng OAuth client.';
             } elseif ($provider === 'google' && $tokenErrorCode === 'unauthorized_client') {
                 $userMessage = 'OAuth Client chưa được Google cho phép dùng luồng này (unauthorized_client). Hãy xác nhận Client ID thuộc loại Web application và cấu hình Google Auth Platform.';
+            } elseif ($provider === 'facebook') {
+                $userMessage = 'Facebook không cấp quyền đăng nhập (' . $tokenErrorCode . '). Kiểm tra App ID, App Secret và Valid OAuth Redirect URI trong Meta for Developers.';
             } else {
                 $userMessage = 'Google không cấp access token (' . $tokenErrorCode . ').';
             }
@@ -2270,12 +2720,23 @@ if ($resource === 'oauth_callback') {
         }
         $accessToken = (string) $tokenResult['data']['access_token'];
 
+        $verifiedFacebookUserId = '';
+        if ($provider === 'facebook') {
+            $verification = aurora_verify_facebook_access_token($config, $accessToken);
+            if (!$verification['ok']) {
+                aurora_oauth_attempt_finish($db, $attemptId, 'failed', 0, '', 'invalid_facebook_token', $verification['message']);
+                aurora_oauth_redirect_error($provider, 'Phiên xác thực Facebook không hợp lệ. Vui lòng đăng nhập lại.');
+            }
+            $verifiedFacebookUserId = (string) $verification['user_id'];
+        }
+
         if ($provider === 'google') {
             $profileResult = aurora_oauth_http($config['profile_url'], 'GET', array(), $accessToken);
         } else {
             $profileResult = aurora_oauth_http($config['profile_url'], 'GET', array(
                 'fields' => 'id,name,email,picture.type(large)',
                 'access_token' => $accessToken,
+                'appsecret_proof' => hash_hmac('sha256', $accessToken, $config['client_secret']),
             ), '');
         }
         if (!$profileResult['ok']) {
@@ -2283,6 +2744,17 @@ if ($resource === 'oauth_callback') {
             aurora_oauth_redirect_error($provider, 'Không thể lấy thông tin tài khoản từ nhà cung cấp. Vui lòng thử lại.');
         }
         $data = $profileResult['data'];
+        if ($provider === 'facebook') {
+            $facebookProfileId = isset($data['id']) ? (string) $data['id'] : '';
+            if ($facebookProfileId === '' || !aurora_oauth_safe_equals($verifiedFacebookUserId, $facebookProfileId)) {
+                aurora_oauth_attempt_finish($db, $attemptId, 'failed', 0, $facebookProfileId, 'facebook_identity_mismatch', 'Facebook profile không khớp với access token đã xác minh.');
+                aurora_oauth_redirect_error($provider, 'Không thể xác minh danh tính Facebook. Vui lòng đăng nhập lại.');
+            }
+            if (empty($data['email']) || !filter_var((string) $data['email'], FILTER_VALIDATE_EMAIL)) {
+                aurora_oauth_attempt_finish($db, $attemptId, 'failed', 0, $facebookProfileId, 'facebook_email_missing', 'Facebook không cung cấp email cho tài khoản này.');
+                aurora_oauth_redirect_error($provider, 'Facebook chưa cung cấp email cho Aurora. Hãy dùng tài khoản Facebook có email đã xác minh và cấp quyền email.');
+            }
+        }
         if ($provider === 'google' && empty($data['email_verified'])) {
             aurora_oauth_attempt_finish($db, $attemptId, 'failed', 0, isset($data['sub']) ? $data['sub'] : '', 'email_unverified', 'Email Google chưa được xác minh.');
             aurora_oauth_redirect_error($provider, 'Email Google chưa được xác minh.');
@@ -2312,6 +2784,167 @@ if ($resource === 'oauth_callback') {
     }
 }
 
+// ── /password_reset_request ──────────────────────────────────────────────────
+if ($resource === 'password_reset_request') {
+    aurora_method('POST');
+    if (!aurora_ensure_password_reset_schema($db)) aurora_response(array('message'=>'Không thể chuẩn bị dữ liệu khôi phục mật khẩu trong aurora_db.'), 500);
+    $body = aurora_body();
+    $identifier = isset($body['identifier']) ? strtolower(trim((string)$body['identifier'])) : '';
+    if ($identifier === '' || strlen($identifier) > 180) aurora_response(array('message'=>'Vui lòng nhập email hoặc số điện thoại hợp lệ.'), 422);
+
+    $now = aurora_vietnam_now();
+    $expiresAt = date('Y-m-d H:i:s', strtotime($now.' +10 minutes'));
+    $windowStart = date('Y-m-d H:i:s', strtotime($now.' -15 minutes'));
+    $pepper = aurora_env('APP_KEY', 'aurora-cinema-password-reset');
+    $lookupHash = hash_hmac('sha256', $identifier, $pepper);
+    $ip = isset($_SERVER['REMOTE_ADDR']) ? (string)$_SERVER['REMOTE_ADDR'] : '';
+    $ipHash = hash_hmac('sha256', $ip, $pepper);
+    $agent = isset($_SERVER['HTTP_USER_AGENT']) ? substr((string)$_SERVER['HTTP_USER_AGENT'], 0, 255) : '';
+
+    $stmt = $db->prepare('SELECT COUNT(*) FROM customer_password_reset_requests WHERE lookup_hash=? AND requested_at>=?');
+    $stmt->bind_param('ss', $lookupHash, $windowStart); $stmt->execute();
+    $lookupCount = 0; $stmt->bind_result($lookupCount); $stmt->fetch(); $stmt->close();
+    $stmt = $db->prepare('SELECT COUNT(*) FROM customer_password_reset_requests WHERE ip_address_hash=? AND requested_at>=?');
+    $stmt->bind_param('ss', $ipHash, $windowStart); $stmt->execute();
+    $ipCount = 0; $stmt->bind_result($ipCount); $stmt->fetch(); $stmt->close();
+    if ((int)$lookupCount >= 3 || (int)$ipCount >= 12) {
+        aurora_response(array('message'=>'Bạn đã yêu cầu quá nhiều mã. Vui lòng thử lại sau 15 phút.'), 429);
+    }
+
+    $userId = 0; $accountName = 'Quý khách'; $accountEmail = '';
+    if (filter_var($identifier, FILTER_VALIDATE_EMAIL)) {
+        $stmt = $db->prepare("SELECT id,full_name,email FROM users WHERE email=? AND role='customer' AND status='active' LIMIT 1");
+        $stmt->bind_param('s', $identifier);
+    } else {
+        $phone = preg_replace('/[\s\.\-\(\)]/', '', $identifier);
+        $stmt = $db->prepare("SELECT id,full_name,email FROM users WHERE phone=? AND role='customer' AND status='active' LIMIT 1");
+        $stmt->bind_param('s', $phone);
+    }
+    $stmt->execute();
+    $foundId = null; $foundName = null; $foundEmail = null;
+    $stmt->bind_result($foundId, $foundName, $foundEmail);
+    if ($stmt->fetch() && filter_var((string)$foundEmail, FILTER_VALIDATE_EMAIL)) {
+        $userId = (int)$foundId;
+        $accountName = trim((string)$foundName) !== '' ? (string)$foundName : 'Quý khách';
+        $accountEmail = strtolower((string)$foundEmail);
+    }
+    $stmt->close();
+
+    $selector = substr(aurora_oauth_random_token(), 0, 40);
+    $code = aurora_password_reset_code();
+    $codeHash = aurora_password_reset_hash($code, $selector);
+    $db->query("UPDATE customer_password_reset_requests SET status='expired' WHERE status IN ('pending','verified') AND expires_at<'".$db->real_escape_string($now)."'");
+    $stmt = $db->prepare("INSERT INTO customer_password_reset_requests (user_id,selector,lookup_hash,code_hash,status,attempts_remaining,delivery_status,ip_address_hash,user_agent,expires_at,requested_at) VALUES (NULLIF(?,0),?,?,?,'pending',5,'not_applicable',?,?,?,?)");
+    $stmt->bind_param('isssssss', $userId, $selector, $lookupHash, $codeHash, $ipHash, $agent, $expiresAt, $now);
+    if (!$stmt->execute()) { $stmt->close(); aurora_response(array('message'=>'Không thể tạo yêu cầu khôi phục mật khẩu.'), 500); }
+    $requestId = (int)$stmt->insert_id; $stmt->close();
+
+    $environment = strtolower((string)aurora_env('APP_ENV', 'production'));
+    $deliveryStatus = 'not_applicable';
+    if ($userId > 0) {
+        if ($environment === 'local' || $environment === 'development') {
+            $deliveryStatus = 'development';
+        } else {
+            $deliveryStatus = aurora_password_reset_send_email($accountEmail, $accountName, $code, false) ? 'sent' : 'failed';
+        }
+    }
+    $stmt = $db->prepare('UPDATE customer_password_reset_requests SET delivery_status=? WHERE id=?');
+    $stmt->bind_param('si', $deliveryStatus, $requestId); $stmt->execute(); $stmt->close();
+
+    $response = array(
+        'message'=>'Nếu thông tin khớp với tài khoản Aurora, mã xác minh đã được gửi và có hiệu lực trong 10 phút.',
+        'requestId'=>$selector,
+        'expiresIn'=>600,
+        'delivery'=>$environment === 'local' || $environment === 'development' ? 'development' : 'email'
+    );
+    // WAMP local has no SMTP server. Expose a test code only in local mode so
+    // the complete flow remains testable; production never returns the code.
+    if ($environment === 'local' || $environment === 'development') $response['developmentCode'] = $code;
+    aurora_response($response, 200);
+}
+
+// ── /password_reset_verify ───────────────────────────────────────────────────
+if ($resource === 'password_reset_verify') {
+    aurora_method('POST');
+    if (!aurora_ensure_password_reset_schema($db)) aurora_response(array('message'=>'Không thể chuẩn bị dữ liệu khôi phục mật khẩu.'), 500);
+    $body = aurora_body();
+    $selector = isset($body['requestId']) ? strtolower(trim((string)$body['requestId'])) : '';
+    $code = isset($body['code']) ? trim((string)$body['code']) : '';
+    if (!preg_match('/^[a-f0-9]{40}$/', $selector) || !preg_match('/^[0-9]{6}$/', $code)) aurora_response(array('message'=>'Mã xác minh không hợp lệ hoặc đã hết hạn.'), 422);
+
+    $now = aurora_vietnam_now();
+    $db->autocommit(false);
+    $stmt = $db->prepare('SELECT id,user_id,code_hash,status,attempts_remaining,expires_at FROM customer_password_reset_requests WHERE selector=? LIMIT 1 FOR UPDATE');
+    $stmt->bind_param('s', $selector); $stmt->execute();
+    $rowId = null; $userId = null; $storedHash = null; $status = null; $attempts = null; $expiresAt = null;
+    $stmt->bind_result($rowId, $userId, $storedHash, $status, $attempts, $expiresAt);
+    $found = $stmt->fetch(); $stmt->close();
+    $valid = $found && $status === 'pending' && (int)$attempts > 0 && strtotime($expiresAt) >= strtotime($now)
+        && aurora_oauth_safe_equals((string)$storedHash, aurora_password_reset_hash($code, $selector)) && (int)$userId > 0;
+    if (!$valid) {
+        if ($found) {
+            $remaining = max(0, (int)$attempts - 1);
+            $nextStatus = strtotime($expiresAt) < strtotime($now) ? 'expired' : ($remaining <= 0 ? 'locked' : (string)$status);
+            $stmt = $db->prepare('UPDATE customer_password_reset_requests SET attempts_remaining=?,status=? WHERE id=?');
+            $stmt->bind_param('isi', $remaining, $nextStatus, $rowId); $stmt->execute(); $stmt->close();
+        }
+        $db->commit(); $db->autocommit(true);
+        aurora_response(array('message'=>'Mã xác minh không đúng, đã hết hạn hoặc đã được sử dụng.'), 422);
+    }
+
+    $resetToken = aurora_oauth_random_token();
+    $resetTokenHash = aurora_password_reset_hash($resetToken, $selector);
+    $verifiedUntil = date('Y-m-d H:i:s', strtotime($now.' +10 minutes'));
+    $stmt = $db->prepare("UPDATE customer_password_reset_requests SET status='verified',reset_token_hash=?,verified_until=?,verified_at=? WHERE id=?");
+    $stmt->bind_param('sssi', $resetTokenHash, $verifiedUntil, $now, $rowId);
+    $ok = $stmt->execute(); $stmt->close();
+    if (!$ok) { $db->rollback(); $db->autocommit(true); aurora_response(array('message'=>'Không thể xác minh yêu cầu đặt lại mật khẩu.'), 500); }
+    $db->commit(); $db->autocommit(true);
+    aurora_response(array('message'=>'Xác minh thành công. Bạn có thể tạo mật khẩu mới.', 'resetToken'=>$resetToken, 'expiresIn'=>600), 200);
+}
+
+// ── /password_reset_complete ─────────────────────────────────────────────────
+if ($resource === 'password_reset_complete') {
+    aurora_method('POST');
+    if (!aurora_ensure_password_reset_schema($db)) aurora_response(array('message'=>'Không thể chuẩn bị dữ liệu khôi phục mật khẩu.'), 500);
+    $body = aurora_body();
+    $selector = isset($body['requestId']) ? strtolower(trim((string)$body['requestId'])) : '';
+    $resetToken = isset($body['resetToken']) ? trim((string)$body['resetToken']) : '';
+    $newPassword = isset($body['password']) ? (string)$body['password'] : '';
+    $confirmPassword = isset($body['confirmPassword']) ? (string)$body['confirmPassword'] : '';
+    if (!preg_match('/^[a-f0-9]{40}$/', $selector) || strlen($resetToken) < 40) aurora_response(array('message'=>'Phiên đặt lại mật khẩu không hợp lệ.'), 422);
+    if ($newPassword !== $confirmPassword) aurora_response(array('message'=>'Mật khẩu xác nhận không khớp.'), 422);
+    if (strlen($newPassword) < 8 || strlen($newPassword) > 72 || !preg_match('/[A-Z]/', $newPassword) || !preg_match('/[a-z]/', $newPassword) || !preg_match('/[0-9]/', $newPassword)) {
+        aurora_response(array('message'=>'Mật khẩu mới cần 8–72 ký tự, gồm chữ hoa, chữ thường và số.'), 422);
+    }
+
+    $now = aurora_vietnam_now();
+    $db->autocommit(false);
+    $stmt = $db->prepare("SELECT r.id,r.user_id,r.reset_token_hash,r.status,r.verified_until,u.password_hash,u.full_name,u.email FROM customer_password_reset_requests r INNER JOIN users u ON u.id=r.user_id WHERE r.selector=? AND u.role='customer' AND u.status='active' LIMIT 1 FOR UPDATE");
+    $stmt->bind_param('s', $selector); $stmt->execute();
+    $rowId = null; $userId = null; $storedTokenHash = null; $status = null; $verifiedUntil = null; $oldPasswordHash = null; $accountName = null; $accountEmail = null;
+    $stmt->bind_result($rowId, $userId, $storedTokenHash, $status, $verifiedUntil, $oldPasswordHash, $accountName, $accountEmail);
+    $found = $stmt->fetch(); $stmt->close();
+    $valid = $found && $status === 'verified' && strtotime($verifiedUntil) >= strtotime($now)
+        && aurora_oauth_safe_equals((string)$storedTokenHash, aurora_password_reset_hash($resetToken, $selector));
+    if (!$valid) { $db->rollback(); $db->autocommit(true); aurora_response(array('message'=>'Phiên đặt lại mật khẩu đã hết hạn hoặc đã được sử dụng.'), 422); }
+    if (aurora_password_verify($newPassword, $oldPasswordHash)) { $db->rollback(); $db->autocommit(true); aurora_response(array('message'=>'Mật khẩu mới phải khác mật khẩu hiện tại.'), 422); }
+
+    $newHash = aurora_password_hash($newPassword);
+    $stmt = $db->prepare('UPDATE users SET password_hash=?,password_changed_at=?,updated_at=? WHERE id=?');
+    $stmt->bind_param('sssi', $newHash, $now, $now, $userId);
+    $savedUser = $stmt->execute(); $stmt->close();
+    $stmt = $db->prepare("UPDATE customer_password_reset_requests SET status='used',completed_at=? WHERE id=?");
+    $stmt->bind_param('si', $now, $rowId); $savedRequest = $stmt->execute(); $stmt->close();
+    $stmt = $db->prepare("UPDATE customer_password_reset_requests SET status='expired' WHERE user_id=? AND id<>? AND status IN ('pending','verified')");
+    $stmt->bind_param('ii', $userId, $rowId); $invalidated = $stmt->execute(); $stmt->close();
+    if (!$savedUser || !$savedRequest || !$invalidated) { $db->rollback(); $db->autocommit(true); aurora_response(array('message'=>'Không thể cập nhật mật khẩu trong aurora_db.'), 500); }
+    $db->commit(); $db->autocommit(true);
+    if (isset($_SESSION['aurora_user_id']) && (int)$_SESSION['aurora_user_id'] === (int)$userId) unset($_SESSION['aurora_user_id']);
+    if (strtolower((string)aurora_env('APP_ENV', 'production')) === 'production') aurora_password_reset_send_email($accountEmail, $accountName, '', true);
+    aurora_response(array('message'=>'Mật khẩu đã được cập nhật thành công. Vui lòng đăng nhập lại.'), 200);
+}
+
 // ── /register ─────────────────────────────────────────────────────────────────
 if ($resource === 'register') {
     if ($_SERVER['REQUEST_METHOD'] !== 'POST') {
@@ -2328,8 +2961,8 @@ if ($resource === 'register') {
     if (!filter_var($email, FILTER_VALIDATE_EMAIL)) {
         aurora_response(array('message' => 'Email không đúng định dạng.'), 422);
     }
-    if (strlen($password) < 6) {
-        aurora_response(array('message' => 'Mật khẩu cần ít nhất 6 ký tự.'), 422);
+    if (strlen($password) < 8 || strlen($password) > 72 || !preg_match('/[A-Z]/', $password) || !preg_match('/[a-z]/', $password) || !preg_match('/[0-9]/', $password)) {
+        aurora_response(array('message' => 'Mật khẩu cần 8–72 ký tự, gồm chữ hoa, chữ thường và số.'), 422);
     }
 
     // Check duplicate email (PHP 5.2 compatible: bind_result + fetch)
@@ -2580,44 +3213,10 @@ if ($resource === 'bookings') {
 
 // ── /profile (GET) ────────────────────────────────────────────────────────────
 if ($resource === 'profile') {
-    $userId = isset($_SESSION['aurora_user_id']) ? (int) $_SESSION['aurora_user_id'] : null;
-    if (!$userId) aurora_response(array('message' => 'Vui lòng đăng nhập.'), 401);
-    aurora_ensure_profile_avatar_schema($db);
-
-    $stmt = $db->prepare('SELECT id, full_name, email, phone, id_number, birthday, gender, city, district, address, avatar_url, membership_level, points, created_at FROM users WHERE id = ?');
-    if (!$stmt) {
-        // Columns might not exist yet — fall back to basic fields
-        $stmt2 = $db->prepare('SELECT id, full_name, email, membership_level, points, created_at, avatar_url FROM users WHERE id = ?');
-        $stmt2->bind_param('i', $userId);
-        $stmt2->execute();
-        $uid = null; $fullName = null; $email = null; $ml = null; $pts = null; $ca = null; $avatarFallback = null;
-        $stmt2->bind_result($uid, $fullName, $email, $ml, $pts, $ca, $avatarFallback);
-        $stmt2->fetch();
-        $stmt2->close();
-        aurora_response(array('profile' => array(
-            'id' => (int)$uid, 'fullName' => $fullName, 'email' => $email,
-            'phone' => null, 'idNumber' => null, 'birthday' => null,
-            'gender' => null, 'city' => null, 'district' => null, 'address' => null, 'avatarUrl' => $avatarFallback,
-            'membershipLevel' => $ml, 'points' => (int)$pts, 'createdAt' => $ca,
-        )), 200);
-    }
-    $stmt->bind_param('i', $userId);
-    $stmt->execute();
-    $uid = null; $fullName = null; $email = null; $phone = null; $idNumber = null;
-    $birthday = null; $gender = null; $city = null; $district = null; $address = null; $avatarUrl = null;
-    $membershipLevel = null; $points = null; $createdAt = null;
-    $stmt->bind_result($uid, $fullName, $email, $phone, $idNumber, $birthday, $gender, $city, $district, $address, $avatarUrl, $membershipLevel, $points, $createdAt);
-    $found = $stmt->fetch();
-    $stmt->close();
-    if (!$found) aurora_response(array('message' => 'Tài khoản không tồn tại.'), 404);
-
-    aurora_response(array('profile' => array(
-        'id' => (int) $uid, 'fullName' => $fullName, 'email' => $email,
-        'phone' => $phone, 'idNumber' => $idNumber, 'birthday' => $birthday,
-        'gender' => $gender, 'city' => $city, 'district' => $district,
-        'address' => $address, 'avatarUrl' => $avatarUrl, 'membershipLevel' => $membershipLevel,
-        'points' => (int) $points, 'createdAt' => $createdAt,
-    )), 200);
+    $userId = aurora_require_user();
+    $profile = aurora_profile_for_user($db, $userId);
+    if (!$profile) aurora_response(array('message'=>'Không thể tải hồ sơ từ aurora_db.'), 500);
+    aurora_response(array('profile'=>$profile), 200);
 }
 
 // ── /membership_card (GET) ─────────────────────────────────────────────────
@@ -2643,7 +3242,7 @@ if ($resource === 'membership_card') {
     }
     $available = max(0, (int)$user['points']);
     $earned = max($earned, $available + $used); // supports customers created before the ledger
-    $level = $user['membership_level'] ?: aurora_membership_level($available);
+    $level = $user['membership_level'] ? $user['membership_level'] : aurora_membership_level($available);
     $thresholds = array('STANDARD'=>500, 'SILVER'=>2000, 'GOLD'=>5000);
     $nextNames = array('STANDARD'=>'SILVER', 'SILVER'=>'GOLD', 'GOLD'=>'PLATINUM');
     $nextThreshold = isset($thresholds[$level]) ? $thresholds[$level] : null;
@@ -2661,42 +3260,77 @@ if ($resource === 'membership_card') {
 if ($resource === 'profile_avatar') {
     aurora_method('POST');
     $userId = aurora_require_user();
-    if (!aurora_ensure_profile_avatar_schema($db)) aurora_response(array('message'=>'Không thể chuẩn bị hồ sơ ảnh đại diện trong aurora_db.'), 500);
-    if (!isset($_FILES['avatar']) || !is_array($_FILES['avatar'])) aurora_response(array('message'=>'Vui lòng chọn một ảnh đại diện.'), 422);
+    if (!aurora_ensure_profile_avatar_schema($db) || !aurora_ensure_avatar_upload_schema($db)) aurora_response(array('message'=>'Không thể chuẩn bị dữ liệu ảnh đại diện trong aurora_db.'), 500);
+    if (!isset($_FILES['avatar']) || !is_array($_FILES['avatar'])) {
+        $contentLength = isset($_SERVER['CONTENT_LENGTH']) ? (int)$_SERVER['CONTENT_LENGTH'] : 0;
+        aurora_response(array('message'=>$contentLength > 5 * 1024 * 1024 ? 'Ảnh vượt quá giới hạn 5 MB.' : 'Vui lòng chọn một ảnh đại diện.'), 422);
+    }
     $file = $_FILES['avatar'];
-    if ((int)$file['error'] !== UPLOAD_ERR_OK) aurora_response(array('message'=>'Tải ảnh lên không thành công. Vui lòng thử lại.'), 422);
+    if ((int)$file['error'] !== UPLOAD_ERR_OK) aurora_response(array('message'=>aurora_avatar_upload_error((int)$file['error'])), 422);
     if ((int)$file['size'] < 1 || (int)$file['size'] > 5 * 1024 * 1024) aurora_response(array('message'=>'Ảnh đại diện phải nhỏ hơn hoặc bằng 5 MB.'), 422);
     $image = @getimagesize($file['tmp_name']);
     $mime = $image && isset($image['mime']) ? $image['mime'] : '';
-    $extensions = array('image/jpeg'=>'jpg', 'image/png'=>'png', 'image/webp'=>'webp');
-    if (!isset($extensions[$mime])) aurora_response(array('message'=>'Chỉ hỗ trợ ảnh JPG, PNG hoặc WebP.'), 422);
+    $extensions = array('image/jpeg'=>'jpg', 'image/png'=>'png');
+    if (!isset($extensions[$mime])) aurora_response(array('message'=>'Chỉ hỗ trợ ảnh JPG hoặc PNG hợp lệ.'), 422);
     if ((int)$image[0] < 80 || (int)$image[1] < 80 || (int)$image[0] > 6000 || (int)$image[1] > 6000) aurora_response(array('message'=>'Ảnh cần có kích thước từ 80×80 đến 6000×6000 px.'), 422);
-    $directory = __DIR__.DIRECTORY_SEPARATOR.'uploads'.DIRECTORY_SEPARATOR.'avatars';
+    $directory = dirname(__FILE__).DIRECTORY_SEPARATOR.'uploads'.DIRECTORY_SEPARATOR.'avatars';
     if (!is_dir($directory) && !@mkdir($directory, 0755, true)) aurora_response(array('message'=>'Không thể tạo thư mục lưu ảnh.'), 500);
+    if (!is_writable($directory)) aurora_response(array('message'=>'Thư mục ảnh đại diện không có quyền ghi.'), 500);
     $filename = 'avatar_'.$userId.'_'.substr(sha1(uniqid((string)$userId, true).mt_rand()), 0, 24).'.'.$extensions[$mime];
     $destination = $directory.DIRECTORY_SEPARATOR.$filename;
     if (!move_uploaded_file($file['tmp_name'], $destination)) aurora_response(array('message'=>'Không thể lưu ảnh đại diện trên máy chủ.'), 500);
     $scriptPath = isset($_SERVER['SCRIPT_NAME']) ? dirname($_SERVER['SCRIPT_NAME']) : '/AURORA%20CINEMA/customer/backend/public';
-    $avatarUrl = rtrim(str_replace('\\', '/', $scriptPath), '/').'/uploads/avatars/'.rawurlencode($filename);
+    $scriptPath = str_replace(' ', '%20', str_replace('\\', '/', $scriptPath));
+    $avatarUrl = rtrim($scriptPath, '/').'/uploads/avatars/'.rawurlencode($filename);
     $oldUrl = '';
     $old = $db->query('SELECT avatar_url FROM users WHERE id='.(int)$userId.' LIMIT 1');
     if ($old && ($oldRow = $old->fetch_assoc())) $oldUrl = isset($oldRow['avatar_url']) ? (string)$oldRow['avatar_url'] : '';
     $urlEsc = $db->real_escape_string($avatarUrl); $nowEsc = $db->real_escape_string(aurora_vietnam_now());
-    if (!$db->query("UPDATE users SET avatar_url='{$urlEsc}', updated_at='{$nowEsc}' WHERE id=".(int)$userId)) { @unlink($destination); aurora_response(array('message'=>'Không thể lưu đường dẫn ảnh trong aurora_db.'), 500); }
-    if (preg_match('/\/uploads\/avatars\/(avatar_'.(int)$userId.'_[A-Za-z0-9]+\.(jpg|png|webp))$/', $oldUrl, $matches)) {
-        $oldPath = $directory.DIRECTORY_SEPARATOR.$matches[1];
-        if (is_file($oldPath) && $oldPath !== $destination) @unlink($oldPath);
-    }
-    aurora_response(array('message'=>'Đã cập nhật ảnh đại diện.', 'avatarUrl'=>$avatarUrl, 'user'=>aurora_public_user($db, $userId)), 200);
+    $sourceName = isset($_POST['source_name']) ? (string)$_POST['source_name'] : (string)$file['name'];
+    $sourceWidth = isset($_POST['source_width']) ? max(0, min(20000, (int)$_POST['source_width'])) : (int)$image[0];
+    $sourceHeight = isset($_POST['source_height']) ? max(0, min(20000, (int)$_POST['source_height'])) : (int)$image[1];
+    $cropOffsetX = isset($_POST['crop_offset_x']) ? max(-1, min(1, (float)$_POST['crop_offset_x'])) : 0;
+    $cropOffsetY = isset($_POST['crop_offset_y']) ? max(-1, min(1, (float)$_POST['crop_offset_y'])) : 0;
+    $cropZoom = isset($_POST['crop_zoom']) ? max(1, min(3, (float)$_POST['crop_zoom'])) : 1;
+    $cropOutputSize = isset($_POST['crop_output_size']) ? max(80, min(2000, (int)$_POST['crop_output_size'])) : (int)$image[0];
+    $storageEsc = $db->real_escape_string($filename); $originalEsc = $db->real_escape_string(substr(basename($sourceName), 0, 255)); $mimeEsc = $db->real_escape_string($mime);
+    $db->autocommit(false);
+    $saved = $db->query("UPDATE users SET avatar_url='{$urlEsc}', updated_at='{$nowEsc}' WHERE id=".(int)$userId)
+        && $db->query("UPDATE customer_avatar_uploads SET status='REPLACED', deleted_at='{$nowEsc}' WHERE user_id=".(int)$userId." AND status='ACTIVE'")
+        && $db->query("INSERT INTO customer_avatar_uploads (user_id,avatar_url,storage_name,original_name,mime_type,byte_size,image_width,image_height,source_width,source_height,crop_offset_x,crop_offset_y,crop_zoom,crop_output_size,status,created_at) VALUES (".(int)$userId.",'{$urlEsc}','{$storageEsc}','{$originalEsc}','{$mimeEsc}',".(int)$file['size'].",".(int)$image[0].",".(int)$image[1].",{$sourceWidth},{$sourceHeight},{$cropOffsetX},{$cropOffsetY},{$cropZoom},{$cropOutputSize},'ACTIVE','{$nowEsc}')");
+    if (!$saved) { $db->rollback(); $db->autocommit(true); @unlink($destination); aurora_response(array('message'=>'Không thể lưu thông tin ảnh trong aurora_db.'), 500); }
+    $db->commit(); $db->autocommit(true);
+    $oldPath = aurora_avatar_storage_path($oldUrl, $directory);
+    if ($oldPath !== '' && is_file($oldPath) && $oldPath !== $destination) @unlink($oldPath);
+    aurora_response(array('message'=>'Đã cập nhật ảnh đại diện.', 'avatarUrl'=>aurora_public_asset_url($avatarUrl), 'user'=>aurora_public_user($db, $userId)), 200);
+}
+
+if ($resource === 'profile_avatar_delete') {
+    aurora_method('POST');
+    $userId = aurora_require_user();
+    if (!aurora_ensure_profile_avatar_schema($db) || !aurora_ensure_avatar_upload_schema($db)) aurora_response(array('message'=>'Không thể chuẩn bị dữ liệu ảnh đại diện trong aurora_db.'), 500);
+    $oldUrl = '';
+    $old = $db->query('SELECT avatar_url FROM users WHERE id='.(int)$userId.' LIMIT 1');
+    if ($old && ($oldRow = $old->fetch_assoc())) $oldUrl = isset($oldRow['avatar_url']) ? (string)$oldRow['avatar_url'] : '';
+    $nowEsc = $db->real_escape_string(aurora_vietnam_now());
+    $db->autocommit(false);
+    $deleted = $db->query("UPDATE users SET avatar_url=NULL, updated_at='{$nowEsc}' WHERE id=".(int)$userId)
+        && $db->query("UPDATE customer_avatar_uploads SET status='DELETED', deleted_at='{$nowEsc}' WHERE user_id=".(int)$userId." AND status='ACTIVE'");
+    if (!$deleted) { $db->rollback(); $db->autocommit(true); aurora_response(array('message'=>'Không thể xóa ảnh trong aurora_db.'), 500); }
+    $db->commit(); $db->autocommit(true);
+    $directory = dirname(__FILE__).DIRECTORY_SEPARATOR.'uploads'.DIRECTORY_SEPARATOR.'avatars';
+    $oldPath = aurora_avatar_storage_path($oldUrl, $directory);
+    if ($oldPath !== '' && is_file($oldPath)) @unlink($oldPath);
+    aurora_response(array('message'=>'Đã xóa ảnh đại diện.', 'avatarUrl'=>null, 'user'=>aurora_public_user($db, $userId)), 200);
 }
 
 // ── /profile_update (POST) ────────────────────────────────────────────────────
 if ($resource === 'profile_update') {
-    if ($_SERVER['REQUEST_METHOD'] !== 'POST') aurora_response(array('message' => 'Method Not Allowed'), 405);
-    $userId = isset($_SESSION['aurora_user_id']) ? (int) $_SESSION['aurora_user_id'] : null;
-    if (!$userId) aurora_response(array('message' => 'Vui lòng đăng nhập.'), 401);
+    aurora_method('POST');
+    $userId = aurora_require_user();
+    if (!aurora_ensure_profile_schema($db)) aurora_response(array('message'=>'Không thể chuẩn bị dữ liệu hồ sơ trong aurora_db.'), 500);
 
-    $body     = json_decode(file_get_contents('php://input'), true);
+    $body     = aurora_body();
     $fullName = isset($body['fullName']) ? trim((string) $body['fullName']) : '';
     $phone    = isset($body['phone'])    ? trim((string) $body['phone'])    : '';
     $idNumber = isset($body['idNumber']) ? trim((string) $body['idNumber']) : '';
@@ -2706,10 +3340,30 @@ if ($resource === 'profile_update') {
     $district = isset($body['district']) ? trim((string) $body['district']) : '';
     $address  = isset($body['address'])  ? trim((string) $body['address'])  : '';
 
-    if ($fullName === '') aurora_response(array('message' => 'Họ tên không được để trống.'), 422);
-    if ($gender !== '' && !in_array($gender, array('male', 'female', 'other'))) $gender = '';
+    $fullNameLength = function_exists('mb_strlen') ? mb_strlen($fullName, 'UTF-8') : strlen($fullName);
+    $addressLength = function_exists('mb_strlen') ? mb_strlen($address, 'UTF-8') : strlen($address);
+    if ($fullNameLength < 2 || $fullNameLength > 120) aurora_response(array('message'=>'Họ và tên phải có từ 2 đến 120 ký tự.'), 422);
+    $normalizedPhone = preg_replace('/[\s\.\-\(\)]/', '', $phone);
+    if ($normalizedPhone !== '' && !preg_match('/^(0[0-9]{9,10}|\+84[0-9]{9,10})$/', $normalizedPhone)) aurora_response(array('message'=>'Số điện thoại không đúng định dạng Việt Nam.'), 422);
+    if ($idNumber !== '' && !preg_match('/^[A-Za-z0-9]{6,20}$/', $idNumber)) aurora_response(array('message'=>'CMND, CCCD hoặc hộ chiếu phải có từ 6 đến 20 ký tự chữ và số.'), 422);
+    if ($birthday !== '' && (!aurora_valid_date($birthday) || $birthday < '1900-01-01' || $birthday > date('Y-m-d'))) aurora_response(array('message'=>'Ngày sinh không hợp lệ.'), 422);
+    if ($gender !== '' && !in_array($gender, array('male', 'female', 'other'), true)) aurora_response(array('message'=>'Giới tính không hợp lệ.'), 422);
+    if ($addressLength > 255) aurora_response(array('message'=>'Địa chỉ cụ thể không được vượt quá 255 ký tự.'), 422);
+    $phone = $normalizedPhone;
+    if (!aurora_ensure_administrative_catalog($db)) aurora_response(array('message'=>'Không thể kiểm tra dữ liệu địa chỉ trong aurora_db.'), 500);
+    if ($city === '' && $district !== '') aurora_response(array('message'=>'Vui lòng chọn tỉnh/thành trước khi chọn quận/huyện.'), 422);
+    if ($city !== '') {
+        $canonicalProvince = aurora_canonical_province($db, $city);
+        if (!$canonicalProvince) aurora_response(array('message'=>'Tỉnh/thành đã chọn không hợp lệ.'), 422);
+        $city = $canonicalProvince['name'];
+        if ($district !== '') {
+            $canonicalDistrict = aurora_canonical_district($db, $canonicalProvince['code'], $district);
+            if ($canonicalDistrict === false) aurora_response(array('message'=>'Quận/huyện không thuộc tỉnh/thành đã chọn.'), 422);
+            $district = $canonicalDistrict;
+        }
+    }
 
-    $now         = date('Y-m-d H:i:s');
+    $now         = aurora_vietnam_now();
     $genderVal   = $gender   !== '' ? $gender   : null;
     $birthdayVal = $birthday !== '' ? $birthday : null;
     $phoneVal    = $phone    !== '' ? $phone    : null;
@@ -2718,22 +3372,22 @@ if ($resource === 'profile_update') {
     $districtVal = $district !== '' ? $district : null;
     $addressVal  = $address  !== '' ? $address  : null;
 
-    // Try to update extended fields; fall back to name only if columns missing
     $stmt = $db->prepare('UPDATE users SET full_name=?, phone=?, id_number=?, birthday=?, gender=?, city=?, district=?, address=?, updated_at=? WHERE id=?');
-    if (!$stmt) {
-        $stmt2 = $db->prepare('UPDATE users SET full_name=?, updated_at=? WHERE id=?');
-        $stmt2->bind_param('ssi', $fullName, $now, $userId);
-        $stmt2->execute();
-        $stmt2->close();
-        aurora_response(array('message' => 'Cập nhật thành công.', 'user' => aurora_public_user($db, $userId)), 200);
-    }
+    if (!$stmt) aurora_response(array('message'=>'Không thể chuẩn bị thao tác cập nhật hồ sơ.'), 500);
+    $db->autocommit(false);
     $stmt->bind_param('sssssssssi', $fullName, $phoneVal, $idNumberVal, $birthdayVal, $genderVal, $cityVal, $districtVal, $addressVal, $now, $userId);
     if (!$stmt->execute()) {
+        $dbError = $db->error;
         $stmt->close();
-        aurora_response(array('message' => 'Không thể cập nhật: ' . $db->error), 500);
+        $db->rollback(); $db->autocommit(true);
+        error_log('Aurora profile update failed for user '.$userId.': '.$dbError);
+        aurora_response(array('message'=>'Không thể cập nhật hồ sơ trong aurora_db.'), 500);
     }
     $stmt->close();
-    aurora_response(array('message' => 'Cập nhật thành công.', 'user' => aurora_public_user($db, $userId)), 200);
+    $db->commit(); $db->autocommit(true);
+    $profile = aurora_profile_for_user($db, $userId);
+    if (!$profile) aurora_response(array('message'=>'Đã lưu nhưng không thể tải lại hồ sơ.'), 500);
+    aurora_response(array('message'=>'Cập nhật thông tin thành công.', 'profile'=>$profile, 'user'=>aurora_public_user($db, $userId)), 200);
 }
 
 // ── /change_password (POST) ───────────────────────────────────────────────────

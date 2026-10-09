@@ -114,6 +114,21 @@ class AdminController
                 'can_edit_movies' => false,
                 'can_edit_pricing' => true,
             ),
+            'marketing_manager' => array(
+                'code' => 'marketing_manager',
+                'name' => 'Quản Lý Marketing (Marketing Manager)',
+                'badge' => 'Marketing Manager',
+                'color' => '#db2777',
+                'bg' => '#fce7f3',
+                'description' => 'Lập kế hoạch và vận hành chiến dịch Marketing, chương trình khuyến mãi, voucher, nội dung website, thông báo và phân nhóm khách hàng.',
+                'can_manage_users' => false,
+                'can_manage_settings' => false,
+                'can_approve_refunds' => false,
+                'can_view_financials' => false,
+                'can_edit_screens' => false,
+                'can_edit_movies' => false,
+                'can_edit_pricing' => false,
+            ),
         );
     }
 
@@ -122,7 +137,7 @@ class AdminController
         if ($role === 'director') return 'super_admin';
         if ($role === 'manager') return 'cinema_admin';
         if ($role === 'technician') return 'supervisor';
-        if (in_array($role, array('super_admin', 'cinema_admin', 'supervisor', 'accounting'), true)) {
+        if (in_array($role, array('super_admin', 'cinema_admin', 'supervisor', 'accounting', 'marketing_manager'), true)) {
             return $role;
         }
         return 'cinema_admin';
@@ -233,7 +248,17 @@ class AdminController
                 'super_admin' => 'Đặc quyền cấu hình hệ thống máy chủ, kết nối TMS',
                 'cinema_admin' => 'Không có quyền truy cập',
                 'supervisor' => 'Không có quyền truy cập',
-                'accounting' => 'Không có quyền truy cập'
+                'accounting' => 'Không có quyền truy cập',
+                'marketing_manager' => 'Không có quyền truy cập'
+            ),
+            array(
+                'module' => 'Marketing & Truyền thông',
+                'key' => 'marketing',
+                'super_admin' => 'Theo dõi, phê duyệt CTKM và giám sát hoạt động Marketing',
+                'cinema_admin' => 'Xem CTKM được triển khai tại rạp',
+                'supervisor' => 'Không có quyền truy cập',
+                'accounting' => 'Xem ngân sách và số liệu sử dụng ưu đãi',
+                'marketing_manager' => 'Toàn quyền lập kế hoạch, tạo nội dung, voucher, thông báo và báo cáo Marketing'
             ),
         );
     }
@@ -261,9 +286,7 @@ class AdminController
         ) ENGINE=InnoDB DEFAULT CHARSET=utf8 COLLATE=utf8_unicode_ci");
         if ($this->db->error) jsonResponse(array('success'=>false, 'message'=>'Không thể khởi tạo bảng phân quyền trong aurora_db: '.$this->db->error), 500);
 
-        $count = (int)$this->scalar('SELECT COUNT(*) FROM tms_rbac_permissions');
-        if ($count > 0) return;
-        $roles = array('super_admin', 'cinema_admin', 'supervisor', 'accounting');
+        $roles = array('super_admin', 'cinema_admin', 'supervisor', 'accounting', 'marketing_manager');
         foreach (self::getPermissionsMatrix() as $index => $item) {
             foreach ($roles as $role) {
                 $note = isset($item[$role]) ? $item[$role] : '❌';
@@ -272,7 +295,7 @@ class AdminController
                 $name = $this->db->real_escape_string($item['module']);
                 $roleEsc = $this->db->real_escape_string($role);
                 $noteEsc = $this->db->real_escape_string(str_replace(array('✅ ', '❌ ', '👁️ '), '', $note));
-                $this->db->query("INSERT INTO tms_rbac_permissions (module_key,module_name,role_code,access_level,permission_note,sort_order,updated_at) VALUES ('{$key}','{$name}','{$roleEsc}','{$level}','{$noteEsc}',".($index + 1).",NOW())");
+                $this->db->query("INSERT IGNORE INTO tms_rbac_permissions (module_key,module_name,role_code,access_level,permission_note,sort_order,updated_at) VALUES ('{$key}','{$name}','{$roleEsc}','{$level}','{$noteEsc}',".($index + 1).",NOW())");
             }
         }
     }
@@ -280,7 +303,7 @@ class AdminController
     public function permissionMatrix()
     {
         $this->ensureRbacPermissionSchema();
-        $roles = array('super_admin', 'cinema_admin', 'supervisor', 'accounting');
+        $roles = array('super_admin', 'cinema_admin', 'supervisor', 'accounting', 'marketing_manager');
         $result = $this->db->query("SELECT module_key,module_name,role_code,access_level,permission_note,sort_order,updated_at FROM tms_rbac_permissions ORDER BY sort_order,module_name,role_code");
         $matrix = array();
         while ($row = $result->fetch_assoc()) {
@@ -313,7 +336,7 @@ class AdminController
         $input = requestJson();
         $items = isset($input['items']) && is_array($input['items']) ? $input['items'] : array();
         if (!$items || count($items) > 80) jsonResponse(array('success'=>false, 'message'=>'Dữ liệu ma trận phân quyền không hợp lệ.'), 400);
-        $roles = array('super_admin', 'cinema_admin', 'supervisor', 'accounting');
+        $roles = array('super_admin', 'cinema_admin', 'supervisor', 'accounting', 'marketing_manager');
         $levels = array('full', 'manage', 'view', 'none');
         $actorId = !empty($_SESSION['tms_user']['id']) ? (int)$_SESSION['tms_user']['id'] : 0;
         if (!$this->beginDbTransaction()) jsonResponse(array('success'=>false, 'message'=>'Không thể bắt đầu cập nhật chính sách phân quyền.'), 500);
@@ -3092,7 +3115,7 @@ class AdminController
         $email = isset($input['email']) ? trim((string)$input['email']) : '';
         $theaterId = isset($input['theater_id']) ? (int)$input['theater_id'] : 0;
         $userRole = isset($input['role']) ? self::normalizeRole($input['role']) : 'cinema_admin';
-        if (!in_array($userRole, array('super_admin', 'cinema_admin', 'supervisor', 'accounting'), true)) {
+        if (!in_array($userRole, array('super_admin', 'cinema_admin', 'supervisor', 'accounting', 'marketing_manager'), true)) {
             jsonResponse(array('success' => false, 'message' => 'Form phân quyền nội bộ không được phép tạo hoặc chuyển đổi tài khoản customer.'), 400);
         }
         $allowedStatuses = array('active', 'inactive', 'locked');

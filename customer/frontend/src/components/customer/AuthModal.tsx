@@ -2,7 +2,7 @@ import { FormEvent, useState, useEffect } from 'react';
 import {
   Ticket, Percent, Crown, ShieldCheck,
   User, Mail, Phone, Lock, Eye, EyeOff, RotateCw, Facebook, X,
-  FileText, CheckCircle2
+  FileText, CheckCircle2, KeyRound, ArrowLeft
 } from 'lucide-react';
 
 type AuthMode = 'login' | 'register';
@@ -16,6 +16,7 @@ type AuthenticatedAccount = {
 
 type OAuthProvider = 'google' | 'facebook';
 type OAuthStatus = Record<OAuthProvider, { configured: boolean }>;
+type ForgotStep = 'request' | 'verify' | 'reset' | 'success';
 
 type AuthModalProps = {
   mode: AuthMode;
@@ -51,6 +52,20 @@ export default function AuthModal({
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [socialProvider, setSocialProvider] = useState<OAuthProvider | null>(null);
   const [oauthStatus, setOauthStatus] = useState<OAuthStatus | null>(null);
+  const [showForgotModal, setShowForgotModal] = useState(false);
+  const [forgotStep, setForgotStep] = useState<ForgotStep>('request');
+  const [forgotIdentifier, setForgotIdentifier] = useState('');
+  const [forgotRequestId, setForgotRequestId] = useState('');
+  const [forgotCode, setForgotCode] = useState('');
+  const [forgotResetToken, setForgotResetToken] = useState('');
+  const [forgotPassword, setForgotPassword] = useState('');
+  const [forgotConfirmPassword, setForgotConfirmPassword] = useState('');
+  const [showForgotPassword, setShowForgotPassword] = useState(false);
+  const [forgotError, setForgotError] = useState('');
+  const [forgotMessage, setForgotMessage] = useState('');
+  const [forgotLoading, setForgotLoading] = useState(false);
+  const [forgotSeconds, setForgotSeconds] = useState(0);
+  const [developmentCode, setDevelopmentCode] = useState('');
 
   // Sync mode when prop changes
   useEffect(() => {
@@ -80,6 +95,139 @@ export default function AuthModal({
     return () => controller.abort();
   }, []);
 
+  useEffect(() => {
+    if (!showForgotModal || forgotSeconds <= 0 || forgotStep === 'success') return;
+    const timer = window.setInterval(() => setForgotSeconds(value => Math.max(0, value - 1)), 1000);
+    return () => window.clearInterval(timer);
+  }, [showForgotModal, forgotSeconds, forgotStep]);
+
+  function openForgotPassword() {
+    setShowForgotModal(true);
+    setForgotStep('request');
+    setForgotIdentifier(email.trim());
+    setForgotRequestId('');
+    setForgotCode('');
+    setForgotResetToken('');
+    setForgotPassword('');
+    setForgotConfirmPassword('');
+    setForgotError('');
+    setForgotMessage('');
+    setDevelopmentCode('');
+    setForgotSeconds(0);
+  }
+
+  function closeForgotPassword() {
+    if (forgotLoading) return;
+    setShowForgotModal(false);
+  }
+
+  async function requestPasswordReset() {
+    const identifier = forgotIdentifier.trim().toLowerCase();
+    if (!identifier || (!/^\S+@\S+\.\S+$/.test(identifier) && !/^[+0-9 .()\-]{9,20}$/.test(identifier))) {
+      setForgotError('Vui lòng nhập email hoặc số điện thoại hợp lệ.');
+      return;
+    }
+    setForgotLoading(true);
+    setForgotError('');
+    setForgotMessage('');
+    try {
+      const response = await fetch(`${API_URL}?action=password_reset_request`, {
+        method: 'POST', credentials: 'include', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ identifier })
+      });
+      const result = await response.json();
+      if (!response.ok) {
+        setForgotError(result.message || 'Không thể gửi mã xác minh.');
+        return;
+      }
+      setForgotRequestId(result.requestId || '');
+      setDevelopmentCode(result.developmentCode || '');
+      setForgotSeconds(Number(result.expiresIn) || 600);
+      setForgotMessage(result.message || 'Mã xác minh đã được gửi.');
+      setForgotStep('verify');
+      setForgotCode('');
+    } catch {
+      setForgotError('Không thể kết nối máy chủ khôi phục mật khẩu.');
+    } finally {
+      setForgotLoading(false);
+    }
+  }
+
+  async function verifyPasswordResetCode() {
+    if (!/^\d{6}$/.test(forgotCode)) {
+      setForgotError('Mã xác minh phải gồm đúng 6 chữ số.');
+      return;
+    }
+    setForgotLoading(true);
+    setForgotError('');
+    try {
+      const response = await fetch(`${API_URL}?action=password_reset_verify`, {
+        method: 'POST', credentials: 'include', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ requestId: forgotRequestId, code: forgotCode })
+      });
+      const result = await response.json();
+      if (!response.ok) {
+        setForgotError(result.message || 'Mã xác minh không hợp lệ.');
+        return;
+      }
+      setForgotResetToken(result.resetToken || '');
+      setForgotSeconds(Number(result.expiresIn) || 600);
+      setForgotMessage(result.message || 'Xác minh thành công.');
+      setForgotStep('reset');
+    } catch {
+      setForgotError('Không thể xác minh mã. Vui lòng thử lại.');
+    } finally {
+      setForgotLoading(false);
+    }
+  }
+
+  async function completePasswordReset() {
+    if (forgotPassword.length < 8 || forgotPassword.length > 72 || !/[A-Z]/.test(forgotPassword) || !/[a-z]/.test(forgotPassword) || !/\d/.test(forgotPassword)) {
+      setForgotError('Mật khẩu cần 8–72 ký tự, gồm chữ hoa, chữ thường và số.');
+      return;
+    }
+    if (forgotPassword !== forgotConfirmPassword) {
+      setForgotError('Mật khẩu xác nhận không khớp.');
+      return;
+    }
+    setForgotLoading(true);
+    setForgotError('');
+    try {
+      const response = await fetch(`${API_URL}?action=password_reset_complete`, {
+        method: 'POST', credentials: 'include', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          requestId: forgotRequestId,
+          resetToken: forgotResetToken,
+          password: forgotPassword,
+          confirmPassword: forgotConfirmPassword
+        })
+      });
+      const result = await response.json();
+      if (!response.ok) {
+        setForgotError(result.message || 'Không thể cập nhật mật khẩu.');
+        return;
+      }
+      setForgotMessage(result.message || 'Mật khẩu đã được cập nhật.');
+      setForgotStep('success');
+      setPassword('');
+      setConfirmPassword('');
+      setForgotSeconds(0);
+    } catch {
+      setForgotError('Không thể kết nối máy chủ để cập nhật mật khẩu.');
+    } finally {
+      setForgotLoading(false);
+    }
+  }
+
+  function submitForgotPassword(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    if (forgotStep === 'request') requestPasswordReset();
+    else if (forgotStep === 'verify') verifyPasswordResetCode();
+    else if (forgotStep === 'reset') completePasswordReset();
+  }
+
+  const forgotTimeLabel = `${String(Math.floor(forgotSeconds / 60)).padStart(2, '0')}:${String(forgotSeconds % 60).padStart(2, '0')}`;
+
   function handleSwitch(nextMode: AuthMode) {
     setMode(nextMode);
     setError('');
@@ -101,8 +249,8 @@ export default function AuthModal({
         setError('Email không đúng định dạng.');
         return;
       }
-      if (password.length < 6) {
-        setError('Mật khẩu cần ít nhất 6 ký tự.');
+      if (password.length < 8 || password.length > 72 || !/[A-Z]/.test(password) || !/[a-z]/.test(password) || !/\d/.test(password)) {
+        setError('Mật khẩu cần 8–72 ký tự, gồm chữ hoa, chữ thường và số.');
         return;
       }
       if (password !== confirmPassword) {
@@ -152,13 +300,15 @@ export default function AuthModal({
 
   async function handleSocialLogin(provider: OAuthProvider) {
     if (oauthStatus && !oauthStatus[provider]?.configured) {
-      setError(`Đăng nhập ${provider === 'google' ? 'Google' : 'Facebook'} chưa được cấu hình trên máy chủ.`);
+      setError(provider === 'facebook'
+        ? 'Facebook Login chưa có Meta App ID và App Secret thật. Hãy cấu hình Meta App trước khi đăng ký.'
+        : 'Đăng nhập Google chưa được cấu hình trên máy chủ.');
       return;
     }
     setSocialProvider(provider);
     setError('');
     try {
-      const response = await fetch(`${API_URL}?action=oauth_start&provider=${provider}`, { credentials: 'include' });
+      const response = await fetch(`${API_URL}?action=oauth_start&provider=${provider}&intent=${mode}`, { credentials: 'include' });
       const result = await response.json();
       if (!response.ok) {
         setError(result.message || 'Đăng nhập mạng xã hội chưa được cấu hình.');
@@ -823,9 +973,13 @@ export default function AuthModal({
                       />
                       Ghi nhớ tài khoản
                     </label>
-                    <a href="#" style={{ fontSize: 12, color: '#2563eb', fontWeight: 600 }}>
+                    <button
+                      type="button"
+                      onClick={openForgotPassword}
+                      style={{ border: 'none', background: 'none', padding: 0, fontSize: 12, color: '#2563eb', fontWeight: 700, cursor: 'pointer' }}
+                    >
                       Quên mật khẩu?
-                    </a>
+                    </button>
                   </div>
                 </>
               )}
@@ -941,7 +1095,7 @@ export default function AuthModal({
                 {/* Facebook Button */}
                 <button
                   type="button"
-                  disabled={isSubmitting || socialProvider !== null || oauthStatus?.facebook?.configured === false}
+                  disabled={isSubmitting || socialProvider !== null}
                   onClick={() => handleSocialLogin('facebook')}
                   style={{
                     width: '100%',
@@ -952,16 +1106,18 @@ export default function AuthModal({
                     fontSize: 12.5,
                     fontWeight: 600,
                     color: '#ffffff',
-                    cursor: socialProvider === 'facebook' ? 'wait' : oauthStatus?.facebook?.configured === false ? 'not-allowed' : 'pointer',
-                    opacity: oauthStatus?.facebook?.configured === false ? 0.58 : 1,
+                    cursor: socialProvider === 'facebook' ? 'wait' : 'pointer',
+                    opacity: socialProvider !== null && socialProvider !== 'facebook' ? 0.65 : 1,
                     display: 'flex',
                     alignItems: 'center',
                     justifyContent: 'center',
                     gap: 10
                   }}
                 >
-                  <Facebook size={16} fill="#ffffff" color="#ffffff" />
-                  <span>{socialProvider === 'facebook' ? 'Đang chuyển đến Facebook...' : oauthStatus?.facebook?.configured === false ? 'Facebook chưa được cấu hình' : mode === 'register' ? 'Đăng ký với Facebook' : 'Đăng nhập với Facebook'}</span>
+                  {socialProvider === 'facebook'
+                    ? <RotateCw size={16} color="#ffffff" className="animate-spin" />
+                    : <Facebook size={16} fill="#ffffff" color="#ffffff" />}
+                  <span>{socialProvider === 'facebook' ? 'Đang kết nối Facebook...' : mode === 'register' ? 'Đăng ký với Facebook' : 'Đăng nhập với Facebook'}</span>
                 </button>
               </div>
 
@@ -987,6 +1143,246 @@ export default function AuthModal({
           </form>
         </div>
       </div>
+
+      {/* ─── FORGOT PASSWORD MODAL ─────────────────────────── */}
+      {showForgotModal && (
+        <div
+          style={{
+            position: 'fixed', inset: 0, zIndex: 120,
+            background: 'rgba(4, 13, 26, 0.82)', backdropFilter: 'blur(8px)',
+            display: 'flex', alignItems: 'center', justifyContent: 'center', padding: 18
+          }}
+        >
+          <div
+            role="dialog"
+            aria-modal="true"
+            aria-labelledby="forgot-password-title"
+            onClick={event => event.stopPropagation()}
+            style={{
+              position: 'relative', width: '100%', maxWidth: 500, background: '#ffffff',
+              borderRadius: 20, overflow: 'hidden',
+              boxShadow: '0 28px 80px rgba(0,0,0,0.48)', border: '1px solid rgba(255,255,255,0.65)'
+            }}
+          >
+            <div style={{ height: 5, background: 'linear-gradient(90deg, #f4c04a 0%, #f2a91f 45%, #1d68b2 100%)' }} />
+            <button
+              type="button"
+              onClick={closeForgotPassword}
+              disabled={forgotLoading}
+              aria-label="Đóng khôi phục mật khẩu"
+              style={{
+                position: 'absolute', top: 20, right: 20, width: 32, height: 32,
+                borderRadius: '50%', border: 'none', background: '#eef2f7', color: '#52647a',
+                display: 'flex', alignItems: 'center', justifyContent: 'center', cursor: forgotLoading ? 'wait' : 'pointer'
+              }}
+            >
+              <X size={17} />
+            </button>
+
+            <div style={{ padding: '28px 32px 30px' }}>
+              <div style={{ display: 'flex', alignItems: 'center', gap: 14, paddingRight: 38 }}>
+                <div style={{
+                  width: 48, height: 48, borderRadius: 14, flexShrink: 0,
+                  background: 'linear-gradient(145deg, #fff8e7, #ffedbd)', border: '1px solid #f4c04a',
+                  color: '#b77908', display: 'flex', alignItems: 'center', justifyContent: 'center'
+                }}>
+                  {forgotStep === 'success' ? <CheckCircle2 size={25} /> : <KeyRound size={24} />}
+                </div>
+                <div>
+                  <h2 id="forgot-password-title" style={{ margin: 0, color: '#071526', fontSize: 21, fontWeight: 900 }}>
+                    {forgotStep === 'success' ? 'Đổi mật khẩu thành công' : 'Khôi phục mật khẩu'}
+                  </h2>
+                  <p style={{ margin: '4px 0 0', color: '#64748b', fontSize: 12.5, lineHeight: 1.45 }}>
+                    {forgotStep === 'request' && 'Nhập thông tin đã đăng ký với tài khoản Aurora.'}
+                    {forgotStep === 'verify' && 'Nhập mã xác minh gồm 6 chữ số để tiếp tục.'}
+                    {forgotStep === 'reset' && 'Tạo mật khẩu mới an toàn cho tài khoản của bạn.'}
+                    {forgotStep === 'success' && 'Tài khoản của bạn đã được bảo vệ bằng mật khẩu mới.'}
+                  </p>
+                </div>
+              </div>
+
+              {forgotStep !== 'success' && (
+                <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: 8, margin: '24px 0 22px' }}>
+                  {[
+                    { key: 'request', number: 1, label: 'Tài khoản' },
+                    { key: 'verify', number: 2, label: 'Xác minh' },
+                    { key: 'reset', number: 3, label: 'Mật khẩu mới' }
+                  ].map((item, index) => {
+                    const order = ['request', 'verify', 'reset'];
+                    const activeIndex = order.indexOf(forgotStep);
+                    const completed = index < activeIndex;
+                    const active = index === activeIndex;
+                    return (
+                      <div key={item.key} style={{ textAlign: 'center' }}>
+                        <div style={{ height: 3, borderRadius: 3, marginBottom: 8, background: completed || active ? '#f4b62f' : '#e2e8f0' }} />
+                        <div style={{ fontSize: 11, fontWeight: active ? 800 : 650, color: active ? '#8b5a00' : completed ? '#15803d' : '#94a3b8' }}>
+                          {completed ? '✓' : item.number}. {item.label}
+                        </div>
+                      </div>
+                    );
+                  })}
+                </div>
+              )}
+
+              {forgotStep === 'success' ? (
+                <div style={{ marginTop: 24 }}>
+                  <div style={{
+                    padding: '18px 20px', borderRadius: 14, background: '#f0fdf4', border: '1px solid #bbf7d0',
+                    color: '#166534', fontSize: 13, lineHeight: 1.6, textAlign: 'center'
+                  }}>
+                    <CheckCircle2 size={30} style={{ marginBottom: 7 }} />
+                    <div style={{ fontWeight: 800, marginBottom: 3 }}>{forgotMessage}</div>
+                    <div>Bạn có thể sử dụng mật khẩu mới để đăng nhập ngay.</div>
+                  </div>
+                  <button
+                    type="button"
+                    onClick={() => { setShowForgotModal(false); setMode('login'); setEmail(forgotIdentifier.includes('@') ? forgotIdentifier : ''); }}
+                    style={{
+                      width: '100%', marginTop: 18, padding: '12px 16px', border: 'none', borderRadius: 10,
+                      background: '#071526', color: '#fff', fontSize: 13, fontWeight: 800, cursor: 'pointer'
+                    }}
+                  >
+                    QUAY LẠI ĐĂNG NHẬP
+                  </button>
+                </div>
+              ) : (
+                <form onSubmit={submitForgotPassword}>
+                  {forgotStep === 'request' && (
+                    <div>
+                      <label style={{ display: 'block', color: '#334155', fontSize: 12.5, fontWeight: 750, marginBottom: 7 }}>
+                        Email hoặc số điện thoại
+                      </label>
+                      <div style={{ display: 'flex', alignItems: 'center', gap: 10, border: '1px solid #cbd5e1', borderRadius: 10, padding: '11px 13px' }}>
+                        <Mail size={17} color="#8ca0b7" />
+                        <input
+                          autoFocus
+                          value={forgotIdentifier}
+                          onChange={event => setForgotIdentifier(event.target.value)}
+                          placeholder="Nhập email hoặc số điện thoại đã đăng ký"
+                          autoComplete="username"
+                          style={{ flex: 1, minWidth: 0, border: 'none', outline: 'none', color: '#0f172a', fontSize: 13 }}
+                        />
+                      </div>
+                      <div style={{ display: 'flex', gap: 9, marginTop: 12, padding: '11px 12px', borderRadius: 10, background: '#f8fafc', color: '#64748b', fontSize: 11.5, lineHeight: 1.5 }}>
+                        <ShieldCheck size={17} color="#1d68b2" style={{ flexShrink: 0 }} />
+                        Aurora không tiết lộ tài khoản có tồn tại hay không. Mã xác minh chỉ có hiệu lực 10 phút.
+                      </div>
+                    </div>
+                  )}
+
+                  {forgotStep === 'verify' && (
+                    <div>
+                      <div style={{ textAlign: 'center', color: '#52647a', fontSize: 12.5, marginBottom: 13 }}>
+                        Mã đã được gửi theo thông tin <strong style={{ color: '#0f2742' }}>{forgotIdentifier}</strong>
+                      </div>
+                      <input
+                        autoFocus
+                        inputMode="numeric"
+                        maxLength={6}
+                        value={forgotCode}
+                        onChange={event => setForgotCode(event.target.value.replace(/\D/g, '').slice(0, 6))}
+                        placeholder="000000"
+                        aria-label="Mã xác minh 6 chữ số"
+                        style={{
+                          width: '100%', boxSizing: 'border-box', border: '1.5px solid #b8c7d9', borderRadius: 12,
+                          padding: '13px 16px', outline: 'none', textAlign: 'center', color: '#071526',
+                          fontSize: 25, fontWeight: 850, letterSpacing: 11, fontFamily: 'monospace'
+                        }}
+                      />
+                      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginTop: 10, fontSize: 11.5 }}>
+                        <span style={{ color: forgotSeconds > 0 ? '#64748b' : '#dc2626' }}>
+                          {forgotSeconds > 0 ? `Mã hết hạn sau ${forgotTimeLabel}` : 'Mã đã hết hạn'}
+                        </span>
+                        <button
+                          type="button"
+                          disabled={forgotLoading || forgotSeconds > 540}
+                          onClick={requestPasswordReset}
+                          style={{ border: 'none', background: 'none', padding: 0, color: forgotSeconds > 540 ? '#94a3b8' : '#1d68b2', fontSize: 11.5, fontWeight: 800, cursor: forgotSeconds > 540 ? 'not-allowed' : 'pointer' }}
+                        >
+                          Gửi lại mã
+                        </button>
+                      </div>
+                      {developmentCode && (
+                        <div style={{ marginTop: 12, padding: '10px 12px', borderRadius: 10, background: '#fff8e7', border: '1px dashed #e7b43c', color: '#805500', fontSize: 11.5, textAlign: 'center' }}>
+                          Môi trường WAMP local — mã kiểm thử: <strong style={{ fontSize: 15, letterSpacing: 2 }}>{developmentCode}</strong>
+                        </div>
+                      )}
+                    </div>
+                  )}
+
+                  {forgotStep === 'reset' && (
+                    <div style={{ display: 'grid', gap: 13 }}>
+                      <div>
+                        <label style={{ display: 'block', color: '#334155', fontSize: 12.5, fontWeight: 750, marginBottom: 7 }}>Mật khẩu mới</label>
+                        <div style={{ display: 'flex', alignItems: 'center', gap: 10, border: '1px solid #cbd5e1', borderRadius: 10, padding: '11px 13px' }}>
+                          <Lock size={17} color="#8ca0b7" />
+                          <input
+                            autoFocus
+                            type={showForgotPassword ? 'text' : 'password'}
+                            value={forgotPassword}
+                            onChange={event => setForgotPassword(event.target.value)}
+                            autoComplete="new-password"
+                            placeholder="Nhập mật khẩu mới"
+                            style={{ flex: 1, minWidth: 0, border: 'none', outline: 'none', fontSize: 13 }}
+                          />
+                          <button type="button" onClick={() => setShowForgotPassword(value => !value)} style={{ border: 'none', background: 'none', color: '#8ca0b7', padding: 0, display: 'flex', cursor: 'pointer' }}>
+                            {showForgotPassword ? <EyeOff size={17} /> : <Eye size={17} />}
+                          </button>
+                        </div>
+                      </div>
+                      <div>
+                        <label style={{ display: 'block', color: '#334155', fontSize: 12.5, fontWeight: 750, marginBottom: 7 }}>Xác nhận mật khẩu mới</label>
+                        <div style={{ display: 'flex', alignItems: 'center', gap: 10, border: '1px solid #cbd5e1', borderRadius: 10, padding: '11px 13px' }}>
+                          <Lock size={17} color="#8ca0b7" />
+                          <input
+                            type={showForgotPassword ? 'text' : 'password'}
+                            value={forgotConfirmPassword}
+                            onChange={event => setForgotConfirmPassword(event.target.value)}
+                            autoComplete="new-password"
+                            placeholder="Nhập lại mật khẩu mới"
+                            style={{ flex: 1, minWidth: 0, border: 'none', outline: 'none', fontSize: 13 }}
+                          />
+                        </div>
+                      </div>
+                      <div style={{ padding: '10px 12px', borderRadius: 10, background: '#f8fafc', color: '#64748b', fontSize: 11.5 }}>
+                        Dùng 8–72 ký tự, có ít nhất một chữ hoa, một chữ thường và một chữ số.
+                      </div>
+                    </div>
+                  )}
+
+                  {forgotMessage && forgotStep !== 'request' && (
+                    <div style={{ marginTop: 13, padding: '9px 11px', borderRadius: 9, background: '#eff6ff', border: '1px solid #bfdbfe', color: '#1e5d9b', fontSize: 11.5 }}>
+                      {forgotMessage}
+                    </div>
+                  )}
+                  {forgotError && (
+                    <div role="alert" style={{ marginTop: 13, padding: '9px 11px', borderRadius: 9, background: '#fef2f2', border: '1px solid #fecaca', color: '#c62828', fontSize: 11.5 }}>
+                      {forgotError}
+                    </div>
+                  )}
+
+                  <button
+                    type="submit"
+                    disabled={forgotLoading || (forgotStep === 'verify' && forgotSeconds <= 0)}
+                    style={{
+                      width: '100%', marginTop: 18, padding: '12px 16px', border: 'none', borderRadius: 10,
+                      background: forgotLoading ? '#52647a' : '#071526', color: '#fff', fontSize: 13,
+                      fontWeight: 850, cursor: forgotLoading ? 'wait' : 'pointer', boxShadow: '0 8px 18px rgba(7,21,38,0.2)'
+                    }}
+                  >
+                    {forgotLoading ? 'ĐANG XỬ LÝ...' : forgotStep === 'request' ? 'GỬI MÃ XÁC MINH' : forgotStep === 'verify' ? 'XÁC MINH MÃ' : 'CẬP NHẬT MẬT KHẨU'}
+                  </button>
+                  {forgotStep === 'request' && (
+                    <button type="button" onClick={closeForgotPassword} style={{ width: '100%', marginTop: 11, border: 'none', background: 'none', color: '#52647a', fontSize: 12, fontWeight: 700, cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 6 }}>
+                      <ArrowLeft size={15} /> Quay lại đăng nhập
+                    </button>
+                  )}
+                </form>
+              )}
+            </div>
+          </div>
+        </div>
+      )}
 
       {/* ─── TERMS & CONDITIONS MODAL ───────────────────────── */}
       {showTermsModal && (

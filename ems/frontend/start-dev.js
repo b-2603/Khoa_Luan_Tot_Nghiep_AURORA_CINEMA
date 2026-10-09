@@ -1,7 +1,7 @@
 import net from 'net';
 import path from 'path';
 import fs from 'fs';
-import { spawn } from 'child_process';
+import { spawn, spawnSync } from 'child_process';
 import { fileURLToPath } from 'url';
 
 const __filename = fileURLToPath(import.meta.url);
@@ -62,6 +62,17 @@ function findPhpBinary() {
     if (fs.existsSync(c)) return c;
   }
   return 'php';
+}
+
+function phpServerArgs(phpBin, serverPhp) {
+  const probe = spawnSync(
+    phpBin,
+    ['-r', 'exit(in_array("mysql", PDO::getAvailableDrivers(), true) ? 0 : 1);'],
+    { stdio: 'ignore', timeout: 3000 },
+  );
+  const extensionArgs = probe.status === 0 ? [] : ['-d', 'extension=pdo_mysql'];
+
+  return [...extensionArgs, '-S', '127.0.0.1:8000', serverPhp];
 }
 
 function findMysqlBinary() {
@@ -155,7 +166,7 @@ async function main() {
       const phpBin = findPhpBinary();
       log('Backend', `Starting PHP API Server on http://127.0.0.1:8000...`, colors.cyan);
 
-      phpChild = spawn(phpBin, ['-S', '127.0.0.1:8000', serverPhp], {
+      phpChild = spawn(phpBin, phpServerArgs(phpBin, serverPhp), {
         cwd: backendDir,
         stdio: ['ignore', 'pipe', 'pipe'],
       });
@@ -194,7 +205,16 @@ async function main() {
   log('Frontend', `Starting Vite Dev Server...\n`, colors.cyan);
 
   const viteBin = path.resolve(__dirname, 'node_modules', 'vite', 'bin', 'vite.js');
-  const viteArgs = [viteBin, '--host'];
+  const cliArgs = process.argv.slice(2);
+  const hasHostArg = cliArgs.some((arg) => arg === '--host' || arg.startsWith('--host='));
+  const viteArgs = [viteBin, ...cliArgs];
+
+  // Forward arguments supplied through `npm run dev -- ...` to Vite. Without
+  // this, start-all.ps1 requests port 5176 but Vite silently starts on its
+  // default port (5173, or the next available port).
+  if (!hasHostArg) {
+    viteArgs.push('--host');
+  }
 
   const viteProc = spawn(process.execPath, viteArgs, {
     cwd: __dirname,

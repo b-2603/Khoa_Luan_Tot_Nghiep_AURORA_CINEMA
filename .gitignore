@@ -22,3 +22,7 @@ aurora_db/
 # Local recovery snapshots and incomplete chunked uploads
 .recovery/
 tms/backend/public/uploads/movies/.chunks/
+
+# Customer-uploaded avatars are runtime data; keep only the directory marker.
+customer/backend/public/uploads/avatars/*
+!customer/backend/public/uploads/avatars/.gitkeep

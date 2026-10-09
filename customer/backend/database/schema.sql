@@ -15,12 +15,37 @@ CREATE TABLE IF NOT EXISTS users (
   city VARCHAR(100) NULL,
   district VARCHAR(100) NULL,
   address VARCHAR(255) NULL,
+  avatar_url VARCHAR(500) NULL,
   password_hash VARCHAR(255) NOT NULL,
   membership_level ENUM('STANDARD', 'SILVER', 'GOLD', 'PLATINUM') NOT NULL DEFAULT 'STANDARD',
   points INT UNSIGNED NOT NULL DEFAULT 0,
   created_at TIMESTAMP NULL DEFAULT CURRENT_TIMESTAMP,
   updated_at TIMESTAMP NULL
-) ENGINE=InnoDB;
+) ENGINE=InnoDB DEFAULT CHARSET=utf8 COLLATE=utf8_general_ci;
+
+CREATE TABLE IF NOT EXISTS customer_avatar_uploads (
+  id BIGINT UNSIGNED NOT NULL AUTO_INCREMENT,
+  user_id BIGINT UNSIGNED NOT NULL,
+  avatar_url VARCHAR(500) NOT NULL,
+  storage_name VARCHAR(255) NOT NULL,
+  original_name VARCHAR(255) NOT NULL,
+  mime_type VARCHAR(50) NOT NULL,
+  byte_size INT UNSIGNED NOT NULL,
+  image_width INT UNSIGNED NOT NULL,
+  image_height INT UNSIGNED NOT NULL,
+  source_width INT UNSIGNED NULL,
+  source_height INT UNSIGNED NULL,
+  crop_offset_x DECIMAL(7,4) NULL,
+  crop_offset_y DECIMAL(7,4) NULL,
+  crop_zoom DECIMAL(7,4) NULL,
+  crop_output_size INT UNSIGNED NULL,
+  status ENUM('ACTIVE','REPLACED','DELETED') NOT NULL DEFAULT 'ACTIVE',
+  created_at DATETIME NOT NULL,
+  deleted_at DATETIME NULL,
+  PRIMARY KEY (id),
+  KEY idx_customer_avatar_user_status (user_id, status),
+  CONSTRAINT fk_customer_avatar_user FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
+) ENGINE=InnoDB DEFAULT CHARSET=utf8 COLLATE=utf8_unicode_ci;
 
 CREATE TABLE IF NOT EXISTS oauth_accounts (
   id BIGINT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
@@ -245,4 +270,49 @@ CREATE TABLE IF NOT EXISTS vouchers (
   created_at TIMESTAMP NULL DEFAULT CURRENT_TIMESTAMP,
   updated_at DATETIME NULL,
   KEY idx_vouchers_customer (status, starts_at, ends_at, sort_order)
+) ENGINE=InnoDB;
+
+-- Danh mục địa chỉ cho hồ sơ khách hàng. Dữ liệu được nạp tự động từ
+-- vietnam_provinces_districts_v2.4.1.json khi API được gọi lần đầu.
+CREATE TABLE IF NOT EXISTS administrative_provinces (
+  code CHAR(2) NOT NULL PRIMARY KEY,
+  name VARCHAR(100) NOT NULL,
+  full_name VARCHAR(150) NOT NULL,
+  code_name VARCHAR(100) NOT NULL,
+  dataset_version VARCHAR(30) NOT NULL,
+  sort_order SMALLINT UNSIGNED NOT NULL DEFAULT 0,
+  is_active TINYINT(1) NOT NULL DEFAULT 1,
+  created_at TIMESTAMP NULL DEFAULT CURRENT_TIMESTAMP,
+  updated_at DATETIME NULL,
+  UNIQUE KEY uq_administrative_province_name (name),
+  KEY idx_administrative_province_active (is_active, sort_order)
+) ENGINE=InnoDB;
+
+CREATE TABLE IF NOT EXISTS administrative_districts (
+  code CHAR(3) NOT NULL PRIMARY KEY,
+  province_code CHAR(2) NOT NULL,
+  name VARCHAR(120) NOT NULL,
+  full_name VARCHAR(160) NOT NULL,
+  code_name VARCHAR(120) NOT NULL,
+  dataset_version VARCHAR(30) NOT NULL,
+  sort_order SMALLINT UNSIGNED NOT NULL DEFAULT 0,
+  is_active TINYINT(1) NOT NULL DEFAULT 1,
+  created_at TIMESTAMP NULL DEFAULT CURRENT_TIMESTAMP,
+  updated_at DATETIME NULL,
+  UNIQUE KEY uq_administrative_district_name (province_code, full_name),
+  KEY idx_administrative_district_province (province_code, is_active, sort_order),
+  CONSTRAINT fk_administrative_district_province FOREIGN KEY (province_code)
+    REFERENCES administrative_provinces(code) ON UPDATE CASCADE ON DELETE RESTRICT
+) ENGINE=InnoDB;
+
+CREATE TABLE IF NOT EXISTS customer_membership_cards (
+  id BIGINT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
+  user_id BIGINT UNSIGNED NOT NULL,
+  card_number BIGINT UNSIGNED NOT NULL,
+  activated_at DATETIME NOT NULL,
+  expires_at DATE NOT NULL,
+  created_at DATETIME NOT NULL,
+  updated_at DATETIME NOT NULL,
+  UNIQUE KEY uq_membership_card_user (user_id),
+  UNIQUE KEY uq_membership_card_number (card_number)
 ) ENGINE=InnoDB;

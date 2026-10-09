@@ -30,7 +30,7 @@ Write-Host "[3/4] Khoi dong TMS System (Cong 5175)..." -ForegroundColor Green
 Start-Process powershell.exe -ArgumentList "-NoExit", "-ExecutionPolicy", "Bypass", "-Command", "`$host.ui.RawUI.WindowTitle = 'AURORA - TMS System (5175)'; npm.cmd run dev -- --port 5175 --host" -WorkingDirectory "$root\tms\frontend"
 
 Write-Host "[4/4] Khoi dong EMS System (Cong 5176)..." -ForegroundColor Green
-Start-Process powershell.exe -ArgumentList "-NoExit", "-ExecutionPolicy", "Bypass", "-Command", "`$host.ui.RawUI.WindowTitle = 'AURORA - EMS System (5176)'; npm.cmd run dev -- --port 5176 --host" -WorkingDirectory "$root\ems\frontend"
+Start-Process powershell.exe -ArgumentList "-NoExit", "-ExecutionPolicy", "Bypass", "-Command", "`$host.ui.RawUI.WindowTitle = 'AURORA - EMS System (5176)'; npm.cmd run dev -- --port 5176 --host --strictPort" -WorkingDirectory "$root\ems\frontend"
 
 # 3. Tu dong mo trinh duyet
 Start-Sleep -Seconds 3

@@ -1,10 +1,12 @@
-import { useState, useEffect, FormEvent, useRef } from 'react';
+import { useState, useEffect, FormEvent, useRef, useId, PointerEvent as ReactPointerEvent } from 'react';
 import {
   User, Mail, Phone, CreditCard, Calendar, MapPin,
   Lock, Eye, EyeOff, Check, AlertCircle, ChevronRight,
   Star, Ticket, Gift, Shield, Edit3, Save, X, Clock3, ReceiptText,
-  CheckCircle, Tag, Sparkles, Camera, Upload, Loader2
+  CheckCircle, Tag, Sparkles, Camera, Upload, Loader2, Trash2
 } from 'lucide-react';
+import SafeAvatar from './SafeAvatar';
+import './AccountPage.css';
 
 const API_URL = 'http://localhost/AURORA%20CINEMA/customer/backend/public/api.php';
 
@@ -63,20 +65,26 @@ const MEMBERSHIP_CONFIG: Record<string, { label: string; color: string; next?: s
   PLATINUM: { label: 'Bạch Kim',   color: '#e2e8f0', next: undefined,  nextPoints: 9999 },
 };
 
-const VN_CITIES = [
-  'Hà Nội','TP. Hồ Chí Minh','Đà Nẵng','Cần Thơ','Hải Phòng',
-  'Bình Dương','Đồng Nai','Khánh Hòa','Thừa Thiên Huế','Quảng Nam',
-  'An Giang','Bà Rịa - Vũng Tàu','Bắc Giang','Bắc Kạn','Bạc Liêu',
-  'Bắc Ninh','Bến Tre','Bình Định','Bình Phước','Bình Thuận',
-  'Cà Mau','Cao Bằng','Đắk Lắk','Đắk Nông','Điện Biên','Đồng Tháp',
-  'Gia Lai','Hà Giang','Hà Nam','Hà Tĩnh','Hải Dương','Hậu Giang',
-  'Hòa Bình','Hưng Yên','Kiên Giang','Kon Tum','Lai Châu','Lạng Sơn',
-  'Lào Cai','Lâm Đồng','Long An','Nam Định','Nghệ An','Ninh Bình',
-  'Ninh Thuận','Phú Thọ','Phú Yên','Quảng Bình','Quảng Ngãi',
-  'Quảng Ninh','Quảng Trị','Sóc Trăng','Sơn La','Tây Ninh',
-  'Thái Bình','Thái Nguyên','Thanh Hóa','Tiền Giang','Trà Vinh',
-  'Tuyên Quang','Vĩnh Long','Vĩnh Phúc','Yên Bái',
-];
+type AdministrativeProvince = {
+  code: string;
+  name: string;
+  fullName: string;
+  aliases?: string[];
+};
+
+type AdministrativeDistrict = {
+  code: string;
+  name: string;
+};
+
+type AvatarCropMetadata = {
+  offsetX: number;
+  offsetY: number;
+  zoom: number;
+  sourceWidth: number;
+  sourceHeight: number;
+  outputSize: number;
+};
 
 function InputField({
   label, value, onChange, type = 'text', placeholder = '', required = false,
@@ -122,6 +130,67 @@ function InputField({
   );
 }
 
+function formatVietnameseDate(value: string) {
+  const match = /^(\d{4})-(\d{2})-(\d{2})$/.exec(value);
+  return match ? `${match[3]}/${match[2]}/${match[1]}` : '';
+}
+
+function parseVietnameseDate(value: string) {
+  const match = /^(\d{2})\/(\d{2})\/(\d{4})$/.exec(value);
+  if (!match) return '';
+  const day = Number(match[1]);
+  const month = Number(match[2]);
+  const year = Number(match[3]);
+  const date = new Date(year, month - 1, day);
+  if (date.getFullYear() !== year || date.getMonth() !== month - 1 || date.getDate() !== day) return '';
+  return `${match[3]}-${match[2]}-${match[1]}`;
+}
+
+function VietnameseDateField({ value, onChange }: { value: string; onChange: (value: string) => void }) {
+  const [displayValue, setDisplayValue] = useState(() => formatVietnameseDate(value));
+  const [dateError, setDateError] = useState('');
+  const nativeDateRef = useRef<HTMLInputElement>(null);
+  const today = new Date();
+  const maxDate = `${today.getFullYear()}-${String(today.getMonth() + 1).padStart(2, '0')}-${String(today.getDate()).padStart(2, '0')}`;
+
+  useEffect(() => setDisplayValue(formatVietnameseDate(value)), [value]);
+
+  function handleTextChange(rawValue: string) {
+    const digits = rawValue.replace(/\D/g, '').slice(0, 8);
+    const formatted = digits.length <= 2 ? digits : digits.length <= 4 ? `${digits.slice(0, 2)}/${digits.slice(2)}` : `${digits.slice(0, 2)}/${digits.slice(2, 4)}/${digits.slice(4)}`;
+    setDisplayValue(formatted);
+    setDateError('');
+    if (formatted === '') onChange('');
+    if (formatted.length === 10) {
+      const isoDate = parseVietnameseDate(formatted);
+      if (isoDate) onChange(isoDate);
+      else setDateError('Ngày sinh không hợp lệ.');
+    }
+  }
+
+  function openDatePicker() {
+    const input = nativeDateRef.current as (HTMLInputElement & { showPicker?: () => void }) | null;
+    if (input?.showPicker) input.showPicker();
+    else input?.click();
+  }
+
+  return (
+    <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
+      <label style={{ fontSize: 12.5, fontWeight: 700, color: '#4a637a', letterSpacing: 0.3 }}>Ngày sinh</label>
+      <div style={{ position: 'relative' }}>
+        <span style={{ position: 'absolute', left: 12, top: '50%', transform: 'translateY(-50%)', color: '#94a3b8', display: 'flex', pointerEvents: 'none' }}><Calendar size={14}/></span>
+        <input type="text" inputMode="numeric" autoComplete="bday" value={displayValue} onChange={event => handleTextChange(event.target.value)} onBlur={() => {
+          if (displayValue && !parseVietnameseDate(displayValue)) setDateError('Vui lòng nhập theo định dạng ngày/tháng/năm.');
+          else if (value) setDisplayValue(formatVietnameseDate(value));
+        }} placeholder="dd/mm/yyyy" maxLength={10} aria-invalid={Boolean(dateError)} style={{ width:'100%', boxSizing:'border-box', padding:'10px 44px 10px 36px', border:`1.5px solid ${dateError ? '#ef8d8d' : '#d5dee9'}`, borderRadius:10, color:'#1a2332', background:'#fff', fontSize:13.5, outline:'none' }} />
+        <button type="button" onClick={openDatePicker} aria-label="Mở lịch chọn ngày sinh" title="Chọn ngày sinh" style={{ position:'absolute', top:'50%', right:7, transform:'translateY(-50%)', display:'grid', width:31, height:31, placeItems:'center', padding:0, border:0, borderRadius:8, color:'#49647f', background:'transparent', cursor:'pointer' }}><Calendar size={16}/></button>
+        <input ref={nativeDateRef} type="date" value={value || ''} max={maxDate} onChange={event => { onChange(event.target.value); setDisplayValue(formatVietnameseDate(event.target.value)); setDateError(''); }} tabIndex={-1} aria-hidden="true" style={{ position:'absolute', width:1, height:1, right:12, bottom:0, opacity:0, pointerEvents:'none' }} />
+      </div>
+      {dateError && <span role="alert" style={{ fontSize: 11, color: '#c24141' }}>{dateError}</span>}
+    </div>
+  );
+}
+
 /* ─── Main Component ─────────────────────────────────────── */
 export default function AccountPage({ authUser, onUserUpdate, initialTab = 'info' }: AccountPageProps) {
   const [activeTab, setActiveTab] = useState(initialTab);
@@ -137,6 +206,11 @@ export default function AccountPage({ authUser, onUserUpdate, initialTab = 'info
   const [city, setCity] = useState('');
   const [district, setDistrict] = useState('');
   const [address, setAddress] = useState('');
+  const [provinces, setProvinces] = useState<AdministrativeProvince[]>([]);
+  const [districts, setDistricts] = useState<AdministrativeDistrict[]>([]);
+  const [provincesLoading, setProvincesLoading] = useState(true);
+  const [districtsLoading, setDistrictsLoading] = useState(false);
+  const [addressCatalogError, setAddressCatalogError] = useState('');
 
   // Password change
   const [showPasswordForm, setShowPasswordForm] = useState(false);
@@ -160,9 +234,31 @@ export default function AccountPage({ authUser, onUserUpdate, initialTab = 'info
   const [membershipLoading, setMembershipLoading] = useState(false);
   const [voucherCode, setVoucherCode] = useState('');
   const [avatarUploading, setAvatarUploading] = useState(false);
+  const [avatarPreviewOpen, setAvatarPreviewOpen] = useState(false);
+  const [avatarDeleteConfirmOpen, setAvatarDeleteConfirmOpen] = useState(false);
+  const [avatarCropFile, setAvatarCropFile] = useState<File | null>(null);
   const avatarInputRef = useRef<HTMLInputElement>(null);
 
   useEffect(() => setActiveTab(initialTab), [initialTab]);
+
+  useEffect(() => {
+    if (!avatarPreviewOpen && !avatarDeleteConfirmOpen && !avatarCropFile) return;
+    const previousOverflow = document.body.style.overflow;
+    const closeOnEscape = (event: KeyboardEvent) => {
+      if (event.key !== 'Escape') return;
+      setAvatarDeleteConfirmOpen(false);
+      if (!avatarUploading) {
+        setAvatarCropFile(null);
+        if (avatarInputRef.current) avatarInputRef.current.value = '';
+      }
+    };
+    document.body.style.overflow = 'hidden';
+    document.addEventListener('keydown', closeOnEscape);
+    return () => {
+      document.body.style.overflow = previousOverflow;
+      document.removeEventListener('keydown', closeOnEscape);
+    };
+  }, [avatarPreviewOpen, avatarDeleteConfirmOpen, avatarCropFile, avatarUploading]);
 
   useEffect(() => {
     setLoading(true);
@@ -187,6 +283,63 @@ export default function AccountPage({ authUser, onUserUpdate, initialTab = 'info
   }, []);
 
   useEffect(() => {
+    let cancelled = false;
+    setProvincesLoading(true);
+    setAddressCatalogError('');
+    fetch(`${API_URL}?action=address_provinces`)
+      .then(async response => {
+        const data = await response.json();
+        if (!response.ok) throw new Error(data.message || 'Không thể tải danh sách tỉnh/thành.');
+        return data;
+      })
+      .then(data => {
+        if (!cancelled) setProvinces(Array.isArray(data.provinces) ? data.provinces : []);
+      })
+      .catch(error => {
+        if (!cancelled) setAddressCatalogError(error instanceof Error ? error.message : 'Không thể tải danh mục địa chỉ.');
+      })
+      .finally(() => { if (!cancelled) setProvincesLoading(false); });
+    return () => { cancelled = true; };
+  }, []);
+
+  useEffect(() => {
+    const selectedProvince = provinces.find(province =>
+      province.name === city || province.fullName === city || province.aliases?.includes(city)
+    );
+    if (!selectedProvince) {
+      setDistricts([]);
+      setDistrictsLoading(false);
+      return;
+    }
+
+    if (city !== selectedProvince.name) {
+      setCity(selectedProvince.name);
+      return;
+    }
+
+    let cancelled = false;
+    setDistrictsLoading(true);
+    setAddressCatalogError('');
+    fetch(`${API_URL}?action=address_districts&province_code=${encodeURIComponent(selectedProvince.code)}`)
+      .then(async response => {
+        const data = await response.json();
+        if (!response.ok) throw new Error(data.message || 'Không thể tải danh sách quận/huyện.');
+        return data;
+      })
+      .then(data => {
+        if (!cancelled) setDistricts(Array.isArray(data.districts) ? data.districts : []);
+      })
+      .catch(error => {
+        if (!cancelled) {
+          setDistricts([]);
+          setAddressCatalogError(error instanceof Error ? error.message : 'Không thể tải danh sách quận/huyện.');
+        }
+      })
+      .finally(() => { if (!cancelled) setDistrictsLoading(false); });
+    return () => { cancelled = true; };
+  }, [city, provinces]);
+
+  useEffect(() => {
     if (activeTab !== 'history') return;
     setBookingsLoading(true);
     fetch(`${API_URL}?action=booking_history`, { credentials: 'include' })
@@ -208,20 +361,48 @@ export default function AccountPage({ authUser, onUserUpdate, initialTab = 'info
 
   async function handleSave(e: FormEvent) {
     e.preventDefault();
-    setSaving(true); setSuccessMsg(''); setErrorMsg('');
+    setSuccessMsg(''); setErrorMsg('');
+    const cleanName = fullName.trim();
+    const cleanPhone = phone.replace(/[\s.\-()]/g, '');
+    const cleanIdNumber = idNumber.trim();
+    const cleanAddress = address.trim();
+    if (cleanName.length < 2 || cleanName.length > 120) { setErrorMsg('Họ và tên phải có từ 2 đến 120 ký tự.'); return; }
+    if (cleanPhone && !/^(0\d{9,10}|\+84\d{9,10})$/.test(cleanPhone)) { setErrorMsg('Số điện thoại không đúng định dạng Việt Nam.'); return; }
+    if (cleanIdNumber && !/^[A-Za-z0-9]{6,20}$/.test(cleanIdNumber)) { setErrorMsg('CMND, CCCD hoặc hộ chiếu phải có từ 6 đến 20 ký tự chữ và số.'); return; }
+    if (birthday && (!/^\d{4}-\d{2}-\d{2}$/.test(birthday) || birthday > new Date().toISOString().slice(0, 10))) { setErrorMsg('Ngày sinh không hợp lệ.'); return; }
+    if (cleanAddress.length > 255) { setErrorMsg('Địa chỉ cụ thể không được vượt quá 255 ký tự.'); return; }
+    if (city && !district && !districtsLoading) { setErrorMsg('Vui lòng chọn quận/huyện thuộc tỉnh/thành đã chọn.'); return; }
+    if (district && !city) { setErrorMsg('Vui lòng chọn tỉnh/thành trước khi chọn quận/huyện.'); return; }
+    if (provincesLoading || districtsLoading) { setErrorMsg('Danh mục địa chỉ đang tải, vui lòng chờ trong giây lát.'); return; }
+    const saveStartedAt = Date.now();
+    setSaving(true);
     try {
       const res = await fetch(`${API_URL}?action=profile_update`, {
         method: 'POST', credentials: 'include',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ fullName, phone, idNumber, birthday, gender, city, district, address }),
+        body: JSON.stringify({ fullName: cleanName, phone: cleanPhone, idNumber: cleanIdNumber, birthday, gender, city, district, address: cleanAddress }),
       });
-      const data = await res.json();
+      const rawResponse = await res.text();
+      let data: any = {};
+      try { data = rawResponse ? JSON.parse(rawResponse) : {}; }
+      catch { throw new Error('Máy chủ trả về dữ liệu không hợp lệ.'); }
       if (!res.ok) { setErrorMsg(data.message || 'Không thể cập nhật.'); return; }
-      setSuccessMsg('Cập nhật thông tin thành công!');
+      if (data.profile) {
+        const updated = data.profile as Profile;
+        setProfile(updated);
+        setFullName(updated.fullName || ''); setPhone(updated.phone || ''); setIdNumber(updated.idNumber || '');
+        setBirthday(updated.birthday || ''); setGender(updated.gender || ''); setCity(updated.city || '');
+        setDistrict(updated.district || ''); setAddress(updated.address || '');
+      }
+      setSuccessMsg(data.message || 'Cập nhật thông tin thành công!');
       if (data.user && onUserUpdate) onUserUpdate(data.user);
       setTimeout(() => setSuccessMsg(''), 4000);
-    } catch { setErrorMsg('Không thể kết nối máy chủ.'); }
-    finally { setSaving(false); }
+    } catch (error) { setErrorMsg(error instanceof Error ? error.message : 'Không thể kết nối máy chủ.'); }
+    finally {
+      const remaining = 650 - (Date.now() - saveStartedAt);
+      if (remaining > 0) await new Promise(resolve => window.setTimeout(resolve, remaining));
+      setSaving(false);
+    }
   }
 
   async function handleChangePassword(e: FormEvent) {
@@ -245,24 +426,74 @@ export default function AccountPage({ authUser, onUserUpdate, initialTab = 'info
     finally { setSavingPwd(false); }
   }
 
-  async function handleAvatarUpload(file?: File) {
+  function handleAvatarFileSelected(file?: File) {
     if (!file) return;
     setErrorMsg(''); setSuccessMsg('');
-    if (!['image/jpeg', 'image/png', 'image/webp'].includes(file.type)) { setErrorMsg('Chỉ hỗ trợ ảnh JPG, PNG hoặc WebP.'); return; }
-    if (file.size > 5 * 1024 * 1024) { setErrorMsg('Ảnh đại diện phải nhỏ hơn hoặc bằng 5 MB.'); return; }
+    const supportedMime = ['image/jpeg', 'image/jpg', 'image/png'].includes(file.type.toLowerCase());
+    const supportedExtension = /\.(jpe?g|png)$/i.test(file.name);
+    if (!supportedMime && !supportedExtension) {
+      setErrorMsg('Chỉ hỗ trợ ảnh JPG hoặc PNG hợp lệ.');
+      if (avatarInputRef.current) avatarInputRef.current.value = '';
+      return;
+    }
+    if (file.size > 5 * 1024 * 1024) {
+      setErrorMsg('Ảnh đại diện phải nhỏ hơn hoặc bằng 5 MB.');
+      if (avatarInputRef.current) avatarInputRef.current.value = '';
+      return;
+    }
+    setAvatarCropFile(file);
+  }
+
+  async function handleAvatarUpload(file: File, crop: AvatarCropMetadata, sourceName: string) {
+    setErrorMsg(''); setSuccessMsg('');
     setAvatarUploading(true);
     try {
-      const formData = new FormData(); formData.append('avatar', file);
+      const formData = new FormData();
+      formData.append('avatar', file);
+      formData.append('source_name', sourceName);
+      formData.append('source_width', String(crop.sourceWidth));
+      formData.append('source_height', String(crop.sourceHeight));
+      formData.append('crop_offset_x', crop.offsetX.toFixed(4));
+      formData.append('crop_offset_y', crop.offsetY.toFixed(4));
+      formData.append('crop_zoom', crop.zoom.toFixed(4));
+      formData.append('crop_output_size', String(crop.outputSize));
       const response = await fetch(`${API_URL}?action=profile_avatar`, { method:'POST', credentials:'include', body:formData });
-      const data = await response.json();
+      const responseText = await response.text();
+      let data: any = {};
+      try { data = responseText ? JSON.parse(responseText) : {}; }
+      catch { throw new Error('Máy chủ trả về dữ liệu không hợp lệ khi tải ảnh.'); }
       if (!response.ok) throw new Error(data.message || 'Không thể tải ảnh đại diện lên.');
       const avatarUrl = String(data.avatarUrl || '');
+      if (!avatarUrl) throw new Error('Máy chủ chưa trả về đường dẫn ảnh đại diện.');
       setProfile(current => current ? { ...current, avatarUrl } : current);
       if (data.user && onUserUpdate) onUserUpdate(data.user);
       setSuccessMsg('Đã cập nhật ảnh đại diện.');
       window.setTimeout(() => setSuccessMsg(''), 4000);
-    } catch (error) { setErrorMsg(error instanceof Error ? error.message : 'Không thể tải ảnh đại diện lên.'); }
-    finally { setAvatarUploading(false); if (avatarInputRef.current) avatarInputRef.current.value = ''; }
+      setAvatarCropFile(null);
+      return true;
+    } catch (error) {
+      setErrorMsg(error instanceof Error ? error.message : 'Không thể tải ảnh đại diện lên.');
+      return false;
+    } finally {
+      setAvatarUploading(false);
+      if (avatarInputRef.current) avatarInputRef.current.value = '';
+    }
+  }
+
+  async function handleAvatarRemove() {
+    if (!avatarUrl || avatarUploading) return;
+    setAvatarDeleteConfirmOpen(false);
+    setAvatarUploading(true); setErrorMsg(''); setSuccessMsg('');
+    try {
+      const response = await fetch(`${API_URL}?action=profile_avatar_delete`, { method: 'POST', credentials: 'include' });
+      const data = await response.json();
+      if (!response.ok) throw new Error(data.message || 'Không thể xóa ảnh đại diện.');
+      setProfile(current => current ? { ...current, avatarUrl: null } : current);
+      if (data.user && onUserUpdate) onUserUpdate(data.user);
+      setSuccessMsg('Đã xóa ảnh đại diện.');
+      window.setTimeout(() => setSuccessMsg(''), 4000);
+    } catch (error) { setErrorMsg(error instanceof Error ? error.message : 'Không thể xóa ảnh đại diện.'); }
+    finally { setAvatarUploading(false); }
   }
 
   const memberLevel = profile?.membershipLevel || 'STANDARD';
@@ -275,11 +506,11 @@ export default function AccountPage({ authUser, onUserUpdate, initialTab = 'info
 
       {/* Page Header */}
       <div style={{ background: 'linear-gradient(135deg,#0d1b2e 0%,#1a3050 100%)', padding: '32px 20px 56px', position: 'relative', overflow: 'hidden' }}>
-        <input ref={avatarInputRef} type="file" accept="image/jpeg,image/png,image/webp" onChange={event => void handleAvatarUpload(event.target.files?.[0])} style={{ display:'none' }} />
+        <input ref={avatarInputRef} type="file" accept=".jpg,.jpeg,.png,image/jpeg,image/png" onChange={event => handleAvatarFileSelected(event.target.files?.[0])} style={{ display:'none' }} />
         <div style={{ position: 'absolute', top: -40, right: -40, width: 200, height: 200, borderRadius: '50%', background: 'rgba(244,192,74,0.07)' }} />
         <div style={{ position: 'absolute', bottom: -60, left: -30, width: 180, height: 180, borderRadius: '50%', background: 'rgba(244,192,74,0.05)' }} />
         <div style={{ maxWidth: 1100, margin: '0 auto', display: 'flex', alignItems: 'center', gap: 20, position: 'relative' }}>
-          <button type="button" onClick={() => avatarInputRef.current?.click()} title="Thay ảnh đại diện" style={{
+          <button type="button" onClick={() => avatarUrl ? setAvatarPreviewOpen(true) : avatarInputRef.current?.click()} title={avatarUrl ? 'Xem ảnh đại diện' : 'Thay ảnh đại diện'} aria-label={avatarUrl ? 'Xem ảnh đại diện kích thước lớn' : 'Chọn ảnh đại diện'} style={{
             width: 72, height: 72, borderRadius: '50%',
             background: 'linear-gradient(135deg,#f4c04a 0%,#e8a020 100%)',
             display: 'flex', alignItems: 'center', justifyContent: 'center',
@@ -287,8 +518,8 @@ export default function AccountPage({ authUser, onUserUpdate, initialTab = 'info
             border: '3px solid rgba(244,192,74,0.4)',
             boxShadow: '0 8px 24px rgba(0,0,0,0.3)', flexShrink: 0, padding: 0, overflow: 'hidden', cursor: 'pointer', position: 'relative'
           }}>
-            {avatarUrl ? <img src={avatarUrl} alt="Ảnh đại diện" style={{ width:'100%', height:'100%', objectFit:'cover' }} /> : avatarLetter}
-            <span style={{ position:'absolute', right:0, bottom:0, display:'grid', width:24, height:24, placeItems:'center', borderRadius:'50%', color:'#fff', background:'#0d1b2e', border:'2px solid #f4c04a' }}><Camera size={12}/></span>
+            <SafeAvatar url={avatarUrl} name={authUser?.fullName || fullName || avatarLetter} />
+            <span style={{ position:'absolute', right:0, bottom:0, display:'grid', width:24, height:24, placeItems:'center', borderRadius:'50%', color:'#fff', background:'#0d1b2e', border:'2px solid #f4c04a' }}>{avatarUrl ? <Eye size={12}/> : <Camera size={12}/>}</span>
           </button>
           <div>
             <div style={{ fontSize: 22, fontWeight: 800, color: '#fff', marginBottom: 4 }}>
@@ -352,13 +583,10 @@ export default function AccountPage({ authUser, onUserUpdate, initialTab = 'info
                     </div>
                   )}
 
-                  <section style={{ display:'flex', alignItems:'center', gap:18, padding:18, marginBottom:28, border:'1px solid #dbe7f4', borderRadius:14, background:'linear-gradient(120deg,#f8fbff,#fff)' }}>
-                    <button type="button" disabled={avatarUploading} onClick={() => avatarInputRef.current?.click()} style={{ position:'relative', display:'grid', width:82, height:82, flex:'0 0 82px', placeItems:'center', overflow:'hidden', border:'3px solid #fff', borderRadius:'50%', color:'#17375e', background:'linear-gradient(135deg,#f8d271,#e8a020)', boxShadow:'0 8px 18px rgba(31,74,123,.18)', cursor:avatarUploading?'wait':'pointer', padding:0 }}>
-                      {avatarUrl ? <img src={avatarUrl} alt="Ảnh đại diện" style={{ width:'100%', height:'100%', objectFit:'cover' }} /> : <span style={{ fontSize:28, fontWeight:850 }}>{avatarLetter}</span>}
-                      <span style={{ position:'absolute', right:1, bottom:1, display:'grid', width:27, height:27, placeItems:'center', border:'2px solid #fff', borderRadius:'50%', color:'#fff', background:'#1d5fae' }}>{avatarUploading ? <Loader2 size={13} style={{ animation:'spin .8s linear infinite' }} /> : <Camera size={13}/>}</span>
-                    </button>
-                    <div style={{ minWidth:0, flex:1 }}><div style={{ display:'flex', alignItems:'center', gap:7, color:'#183858', fontSize:14, fontWeight:850 }}><Camera size={16} color="#d99216"/> Ảnh đại diện</div><p style={{ margin:'5px 0 10px', color:'#718399', fontSize:12, lineHeight:1.5 }}>Ảnh sẽ hiển thị trên hồ sơ và thanh điều hướng tài khoản của bạn.</p><div style={{ display:'flex', alignItems:'center', flexWrap:'wrap', gap:8 }}><button type="button" disabled={avatarUploading} onClick={() => avatarInputRef.current?.click()} style={{ display:'inline-flex', alignItems:'center', gap:6, minHeight:32, padding:'0 11px', border:'1px solid #9fc0e5', borderRadius:8, color:'#165a9f', background:'#fff', fontSize:12, fontWeight:750, cursor:avatarUploading?'wait':'pointer' }}>{avatarUploading ? <Loader2 size={14} style={{ animation:'spin .8s linear infinite' }}/> : <Upload size={14}/>} {avatarUploading ? 'Đang tải ảnh...' : avatarUrl ? 'Thay ảnh' : 'Tải ảnh lên'}</button><small style={{ color:'#8b9aae', fontSize:10.5 }}>JPG, PNG hoặc WebP · tối đa 5 MB · tối thiểu 80×80 px</small></div></div>
-                  </section>
+                  <div className="profile-avatar-actions profile-avatar-actions-only">
+                    <button type="button" className="primary" disabled={avatarUploading} onClick={() => avatarInputRef.current?.click()}>{avatarUploading ? <Loader2 size={16} style={{ animation:'spin .8s linear infinite' }}/> : <Upload size={16}/>} {avatarUploading ? 'Đang tải ảnh...' : 'Thay ảnh'}</button>
+                    <button type="button" className="remove" disabled={!avatarUrl || avatarUploading} onClick={() => setAvatarDeleteConfirmOpen(true)}><Trash2 size={14}/>Xóa ảnh</button>
+                  </div>
 
                   {/* Section: Cá nhân */}
                   <SectionTitle>THÔNG TIN CÁ NHÂN</SectionTitle>
@@ -372,17 +600,36 @@ export default function AccountPage({ authUser, onUserUpdate, initialTab = 'info
                   {/* Section: Bổ sung */}
                   <SectionTitle>THÔNG TIN BỔ SUNG</SectionTitle>
                   <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 16, marginBottom: 28 }}>
-                    <InputField label="Ngày sinh" value={birthday} onChange={setBirthday} type="date" lang="vi" icon={Calendar} />
+                    <VietnameseDateField value={birthday} onChange={setBirthday} />
                     <SelectField label="Giới tính" value={gender} onChange={setGender} options={[{ value: 'male', label: 'Nam' }, { value: 'female', label: 'Nữ' }, { value: 'other', label: 'Khác' }]} placeholder="Chọn giới tính" />
                   </div>
 
                   {/* Section: Địa chỉ */}
                   <SectionTitle>ĐỊA CHỈ</SectionTitle>
-                  <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 16, marginBottom: 16 }}>
-                    <SelectField label="Tỉnh / Thành phố" value={city} onChange={v => { setCity(v); setDistrict(''); }} options={VN_CITIES.map(c => ({ value: c, label: c }))} placeholder="Chọn Tỉnh/Thành phố" icon={MapPin} />
-                    <InputField label="Quận / Huyện" value={district} onChange={setDistrict} placeholder="Nhập Quận/Huyện" />
-                  </div>
-                  <div style={{ marginBottom: 28 }}>
+                  <div className="profile-address-card">
+                    <div className="profile-address-grid">
+                      <SelectField
+                        label="Tỉnh / Thành phố"
+                        value={city}
+                        onChange={value => { setCity(value); setDistrict(''); setDistricts([]); setDistrictsLoading(Boolean(value)); setAddressCatalogError(''); }}
+                        options={provinces.map(province => ({ value: province.name, label: province.name }))}
+                        placeholder={provincesLoading ? 'Đang tải tỉnh/thành...' : 'Chọn Tỉnh/Thành phố'}
+                        icon={MapPin}
+                        loading={provincesLoading}
+                        disabled={provincesLoading}
+                      />
+                      <SelectField
+                        label="Quận / Huyện"
+                        value={district}
+                        onChange={setDistrict}
+                        options={districts.map(item => ({ value: item.name, label: item.name }))}
+                        placeholder={!city ? 'Chọn tỉnh/thành trước' : districtsLoading ? 'Đang tải quận/huyện...' : 'Chọn Quận/Huyện'}
+                        icon={MapPin}
+                        loading={districtsLoading}
+                        disabled={!city || districtsLoading || Boolean(addressCatalogError)}
+                      />
+                    </div>
+                    {addressCatalogError && <div className="profile-address-error" role="alert"><AlertCircle size={14}/>{addressCatalogError}</div>}
                     <InputField label="Địa chỉ cụ thể" value={address} onChange={setAddress} icon={MapPin} placeholder="Số nhà, tên đường..." />
                   </div>
 
@@ -446,16 +693,11 @@ export default function AccountPage({ authUser, onUserUpdate, initialTab = 'info
                   )}
 
                   {/* Save */}
-                  <div style={{ display: 'flex', justifyContent: 'center', paddingTop: 8 }}>
-                    <button type="submit" disabled={saving} style={{
-                      padding: '13px 48px',
-                      background: saving ? '#e5e7eb' : 'linear-gradient(135deg,#f4c04a 0%,#e8a020 100%)',
-                      border: 'none', borderRadius: 12, fontSize: 14, fontWeight: 800,
-                      color: saving ? '#9ca3af' : '#0d1b2e', cursor: saving ? 'not-allowed' : 'pointer',
-                      boxShadow: saving ? 'none' : '0 6px 20px rgba(244,192,74,0.40)',
-                      transition: 'all 0.2s', display: 'flex', alignItems: 'center', gap: 8
-                    }}>
-                      {saving ? '⏳ Đang lưu...' : <><Save size={16} /> CẬP NHẬT THÔNG TIN</>}
+                  <div className="profile-save-area">
+                    {successMsg && <div className="profile-save-result success" role="status"><CheckCircle size={16}/>{successMsg}</div>}
+                    {errorMsg && <div className="profile-save-result error" role="alert"><AlertCircle size={16}/>{errorMsg}</div>}
+                    <button type="submit" disabled={saving} aria-busy={saving} className={`profile-save-button ${saving ? 'loading' : ''}`}>
+                      {saving ? <><Loader2 size={17}/>ĐANG CẬP NHẬT...</> : <><Save size={16} />CẬP NHẬT THÔNG TIN</>}
                     </button>
                   </div>
                 </form>
@@ -476,7 +718,7 @@ export default function AccountPage({ authUser, onUserUpdate, initialTab = 'info
                 <div style={{ position:'relative', marginTop:28, fontSize:24, fontWeight:900, color:'#fff' }}>{profile?.fullName || authUser?.fullName || 'Khách hàng Aurora'}</div>
                 <div style={{ position:'relative', marginTop:5, fontSize:13, color:'#b8c6d8' }}>{profile?.email || authUser?.email}</div>
                 <div style={{ position:'relative', marginTop:24, display:'flex', gap:32, flexWrap:'wrap' }}>
-                  <div><div style={{ fontSize:10, letterSpacing:1.1, fontWeight:800, color:'#9fb1c6' }}>MÃ THẺ TỰ ĐỘNG</div><div style={{ marginTop:5, color:'#f4c04a', fontSize:18, fontWeight:900, letterSpacing:1.5, fontFamily:'monospace' }}>{membershipCard?.cardNumber || '—'}</div></div>
+                  <div><div style={{ fontSize:10, letterSpacing:1.1, fontWeight:800, color:'#9fb1c6' }}>MÃ THÀNH VIÊN</div><div style={{ marginTop:5, color:'#f4c04a', fontSize:18, fontWeight:900, letterSpacing:1.5, fontFamily:'monospace' }}>{membershipCard?.cardNumber || '—'}</div></div>
                   <div><div style={{ fontSize:10, letterSpacing:1.1, fontWeight:800, color:'#9fb1c6' }}>ĐIỂM KHẢ DỤNG</div><div style={{ marginTop:5, color:'#fff', fontSize:18, fontWeight:900 }}>{membershipCard?.pointsAvailable ?? profile?.points ?? 0} điểm</div></div>
                   <div><div style={{ fontSize:10, letterSpacing:1.1, fontWeight:800, color:'#9fb1c6' }}>TRẠNG THÁI</div><div style={{ marginTop:5, color:'#86efac', fontSize:14, fontWeight:800 }}>● ĐANG HOẠT ĐỘNG</div></div>
                 </div>
@@ -485,7 +727,7 @@ export default function AccountPage({ authUser, onUserUpdate, initialTab = 'info
                 <div style={{ padding:'16px 20px', borderBottom:'1px solid #edf1f5', fontWeight:800, color:'#0d1b2e' }}>Thông tin thẻ và điểm thưởng</div>
                 <div style={{ display:'grid', gridTemplateColumns:'repeat(3,minmax(0,1fr))' }}>
                   {[
-                    ['Số thẻ', membershipCard?.cardNumber || 'Đang cấp'], ['Hạng thẻ', MEMBERSHIP_CONFIG[membershipCard?.membershipLevel || memberLevel]?.label || 'Thành Viên'], ['Ngày kích hoạt', formatShortDate(membershipCard?.activatedAt)],
+                    ['Mã thành viên', membershipCard?.cardNumber || 'Đang cấp'], ['Hạng thẻ', MEMBERSHIP_CONFIG[membershipCard?.membershipLevel || memberLevel]?.label || 'Thành Viên'], ['Ngày kích hoạt', formatShortDate(membershipCard?.activatedAt)],
                     ['Tổng chi tiêu', formatMoney(membershipCard?.totalSpent || 0)], ['Điểm tích lũy', `${membershipCard?.pointsAccumulated ?? 0} điểm`], ['Điểm đã dùng', `${membershipCard?.pointsUsed ?? 0} điểm`],
                     ['Điểm khả dụng', `${membershipCard?.pointsAvailable ?? profile?.points ?? 0} điểm`], ['Điểm sắp hết hạn', `${membershipCard?.pointsExpiring ?? 0} điểm`], ['Hạn thẻ', formatShortDate(membershipCard?.expiresAt)]
                   ].map(([label, value]) => <div key={label} style={{ padding:'16px 20px', borderRight:'1px solid #edf1f5', borderBottom:'1px solid #edf1f5' }}><div style={{ fontSize:10.5, color:'#7b8ba0', fontWeight:800, letterSpacing:.5 }}>{label.toUpperCase()}</div><div style={{ marginTop:6, color:'#172b4d', fontSize:14, fontWeight:800 }}>{value}</div></div>)}
@@ -578,12 +820,204 @@ export default function AccountPage({ authUser, onUserUpdate, initialTab = 'info
           )}
         </div>
       </div>
+      {avatarPreviewOpen && avatarUrl && (
+        <div className="profile-avatar-lightbox" role="presentation">
+          <div className="profile-avatar-lightbox-dialog" role="dialog" aria-modal="true" aria-label="Xem ảnh đại diện">
+            <button type="button" className="profile-avatar-lightbox-close" onClick={() => setAvatarPreviewOpen(false)} aria-label="Đóng ảnh đại diện"><X size={20}/></button>
+            <div className="profile-avatar-lightbox-media">
+              <SafeAvatar url={avatarUrl} name={authUser?.fullName || fullName || avatarLetter} fit="contain" />
+            </div>
+            <div className="profile-avatar-lightbox-caption">{authUser?.fullName || fullName || 'Ảnh đại diện'}</div>
+          </div>
+        </div>
+      )}
+      {saving && (
+        <div className="profile-update-loading" role="status" aria-live="polite">
+          <div className="profile-update-loading-icon"><Loader2 size={20}/></div>
+          <div className="profile-update-loading-copy"><strong>Đang cập nhật thông tin</strong><span>Hệ thống đang lưu thay đổi vào hồ sơ của bạn.</span></div>
+          <div className="profile-update-loading-progress"><i/></div>
+        </div>
+      )}
+      {avatarCropFile && (
+        <AvatarCropModal
+          file={avatarCropFile}
+          saving={avatarUploading}
+          onCancel={() => {
+            if (avatarUploading) return;
+            setAvatarCropFile(null);
+            if (avatarInputRef.current) avatarInputRef.current.value = '';
+          }}
+          onConfirm={handleAvatarUpload}
+        />
+      )}
+      {avatarDeleteConfirmOpen && (
+        <div className="profile-confirm-overlay" onClick={() => setAvatarDeleteConfirmOpen(false)} role="presentation">
+          <div className="profile-confirm-dialog" role="alertdialog" aria-modal="true" aria-labelledby="avatar-delete-title" aria-describedby="avatar-delete-description" onClick={event => event.stopPropagation()}>
+            <button type="button" className="profile-confirm-close" onClick={() => setAvatarDeleteConfirmOpen(false)} aria-label="Đóng thông báo"><X size={18}/></button>
+            <div className="profile-confirm-icon"><Trash2 size={24}/></div>
+            <div className="profile-confirm-copy">
+              <h3 id="avatar-delete-title">Xóa ảnh đại diện?</h3>
+              <p id="avatar-delete-description">Ảnh hiện tại sẽ bị xóa khỏi hồ sơ của bạn. Bạn có thể tải ảnh mới lên bất cứ lúc nào.</p>
+            </div>
+            <div className="profile-confirm-actions">
+              <button type="button" className="cancel" onClick={() => setAvatarDeleteConfirmOpen(false)}>Hủy</button>
+              <button type="button" className="confirm" onClick={() => void handleAvatarRemove()}><Trash2 size={15}/>Xóa ảnh</button>
+            </div>
+          </div>
+        </div>
+      )}
       <div style={{ height: 48 }} />
     </div>
   );
 }
 
 /* ─── Small helper sub-components ── */
+function AvatarCropModal({ file, saving, onCancel, onConfirm }: {
+  file: File;
+  saving: boolean;
+  onCancel: () => void;
+  onConfirm: (file: File, crop: AvatarCropMetadata, sourceName: string) => Promise<boolean>;
+}) {
+  const OUTPUT_SIZE = 512;
+  const [sourceUrl, setSourceUrl] = useState('');
+  const [sourceSize, setSourceSize] = useState({ width: 0, height: 0 });
+  const [viewportSize, setViewportSize] = useState(360);
+  const [zoom, setZoom] = useState(1);
+  const [offset, setOffset] = useState({ x: 0, y: 0 });
+  const [cropError, setCropError] = useState('');
+  const imageRef = useRef<HTMLImageElement>(null);
+  const viewportRef = useRef<HTMLDivElement>(null);
+  const dragRef = useRef<{ pointerId: number; x: number; y: number; offsetX: number; offsetY: number; maxX: number; maxY: number } | null>(null);
+
+  useEffect(() => {
+    const url = URL.createObjectURL(file);
+    setSourceUrl(url);
+    return () => URL.revokeObjectURL(url);
+  }, [file]);
+
+  useEffect(() => {
+    const viewport = viewportRef.current;
+    if (!viewport) return;
+    const updateSize = () => setViewportSize(Math.max(1, viewport.getBoundingClientRect().width));
+    updateSize();
+    const observer = typeof ResizeObserver !== 'undefined' ? new ResizeObserver(updateSize) : null;
+    observer?.observe(viewport);
+    window.addEventListener('resize', updateSize);
+    return () => {
+      observer?.disconnect();
+      window.removeEventListener('resize', updateSize);
+    };
+  }, []);
+
+  const baseScale = sourceSize.width && sourceSize.height
+    ? Math.max(viewportSize / sourceSize.width, viewportSize / sourceSize.height)
+    : 1;
+  const renderedWidth = sourceSize.width * baseScale * zoom;
+  const renderedHeight = sourceSize.height * baseScale * zoom;
+  const maxX = Math.max(0, (renderedWidth - viewportSize) / 2);
+  const maxY = Math.max(0, (renderedHeight - viewportSize) / 2);
+
+  function handlePointerDown(event: ReactPointerEvent<HTMLDivElement>) {
+    if (!sourceSize.width || saving) return;
+    event.currentTarget.setPointerCapture(event.pointerId);
+    dragRef.current = { pointerId: event.pointerId, x: event.clientX, y: event.clientY, offsetX: offset.x, offsetY: offset.y, maxX, maxY };
+  }
+
+  function handlePointerMove(event: ReactPointerEvent<HTMLDivElement>) {
+    const drag = dragRef.current;
+    if (!drag || drag.pointerId !== event.pointerId) return;
+    const nextX = drag.maxX > 0 ? drag.offsetX + (event.clientX - drag.x) / drag.maxX : 0;
+    const nextY = drag.maxY > 0 ? drag.offsetY + (event.clientY - drag.y) / drag.maxY : 0;
+    setOffset({ x: Math.max(-1, Math.min(1, nextX)), y: Math.max(-1, Math.min(1, nextY)) });
+  }
+
+  function handlePointerEnd(event: ReactPointerEvent<HTMLDivElement>) {
+    if (dragRef.current?.pointerId === event.pointerId) dragRef.current = null;
+  }
+
+  async function createCroppedImage() {
+    const image = imageRef.current;
+    if (!image || !sourceSize.width || saving) return;
+    setCropError('');
+    const canvas = document.createElement('canvas');
+    canvas.width = OUTPUT_SIZE;
+    canvas.height = OUTPUT_SIZE;
+    const context = canvas.getContext('2d');
+    if (!context) { setCropError('Trình duyệt không thể xử lý ảnh này.'); return; }
+    const scale = Math.max(OUTPUT_SIZE / sourceSize.width, OUTPUT_SIZE / sourceSize.height) * zoom;
+    const width = sourceSize.width * scale;
+    const height = sourceSize.height * scale;
+    const outputMaxX = Math.max(0, (width - OUTPUT_SIZE) / 2);
+    const outputMaxY = Math.max(0, (height - OUTPUT_SIZE) / 2);
+    context.fillStyle = '#ffffff';
+    context.fillRect(0, 0, OUTPUT_SIZE, OUTPUT_SIZE);
+    context.imageSmoothingEnabled = true;
+    context.imageSmoothingQuality = 'high';
+    context.drawImage(image, (OUTPUT_SIZE - width) / 2 + offset.x * outputMaxX, (OUTPUT_SIZE - height) / 2 + offset.y * outputMaxY, width, height);
+    const blob = await new Promise<Blob | null>(resolve => canvas.toBlob(resolve, 'image/jpeg', .92));
+    if (!blob) { setCropError('Không thể tạo ảnh đã cắt. Vui lòng thử lại.'); return; }
+    const croppedFile = new File([blob], `avatar_${Date.now()}.jpg`, { type: 'image/jpeg' });
+    await onConfirm(croppedFile, {
+      offsetX: offset.x,
+      offsetY: offset.y,
+      zoom,
+      sourceWidth: sourceSize.width,
+      sourceHeight: sourceSize.height,
+      outputSize: OUTPUT_SIZE,
+    }, file.name);
+  }
+
+  return (
+    <div className="profile-crop-overlay" role="presentation" onClick={() => { if (!saving) onCancel(); }}>
+      <div className="profile-crop-dialog" role="dialog" aria-modal="true" aria-labelledby="avatar-crop-title" onClick={event => event.stopPropagation()}>
+        <div className="profile-crop-header">
+          <div><h3 id="avatar-crop-title">Cắt ảnh đại diện</h3><p>Kéo ảnh để chọn vùng bạn muốn hiển thị.</p></div>
+          <button type="button" onClick={onCancel} disabled={saving} aria-label="Đóng trình cắt ảnh"><X size={19}/></button>
+        </div>
+        <div className="profile-crop-body">
+          <div
+            ref={viewportRef}
+            className="profile-crop-viewport"
+            onPointerDown={handlePointerDown}
+            onPointerMove={handlePointerMove}
+            onPointerUp={handlePointerEnd}
+            onPointerCancel={handlePointerEnd}
+          >
+            {sourceUrl && <img
+              ref={imageRef}
+              src={sourceUrl}
+              alt="Ảnh đang cắt"
+              draggable={false}
+              onLoad={event => setSourceSize({ width: event.currentTarget.naturalWidth, height: event.currentTarget.naturalHeight })}
+              style={{
+                width: renderedWidth || 'auto',
+                height: renderedHeight || 'auto',
+                transform: `translate(calc(-50% + ${offset.x * maxX}px), calc(-50% + ${offset.y * maxY}px))`,
+              }}
+            />}
+            <div className="profile-crop-grid" aria-hidden="true" />
+            <div className="profile-crop-mask" aria-hidden="true" />
+          </div>
+          <div className="profile-crop-controls">
+            <div className="profile-crop-control-heading"><span>Thu phóng</span><strong>{Math.round(zoom * 100)}%</strong></div>
+            <div className="profile-crop-slider-row">
+              <span aria-hidden="true">−</span>
+              <input type="range" min="1" max="3" step="0.01" value={zoom} disabled={saving} onChange={event => setZoom(Number(event.target.value))} aria-label="Thu phóng ảnh" />
+              <span aria-hidden="true">+</span>
+            </div>
+            <button type="button" className="profile-crop-reset" disabled={saving} onClick={() => { setZoom(1); setOffset({ x: 0, y: 0 }); }}>Đặt lại vị trí</button>
+          </div>
+        </div>
+        {cropError && <div className="profile-crop-error" role="alert"><AlertCircle size={15}/>{cropError}</div>}
+        <div className="profile-crop-footer">
+          <button type="button" className="cancel" disabled={saving} onClick={onCancel}>Hủy</button>
+          <button type="button" className="save" disabled={saving || !sourceSize.width} onClick={() => void createCroppedImage()}>{saving ? <Loader2 size={16} style={{ animation:'spin .8s linear infinite' }}/> : <Check size={16}/>} {saving ? 'Đang lưu ảnh...' : 'Dùng ảnh này'}</button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
 function formatMoney(value: number | string) {
   return `${Number(value || 0).toLocaleString('vi-VN')}đ`;
 }
@@ -623,25 +1057,34 @@ function SectionTitle({ children }: { children: string }) {
   );
 }
 
-function SelectField({ label, value, onChange, options, placeholder, icon: Icon }: {
+function SelectField({ label, value, onChange, options, placeholder, icon: Icon, disabled = false, loading = false, hint }: {
   label: string; value: string; onChange: (v: string) => void;
   options: { value: string; label: string }[]; placeholder: string; icon?: any;
+  disabled?: boolean; loading?: boolean; hint?: string;
 }) {
+  const fieldId = useId();
   return (
-    <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
-      <label style={{ fontSize: 12.5, fontWeight: 700, color: '#4a637a', letterSpacing: 0.3 }}>{label}</label>
-      <div style={{ position: 'relative' }}>
-        {Icon && <Icon size={14} style={{ position: 'absolute', left: 12, top: '50%', transform: 'translateY(-50%)', color: '#94a3b8' }} />}
-        <select value={value} onChange={e => onChange(e.target.value)} style={{
-          width: '100%', padding: Icon ? '10px 36px 10px 36px' : '10px 36px 10px 12px',
-          border: '1.5px solid #d5dee9', borderRadius: 10, fontSize: 13.5,
-          background: '#fff', color: value ? '#1a2332' : '#94a3b8', outline: 'none', cursor: 'pointer', appearance: 'none'
-        }}>
+    <div className="account-select-field">
+      <label htmlFor={fieldId}>{label}</label>
+      <div className="account-select-control">
+        {Icon && <Icon className="account-select-leading" size={15}/>}
+        <select
+          value={value}
+          id={fieldId}
+          disabled={disabled}
+          aria-busy={loading}
+          onChange={e => onChange(e.target.value)}
+          className={`${Icon ? 'has-icon' : ''} ${value ? 'has-value' : ''}`}
+        >
           <option value="">{placeholder}</option>
           {options.map(o => <option key={o.value} value={o.value}>{o.label}</option>)}
         </select>
-        <ChevronRight size={14} color="#94a3b8" style={{ position: 'absolute', right: 12, top: '50%', transform: 'translateY(-50%) rotate(90deg)', pointerEvents: 'none' }} />
+        {loading
+          ? <Loader2 className="account-select-spinner" size={15}/>
+          : <ChevronRight className="account-select-chevron" size={15}/>
+        }
       </div>
+      {hint && <span className="account-select-hint">{hint}</span>}
     </div>
   );
 }

@@ -16,6 +16,7 @@ import MoviesPage from './components/customer/MoviesPage';
 import TicketPricingPage from './components/customer/TicketPricingPage';
 import CustomerHome from './components/customer/CustomerHome';
 import PromotionsPage from './components/customer/PromotionsPage';
+import SafeAvatar from './components/customer/SafeAvatar';
 
 const API_URL = 'http://localhost/AURORA%20CINEMA/customer/backend/public/api.php';
 
@@ -700,24 +701,26 @@ export default function App() {
                 <button
                   onClick={() => setShowUserMenu(v => !v)}
                   style={{
-                    display: 'flex', alignItems: 'center', gap: 8,
+                    minHeight: 44, display: 'flex', alignItems: 'center', gap: 9,
                     background: showUserMenu ? '#f1f5f9' : '#fff',
-                    border: '1px solid #d5dee9',
-                    borderRadius: 24, padding: '6px 14px 6px 8px',
+                    border: showUserMenu ? '1px solid #b9cbe0' : '1px solid #d5dee9',
+                    borderRadius: 24, padding: '5px 13px 5px 6px',
                     cursor: 'pointer', transition: 'all 0.2s',
-                    boxShadow: showUserMenu ? '0 0 0 3px rgba(244,192,74,0.2)' : 'none'
+                    boxShadow: showUserMenu ? '0 0 0 3px rgba(29,95,174,0.12)' : '0 2px 7px rgba(23,55,94,.05)'
                   }}
                 >
                   {/* Avatar */}
                   <div style={{
-                    width: 30, height: 30, borderRadius: '50%',
+                    width: 32, height: 32, borderRadius: '50%', overflow: 'hidden',
                     background: 'linear-gradient(135deg, #f4c04a 0%, #e8a020 100%)',
-                    display: 'flex', alignItems: 'center', justifyContent: 'center',
-                    fontSize: 13, fontWeight: 800, color: '#0d1b2e', flexShrink: 0
+                    display: 'grid', placeItems: 'center',
+                    fontSize: 13, fontWeight: 800, color: '#0d1b2e', flexShrink: 0,
+                    border: '2px solid #fff', outline: '1px solid #cbd8e6',
+                    boxShadow: '0 3px 8px rgba(23,55,94,.16)'
                   }}>
-                    {authUser.avatarUrl ? <img src={authUser.avatarUrl} alt="Ảnh đại diện" style={{width:'100%',height:'100%',objectFit:'cover'}}/> : authUser.fullName.charAt(0).toUpperCase()}
+                    <SafeAvatar url={authUser.avatarUrl} name={authUser.fullName} />
                   </div>
-                  <span style={{ fontSize: 13, fontWeight: 600, color: '#1a2332', maxWidth: 110, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                  <span style={{ fontSize: 13, fontWeight: 700, color: '#1a3048', maxWidth: 110, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', lineHeight: 1 }}>
                     {authUser.fullName.split(' ').slice(-1)[0]}
                   </span>
                   <ChevronDown size={13} color="#7a8fa6" style={{ transform: showUserMenu ? 'rotate(180deg)' : 'none', transition: 'transform 0.2s' }} />
@@ -795,13 +798,13 @@ export default function App() {
                         <div style={{ position: 'absolute', top: -20, right: -20, width: 80, height: 80, borderRadius: '50%', background: 'rgba(244,192,74,0.12)' }} />
                         <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
                           <div style={{
-                            width: 42, height: 42, borderRadius: '50%',
+                            width: 42, height: 42, borderRadius: '50%', overflow: 'hidden',
                             background: 'linear-gradient(135deg, #f4c04a 0%, #e8a020 100%)',
-                            display: 'flex', alignItems: 'center', justifyContent: 'center',
+                            display: 'grid', placeItems: 'center',
                             fontSize: 18, fontWeight: 800, color: '#0d1b2e',
                             border: '2px solid rgba(244,192,74,0.5)', flexShrink: 0
                           }}>
-                            {authUser.avatarUrl ? <img src={authUser.avatarUrl} alt="Ảnh đại diện" style={{width:'100%',height:'100%',objectFit:'cover'}}/> : authUser.fullName.charAt(0).toUpperCase()}
+                            <SafeAvatar url={authUser.avatarUrl} name={authUser.fullName} />
                           </div>
                           <div style={{ flex: 1, minWidth: 0 }}>
                             <div style={{ fontSize: 14, fontWeight: 700, color: '#fff', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
