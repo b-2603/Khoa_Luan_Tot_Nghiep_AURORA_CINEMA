@@ -3934,7 +3934,7 @@ export default function App() {
           <nav aria-label="Các bước xem lịch chiếu"><span className="active"><b>1</b> Chọn rạp</span><i/><span><b>2</b> Chọn phim</span><i/><span><b>3</b> Xem lịch</span></nav>
         </section>
         <section className="schedule-theater-directory">
-          <header><div><small>HỆ THỐNG AURORA CINEMA</small><h3>Danh sách cụm rạp</h3><p>Số liệu được cập nhật trực tiếp từ aurora_db.</p></div><button type="button" className="account-refresh-btn" disabled={scheduleTheatersLoading} onClick={()=>void loadScheduleTheaters()}><RefreshCw size={15}/>{scheduleTheatersLoading?'Đang tải…':'Làm mới'}</button></header>
+          <header><div><small>HỆ THỐNG AURORA CINEMA</small><h3>Danh sách cụm rạp</h3></div><button type="button" className="account-refresh-btn" disabled={scheduleTheatersLoading} onClick={()=>void loadScheduleTheaters()}><RefreshCw size={15}/>{scheduleTheatersLoading?'Đang tải…':'Làm mới'}</button></header>
           <div className="schedule-theater-grid">{scheduleTheatersList.map(theater=><button type="button" className="schedule-theater-card" key={theater.id} onClick={()=>chooseScheduleTheater(Number(theater.id))}>
             <span className="schedule-theater-card-icon"><Building2 size={22}/></span><span className="schedule-theater-card-copy"><small>{theater.city || 'Aurora Cinema'}</small><b>{theater.name}</b><em><MapPin size={13}/>{theater.address || 'Địa chỉ đang cập nhật'}</em></span>
             <span className="schedule-theater-card-metrics"><i><b>{theater.allocated_movie_count}</b><small>Phim</small></i><i><b>{theater.active_showtime_count}</b><small>Suất</small></i><i><b>{theater.screen_count}</b><small>Phòng</small></i></span>
