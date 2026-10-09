@@ -2876,8 +2876,8 @@ export default function App() {
       if (!isMatrix) return (
         <div>
           <div className="tms-tabs-bar account-root-tabs">
-            <button className="tms-tab-btn active" onClick={() => setActive('Danh sách tài khoản')}><Users size={16}/><span>Trung tâm tài khoản</span></button>
-            <button className="tms-tab-btn" onClick={() => setActive('Ma trận phân quyền')}><ShieldCheck size={16}/><span>Ma trận phân quyền nội bộ</span></button>
+            <button className="tms-tab-btn active" onClick={() => setActive('Danh sách tài khoản')}><Users size={16}/><span>Tài khoản</span></button>
+            <button className="tms-tab-btn" onClick={() => setActive('Ma trận phân quyền')}><ShieldCheck size={16}/><span>Phân quyền</span></button>
           </div>
           <AccountManagementPage
             internalUsers={tmsUsers as any}
