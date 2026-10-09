@@ -5043,7 +5043,7 @@ export default function App() {
             <div className="tms-modal-header schedule-editor-header"><div><span className="schedule-modal-kicker">ĐIỀU PHỐI LỊCH CHIẾU · AURORA DB</span><div id="schedule-editor-title" className="tms-modal-title">{scheduleForm.id ? 'Cập nhật suất chiếu' : 'Tạo suất chiếu mới'}</div><p>{scheduleForm.id ? 'Điều chỉnh thông tin vận hành; hệ thống sẽ kiểm tra lại xung đột phòng.' : 'Thiết lập suất chiếu, giá bán và điều kiện mở bán cho khách hàng.'}</p></div><button type="button" className="temp-btn" aria-label="Đóng modal" onClick={() => setShowScheduleModal(false)}><X size={16}/></button></div>
             <form onSubmit={handleSaveSchedule}>
               <div className="tms-modal-body schedule-editor-body">
-                <section className="schedule-editor-notice"><span><ShieldCheck size={18}/></span><div><b>Kiểm tra lịch an toàn trước khi lưu</b><p>Aurora DB chặn mọi suất chiếu trùng giờ trong cùng phòng và lưu lại lịch sử thao tác.</p></div></section>
+                <section className="schedule-editor-notice"><span><ShieldCheck size={18}/></span><div><b>Kiểm tra lịch chiếu trước khi lưu</b><p>Hệ thống tự động kiểm tra trùng lịch và thời gian chuẩn bị phòng.</p></div></section>
                 <div className="schedule-editor-layout">
                   <section className="schedule-editor-form-section">
                     <div className="schedule-section-heading"><Film size={16}/><div><b>Nội dung suất chiếu</b></div></div>
