@@ -232,7 +232,7 @@ if ($action === 'movie-media-chunk') {
     if ($requestMethod !== 'POST') jsonResponse(array('success' => false, 'message' => 'Phương thức không được hỗ trợ.'), 400);
     $user = requireAdmin();
     $role = AdminController::normalizeRole($user['role']);
-    if (!in_array($role, array('super_admin', 'cinema_admin'), true)) jsonResponse(array('success' => false, 'message' => 'Bạn không có quyền tải media phim lên.'), 403);
+    if (!in_array($role, array('super_admin', 'cinema_admin', 'marketing_manager'), true)) jsonResponse(array('success' => false, 'message' => 'Bạn không có quyền tải media phim lên.'), 403);
 
     $kind = isset($_POST['kind']) ? $_POST['kind'] : '';
     $allowedMimeTypes = array(
@@ -305,7 +305,7 @@ if ($action === 'movie-media') {
     }
     $user = requireAdmin();
     $role = AdminController::normalizeRole($user['role']);
-    if (!in_array($role, array('super_admin', 'cinema_admin'), true)) {
+    if (!in_array($role, array('super_admin', 'cinema_admin', 'marketing_manager'), true)) {
         jsonResponse(array('success' => false, 'message' => 'Bạn không có quyền tải media phim lên.'), 403);
     }
 

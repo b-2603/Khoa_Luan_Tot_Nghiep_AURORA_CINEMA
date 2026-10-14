@@ -1,6 +1,10 @@
 import { useState, useEffect, FormEvent, useRef } from 'react';
 import * as XLSX from 'xlsx';
 import AccountManagementPage from './components/AccountManagementPage';
+import MarketingWorkspace, { MarketingPlanApproval } from './components/MarketingWorkspace';
+import './components/MarketingWorkspace.css';
+import './components/MarketingWorkspace.layout.css';
+import { formatVietnameseDate, VietnameseDateInput } from './components/VietnameseDateInput';
 import {
   User, Lock, Eye, EyeOff, ChevronDown, Clapperboard,
   ShieldCheck, TrendingUp, Users, LogOut, Bell, BarChart3,
@@ -11,13 +15,13 @@ import {
   ShieldAlert, UserCheck, Monitor, ScrollText, CreditCard, Search, RefreshCw,
   Tv, Clapperboard as ShowtimeIcon, MapPin, Clock, Target,
   Layers, Send, CalendarCheck, Sparkles, Filter, Globe, CirclePause,
-  Play, WalletCards, KeyRound, CircleDollarSign, Phone, Activity, History, Printer
+  Play, WalletCards, KeyRound, CircleDollarSign, Phone, Activity, History, Printer, Megaphone
 } from 'lucide-react';
 
 // ============================================================
 // TYPES & ROLE DEFINITIONS
 // ============================================================
-export type TMSRole = 'super_admin' | 'cinema_admin' | 'supervisor' | 'accounting';
+export type TMSRole = 'super_admin' | 'cinema_admin' | 'supervisor' | 'accounting' | 'marketing_manager';
 
 interface RoleConfig {
   code: TMSRole; name: string; badge: string; emoji: string;
@@ -73,6 +77,12 @@ export const ROLE_CONFIGS: Record<TMSRole, RoleConfig> = {
     color: '#7c3aed', bg: '#ede9fe', borderColor: '#8b5cf6',
     tagline: 'Quản lý & đối soát dữ liệu tài chính',
     description: 'Quản lý, kiểm tra và đối soát các dữ liệu tài chính phát sinh từ hoạt động bán vé và bán hàng.',
+  },
+  marketing_manager: {
+    code: 'marketing_manager', name: 'Bộ phận Marketing', badge: 'Marketing', emoji: '📣',
+    color: '#be185d', bg: '#fce7f3', borderColor: '#ec4899',
+    tagline: 'Quản lý phim, chiến dịch, ưu đãi và nội dung khách hàng',
+    description: 'Chuẩn bị hồ sơ phim, lập kế hoạch truyền thông, CTKM, voucher và nội dung Customer Website theo quy trình phê duyệt.',
   }
 };
 
@@ -93,10 +103,14 @@ const PAGE_TITLES: Record<string, string> = {
   catalog: 'Danh mục dùng chung', promotions: 'Khuyến mãi & Ưu đãi', products: 'Quản lý hàng hóa', staff: 'Nhân viên & Ca làm việc',
   reports: 'Báo cáo vận hành', pos_devices: 'Thiết bị POS', audit_log: 'Nhật ký hệ thống', settings: 'Cấu hình hệ thống',
   transactions: 'Giao dịch', refunds: 'Hoàn tiền', showtimes: 'Lịch chiếu', shifts: 'Phiên làm việc'
+  , 'mkt-dashboard':'Dashboard Marketing', 'mkt-movies':'Danh sách phim', 'mkt-plans':'Kế hoạch phim', 'mkt-campaigns':'Quảng bá phim',
+  'mkt-promotions':'Chương trình khuyến mãi', 'mkt-vouchers':'Voucher', 'mkt-contents':'Nội dung Customer Website',
+  'mkt-notifications':'Thông báo Marketing', 'mkt-segments':'Phân nhóm khách hàng', 'mkt-reports':'Báo cáo Marketing', 'mkt-account':'Thông tin cá nhân'
+  , marketing_approvals:'Duyệt kế hoạch Marketing'
 };
 
 function pageTitleFor(active: string, role?: TMSRole) {
-  if (active === 'dashboard') return role === 'accounting' ? 'Tổng quan tài chính' : role === 'supervisor' ? 'Tổng quan vận hành' : role === 'cinema_admin' ? 'Tổng quan rạp' : 'Tổng quan hệ thống';
+  if (active === 'dashboard') return role === 'marketing_manager' ? 'Dashboard Marketing' : role === 'accounting' ? 'Tổng quan tài chính' : role === 'supervisor' ? 'Tổng quan vận hành' : role === 'cinema_admin' ? 'Tổng quan rạp' : 'Tổng quan hệ thống';
   return PAGE_TITLES[active] || active;
 }
 
@@ -155,6 +169,20 @@ function getRoleNavItems(role: TMSRole): NavItem[] {
         { id: 'refunds', name: 'Hoàn tiền', icon: DollarSign },
         { id: 'reports', name: 'Báo cáo', icon: BarChart3, children: ['Báo cáo doanh thu', 'Báo cáo bán vé', 'Báo cáo bán hàng', 'Báo cáo phương thức TT'] },
       ];
+    case 'marketing_manager':
+      return [
+        { id: 'dashboard', name: 'Dashboard Marketing', icon: Home },
+        { id: 'mkt-movies', name: 'Danh sách phim', icon: Film },
+        { id: 'mkt-plans', name: 'Kế hoạch phim', icon: CalendarCheck },
+        { id: 'mkt-campaigns', name: 'Quảng bá phim', icon: Megaphone },
+        { id: 'mkt-promotions', name: 'Chương trình khuyến mãi', icon: Ticket },
+        { id: 'mkt-vouchers', name: 'Voucher', icon: WalletCards },
+        { id: 'mkt-contents', name: 'Nội dung Website', icon: Globe },
+        { id: 'mkt-notifications', name: 'Thông báo Marketing', icon: Bell },
+        { id: 'mkt-segments', name: 'Nhóm khách hàng', icon: Users },
+        { id: 'mkt-reports', name: 'Báo cáo Marketing', icon: BarChart3 },
+        { id: 'mkt-account', name: 'Thông tin cá nhân', icon: UserRound },
+      ];
   }
 }
 
@@ -194,6 +222,7 @@ const allowedTmsViews = (role: TMSRole) => {
     cinema_admin: ['screens', 'movie_plan', 'schedules'],
     supervisor: ['screens', 'showtimes', 'transactions', 'refunds'],
     accounting: ['transactions', 'refunds'],
+    marketing_manager: [],
   };
   operationalViews[role].forEach(view => allowed.add(view));
   return allowed;
@@ -530,35 +559,6 @@ function shiftLocalIsoDate(isoDate: string, offsetDays: number) {
   return `${value.getFullYear()}-${String(value.getMonth() + 1).padStart(2, '0')}-${String(value.getDate()).padStart(2, '0')}`;
 }
 
-function formatVietnameseDate(value: string) {
-  const parts = String(value || '').split('-');
-  return parts.length === 3 ? `${parts[2]}/${parts[1]}/${parts[0]}` : 'Chưa chọn ngày';
-}
-
-function parseVietnameseDate(value: string) {
-  const match = String(value || '').trim().match(/^(\d{2})\/(\d{2})\/(\d{4})$/);
-  if (!match) return null;
-  const [, dayText, monthText, yearText] = match;
-  const day = Number(dayText), month = Number(monthText), year = Number(yearText);
-  const candidate = new Date(year, month - 1, day, 12, 0, 0);
-  if (candidate.getFullYear() !== year || candidate.getMonth() !== month - 1 || candidate.getDate() !== day) return null;
-  return `${yearText}-${monthText}-${dayText}`;
-}
-
-/** Date fields must not inherit the browser's MM/DD/YYYY locale. */
-function VietnameseDateInput({ value, onChange, className = '', disabled = false, required = false, ariaLabel }: { value:string; onChange:(value:string)=>void; className?:string; disabled?:boolean; required?:boolean; ariaLabel?:string }) {
-  const normalized = value ? formatVietnameseDate(value) : '';
-  const [draft, setDraft] = useState(normalized);
-  useEffect(() => setDraft(normalized), [normalized]);
-  const commit = () => {
-    if (!draft) { if (value) onChange(''); return; }
-    const parsed = parseVietnameseDate(draft);
-    if (parsed) onChange(parsed);
-    else setDraft(normalized);
-  };
-  return <input type="text" className={className} value={draft} disabled={disabled} required={required} inputMode="numeric" autoComplete="off" placeholder="dd/MM/yyyy" aria-label={ariaLabel} onChange={event=>setDraft(event.target.value.replace(/[^0-9/]/g,''))} onBlur={commit} onKeyDown={event=>{if(event.key==='Enter'){event.preventDefault();commit();}}}/>;
-}
-
 const formatMoney = (value: number) => `${Number(value || 0).toLocaleString('vi-VN')} đ`;
 const formatPosDateTime = (value?: string|null) => {
   if (!value) return '—';
@@ -796,7 +796,7 @@ export default function App() {
   const toTmsRole = (role: string): TMSRole => (
     role === 'director' || role === 'super_admin' ? 'super_admin'
       : role === 'supervisor' || role === 'technician' ? 'supervisor'
-        : role === 'accounting' ? 'accounting' : 'cinema_admin'
+        : role === 'accounting' ? 'accounting' : role === 'marketing_manager' ? 'marketing_manager' : 'cinema_admin'
   );
 
   const generateMovieCode = () => {
@@ -832,7 +832,7 @@ export default function App() {
           // Do not turn a recoverable session mismatch into an automatic
           // logout; the account returned by the authenticated API is restored.
           window.sessionStorage.setItem('aurora_tms_username', user.username);
-          const restoredUser = { id: user.id, username: user.username, full_name: user.full_name, role: toTmsRole(user.role), phone: user.phone, theater_id: Number(user.theater_id || 0), theater_name: user.theater_name, status: user.status } as TMSUser;
+          const restoredUser = { id: user.id, username: user.username, full_name: user.full_name, role: toTmsRole(user.role), phone: user.phone, email: user.email, theater_id: Number(user.theater_id || 0), theater_name: user.theater_name, status: user.status } as TMSUser;
           setCurrentUser(restoredUser);
           setActive(restoredTmsView(restoredUser));
           setIsLoggedIn(true);
@@ -1588,6 +1588,7 @@ export default function App() {
 
   useEffect(() => {
     if (isLoggedIn && currentUser) {
+      if (currentUser.role === 'marketing_manager') return;
       if (currentUser.role === 'super_admin') { void loadUsers(); void loadRbacMatrix(); }
       loadMoviePlans();
       loadMovieAllocations();
@@ -1627,7 +1628,7 @@ export default function App() {
   }, [isLoggedIn, currentUser?.id, currentUser?.role, scheduleView, schedulePage, scheduleDateFilter, scheduleStatusFilter, scheduleTheaterFilter, scheduleSearch, scheduleMovieId]);
 
   useEffect(() => {
-    if (isLoggedIn) {
+    if (isLoggedIn && currentUser?.role !== 'marketing_manager') {
       loadDashboard(reportDate);
       if (currentUser?.role === 'cinema_admin') loadCinemaScheduleBoard(reportDate);
     }
@@ -2377,7 +2378,7 @@ export default function App() {
         const user = result.data.user;
         const role = toTmsRole(user.role);
         window.sessionStorage.setItem('aurora_tms_username', user.username);
-        setCurrentUser({ id: user.id, username: user.username, full_name: user.full_name, role, phone: user.phone, theater_id: Number(user.theater_id || 0), theater_name: user.theater_name, status: user.status });
+        setCurrentUser({ id: user.id, username: user.username, full_name: user.full_name, role, phone: user.phone, email: user.email, theater_id: Number(user.theater_id || 0), theater_name: user.theater_name, status: user.status });
         setIsLoggedIn(true); setActive('dashboard');
       } else { setErrorMsg(result.message || 'Tên đăng nhập hoặc mật khẩu không chính xác.'); }
     } catch {
@@ -2936,6 +2937,9 @@ export default function App() {
   const renderContent = () => {
     const a = active;
 
+    if (role === 'super_admin' && (a === 'Kế hoạch phim' || a === 'marketing_approvals')) return <MarketingPlanApproval apiBase={API_BASE} notify={showSystemNotice} requestConfirm={requestSystemConfirmation}/>;
+    if (role === 'marketing_manager') return <MarketingWorkspace active={a} user={currentUser!} apiBase={API_BASE} notify={showSystemNotice} requestConfirm={requestSystemConfirmation}/>;
+
     if (a === 'dashboard' || a === 'Tổng quan tài chính') return renderDashboard();
 
     // ACCOUNTS & PERMISSIONS (super_admin only)
@@ -3065,15 +3069,16 @@ export default function App() {
                   <th><div className="rbac-col-header" style={{color:'#2563eb'}}>🏢 Admin Rạp</div></th>
                   <th><div className="rbac-col-header" style={{color:'#059669'}}>🛡️ Supervisor</div></th>
                   <th><div className="rbac-col-header" style={{color:'#7c3aed'}}>📊 Kế Toán</div></th>
+                  <th><div className="rbac-col-header" style={{color:'#be185d'}}>📣 Marketing</div></th>
                 </tr></thead>
                 <tbody>
                   {rbacMatrix.map(row => (
                     <tr key={row.key}>
                       <td><b style={{fontSize:'0.84rem'}}>{row.module}</b><small className="rbac-module-key">{row.key}</small></td>
-                      {(['super_admin','cinema_admin','supervisor','accounting'] as TMSRole[]).map(roleCode => { const grant=row.permissions[roleCode] || {level:'none' as PermissionLevel,note:''}; return <td key={roleCode}><div className={`rbac-grant ${grant.level}`}>{rbacEditing ? <><select aria-label={`Quyền ${roleCode} tại ${row.module}`} value={grant.level} onChange={event=>updateRbacGrant(row.key,roleCode,{level:event.target.value as PermissionLevel})}><option value="full">Toàn quyền</option><option value="manage">Quản lý</option><option value="view">Chỉ xem</option><option value="none">Không truy cập</option></select><input value={grant.note || ''} maxLength={255} onChange={event=>updateRbacGrant(row.key,roleCode,{note:event.target.value})} placeholder="Ghi chú phạm vi" /></> : <><b>{grant.level==='full'?'Toàn quyền':grant.level==='manage'?'Quản lý':grant.level==='view'?'Chỉ xem':'Không truy cập'}</b>{grant.note && <span>{grant.note}</span>}</>}</div></td>; })}
+                      {(['super_admin','cinema_admin','supervisor','accounting','marketing_manager'] as TMSRole[]).map(roleCode => { const grant=row.permissions[roleCode] || {level:'none' as PermissionLevel,note:''}; return <td key={roleCode}><div className={`rbac-grant ${grant.level}`}>{rbacEditing ? <><select aria-label={`Quyền ${roleCode} tại ${row.module}`} value={grant.level} onChange={event=>updateRbacGrant(row.key,roleCode,{level:event.target.value as PermissionLevel})}><option value="full">Toàn quyền</option><option value="manage">Quản lý</option><option value="view">Chỉ xem</option><option value="none">Không truy cập</option></select><input value={grant.note || ''} maxLength={255} onChange={event=>updateRbacGrant(row.key,roleCode,{note:event.target.value})} placeholder="Ghi chú phạm vi" /></> : <><b>{grant.level==='full'?'Toàn quyền':grant.level==='manage'?'Quản lý':grant.level==='view'?'Chỉ xem':'Không truy cập'}</b>{grant.note && <span>{grant.note}</span>}</>}</div></td>; })}
                     </tr>
                   ))}
-                  {!rbacMatrix.length && <tr><td colSpan={5}><div className="rbac-loading">Chưa có chính sách RBAC trong aurora_db.</div></td></tr>}
+                  {!rbacMatrix.length && <tr><td colSpan={6}><div className="rbac-loading">Chưa có chính sách RBAC trong aurora_db.</div></td></tr>}
                 </tbody>
               </table></div>}
             </div>
@@ -4586,7 +4591,7 @@ export default function App() {
 
             {/* User info - NO ROLE SWITCHER */}
             <div className="topbar-user-wrap">
-              <button type="button" className="topbar-user-btn" onClick={() => setUserDropdownOpen(!userDropdownOpen)}>
+              <button type="button" className="topbar-user-btn" title={`${displayName} · ${rc.name}`} aria-label={`Tài khoản ${displayName}, ${rc.name}`} onClick={() => setUserDropdownOpen(!userDropdownOpen)}>
                 <div className="hello"><span>Xin chào,</span><strong>{displayName}</strong></div>
                 <span className={`role-badge-pill ${role}`}>{rc.badge}</span>
                 <ChevronDown size={15} />
@@ -4646,8 +4651,8 @@ export default function App() {
                   </div>
                   <div className="user-form-section-title access"><span><ShieldCheck size={16}/></span><div><b>Phân quyền & phạm vi làm việc</b><small>Chỉ cấp đúng quyền cần thiết cho từng vị trí.</small></div></div>
                   <div className="user-form-grid">
-                    <div className="tms-form-group"><label className="tms-form-label">Vai trò hệ thống <em>*</em></label><select className="tms-form-select" value={userForm.role} onChange={e => setUserForm({...userForm, role: e.target.value as TMSRole, theater_id: (e.target.value === 'cinema_admin' || e.target.value === 'supervisor') ? userForm.theater_id : 0})}><option value="super_admin">👑 Admin Tổng — Toàn hệ thống</option><option value="cinema_admin">🏢 Admin Rạp — Quản lý một rạp</option><option value="supervisor">🛡️ Supervisor — Giám sát rạp</option><option value="accounting">📊 Kế Toán — Tài chính & đối soát</option></select></div>
-                    <div className="tms-form-group"><label className="tms-form-label">Rạp phụ trách {(userForm.role === 'cinema_admin' || userForm.role === 'supervisor') && <em>*</em>}</label><select className="tms-form-select" value={userForm.theater_id} onChange={e => setUserForm({...userForm, theater_id:Number(e.target.value)})} disabled={userForm.role === 'super_admin' || userForm.role === 'accounting'}><option value={0}>{userForm.role === 'super_admin' || userForm.role === 'accounting' ? 'Phạm vi toàn hệ thống' : '— Chọn rạp phụ trách —'}</option>{theatersList.map(theater => <option key={theater.id} value={theater.id}>{theater.name}{theater.city ? ` · ${theater.city}` : ''}</option>)}</select></div>
+                    <div className="tms-form-group"><label className="tms-form-label">Vai trò hệ thống <em>*</em></label><select className="tms-form-select" value={userForm.role} onChange={e => setUserForm({...userForm, role: e.target.value as TMSRole, theater_id: (e.target.value === 'cinema_admin' || e.target.value === 'supervisor') ? userForm.theater_id : 0})}><option value="super_admin">👑 Admin Tổng — Toàn hệ thống</option><option value="cinema_admin">🏢 Admin Rạp — Quản lý một rạp</option><option value="supervisor">🛡️ Supervisor — Giám sát rạp</option><option value="accounting">📊 Kế Toán — Tài chính & đối soát</option><option value="marketing_manager">📣 Bộ phận Marketing — Toàn hệ thống</option></select></div>
+                    <div className="tms-form-group"><label className="tms-form-label">Rạp phụ trách {(userForm.role === 'cinema_admin' || userForm.role === 'supervisor') && <em>*</em>}</label><select className="tms-form-select" value={userForm.theater_id} onChange={e => setUserForm({...userForm, theater_id:Number(e.target.value)})} disabled={userForm.role === 'super_admin' || userForm.role === 'accounting' || userForm.role === 'marketing_manager'}><option value={0}>{userForm.role === 'super_admin' || userForm.role === 'accounting' || userForm.role === 'marketing_manager' ? 'Phạm vi toàn hệ thống' : '— Chọn rạp phụ trách —'}</option>{theatersList.map(theater => <option key={theater.id} value={theater.id}>{theater.name}{theater.city ? ` · ${theater.city}` : ''}</option>)}</select></div>
                     <div className="tms-form-group"><label className="tms-form-label">{userForm.id > 0 ? 'Đặt mật khẩu mới' : 'Mật khẩu khởi tạo'} {!userForm.id && <em>*</em>}</label><div className="password-field-wrap"><input type={showUserPassword ? 'text' : 'password'} className="tms-form-input" value={userForm.password} onChange={e => setUserForm({...userForm, password: e.target.value})} placeholder={userForm.id > 0 ? 'Bỏ trống để giữ nguyên' : 'Ít nhất 6 ký tự'} required={!userForm.id} minLength={userForm.id ? undefined : 6}/><button type="button" aria-label={showUserPassword ? 'Ẩn mật khẩu' : 'Hiện mật khẩu'} onClick={() => setShowUserPassword(!showUserPassword)}>{showUserPassword ? <EyeOff size={16}/> : <Eye size={16}/>}</button></div><small className="form-hint">{userForm.id > 0 ? 'Chỉ nhập khi cần đổi mật khẩu.' : 'Không sử dụng mật khẩu mặc định hoặc dễ đoán.'}</small></div>
                     <div className="tms-form-group"><label className="tms-form-label">Trạng thái truy cập</label><select className="tms-form-select" value={userForm.status} onChange={e => setUserForm({...userForm, status: e.target.value})}><option value="active">Đang hoạt động — cho phép đăng nhập</option><option value="inactive">Ngừng hoạt động tạm thời</option><option value="locked">Tạm khóa truy cập</option></select></div>
                   </div>

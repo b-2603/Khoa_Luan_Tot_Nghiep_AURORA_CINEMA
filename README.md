@@ -103,6 +103,7 @@ npm run dev
 | Admin Rạp | `admin_rap_tanbinh` | `8888` | Aurora Tân Bình — 7 phòng, 464 ghế |
 | Giám sát ca | `supervisor` | `8888` | Theo quyền được phân công |
 | Kế toán | `accounting` | `8888` | Toàn hệ thống theo quyền kế toán |
+| Bộ phận Marketing | `marketing` | `8888` | Toàn hệ thống theo quyền Marketing |
 
 Admin Rạp được gán cố định bằng `theater_id` trong bảng `users` của
 `aurora_db`; API chỉ cho phép xem và thao tác phòng chiếu, suất chiếu và phân
