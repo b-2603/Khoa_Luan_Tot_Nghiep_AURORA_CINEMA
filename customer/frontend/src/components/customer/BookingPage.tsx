@@ -77,8 +77,8 @@ function getSeatPrice(seat: Seat, basePrice: number): number {
 }
 function seatColor(seat: Seat, selected: boolean): { bg: string; border: string; color: string } {
   if (!seat.is_available) return { bg: '#e2e8f0', border: '#cbd5e1', color: '#94a3b8' };
-  if (selected) return { bg: '#1e3a5f', border: '#1e3a5f', color: '#f4c04a' };
-  if (seat.seat_type === 'VIP')    return { bg: '#fef9c3', border: '#fbbf24', color: '#92400e' };
+  if (selected) return { bg: '#0d1b2e', border: '#0d1b2e', color: '#f4c04a' };
+  if (seat.seat_type === 'VIP')    return { bg: '#fef9c3', border: '#f4c04a', color: '#92400e' };
   if (seat.seat_type === 'COUPLE' || seat.seat_type === 'DOUBLE') return { bg: '#fce7f3', border: '#f472b6', color: '#9d174d' };
   return { bg: '#f8fafc', border: '#cbd5e1', color: '#475569' };
 }
@@ -118,7 +118,7 @@ function StepBar({ step, lang, onGoStep }: { step: Step; lang: Lang; onGoStep?: 
                 background: done
                   ? 'linear-gradient(135deg, #16a34a, #22c55e)'
                   : active
-                  ? 'linear-gradient(135deg, #0d1b2e, #1e3a5f)'
+                  ? 'linear-gradient(135deg, #0d1b2e, #0d1b2e)'
                   : '#f8fafc',
                 color: done || active ? '#ffffff' : '#94a3b8',
                 display: 'flex', alignItems: 'center', justifyContent: 'center',
@@ -192,7 +192,7 @@ function SummaryPanel({
       position: 'sticky', top: 0,
       height: 'calc(100vh - 104px)',
       overflow: 'visible',
-      boxShadow: '-4px 0 20px rgba(13, 27, 46, 0.03)',
+      boxShadow: '-4px 0 20px rgba(13,27,46,0.03)',
       zIndex: 10,
     }}>
       {/* Poster header */}
@@ -301,7 +301,7 @@ function SummaryPanel({
               { icon: <Calendar size={13} color="#f4c04a" />, val: fmtDateFull(showtime.starts_at, lang), bold: false },
               { icon: <Clock size={13} color="#f4c04a" />, val: `${fmtTime(showtime.starts_at)} – ${fmtTime(showtime.ends_at || showtime.starts_at)}`, bold: false },
             ].map((r, i) => (
-              <div key={i} style={{ display: 'flex', alignItems: 'flex-start', gap: 9, fontSize: 12, color: '#1e293b' }}>
+              <div key={i} style={{ display: 'flex', alignItems: 'flex-start', gap: 9, fontSize: 12, color: '#0d1b2e' }}>
                 <span style={{ flexShrink: 0, marginTop: 1 }}>{r.icon}</span>
                 <span style={{ lineHeight: 1.35, fontWeight: r.bold ? 700 : 500 }}>{r.val}</span>
               </div>
@@ -439,7 +439,7 @@ function SummaryPanel({
                 border: 0, borderRadius: 12, padding: '14px 18px',
                 background: continueDisabled
                   ? '#e2e8f0'
-                  : 'linear-gradient(135deg, #0d1b2e 0%, #1e3a5f 100%)',
+                  : 'linear-gradient(135deg, #0d1b2e 0%, #0d1b2e 100%)',
                 color: continueDisabled ? '#94a3b8' : '#f4c04a',
                 fontWeight: 900, fontSize: 14,
                 cursor: continueDisabled ? 'not-allowed' : 'pointer',
@@ -739,7 +739,7 @@ export default function BookingPage({ movie, showtime: initShowtime, theater: in
     <div style={{ minHeight:'100vh', background:'#f8fafc', fontFamily:"'Inter','Segoe UI',Arial,sans-serif", display:'flex', flexDirection:'column' }}>
 
       {/* ── TOP HEADER ── */}
-      <div style={{ background:'linear-gradient(90deg, #091322, #0d1b2e 50%, #15253c)', color:'#dce8f5', padding:'0 24px', height:56, display:'flex', alignItems:'center', justifyContent:'space-between', flexShrink:0, borderBottom:'1px solid rgba(244,192,74,0.2)', boxShadow:'0 2px 10px rgba(0,0,0,0.15)' }}>
+      <div style={{ background:'linear-gradient(90deg, #0d1b2e, #0d1b2e 50%, #0d1b2e)', color:'#dce8f5', padding:'0 24px', height:56, display:'flex', alignItems:'center', justifyContent:'space-between', flexShrink:0, borderBottom:'1px solid rgba(244,192,74,0.2)', boxShadow:'0 2px 10px rgba(0,0,0,0.15)' }}>
         <button
           onClick={handleGoBack}
           style={{
@@ -922,7 +922,7 @@ function ShowtimeStep({ lang, movie, availableDates, selectedDate, setSelectedDa
         </div>
       ) : showtimesError ? (
         <div style={{textAlign:'center',padding:'48px 20px',background:'#fff',border:'1px solid #fecaca',borderRadius:14}}>
-          <AlertCircle size={36} color="#dc2626" style={{margin:'0 auto 10px'}}/><b style={{display:'block',color:'#7f1d1d',fontSize:14}}>{t('Chưa thể tải lịch chiếu','Unable to load showtimes',lang)}</b><p style={{margin:'6px 0 16px',color:'#64748b',fontSize:12}}>{showtimesError}</p><button type="button" onClick={onReload} style={{display:'inline-flex',alignItems:'center',gap:6,padding:'9px 15px',border:0,borderRadius:8,color:'#fff',background:'#173b65',fontWeight:800,cursor:'pointer'}}><RefreshCw size={14}/>{t('Thử tải lại','Try again',lang)}</button>
+          <AlertCircle size={36} color="#dc2626" style={{margin:'0 auto 10px'}}/><b style={{display:'block',color:'#7f1d1d',fontSize:14}}>{t('Chưa thể tải lịch chiếu','Unable to load showtimes',lang)}</b><p style={{margin:'6px 0 16px',color:'#64748b',fontSize:12}}>{showtimesError}</p><button type="button" onClick={onReload} style={{display:'inline-flex',alignItems:'center',gap:6,padding:'9px 15px',border:0,borderRadius:8,color:'#fff',background:'#0d1b2e',fontWeight:800,cursor:'pointer'}}><RefreshCw size={14}/>{t('Thử tải lại','Try again',lang)}</button>
         </div>
       ) : noShowtimes ? (
         <div style={{ textAlign:'center', padding:'60px 20px', background:'#fff', borderRadius:14 }}>
@@ -1127,7 +1127,7 @@ function SeatStep({ lang, movie, showtime, theater, seats, seatsLoading, seatRow
       </div>
 
       {/* Live availability strip — values come from aurora_db.showtime_seats */}
-      <div style={{ display:'grid', gridTemplateColumns:'minmax(0,1fr) auto auto', gap:10, alignItems:'center', marginBottom:16, padding:'13px 16px', borderRadius:14, background:'linear-gradient(135deg,#0d1b2e,#19385e)', boxShadow:'0 9px 24px rgba(13,27,46,.13)' }}>
+      <div style={{ display:'grid', gridTemplateColumns:'minmax(0,1fr) auto auto', gap:10, alignItems:'center', marginBottom:16, padding:'13px 16px', borderRadius:14, background:'linear-gradient(135deg,#0d1b2e,#0d1b2e)', boxShadow:'0 9px 24px rgba(13,27,46,.13)' }}>
         <div style={{ minWidth:0 }}>
           <div style={{ display:'flex', alignItems:'center', gap:7, color:'#f4c04a', fontSize:11, fontWeight:900, letterSpacing:.7 }}><span style={{ width:8, height:8, borderRadius:'50%', background:'#2dd47b', boxShadow:'0 0 0 4px rgba(45,212,123,.16)' }} /> {t('SƠ ĐỒ GHẾ TRỰC TUYẾN', 'LIVE SEAT MAP', lang)}</div>
           <div style={{ color:'#c7d6e8', fontSize:11.5, marginTop:5 }}>{t('Ghế được đồng bộ và giữ tạm thời trên hệ thống Aurora.', 'Seats sync and are temporarily held by Aurora.', lang)}</div>
@@ -1142,7 +1142,7 @@ function SeatStep({ lang, movie, showtime, theater, seats, seatsLoading, seatRow
           { bg: '#f8fafc', border: '#cbd5e1', color: '#475569', label: t('Ghế thường', 'Standard', lang) },
           { bg: '#fef3c7', border: '#f59e0b', color: '#92400e', label: `Ghế VIP · ${fmtMoney(Number(seatPricing?.VIP || 0))}` },
           { bg: '#fce7f3', border: '#f472b6', color: '#9d174d', label: t('Ghế đôi (Couple - x2)', 'Couple seat (x2)', lang) },
-          { bg: '#1e3a5f', border: '#f4c04a', color: '#f4c04a', label: t('Đang chọn', 'Selected', lang) },
+          { bg: '#0d1b2e', border: '#f4c04a', color: '#f4c04a', label: t('Đang chọn', 'Selected', lang) },
           { bg: '#e2e8f0', border: '#cbd5e1', color: '#94a3b8', label: t('Đã bán', 'Taken', lang) },
         ].map(item => (
           <div key={item.label} style={{ display: 'flex', alignItems: 'center', gap: 7, fontSize: 11.5, color: '#475569', fontWeight: 600 }}>
@@ -1199,7 +1199,7 @@ function SeatStep({ lang, movie, showtime, theater, seats, seatsLoading, seatRow
                           padding: 0, flexShrink: 0,
                           transform: isSelected ? 'scale(1.12)' : 'scale(1)',
                           boxShadow: isSelected
-                            ? '0 3px 10px rgba(30,58,95,0.4), 0 0 0 2px #f4c04a'
+                            ? '0 3px 10px rgba(13,27,46,0.4), 0 0 0 2px #f4c04a'
                             : seat.is_available
                             ? '0 1px 2px rgba(0,0,0,0.05)'
                             : 'none',
@@ -1261,7 +1261,7 @@ function PaymentStep({
       title: 'VNPay QR',
       desc: t('Quét mã qua 40+ ứng dụng ngân hàng & ví điện tử', 'Scan via 40+ banking apps & e-wallets', lang),
       badge: 'Khuyên dùng',
-      icon: <QrCode size={20} color="#005baa" />,
+      icon: <QrCode size={20} color="#0d1b2e" />,
     },
     {
       id: 'qr_momo',
@@ -1429,7 +1429,7 @@ function PaymentStep({
                   style={{
                     border: hasQty ? '1.5px solid #f59e0b' : '1px solid #e2e8f0',
                     background: hasQty ? '#fffaf0' : '#ffffff',
-                    boxShadow: hasQty ? '0 3px 12px rgba(245, 158, 11, 0.12)' : '0 1px 3px rgba(0,0,0,0.02)',
+                    boxShadow: hasQty ? '0 3px 12px rgba(244,192,74,0.12)' : '0 1px 3px rgba(0,0,0,0.02)',
                   }}
                 >
                   <div style={{
@@ -1550,7 +1550,7 @@ function PaymentStep({
                 disabled={voucherLoading || !voucherCode.trim()}
                 style={{
                   padding: '0 22px',
-                  background: 'linear-gradient(135deg, #0d1b2e, #1e3a5f)',
+                  background: 'linear-gradient(135deg, #0d1b2e, #0d1b2e)',
                   color: '#f4c04a',
                   border: 0, borderRadius: 10,
                   fontWeight: 800, fontSize: 13.5,
@@ -1778,7 +1778,7 @@ function SuccessStep({ booking, movie, showtime, theater, selectedSeats, totalFi
       {/* Ticket card */}
       <div style={{ background:'#fff', borderRadius:16, overflow:'hidden', boxShadow:'0 8px 32px rgba(0,0,0,0.12)', marginBottom:24 }}>
         {/* Top: phim + mã */}
-        <div style={{ background:'linear-gradient(135deg,#0d1b2e,#1e3a5f)', padding:'20px 24px', color:'#fff' }}>
+        <div style={{ background:'linear-gradient(135deg,#0d1b2e,#0d1b2e)', padding:'20px 24px', color:'#fff' }}>
           <div style={{ display:'flex', gap:14, alignItems:'center' }}>
             {(movie.poster||movie.posterUrl) && (
               <img src={movie.poster||movie.posterUrl} alt="" style={{ width:60, height:84, objectFit:'cover', borderRadius:8, flexShrink:0 }}
@@ -1816,7 +1816,7 @@ function SuccessStep({ booking, movie, showtime, theater, selectedSeats, totalFi
           ].map(r => (
             <div key={r.label}>
               <div style={{ fontSize:10, fontWeight:600, color:'#94a3b8', textTransform:'uppercase', letterSpacing:0.5, marginBottom:4 }}>{r.label}</div>
-              <div style={{ fontSize: r.big ? 17 : 13, fontWeight: r.big ? 900 : 700, color: r.gold ? '#b8860b' : '#0d1b2e', letterSpacing: r.big ? 1 : 0 }}>{r.val}</div>
+              <div style={{ fontSize: r.big ? 17 : 13, fontWeight: r.big ? 900 : 700, color: r.gold ? '#f4c04a' : '#0d1b2e', letterSpacing: r.big ? 1 : 0 }}>{r.val}</div>
             </div>
           ))}
         </div>
@@ -1831,7 +1831,7 @@ function SuccessStep({ booking, movie, showtime, theater, selectedSeats, totalFi
             <div style={{ fontSize:12, fontWeight:700, color:'#0d1b2e', marginBottom:4 }}>{t('Quét mã QR để vào rạp','Scan QR code at entrance',lang)}</div>
             <div style={{ fontSize:11, color:'#94a3b8', lineHeight:1.5 }}>
               {t('Hoặc xuất trình mã vé: ','Or show booking code: ',lang)}
-              <strong style={{ color:'#b8860b', letterSpacing:1 }}>{booking.code}</strong>
+              <strong style={{ color:'#f4c04a', letterSpacing:1 }}>{booking.code}</strong>
             </div>
           </div>
         </div>
@@ -1839,7 +1839,7 @@ function SuccessStep({ booking, movie, showtime, theater, selectedSeats, totalFi
 
       {/* Action buttons */}
       <div style={{ display:'flex', gap:10, flexWrap:'wrap' }}>
-        <button onClick={onClose} style={{ flex:1, minWidth:160, padding:'13px 20px', border:0, borderRadius:10, background:'linear-gradient(135deg,#0d1b2e,#1e3a5f)', color:'#f4c04a', fontWeight:900, fontSize:14, cursor:'pointer', display:'flex', alignItems:'center', justifyContent:'center', gap:8, boxShadow:'0 4px 16px rgba(13,27,46,0.3)' }}>
+        <button onClick={onClose} style={{ flex:1, minWidth:160, padding:'13px 20px', border:0, borderRadius:10, background:'linear-gradient(135deg,#0d1b2e,#0d1b2e)', color:'#f4c04a', fontWeight:900, fontSize:14, cursor:'pointer', display:'flex', alignItems:'center', justifyContent:'center', gap:8, boxShadow:'0 4px 16px rgba(13,27,46,0.3)' }}>
           <Ticket size={16} /> {t('VỀ TRANG CHỦ','HOME',lang)}
         </button>
         <button onClick={onClose} style={{ flex:1, minWidth:160, padding:'13px 20px', border:'1.5px solid #e2e8f0', borderRadius:10, background:'#fff', color:'#0d1b2e', fontWeight:700, fontSize:14, cursor:'pointer', display:'flex', alignItems:'center', justifyContent:'center', gap:8 }}>

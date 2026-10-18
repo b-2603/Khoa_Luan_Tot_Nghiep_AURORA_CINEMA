@@ -25,7 +25,7 @@ type Props = {
 };
 
 const ROLE_COPY: Record<string, { name: string; icon: string; color: string; bg: string }> = {
-  super_admin: { name: 'Admin Tổng', icon: '👑', color: '#a86208', bg: '#fff5d9' },
+  super_admin: { name: 'Admin Tổng', icon: '👑', color: '#f4c04a', bg: '#fff5d9' },
   cinema_admin: { name: 'Admin Rạp', icon: '🏢', color: '#2457c5', bg: '#eaf1ff' },
   supervisor: { name: 'Supervisor', icon: '🛡️', color: '#08775b', bg: '#e7f8f1' },
   accounting: { name: 'Kế toán', icon: '📊', color: '#6c3fc3', bg: '#f1ebff' },

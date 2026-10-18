@@ -35,7 +35,7 @@ class RecommendTool implements AITool
         $title = trim($arguments['movie_title'] ?? '');
         $genre = mb_strtolower(trim($arguments['genre'] ?? ''));
 
-        $all = $pdo->query("SELECT id, title, original_title, genre, director, country, age_rating, duration, description FROM movies WHERE status='now_showing'")->fetchAll(PDO::FETCH_ASSOC);
+        $all = $pdo->query("SELECT id, title, original_title, genre, director, country, age_rating, duration, description FROM ems_movies WHERE status='now_showing'")->fetchAll(PDO::FETCH_ASSOC);
 
         $base = null;
         if ($title !== '') {
@@ -165,7 +165,7 @@ class CancelBookingTool implements AITool
 
         $q = $pdo->prepare("SELECT b.id, b.booking_code, b.status, b.total_amount, b.customer_name, s.start_at, m.title,
                                    TIMESTAMPDIFF(MINUTE, NOW(), s.start_at) mins
-                            FROM bookings b JOIN showtimes s ON s.id=b.showtime_id JOIN movies m ON m.id=s.movie_id WHERE b.booking_code=? LIMIT 1");
+                            FROM ems_bookings b JOIN ems_showtimes s ON s.id=b.showtime_id JOIN ems_movies m ON m.id=s.movie_id WHERE b.booking_code=? LIMIT 1");
         $q->execute([$code]);
         $b = $q->fetch(PDO::FETCH_ASSOC);
 
@@ -187,7 +187,7 @@ class CancelBookingTool implements AITool
 
         $token = bin2hex(random_bytes(8));
         $summary = "Hủy booking {$code} ({$b['title']}, " . date('H:i d/m', strtotime($b['start_at'])) . ") và hoàn " . number_format($b['total_amount'], 0, ',', '.') . " VNĐ cho {$b['customer_name']}";
-        $ins = $pdo->prepare("INSERT INTO ai_pending_actions (token, conversation_id, user_id, action, payload, summary, expires_at) VALUES (?,?,?,?,?,?, DATE_ADD(NOW(), INTERVAL 5 MINUTE))");
+        $ins = $pdo->prepare("INSERT INTO ems_ai_pending_actions (token, conversation_id, user_id, action, payload, summary, expires_at) VALUES (?,?,?,?,?,?, DATE_ADD(NOW(), INTERVAL 5 MINUTE))");
         $ins->execute([$token, $user['conversation_id'] ?? null, $user['id'] ?? null, 'cancel_booking',
                        json_encode(['booking_id' => (int)$b['id'], 'booking_code' => $code, 'amount' => (float)$b['total_amount'], 'reason' => $reason], JSON_UNESCAPED_UNICODE),
                        $summary]);

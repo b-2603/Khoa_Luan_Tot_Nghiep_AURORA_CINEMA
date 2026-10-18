@@ -53,21 +53,21 @@ class RevenueTool implements AITool
 
     public function dayStats(PDO $pdo, string $d): array
     {
-        $hasShow = $pdo->prepare("SELECT COUNT(*) FROM showtimes WHERE DATE(start_at)=?");
+        $hasShow = $pdo->prepare("SELECT COUNT(*) FROM ems_showtimes WHERE DATE(start_at)=?");
         $hasShow->execute([$d]);
         $hasShow = (int)$hasShow->fetchColumn() > 0;
 
         if ($hasShow) {
-            $q = $pdo->prepare("SELECT COALESCE(SUM(b.total_amount),0) amt, COUNT(DISTINCT b.id) bk FROM bookings b JOIN showtimes s ON s.id=b.showtime_id WHERE DATE(s.start_at)=? AND b.status IN ('confirmed','paid')");
+            $q = $pdo->prepare("SELECT COALESCE(SUM(b.total_amount),0) amt, COUNT(DISTINCT b.id) bk FROM ems_bookings b JOIN ems_showtimes s ON s.id=b.showtime_id WHERE DATE(s.start_at)=? AND b.status IN ('confirmed','paid')");
             $q->execute([$d]);
             $r = $q->fetch(PDO::FETCH_ASSOC);
-            $s = $pdo->prepare("SELECT COUNT(*) FROM booking_seats bs JOIN bookings b ON b.id=bs.booking_id JOIN showtimes s ON s.id=b.showtime_id WHERE DATE(s.start_at)=? AND b.status IN ('confirmed','paid')");
+            $s = $pdo->prepare("SELECT COUNT(*) FROM ems_booking_seats bs JOIN ems_bookings b ON b.id=bs.booking_id JOIN ems_showtimes s ON s.id=b.showtime_id WHERE DATE(s.start_at)=? AND b.status IN ('confirmed','paid')");
             $s->execute([$d]);
             $tickets = (int)$s->fetchColumn();
             $ticketRevenue = (float)$r['amt'];
             $bookings = (int)$r['bk'];
         } else {
-            $q = $pdo->prepare("SELECT COALESCE(SUM(amount),0) amt, COALESCE(SUM(quantity),0) qty, COUNT(*) c FROM pos_transactions WHERE type='ticket' AND status='success' AND DATE(created_at)=?");
+            $q = $pdo->prepare("SELECT COALESCE(SUM(amount),0) amt, COALESCE(SUM(quantity),0) qty, COUNT(*) c FROM ems_pos_transactions WHERE type='ticket' AND status='success' AND DATE(created_at)=?");
             $q->execute([$d]);
             $r = $q->fetch(PDO::FETCH_ASSOC);
             $ticketRevenue = (float)$r['amt'];
@@ -75,11 +75,11 @@ class RevenueTool implements AITool
             $bookings = (int)$r['c'];
         }
 
-        $c = $pdo->prepare("SELECT COALESCE(SUM(amount),0) amt, COALESCE(SUM(quantity),0) qty FROM pos_transactions WHERE type='combo' AND status='success' AND DATE(created_at)=?");
+        $c = $pdo->prepare("SELECT COALESCE(SUM(amount),0) amt, COALESCE(SUM(quantity),0) qty FROM ems_pos_transactions WHERE type='combo' AND status='success' AND DATE(created_at)=?");
         $c->execute([$d]);
         $combo = $c->fetch(PDO::FETCH_ASSOC);
 
-        $rf = $pdo->prepare("SELECT COALESCE(SUM(amount),0) FROM pos_transactions WHERE type='refund' AND DATE(created_at)=?");
+        $rf = $pdo->prepare("SELECT COALESCE(SUM(amount),0) FROM ems_pos_transactions WHERE type='refund' AND DATE(created_at)=?");
         $rf->execute([$d]);
         $refund = (float)$rf->fetchColumn();
 
@@ -139,10 +139,10 @@ class OccupancyTool implements AITool
 
         $q = $pdo->prepare("
             SELECT s.id, TIME_FORMAT(s.start_at,'%H:%i') t, HOUR(s.start_at) h, m.title, r.name room,
-              (SELECT COUNT(*) FROM seats WHERE room_id=s.room_id AND status='active') cap,
-              (SELECT COUNT(*) FROM booking_seats bs JOIN bookings b ON b.id=bs.booking_id
+              (SELECT COUNT(*) FROM ems_seats WHERE room_id=s.room_id AND status='active') cap,
+              (SELECT COUNT(*) FROM ems_booking_seats bs JOIN ems_bookings b ON b.id=bs.booking_id
                  WHERE b.showtime_id=s.id AND b.status IN ('confirmed','paid','pending')) sold
-            FROM showtimes s JOIN movies m ON m.id=s.movie_id JOIN rooms r ON r.id=s.room_id
+            FROM ems_showtimes s JOIN ems_movies m ON m.id=s.movie_id JOIN ems_rooms r ON r.id=s.room_id
             WHERE DATE(s.start_at)=? AND s.status='active' ORDER BY s.start_at");
         $q->execute([$date]);
         $rows = $q->fetchAll(PDO::FETCH_ASSOC);
@@ -210,8 +210,8 @@ class TopMoviesTool implements AITool
 
         $q = $pdo->prepare("
             SELECT m.id, m.title, m.age_rating, COUNT(bs.id) tickets, COALESCE(SUM(bs.price),0) revenue
-            FROM booking_seats bs JOIN bookings b ON b.id=bs.booking_id
-            JOIN showtimes s ON s.id=b.showtime_id JOIN movies m ON m.id=s.movie_id
+            FROM ems_booking_seats bs JOIN ems_bookings b ON b.id=bs.booking_id
+            JOIN ems_showtimes s ON s.id=b.showtime_id JOIN ems_movies m ON m.id=s.movie_id
             WHERE DATE(s.start_at) BETWEEN ? AND ? AND b.status IN ('confirmed','paid')
             GROUP BY m.id ORDER BY revenue DESC LIMIT $limit");
         $q->execute([$from, $to]);
@@ -250,8 +250,8 @@ class DailyReportTool implements AITool
         $occ = (new OccupancyTool())->execute([], $user, $pdo);
         $top = (new TopMoviesTool())->execute(['period' => 'today', 'limit' => 3], $user, $pdo);
 
-        $inc = $pdo->query("SELECT i.severity, i.description, i.status, e.code, e.name FROM equipment_incidents i JOIN equipment e ON e.id=i.equipment_id WHERE i.status<>'resolved' ORDER BY FIELD(i.severity,'critical','high','medium','low')")->fetchAll(PDO::FETCH_ASSOC);
-        $posFail = (int)$pdo->query("SELECT COUNT(*) FROM pos_transactions WHERE status IN ('failed','pending') AND DATE(created_at)=CURDATE()")->fetchColumn();
+        $inc = $pdo->query("SELECT i.severity, i.description, i.status, e.code, e.name FROM ems_equipment_incidents i JOIN ems_equipment e ON e.id=i.equipment_id WHERE i.status<>'resolved' ORDER BY FIELD(i.severity,'critical','high','medium','low')")->fetchAll(PDO::FETCH_ASSOC);
+        $posFail = (int)$pdo->query("SELECT COUNT(*) FROM ems_pos_transactions WHERE status IN ('failed','pending') AND DATE(created_at)=CURDATE()")->fetchColumn();
 
         $t = $rev['total'];
         $insights = [];

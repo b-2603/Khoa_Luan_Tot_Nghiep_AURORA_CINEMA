@@ -118,7 +118,7 @@ function InputField({
             padding: Icon ? '10px 12px 10px 36px' : '10px 12px',
             border: '1.5px solid #d5dee9', borderRadius: 10, fontSize: 13.5,
             background: disabled ? '#f8fafd' : '#fff',
-            color: disabled ? '#64748b' : '#1a2332',
+            color: disabled ? '#64748b' : '#0d1b2e',
             outline: 'none', transition: 'border-color 0.2s, box-shadow 0.2s',
           }}
           onFocus={e => { e.target.style.borderColor = '#f4c04a'; e.target.style.boxShadow = '0 0 0 3px rgba(244,192,74,0.15)'; }}
@@ -182,7 +182,7 @@ function VietnameseDateField({ value, onChange }: { value: string; onChange: (va
         <input type="text" inputMode="numeric" autoComplete="bday" value={displayValue} onChange={event => handleTextChange(event.target.value)} onBlur={() => {
           if (displayValue && !parseVietnameseDate(displayValue)) setDateError('Vui lòng nhập theo định dạng ngày/tháng/năm.');
           else if (value) setDisplayValue(formatVietnameseDate(value));
-        }} placeholder="dd/mm/yyyy" maxLength={10} aria-invalid={Boolean(dateError)} style={{ width:'100%', boxSizing:'border-box', padding:'10px 44px 10px 36px', border:`1.5px solid ${dateError ? '#ef8d8d' : '#d5dee9'}`, borderRadius:10, color:'#1a2332', background:'#fff', fontSize:13.5, outline:'none' }} />
+        }} placeholder="dd/mm/yyyy" maxLength={10} aria-invalid={Boolean(dateError)} style={{ width:'100%', boxSizing:'border-box', padding:'10px 44px 10px 36px', border:`1.5px solid ${dateError ? '#ef8d8d' : '#d5dee9'}`, borderRadius:10, color:'#0d1b2e', background:'#fff', fontSize:13.5, outline:'none' }} />
         <button type="button" onClick={openDatePicker} aria-label="Mở lịch chọn ngày sinh" title="Chọn ngày sinh" style={{ position:'absolute', top:'50%', right:7, transform:'translateY(-50%)', display:'grid', width:31, height:31, placeItems:'center', padding:0, border:0, borderRadius:8, color:'#49647f', background:'transparent', cursor:'pointer' }}><Calendar size={16}/></button>
         <input ref={nativeDateRef} type="date" value={value || ''} max={maxDate} onChange={event => { onChange(event.target.value); setDisplayValue(formatVietnameseDate(event.target.value)); setDateError(''); }} tabIndex={-1} aria-hidden="true" style={{ position:'absolute', width:1, height:1, right:12, bottom:0, opacity:0, pointerEvents:'none' }} />
       </div>
@@ -505,14 +505,14 @@ export default function AccountPage({ authUser, onUserUpdate, initialTab = 'info
     <div style={{ minHeight: '100vh', background: 'linear-gradient(180deg,#f0f4f8 0%,#eef0f4 100%)', fontFamily: "'Inter','Segoe UI',Arial,sans-serif" }}>
 
       {/* Page Header */}
-      <div style={{ background: 'linear-gradient(135deg,#0d1b2e 0%,#1a3050 100%)', padding: '32px 20px 56px', position: 'relative', overflow: 'hidden' }}>
+      <div style={{ background: 'linear-gradient(135deg,#0d1b2e 0%,#0d1b2e 100%)', padding: '32px 20px 56px', position: 'relative', overflow: 'hidden' }}>
         <input ref={avatarInputRef} type="file" accept=".jpg,.jpeg,.png,image/jpeg,image/png" onChange={event => handleAvatarFileSelected(event.target.files?.[0])} style={{ display:'none' }} />
         <div style={{ position: 'absolute', top: -40, right: -40, width: 200, height: 200, borderRadius: '50%', background: 'rgba(244,192,74,0.07)' }} />
         <div style={{ position: 'absolute', bottom: -60, left: -30, width: 180, height: 180, borderRadius: '50%', background: 'rgba(244,192,74,0.05)' }} />
         <div style={{ maxWidth: 1100, margin: '0 auto', display: 'flex', alignItems: 'center', gap: 20, position: 'relative' }}>
           <button type="button" onClick={() => avatarUrl ? setAvatarPreviewOpen(true) : avatarInputRef.current?.click()} title={avatarUrl ? 'Xem ảnh đại diện' : 'Thay ảnh đại diện'} aria-label={avatarUrl ? 'Xem ảnh đại diện kích thước lớn' : 'Chọn ảnh đại diện'} style={{
             width: 72, height: 72, borderRadius: '50%',
-            background: 'linear-gradient(135deg,#f4c04a 0%,#e8a020 100%)',
+            background: 'linear-gradient(135deg,#f4c04a 0%,#f4c04a 100%)',
             display: 'flex', alignItems: 'center', justifyContent: 'center',
             fontSize: 30, fontWeight: 800, color: '#0d1b2e',
             border: '3px solid rgba(244,192,74,0.4)',
@@ -674,7 +674,7 @@ export default function AccountPage({ authUser, onUserUpdate, initialTab = 'info
                             <div style={{ position: 'relative' }}>
                               <Lock size={13} style={{ position: 'absolute', left: 12, top: '50%', transform: 'translateY(-50%)', color: '#94a3b8' }} />
                               <input type={show ? 'text' : 'password'} value={val} onChange={e => setVal(e.target.value)} placeholder="••••••••"
-                                style={{ width: '100%', boxSizing: 'border-box', padding: '9px 40px 9px 36px', border: '1.5px solid #d5dee9', borderRadius: 8, fontSize: 13, background: '#fff', color: '#1a2332', outline: 'none' }} />
+                                style={{ width: '100%', boxSizing: 'border-box', padding: '9px 40px 9px 36px', border: '1.5px solid #d5dee9', borderRadius: 8, fontSize: 13, background: '#fff', color: '#0d1b2e', outline: 'none' }} />
                               <button type="button" onClick={() => setShow(!show)} style={{ position: 'absolute', right: 10, top: '50%', transform: 'translateY(-50%)', background: 'none', border: 'none', cursor: 'pointer', color: '#94a3b8' }}>
                                 {show ? <EyeOff size={14} /> : <Eye size={14} />}
                               </button>
@@ -684,7 +684,7 @@ export default function AccountPage({ authUser, onUserUpdate, initialTab = 'info
                       </div>
                       <button type="button" onClick={handleChangePassword} disabled={savingPwd} style={{
                         marginTop: 14, padding: '10px 20px',
-                        background: 'linear-gradient(135deg,#f4c04a,#e8a020)', border: 'none', borderRadius: 8,
+                        background: 'linear-gradient(135deg,#f4c04a,#f4c04a)', border: 'none', borderRadius: 8,
                         fontSize: 13, fontWeight: 700, color: '#0d1b2e', cursor: savingPwd ? 'not-allowed' : 'pointer', opacity: savingPwd ? 0.7 : 1
                       }}>
                         {savingPwd ? 'Đang lưu...' : 'Cập nhật mật khẩu'}
@@ -709,7 +709,7 @@ export default function AccountPage({ authUser, onUserUpdate, initialTab = 'info
           {activeTab === 'member' && (
             <div style={{ padding: 32 }}>
               {membershipLoading && !membershipCard ? <LoadingState text="Đang cấp và tải thông tin thẻ thành viên..." /> : <>
-              <div style={{ borderRadius: 20, padding: '30px 28px', background: 'linear-gradient(135deg,#0d1b2e,#1a3050 60%,#0f2540)', position: 'relative', overflow: 'hidden', marginBottom: 20, boxShadow: '0 16px 48px rgba(13,27,46,.35)' }}>
+              <div style={{ borderRadius: 20, padding: '30px 28px', background: 'linear-gradient(135deg,#0d1b2e,#0d1b2e 60%,#0d1b2e)', position: 'relative', overflow: 'hidden', marginBottom: 20, boxShadow: '0 16px 48px rgba(13,27,46,.35)' }}>
                 <div style={{ position:'absolute', width:220, height:220, border:'34px solid rgba(244,192,74,.10)', borderRadius:'50%', right:-68, top:-92 }} />
                 <div style={{ display:'flex', justifyContent:'space-between', gap:16, position:'relative', flexWrap:'wrap' }}>
                   <div><div style={{ fontSize:11, letterSpacing:3, color:'#f4c04a', fontWeight:800 }}>AURORA CINEMA</div><div style={{ fontSize:23, color:'#fff', fontWeight:900, marginTop:5 }}>Thẻ Thành Viên</div></div>
@@ -730,7 +730,7 @@ export default function AccountPage({ authUser, onUserUpdate, initialTab = 'info
                     ['Mã thành viên', membershipCard?.cardNumber || 'Đang cấp'], ['Hạng thẻ', MEMBERSHIP_CONFIG[membershipCard?.membershipLevel || memberLevel]?.label || 'Thành Viên'], ['Ngày kích hoạt', formatShortDate(membershipCard?.activatedAt)],
                     ['Tổng chi tiêu', formatMoney(membershipCard?.totalSpent || 0)], ['Điểm tích lũy', `${membershipCard?.pointsAccumulated ?? 0} điểm`], ['Điểm đã dùng', `${membershipCard?.pointsUsed ?? 0} điểm`],
                     ['Điểm khả dụng', `${membershipCard?.pointsAvailable ?? profile?.points ?? 0} điểm`], ['Điểm sắp hết hạn', `${membershipCard?.pointsExpiring ?? 0} điểm`], ['Hạn thẻ', formatShortDate(membershipCard?.expiresAt)]
-                  ].map(([label, value]) => <div key={label} style={{ padding:'16px 20px', borderRight:'1px solid #edf1f5', borderBottom:'1px solid #edf1f5' }}><div style={{ fontSize:10.5, color:'#7b8ba0', fontWeight:800, letterSpacing:.5 }}>{label.toUpperCase()}</div><div style={{ marginTop:6, color:'#172b4d', fontSize:14, fontWeight:800 }}>{value}</div></div>)}
+                  ].map(([label, value]) => <div key={label} style={{ padding:'16px 20px', borderRight:'1px solid #edf1f5', borderBottom:'1px solid #edf1f5' }}><div style={{ fontSize:10.5, color:'#7b8ba0', fontWeight:800, letterSpacing:.5 }}>{label.toUpperCase()}</div><div style={{ marginTop:6, color:'#0d1b2e', fontSize:14, fontWeight:800 }}>{value}</div></div>)}
                 </div>
               </div>
               {(membershipCard?.nextLevel || memberCfg.next) && (
@@ -740,7 +740,7 @@ export default function AccountPage({ authUser, onUserUpdate, initialTab = 'info
                     <span style={{ fontSize: 12, color: '#64748b' }}>{membershipCard?.pointsAvailable ?? profile?.points ?? 0} / {membershipCard?.nextThreshold || memberCfg.nextPoints} điểm</span>
                   </div>
                   <div style={{ background: '#f1f5f9', borderRadius: 99, height: 8, overflow: 'hidden' }}>
-                    <div style={{ height: '100%', borderRadius: 99, background: 'linear-gradient(90deg,#f4c04a,#e8a020)', width: `${Math.min(100, ((membershipCard?.pointsAvailable ?? profile?.points ?? 0) / (membershipCard?.nextThreshold || memberCfg.nextPoints)) * 100)}%`, transition: 'width 1s ease' }} />
+                    <div style={{ height: '100%', borderRadius: 99, background: 'linear-gradient(90deg,#f4c04a,#f4c04a)', width: `${Math.min(100, ((membershipCard?.pointsAvailable ?? profile?.points ?? 0) / (membershipCard?.nextThreshold || memberCfg.nextPoints)) * 100)}%`, transition: 'width 1s ease' }} />
                   </div>
                   <div style={{ fontSize: 12, color: '#64748b', marginTop: 8 }}>
                     Cần thêm <strong style={{ color: '#f4c04a' }}>{membershipCard?.pointsToNextLevel ?? Math.max(0, memberCfg.nextPoints - (profile?.points || 0))}</strong> điểm để lên hạng
@@ -758,7 +758,7 @@ export default function AccountPage({ authUser, onUserUpdate, initialTab = 'info
                 ].map((b, i) => (
                   <div key={i} style={{ display: 'flex', alignItems: 'center', gap: 12, padding: '10px 0', borderBottom: i < 3 ? '1px solid #f1f5f9' : 'none' }}>
                     <span style={{ fontSize: 20 }}>{b.icon}</span>
-                    <span style={{ fontSize: 13.5, color: '#1a2332' }}>{b.text}</span>
+                    <span style={{ fontSize: 13.5, color: '#0d1b2e' }}>{b.text}</span>
                     <Check size={14} color="#22c55e" style={{ marginLeft: 'auto', flexShrink: 0 }} />
                   </div>
                 ))}
@@ -777,15 +777,15 @@ export default function AccountPage({ authUser, onUserUpdate, initialTab = 'info
                 {bookings.map(booking => {
                   const isPaid = booking.status === 'PAID';
                   return <div key={booking.id} style={{ border: '1px solid #e2e8f0', borderRadius: 14, padding: 18, background: '#fff', display: 'flex', gap: 16, alignItems: 'center', flexWrap: 'wrap' }}>
-                    <div style={{ width: 48, height: 48, borderRadius: 12, background: '#fff7dd', display: 'grid', placeItems: 'center', flexShrink: 0 }}><Ticket size={23} color="#d99216" /></div>
+                    <div style={{ width: 48, height: 48, borderRadius: 12, background: '#fff7dd', display: 'grid', placeItems: 'center', flexShrink: 0 }}><Ticket size={23} color="#f4c04a" /></div>
                     <div style={{ flex: 1, minWidth: 210 }}>
                       <div style={{ fontSize: 15, fontWeight: 800, color: '#0d1b2e' }}>{booking.movieTitle}</div>
                       <div style={{ fontSize: 12.5, color: '#64748b', marginTop: 5 }}>{booking.theaterName} · {booking.screenName}</div>
                       <div style={{ fontSize: 12.5, color: '#64748b', marginTop: 3 }}>{formatDateTime(booking.startsAt)} · Ghế {booking.seats || '—'}</div>
                     </div>
                     <div style={{ minWidth: 120 }}><div style={{ fontSize: 11, color: '#94a3b8', fontWeight: 700 }}>MÃ ĐẶT VÉ</div><div style={{ fontWeight: 800, color: '#0d1b2e', fontSize: 13 }}>{booking.code}</div></div>
-                    <div style={{ minWidth: 115 }}><div style={{ fontSize: 11, color: '#94a3b8', fontWeight: 700 }}>TỔNG TIỀN</div><div style={{ fontWeight: 800, color: '#d99216', fontSize: 14 }}>{formatMoney(booking.totalAmount)}</div></div>
-                    <span style={{ fontSize: 11, fontWeight: 800, padding: '5px 10px', borderRadius: 20, color: isPaid ? '#166534' : '#9a6700', background: isPaid ? '#dcfce7' : '#fef3c7' }}>{isPaid ? 'ĐÃ THANH TOÁN' : booking.status}</span>
+                    <div style={{ minWidth: 115 }}><div style={{ fontSize: 11, color: '#94a3b8', fontWeight: 700 }}>TỔNG TIỀN</div><div style={{ fontWeight: 800, color: '#f4c04a', fontSize: 14 }}>{formatMoney(booking.totalAmount)}</div></div>
+                    <span style={{ fontSize: 11, fontWeight: 800, padding: '5px 10px', borderRadius: 20, color: isPaid ? '#166534' : '#f4c04a', background: isPaid ? '#dcfce7' : '#fef3c7' }}>{isPaid ? 'ĐÃ THANH TOÁN' : booking.status}</span>
                   </div>;
                 })}
               </div>}
@@ -796,8 +796,8 @@ export default function AccountPage({ authUser, onUserUpdate, initialTab = 'info
           {activeTab === 'points' && (
             <div style={{ padding: 32 }}>
               <PageHeading icon={Sparkles} title="Điểm thưởng Aurora" subtitle="Tích điểm sau mỗi giao dịch và dùng điểm để nhận ưu đãi." />
-              <div style={{ borderRadius: 18, padding: 26, background: 'linear-gradient(135deg,#fff7dc,#fff 65%)', border: '1px solid #f6d77d', display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 20, flexWrap: 'wrap', marginBottom: 22 }}>
-                <div><div style={{ fontSize: 12, fontWeight: 800, color: '#9a6700', letterSpacing: 1 }}>SỐ DƯ ĐIỂM HIỆN TẠI</div><div style={{ fontSize: 38, fontWeight: 900, color: '#d99216', marginTop: 3 }}>{profile?.points || 0} <span style={{ fontSize: 15 }}>điểm</span></div><div style={{ color: '#64748b', fontSize: 13 }}>1.000đ chi tiêu hợp lệ = 1 điểm Aurora</div></div>
+              <div style={{ borderRadius: 18, padding: 26, background: 'linear-gradient(135deg,#fff7dc,#fff 65%)', border: '1px solid #f4c04a', display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 20, flexWrap: 'wrap', marginBottom: 22 }}>
+                <div><div style={{ fontSize: 12, fontWeight: 800, color: '#f4c04a', letterSpacing: 1 }}>SỐ DƯ ĐIỂM HIỆN TẠI</div><div style={{ fontSize: 38, fontWeight: 900, color: '#f4c04a', marginTop: 3 }}>{profile?.points || 0} <span style={{ fontSize: 15 }}>điểm</span></div><div style={{ color: '#64748b', fontSize: 13 }}>1.000đ chi tiêu hợp lệ = 1 điểm Aurora</div></div>
                 <div style={{ width: 64, height: 64, borderRadius: '50%', background: '#f4c04a', display: 'grid', placeItems: 'center', boxShadow: '0 8px 20px rgba(244,192,74,.35)' }}><Star size={31} fill="#0d1b2e" color="#0d1b2e" /></div>
               </div>
               <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3,minmax(0,1fr))', gap: 14, marginBottom: 24 }}>
@@ -812,7 +812,7 @@ export default function AccountPage({ authUser, onUserUpdate, initialTab = 'info
             <div style={{ padding: 32 }}>
               <PageHeading icon={Gift} title="Voucher của tôi" subtitle="Lưu mã ưu đãi để áp dụng khi thanh toán vé." />
               <div style={{ display: 'flex', gap: 10, padding: 16, background: '#f8fafd', border: '1px solid #e8edf4', borderRadius: 14, marginBottom: 22, flexWrap: 'wrap' }}>
-                <Tag size={20} color="#d99216" style={{ marginTop: 8 }} /><input value={voucherCode} onChange={e => setVoucherCode(e.target.value.toUpperCase())} placeholder="Nhập mã voucher của bạn" style={{ flex: 1, minWidth: 200, border: '1px solid #d5dee9', borderRadius: 9, padding: '10px 12px', outline: 'none', fontSize: 13 }} /><button onClick={() => setVoucherCode('')} style={{ background: '#f4c04a', border: 'none', borderRadius: 9, padding: '0 18px', fontWeight: 800, color: '#0d1b2e', cursor: 'pointer' }}>ÁP DỤNG</button>
+                <Tag size={20} color="#f4c04a" style={{ marginTop: 8 }} /><input value={voucherCode} onChange={e => setVoucherCode(e.target.value.toUpperCase())} placeholder="Nhập mã voucher của bạn" style={{ flex: 1, minWidth: 200, border: '1px solid #d5dee9', borderRadius: 9, padding: '10px 12px', outline: 'none', fontSize: 13 }} /><button onClick={() => setVoucherCode('')} style={{ background: '#f4c04a', border: 'none', borderRadius: 9, padding: '0 18px', fontWeight: 800, color: '#0d1b2e', cursor: 'pointer' }}>ÁP DỤNG</button>
               </div>
               <EmptyState icon="🎁" title="Bạn chưa có voucher khả dụng" text="Voucher được gửi từ các chương trình ưu đãi của Aurora Cinema sẽ hiển thị tại đây." />
               <div style={{ marginTop: 24, borderTop: '1px solid #e8edf4', paddingTop: 20 }}><SectionTitle>MẸO SỬ DỤNG VOUCHER</SectionTitle><div style={{ display: 'grid', gap: 10 }}>{['Nhập mã voucher tại bước thanh toán để áp dụng ưu đãi.', 'Mỗi voucher chỉ dùng một lần và có thời hạn riêng.', 'Không thể cộng dồn nhiều voucher trong cùng một đơn hàng.'].map((text, i) => <div key={text} style={{ display: 'flex', gap: 10, color: '#475569', fontSize: 13 }}><CheckCircle size={17} color="#22a55a" style={{ flexShrink: 0 }} />{text}</div>)}</div></div>
@@ -1035,13 +1035,13 @@ function formatDateTime(value: string) {
 
 function PageHeading({ icon: Icon, title, subtitle }: { icon: any; title: string; subtitle: string }) {
   return <div style={{ display: 'flex', alignItems: 'center', gap: 12, marginBottom: 24 }}>
-    <div style={{ width: 42, height: 42, display: 'grid', placeItems: 'center', borderRadius: 12, background: '#fff7dd' }}><Icon size={21} color="#d99216" /></div>
+    <div style={{ width: 42, height: 42, display: 'grid', placeItems: 'center', borderRadius: 12, background: '#fff7dd' }}><Icon size={21} color="#f4c04a" /></div>
     <div><div style={{ fontSize: 20, fontWeight: 850, color: '#0d1b2e' }}>{title}</div><div style={{ fontSize: 12.5, color: '#64748b', marginTop: 2 }}>{subtitle}</div></div>
   </div>;
 }
 
 function EmptyState({ icon, title, text, compact = false }: { icon: string; title: string; text: string; compact?: boolean }) {
-  return <div style={{ padding: compact ? '24px 16px' : '44px 20px', textAlign: 'center', border: '1px dashed #d5dee9', borderRadius: 14, background: '#fbfdff' }}><div style={{ fontSize: compact ? 32 : 44, marginBottom: 10 }}>{icon}</div><div style={{ fontWeight: 800, fontSize: 15, color: '#1a2332', marginBottom: 5 }}>{title}</div><div style={{ fontSize: 13, color: '#64748b', maxWidth: 400, margin: '0 auto' }}>{text}</div></div>;
+  return <div style={{ padding: compact ? '24px 16px' : '44px 20px', textAlign: 'center', border: '1px dashed #d5dee9', borderRadius: 14, background: '#fbfdff' }}><div style={{ fontSize: compact ? 32 : 44, marginBottom: 10 }}>{icon}</div><div style={{ fontWeight: 800, fontSize: 15, color: '#0d1b2e', marginBottom: 5 }}>{title}</div><div style={{ fontSize: 13, color: '#64748b', maxWidth: 400, margin: '0 auto' }}>{text}</div></div>;
 }
 
 function LoadingState({ text }: { text: string }) {

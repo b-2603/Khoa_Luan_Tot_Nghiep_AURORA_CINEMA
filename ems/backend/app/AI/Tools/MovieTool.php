@@ -43,12 +43,12 @@ class MovieTool implements AITool
         if ($cleanQuery === '') $cleanQuery = $query;
 
         if ($cleanQuery === '') {
-            $stmt = $pdo->query("SELECT id, title, original_title, genre, duration, age_rating, director, language, status, description FROM movies LIMIT 6");
+            $stmt = $pdo->query("SELECT id, title, original_title, genre, duration, age_rating, director, language, status, description FROM ems_movies LIMIT 6");
             $movies = $stmt->fetchAll(PDO::FETCH_ASSOC);
         } else {
             $stmt = $pdo->prepare("
                 SELECT id, title, original_title, genre, duration, age_rating, director, cast, language, country, status, description 
-                FROM movies 
+                FROM ems_movies
                 WHERE title LIKE ? OR original_title LIKE ? OR genre LIKE ? OR director LIKE ? OR ? LIKE CONCAT('%', title, '%')
                 LIMIT 10
             ");
@@ -62,7 +62,7 @@ class MovieTool implements AITool
                 foreach ($words as $w) {
                     $w = trim($w);
                     if (mb_strlen($w) >= 3) {
-                        $stmtW = $pdo->prepare("SELECT id, title, original_title, genre, duration, age_rating, director, cast, language, country, status, description FROM movies WHERE title LIKE ? OR original_title LIKE ? LIMIT 6");
+                        $stmtW = $pdo->prepare("SELECT id, title, original_title, genre, duration, age_rating, director, cast, language, country, status, description FROM ems_movies WHERE title LIKE ? OR original_title LIKE ? LIMIT 6");
                         $stmtW->execute(["%{$w}%", "%{$w}%"]);
                         $found = $stmtW->fetchAll(PDO::FETCH_ASSOC);
                         if (!empty($found)) {

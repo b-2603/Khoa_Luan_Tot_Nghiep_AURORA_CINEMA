@@ -52,9 +52,9 @@ class SeatTool implements AITool
         $stmtSt = $pdo->prepare("
             SELECT s.id, s.room_id, s.start_at, s.price,
                    m.title AS movie_title, r.name AS room_name, r.type AS room_type, r.capacity
-            FROM showtimes s
-            JOIN movies m ON s.movie_id = m.id
-            JOIN rooms r ON s.room_id = r.id
+            FROM ems_showtimes s
+            JOIN ems_movies m ON s.movie_id = m.id
+            JOIN ems_rooms r ON s.room_id = r.id
             WHERE s.id = ?
         ");
         $stmtSt->execute([$showtimeId]);
@@ -69,8 +69,8 @@ class SeatTool implements AITool
         // Lấy danh sách ID ghế đã được đặt trong các booking confirmed/paid
         $stmtBooked = $pdo->prepare("
             SELECT bs.seat_id
-            FROM booking_seats bs
-            JOIN bookings b ON bs.booking_id = b.id
+            FROM ems_booking_seats bs
+            JOIN ems_bookings b ON bs.booking_id = b.id
             WHERE b.showtime_id = ? AND b.status IN ('confirmed', 'paid', 'pending')
         ");
         $stmtBooked->execute([$showtimeId]);
@@ -79,7 +79,7 @@ class SeatTool implements AITool
         // Lấy toàn bộ ghế của phòng
         $stmtSeats = $pdo->prepare("
             SELECT id, row, number, seat_type, status
-            FROM seats
+            FROM ems_seats
             WHERE room_id = ? AND status = 'active'
             ORDER BY row ASC, number ASC
         ");

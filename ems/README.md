@@ -68,7 +68,21 @@ EMS_AURORA/
 | **Nhân viên Rạp (Staff)** | **Nguyễn Văn Minh** | `0901234567` | `8888` | Vé & CSKH • Điểm danh Face ID, xem ca làm, đăng ký ca, học tập & thi định kỳ |
 | **Nhân viên Rạp (Staff)** | **Trần Thị Mai** | `0912345678` | `8888` | Bắp nước & Concession • Điểm danh Face ID, xem ca làm, đăng ký ca, học tập & thi |
 | **Nhân viên Rạp (Staff)** | **Lê Hoàng Nam** | `0923456789` | `8888` | Kỹ thuật Phim & Âm thanh • Điểm danh Face ID, xem ca làm, đăng ký ca, học tập |
-| **Nhân viên Rạp (Staff)** | **Nguyễn Trần Thái Bảo** | `0395852972` | `8888` | Nhân sự vận hành tại cụm rạp |
+| **Nhân viên Rạp (Staff)** | **Nguyễn Trần Thái Bảo** | `0328754062` | `8888` | Nhân sự vận hành tại cụm rạp |
+
+---
+
+## 🗄️ Cơ Sở Dữ Liệu Dùng Chung
+
+EMS kết nối tới database `aurora_db`. Toàn bộ bảng thuộc phân hệ này dùng tiền tố `ems_` để không ghi đè các bảng `users`, `movies`, `bookings`, `seats`, `showtimes` và dữ liệu của các phân hệ hiện có.
+
+Migration hợp nhất schema và dữ liệu EMS:
+
+```text
+backend/database/merge_aurora_ems_into_aurora_db.sql
+```
+
+File `.env` của backend cần đặt `DB_DATABASE=aurora_db`.
 
 ---
 

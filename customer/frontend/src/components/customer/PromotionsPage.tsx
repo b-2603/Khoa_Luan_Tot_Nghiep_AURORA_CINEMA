@@ -115,7 +115,7 @@ export default function PromotionsPage({ language, promotions, loading, error, o
 
   function renderArtwork(promotion: Promotion, featuredCard = false) {
     const Icon = categoryIcon(promotion.category);
-    return <div className={`offers-artwork ${featuredCard ? 'featured' : ''}`} style={{ '--offer-color': promotion.themeColor || '#D89718' } as CSSProperties}>
+    return <div className={`offers-artwork ${featuredCard ? 'featured' : ''}`} style={{ '--offer-color': promotion.themeColor || '#f4c04a' } as CSSProperties}>
       {promotion.imageUrl ? <img src={encodeURI(promotion.imageUrl)} alt="" /> : <>
         <div className="offers-artwork-orbit" />
         <Icon size={featuredCard ? 42 : 28} />
@@ -133,7 +133,7 @@ export default function PromotionsPage({ language, promotions, loading, error, o
       </header>
 
       {loading ? <section className="offers-loading" aria-label={t('Đang tải ưu đãi', 'Loading offers')}><i/><i/><i/></section> : error ? <section className="offers-state"><Gift size={30}/><h2>{t('Chưa thể tải ưu đãi', 'Offers are unavailable')}</h2><p>{error}</p><button onClick={onRetry}>{t('Thử lại', 'Try again')}</button></section> : promotions.length === 0 ? <section className="offers-state"><Gift size={30}/><h2>{t('Chưa có ưu đãi đang hoạt động', 'No active offers')}</h2><p>{t('Các chương trình mới sẽ xuất hiện tại đây ngay khi được phát hành.', 'New campaigns will appear here as soon as they launch.')}</p></section> : <>
-        {featured && <section className="offers-featured" style={{ '--offer-color': featured.themeColor || '#D89718' } as CSSProperties}>
+        {featured && <section className="offers-featured" style={{ '--offer-color': featured.themeColor || '#f4c04a' } as CSSProperties}>
           <div className="offers-featured-copy"><span>{featured.badge || t('ƯU ĐÃI NỔI BẬT', 'FEATURED OFFER')}</span><h2>{featured.name}</h2><p>{featured.description}</p><div className="offers-featured-facts"><b>{offerValue(featured, language)}</b><small><CalendarDays size={14}/>{t('Đến', 'Until')} {dateLabel(featured.endsAt, language)}</small>{featured.minOrderAmount ? <small><Ticket size={14}/>{t('Đơn từ', 'Orders from')} {money(featured.minOrderAmount)}</small> : null}</div><div className="offers-featured-actions"><button onClick={() => openPromotion(featured)}>{t('Xem chi tiết', 'View details')}<ArrowRight size={15}/></button><button onClick={() => copyCode(featured.code)}>{copiedCode === featured.code ? <Check size={15}/> : <Copy size={15}/>} {copiedCode === featured.code ? t('Đã sao chép', 'Copied') : featured.code}</button></div></div>
           {renderArtwork(featured, true)}
         </section>}

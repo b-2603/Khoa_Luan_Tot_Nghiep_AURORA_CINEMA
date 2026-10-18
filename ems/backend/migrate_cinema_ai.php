@@ -24,7 +24,7 @@ try {
 // 1. TẠO CÁC BẢNG DỮ LIỆU RẠP CHIẾU PHIM (CINEMA DB)
 $tablesSql = "
 -- 1. movies
-CREATE TABLE IF NOT EXISTS `movies` (
+CREATE TABLE IF NOT EXISTS `ems_movies` (
   `id` INT AUTO_INCREMENT PRIMARY KEY,
   `title` VARCHAR(255) NOT NULL,
   `original_title` VARCHAR(255) NULL,
@@ -44,7 +44,7 @@ CREATE TABLE IF NOT EXISTS `movies` (
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
 -- 2. rooms
-CREATE TABLE IF NOT EXISTS `rooms` (
+CREATE TABLE IF NOT EXISTS `ems_rooms` (
   `id` INT AUTO_INCREMENT PRIMARY KEY,
   `name` VARCHAR(50) NOT NULL,
   `type` VARCHAR(50) NOT NULL DEFAULT 'Standard 2D',
@@ -55,7 +55,7 @@ CREATE TABLE IF NOT EXISTS `rooms` (
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
 -- 3. seats
-CREATE TABLE IF NOT EXISTS `seats` (
+CREATE TABLE IF NOT EXISTS `ems_seats` (
   `id` INT AUTO_INCREMENT PRIMARY KEY,
   `room_id` INT NOT NULL,
   `row` VARCHAR(5) NOT NULL,
@@ -69,7 +69,7 @@ CREATE TABLE IF NOT EXISTS `seats` (
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
 -- 4. showtimes
-CREATE TABLE IF NOT EXISTS `showtimes` (
+CREATE TABLE IF NOT EXISTS `ems_showtimes` (
   `id` INT AUTO_INCREMENT PRIMARY KEY,
   `movie_id` INT NOT NULL,
   `room_id` INT NOT NULL,
@@ -85,7 +85,7 @@ CREATE TABLE IF NOT EXISTS `showtimes` (
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
 -- 5. bookings
-CREATE TABLE IF NOT EXISTS `bookings` (
+CREATE TABLE IF NOT EXISTS `ems_bookings` (
   `id` INT AUTO_INCREMENT PRIMARY KEY,
   `user_id` BIGINT UNSIGNED NULL,
   `showtime_id` INT NOT NULL,
@@ -102,7 +102,7 @@ CREATE TABLE IF NOT EXISTS `bookings` (
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
 -- 6. booking_seats
-CREATE TABLE IF NOT EXISTS `booking_seats` (
+CREATE TABLE IF NOT EXISTS `ems_booking_seats` (
   `id` INT AUTO_INCREMENT PRIMARY KEY,
   `booking_id` INT NOT NULL,
   `seat_id` INT NOT NULL,
@@ -114,7 +114,7 @@ CREATE TABLE IF NOT EXISTS `booking_seats` (
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
 -- 7. ai_conversations
-CREATE TABLE IF NOT EXISTS `ai_conversations` (
+CREATE TABLE IF NOT EXISTS `ems_ai_conversations` (
   `id` INT AUTO_INCREMENT PRIMARY KEY,
   `user_id` BIGINT UNSIGNED NULL,
   `title` VARCHAR(255) NULL,
@@ -123,7 +123,7 @@ CREATE TABLE IF NOT EXISTS `ai_conversations` (
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
 -- 8. ai_messages
-CREATE TABLE IF NOT EXISTS `ai_messages` (
+CREATE TABLE IF NOT EXISTS `ems_ai_messages` (
   `id` INT AUTO_INCREMENT PRIMARY KEY,
   `conversation_id` INT NOT NULL,
   `role` ENUM('user', 'assistant', 'tool', 'system') NOT NULL,
@@ -135,7 +135,7 @@ CREATE TABLE IF NOT EXISTS `ai_messages` (
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
 -- 9. ai_tool_logs
-CREATE TABLE IF NOT EXISTS `ai_tool_logs` (
+CREATE TABLE IF NOT EXISTS `ems_ai_tool_logs` (
   `id` INT AUTO_INCREMENT PRIMARY KEY,
   `user_id` BIGINT UNSIGNED NULL,
   `conversation_id` INT NULL,
@@ -151,7 +151,7 @@ CREATE TABLE IF NOT EXISTS `ai_tool_logs` (
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
 -- 10. ai_documents (RAG)
-CREATE TABLE IF NOT EXISTS `ai_documents` (
+CREATE TABLE IF NOT EXISTS `ems_ai_documents` (
   `id` INT AUTO_INCREMENT PRIMARY KEY,
   `name` VARCHAR(255) NOT NULL,
   `category` VARCHAR(50) NOT NULL, -- POS, TMS, EMS, NGHIEP-VU, QUY-DINH
@@ -164,7 +164,7 @@ CREATE TABLE IF NOT EXISTS `ai_documents` (
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
 -- 11. ai_document_chunks (RAG Knowledge Chunks)
-CREATE TABLE IF NOT EXISTS `ai_document_chunks` (
+CREATE TABLE IF NOT EXISTS `ems_ai_document_chunks` (
   `id` INT AUTO_INCREMENT PRIMARY KEY,
   `document_id` INT NOT NULL,
   `content` TEXT NOT NULL,
@@ -175,7 +175,7 @@ CREATE TABLE IF NOT EXISTS `ai_document_chunks` (
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
 -- 12. ai_feedback
-CREATE TABLE IF NOT EXISTS `ai_feedback` (
+CREATE TABLE IF NOT EXISTS `ems_ai_feedback` (
   `id` INT AUTO_INCREMENT PRIMARY KEY,
   `message_id` INT NULL,
   `user_id` BIGINT UNSIGNED NULL,
@@ -190,7 +190,7 @@ $pdo->exec($tablesSql);
 echo "[1/4] Created Cinema DB + AI Tables successfully.\n";
 
 // 2. SEED PHIM (MOVIES)
-$movieCount = $pdo->query("SELECT COUNT(*) FROM movies")->fetchColumn();
+$movieCount = $pdo->query("SELECT COUNT(*) FROM ems_movies")->fetchColumn();
 if ($movieCount == 0) {
     $movies = [
         [
@@ -285,7 +285,7 @@ if ($movieCount == 0) {
         ]
     ];
 
-    $stmt = $pdo->prepare("INSERT INTO movies (title, original_title, description, genre, duration, age_rating, release_date, director, cast, language, country, poster_url, status) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)");
+    $stmt = $pdo->prepare("INSERT INTO ems_movies (title, original_title, description, genre, duration, age_rating, release_date, director, cast, language, country, poster_url, status) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)");
     foreach ($movies as $m) {
         $stmt->execute([
             $m['title'], $m['original_title'], $m['description'], $m['genre'],
@@ -297,7 +297,7 @@ if ($movieCount == 0) {
 }
 
 // 3. SEED ROOMS & SEATS
-$roomCount = $pdo->query("SELECT COUNT(*) FROM rooms")->fetchColumn();
+$roomCount = $pdo->query("SELECT COUNT(*) FROM ems_rooms")->fetchColumn();
 if ($roomCount == 0) {
     $rooms = [
         ['P01', 'Phòng Chiếu 1 (Standard 2D)', 90],
@@ -306,8 +306,8 @@ if ($roomCount == 0) {
         ['P04', 'Phòng Chiếu 4 (4DX Motion & Effects)', 60],
         ['P05', 'Phòng Chiếu 5 (Dolby Atmos Cinema)', 105]
     ];
-    $stmtRoom = $pdo->prepare("INSERT INTO rooms (name, type, capacity, status) VALUES (?, ?, ?, 'active')");
-    $stmtSeat = $pdo->prepare("INSERT INTO seats (room_id, row, number, seat_type, status) VALUES (?, ?, ?, ?, 'active')");
+    $stmtRoom = $pdo->prepare("INSERT INTO ems_rooms (name, type, capacity, status) VALUES (?, ?, ?, 'active')");
+    $stmtSeat = $pdo->prepare("INSERT INTO ems_seats (room_id, row, number, seat_type, status) VALUES (?, ?, ?, ?, 'active')");
 
     foreach ($rooms as $r) {
         $stmtRoom->execute([$r[0], $r[1], $r[2]]);
@@ -329,16 +329,16 @@ if ($roomCount == 0) {
 }
 
 // 4. SEED SHOWTIMES & BOOKINGS
-$showtimeCount = $pdo->query("SELECT COUNT(*) FROM showtimes")->fetchColumn();
+$showtimeCount = $pdo->query("SELECT COUNT(*) FROM ems_showtimes")->fetchColumn();
 if ($showtimeCount == 0) {
-    $movieIds = $pdo->query("SELECT id FROM movies")->fetchAll(PDO::FETCH_COLUMN);
-    $roomIds = $pdo->query("SELECT id FROM rooms")->fetchAll(PDO::FETCH_COLUMN);
+    $movieIds = $pdo->query("SELECT id FROM ems_movies")->fetchAll(PDO::FETCH_COLUMN);
+    $roomIds = $pdo->query("SELECT id FROM ems_rooms")->fetchAll(PDO::FETCH_COLUMN);
 
     $today = date('Y-m-d');
     $times = ['10:00:00', '13:30:00', '16:45:00', '19:30:00', '21:50:00'];
     $prices = [85000, 95000, 110000, 120000, 140000];
 
-    $stmtSt = $pdo->prepare("INSERT INTO showtimes (movie_id, room_id, start_at, end_at, price, status) VALUES (?, ?, ?, ?, ?, 'active')");
+    $stmtSt = $pdo->prepare("INSERT INTO ems_showtimes (movie_id, room_id, start_at, end_at, price, status) VALUES (?, ?, ?, ?, ?, 'active')");
     
     $createdShowtimeIds = [];
     foreach ($movieIds as $mIdx => $mId) {
@@ -353,8 +353,8 @@ if ($showtimeCount == 0) {
     }
 
     // Seed sample bookings
-    $stmtBk = $pdo->prepare("INSERT INTO bookings (user_id, showtime_id, booking_code, customer_name, customer_phone, status, total_amount) VALUES (?, ?, ?, ?, ?, 'confirmed', ?)");
-    $stmtBkSeat = $pdo->prepare("INSERT INTO booking_seats (booking_id, seat_id, price) VALUES (?, ?, ?)");
+    $stmtBk = $pdo->prepare("INSERT INTO ems_bookings (user_id, showtime_id, booking_code, customer_name, customer_phone, status, total_amount) VALUES (?, ?, ?, ?, ?, 'confirmed', ?)");
+    $stmtBkSeat = $pdo->prepare("INSERT INTO ems_booking_seats (booking_id, seat_id, price) VALUES (?, ?, ?)");
 
     $sampleBookings = [
         ['BK20261006001', 'Nguyễn Minh Tuấn', '0912345678', 220000, ['C10', 'C11']],
@@ -368,11 +368,11 @@ if ($showtimeCount == 0) {
         $bkId = $pdo->lastInsertId();
 
         // Lấy phòng của suất này
-        $roomId = $pdo->query("SELECT room_id FROM showtimes WHERE id = {$stId}")->fetchColumn();
+        $roomId = $pdo->query("SELECT room_id FROM ems_showtimes WHERE id = {$stId}")->fetchColumn();
         foreach ($sb[4] as $code) {
             $row = substr($code, 0, 1);
             $num = intval(substr($code, 1));
-            $seatId = $pdo->query("SELECT id FROM seats WHERE room_id = {$roomId} AND row = '{$row}' AND number = {$num} LIMIT 1")->fetchColumn();
+            $seatId = $pdo->query("SELECT id FROM ems_seats WHERE room_id = {$roomId} AND row = '{$row}' AND number = {$num} LIMIT 1")->fetchColumn();
             if ($seatId) {
                 $stmtBkSeat->execute([$bkId, $seatId, $sb[3] / count($sb[4])]);
             }
@@ -382,7 +382,7 @@ if ($showtimeCount == 0) {
 }
 
 // 5. SEED RAG KNOWLEDGE DOCUMENTS (BỘ NÃO 3)
-$docCount = $pdo->query("SELECT COUNT(*) FROM ai_documents")->fetchColumn();
+$docCount = $pdo->query("SELECT COUNT(*) FROM ems_ai_documents")->fetchColumn();
 if ($docCount == 0) {
     $docs = [
         [
@@ -424,8 +424,8 @@ if ($docCount == 0) {
         ]
     ];
 
-    $stmtDoc = $pdo->prepare("INSERT INTO ai_documents (name, category, content_summary, status) VALUES (?, ?, ?, 'active')");
-    $stmtChunk = $pdo->prepare("INSERT INTO ai_document_chunks (document_id, content, metadata) VALUES (?, ?, ?)");
+    $stmtDoc = $pdo->prepare("INSERT INTO ems_ai_documents (name, category, content_summary, status) VALUES (?, ?, ?, 'active')");
+    $stmtChunk = $pdo->prepare("INSERT INTO ems_ai_document_chunks (document_id, content, metadata) VALUES (?, ?, ?)");
 
     foreach ($docs as $d) {
         $stmtDoc->execute([$d['name'], $d['category'], $d['summary']]);

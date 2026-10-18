@@ -274,7 +274,7 @@ function PlanDetail({plan,onClose,review}:{plan:Row;onClose:()=>void;review?:Rea
   const rights=plan.release_rights_status==='verified'?'Đã xác minh':plan.release_rights_status==='not_required'?'Không yêu cầu':'Chờ xác minh';
   const classification=plan.content_classification_status==='verified'?'Đã kiểm tra':plan.content_classification_status==='supplement_required'?'Cần bổ sung':'Chờ kiểm tra';
   return <div className="mkt-modal-backdrop plan-review-backdrop" onMouseDown={e=>{if(e.currentTarget===e.target)onClose()}}><aside className="plan-detail plan-review-modal">
-    <header className="plan-review-hero" style={plan.banner_url?{backgroundImage:`linear-gradient(90deg,rgba(8,20,39,.97),rgba(13,31,57,.86)),url(${plan.banner_url})`}:undefined}>
+    <header className="plan-review-hero" style={plan.banner_url?{backgroundImage:`linear-gradient(90deg,rgba(13,27,46,.97),rgba(13,27,46,.86)),url(${plan.banner_url})`}:undefined}>
       <span className="plan-review-poster">{plan.poster_url?<img src={plan.poster_url} alt={`Poster ${plan.movie_title}`}/>:<Film/>}</span>
       <div className="plan-review-identity"><div><code>{plan.plan_code}</code><ApprovalBadge value={plan.approval_status}/></div><h3>{plan.plan_name}</h3><p>{plan.movie_title}<span>•</span>{plan.original_title||'Chưa có tên gốc'}</p><div className="plan-review-tags"><span>{plan.format||'Chưa có định dạng'}</span><span>{plan.age_rating||'P'}</span><span>{plan.duration_minutes||'—'} phút</span><span>{plan.production_country||'Chưa rõ quốc gia'}</span></div></div>
       <button type="button" aria-label="Đóng hồ sơ" onClick={onClose}><X/></button>

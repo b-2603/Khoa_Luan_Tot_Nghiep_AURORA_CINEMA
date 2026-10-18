@@ -4,14 +4,14 @@
  * Pending Actions (xác nhận hành động nguy hiểm), Conversation Context (bộ nhớ thực thể)
  * + Seed dữ liệu bán vé / doanh thu để AI có thể phân tích.
  */
-$pdo = new PDO("mysql:host=127.0.0.1;port=3306;dbname=aurora_ems;charset=utf8mb4", 'root', '', [
+$pdo = new PDO("mysql:host=127.0.0.1;port=3306;dbname=aurora_db;charset=utf8mb4", 'root', '', [
     PDO::ATTR_ERRMODE => PDO::ERRMODE_EXCEPTION,
     PDO::ATTR_DEFAULT_FETCH_MODE => PDO::FETCH_ASSOC,
 ]);
 echo "=== CONNECTED ===\n";
 
 $pdo->exec("
-CREATE TABLE IF NOT EXISTS `equipment` (
+CREATE TABLE IF NOT EXISTS `ems_equipment` (
   `id` INT AUTO_INCREMENT PRIMARY KEY,
   `room_id` INT NULL,
   `code` VARCHAR(50) NOT NULL UNIQUE,
@@ -25,7 +25,7 @@ CREATE TABLE IF NOT EXISTS `equipment` (
   INDEX (`room_id`)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
-CREATE TABLE IF NOT EXISTS `equipment_incidents` (
+CREATE TABLE IF NOT EXISTS `ems_equipment_incidents` (
   `id` INT AUTO_INCREMENT PRIMARY KEY,
   `equipment_id` INT NOT NULL,
   `severity` ENUM('low','medium','high','critical') DEFAULT 'medium',
@@ -36,7 +36,7 @@ CREATE TABLE IF NOT EXISTS `equipment_incidents` (
   INDEX (`equipment_id`), INDEX (`status`)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
-CREATE TABLE IF NOT EXISTS `pos_transactions` (
+CREATE TABLE IF NOT EXISTS `ems_pos_transactions` (
   `id` INT AUTO_INCREMENT PRIMARY KEY,
   `code` VARCHAR(30) NOT NULL UNIQUE,
   `type` ENUM('ticket','combo','refund') NOT NULL,
@@ -51,7 +51,7 @@ CREATE TABLE IF NOT EXISTS `pos_transactions` (
   INDEX (`created_at`), INDEX (`type`)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
-CREATE TABLE IF NOT EXISTS `ai_pending_actions` (
+CREATE TABLE IF NOT EXISTS `ems_ai_pending_actions` (
   `id` INT AUTO_INCREMENT PRIMARY KEY,
   `token` VARCHAR(40) NOT NULL UNIQUE,
   `conversation_id` INT NULL,
@@ -67,17 +67,17 @@ CREATE TABLE IF NOT EXISTS `ai_pending_actions` (
 ");
 
 // ALTER ai_conversations: thêm context (bộ nhớ thực thể)
-$col = $pdo->query("SHOW COLUMNS FROM ai_conversations LIKE 'context'")->fetch();
+$col = $pdo->query("SHOW COLUMNS FROM ems_ai_conversations LIKE 'context'")->fetch();
 if (!$col) {
-    $pdo->exec("ALTER TABLE ai_conversations ADD COLUMN `context` JSON NULL AFTER `title`");
+    $pdo->exec("ALTER TABLE ems_ai_conversations ADD COLUMN `context` JSON NULL AFTER `title`");
     echo "[+] Added ai_conversations.context\n";
 }
 echo "[1/4] Tables ready.\n";
 
 // ---- SEED EQUIPMENT ----
-if ($pdo->query("SELECT COUNT(*) FROM equipment")->fetchColumn() == 0) {
-    $rooms = $pdo->query("SELECT id, name FROM rooms ORDER BY id")->fetchAll();
-    $stmt = $pdo->prepare("INSERT INTO equipment (room_id, code, name, category, status, last_maintenance, next_maintenance) VALUES (?,?,?,?,?,?,?)");
+if ($pdo->query("SELECT COUNT(*) FROM ems_equipment")->fetchColumn() == 0) {
+    $rooms = $pdo->query("SELECT id, name FROM ems_rooms ORDER BY id")->fetchAll();
+    $stmt = $pdo->prepare("INSERT INTO ems_equipment (room_id, code, name, category, status, last_maintenance, next_maintenance) VALUES (?,?,?,?,?,?,?)");
     $eqStatus = [
         'P01' => ['operational', 'operational', 'operational'],
         'P02' => ['operational', 'warning', 'operational'],
@@ -92,9 +92,9 @@ if ($pdo->query("SELECT COUNT(*) FROM equipment")->fetchColumn() == 0) {
         $stmt->execute([$r['id'], "SND-$n", "Hệ thống âm thanh Dolby ($n)", 'audio', $st[1], date('Y-m-d', strtotime('-25 days')), date('Y-m-d', strtotime('+35 days'))]);
         $stmt->execute([$r['id'], "AC-$n", "Điều hòa trung tâm ($n)", 'hvac', $st[2], date('Y-m-d', strtotime('-60 days')), date('Y-m-d', strtotime('+5 days'))]);
     }
-    $eq = $pdo->query("SELECT id, code FROM equipment")->fetchAll(PDO::FETCH_KEY_PAIR);
+    $eq = $pdo->query("SELECT id, code FROM ems_equipment")->fetchAll(PDO::FETCH_KEY_PAIR);
     $ids = array_flip($eq);
-    $inc = $pdo->prepare("INSERT INTO equipment_incidents (equipment_id, severity, description, status, reported_at) VALUES (?,?,?,?,?)");
+    $inc = $pdo->prepare("INSERT INTO ems_equipment_incidents (equipment_id, severity, description, status, reported_at) VALUES (?,?,?,?,?)");
     $inc->execute([$ids['SND-P02'], 'low', 'Loa surround bên trái rè nhẹ ở dải tần thấp, cần cân chỉnh lại fader.', 'open', date('Y-m-d 09:15:00')]);
     $inc->execute([$ids['AC-P03'], 'high', 'Máy lạnh phòng IMAX P03 không đạt nhiệt độ 22°C, phòng nóng 28°C ảnh hưởng khách.', 'in_progress', date('Y-m-d 11:40:00')]);
     $inc->execute([$ids['PRJ-P04'], 'medium', 'Bảo trì định kỳ thay bóng Laser phòng 4DX, tạm ngưng suất chiếu.', 'in_progress', date('Y-m-d 08:00:00')]);
@@ -102,20 +102,20 @@ if ($pdo->query("SELECT COUNT(*) FROM equipment")->fetchColumn() == 0) {
 }
 
 // ---- SEED BOOKINGS HÔM NAY (để phân tích lấp đầy / doanh thu) ----
-$todayBookings = $pdo->query("SELECT COUNT(*) FROM bookings WHERE DATE(created_at)=CURDATE() AND booking_code LIKE 'GEN-%'")->fetchColumn();
+$todayBookings = $pdo->query("SELECT COUNT(*) FROM ems_bookings WHERE DATE(created_at)=CURDATE() AND booking_code LIKE 'GEN-%'")->fetchColumn();
 if ($todayBookings == 0) {
     mt_srand(2026);
-    $showtimes = $pdo->query("SELECT s.id, s.room_id, s.price, s.start_at FROM showtimes s WHERE DATE(s.start_at)=CURDATE() AND s.status='active'")->fetchAll();
-    $insB = $pdo->prepare("INSERT INTO bookings (user_id, showtime_id, booking_code, customer_name, customer_phone, status, total_amount, created_at) VALUES (NULL,?,?,?,?,'confirmed',?,?)");
-    $insS = $pdo->prepare("INSERT INTO booking_seats (booking_id, seat_id, price) VALUES (?,?,?)");
+    $showtimes = $pdo->query("SELECT s.id, s.room_id, s.price, s.start_at FROM ems_showtimes s WHERE DATE(s.start_at)=CURDATE() AND s.status='active'")->fetchAll();
+    $insB = $pdo->prepare("INSERT INTO ems_bookings (user_id, showtime_id, booking_code, customer_name, customer_phone, status, total_amount, created_at) VALUES (NULL,?,?,?,?,'confirmed',?,?)");
+    $insS = $pdo->prepare("INSERT INTO ems_booking_seats (booking_id, seat_id, price) VALUES (?,?,?)");
     $names = ['Nguyễn An','Trần Bình','Lê Châu','Phạm Dũng','Hoàng Em','Vũ Phúc','Đặng Giang','Bùi Hà','Đỗ Khoa','Ngô Lan'];
     $seq = 1;
     foreach ($showtimes as $st) {
         $hour = (int)date('H', strtotime($st['start_at']));
         // Giờ vàng tối đông hơn, giờ chiều vắng hơn
         $fill = $hour >= 19 ? mt_rand(55, 85) : ($hour >= 16 ? mt_rand(35, 55) : ($hour >= 13 ? mt_rand(10, 25) : mt_rand(15, 30)));
-        $seatIds = $pdo->query("SELECT id FROM seats WHERE room_id={$st['room_id']} AND status='active'")->fetchAll(PDO::FETCH_COLUMN);
-        $taken = $pdo->query("SELECT bs.seat_id FROM booking_seats bs JOIN bookings b ON b.id=bs.booking_id WHERE b.showtime_id={$st['id']}")->fetchAll(PDO::FETCH_COLUMN);
+        $seatIds = $pdo->query("SELECT id FROM ems_seats WHERE room_id={$st['room_id']} AND status='active'")->fetchAll(PDO::FETCH_COLUMN);
+        $taken = $pdo->query("SELECT bs.seat_id FROM ems_booking_seats bs JOIN ems_bookings b ON b.id=bs.booking_id WHERE b.showtime_id={$st['id']}")->fetchAll(PDO::FETCH_COLUMN);
         $free = array_values(array_diff($seatIds, $taken));
         shuffle($free);
         $target = (int)round(count($seatIds) * $fill / 100) - count($taken);
@@ -134,9 +134,9 @@ if ($todayBookings == 0) {
 }
 
 // ---- SEED POS TRANSACTIONS (7 ngày) ----
-if ($pdo->query("SELECT COUNT(*) FROM pos_transactions")->fetchColumn() == 0) {
+if ($pdo->query("SELECT COUNT(*) FROM ems_pos_transactions")->fetchColumn() == 0) {
     mt_srand(77);
-    $ins = $pdo->prepare("INSERT INTO pos_transactions (code, type, item_name, quantity, amount, payment_method, status, error_message, staff_id, created_at) VALUES (?,?,?,?,?,?,?,?,?,?)");
+    $ins = $pdo->prepare("INSERT INTO ems_pos_transactions (code, type, item_name, quantity, amount, payment_method, status, error_message, staff_id, created_at) VALUES (?,?,?,?,?,?,?,?,?,?)");
     $combos = [['Combo Solo (1 bắp + 1 nước)', 79000], ['Combo Couple (1 bắp lớn + 2 nước)', 119000], ['Combo Family (2 bắp + 4 nước)', 219000], ['Bắp Caramel Lớn', 69000], ['Nước Coca 32oz', 39000]];
     $n = 1000;
     for ($d = 6; $d >= 0; $d--) {

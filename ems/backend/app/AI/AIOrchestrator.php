@@ -48,20 +48,20 @@ class AIOrchestrator
         $this->trace = [];
 
         if ($conversationId) {
-            $s = $this->pdo->prepare("SELECT id, context FROM ai_conversations WHERE id=?");
+            $s = $this->pdo->prepare("SELECT id, context FROM ems_ai_conversations WHERE id=?");
             $s->execute([$conversationId]);
             $row = $s->fetch(PDO::FETCH_ASSOC);
             if (!$row) $conversationId = null; else $this->ctx = json_decode($row['context'] ?? '[]', true) ?: [];
         }
         if (!$conversationId) {
             $this->ctx = [];
-            $ins = $this->pdo->prepare("INSERT INTO ai_conversations (user_id, title) VALUES (?, ?)");
+            $ins = $this->pdo->prepare("INSERT INTO ems_ai_conversations (user_id, title) VALUES (?, ?)");
             $ins->execute([$user['id'] ?: null, mb_substr($message, 0, 80)]);
             $conversationId = (int)$this->pdo->lastInsertId();
         }
         $user['conversation_id'] = $conversationId;
 
-        $this->pdo->prepare("INSERT INTO ai_messages (conversation_id, role, content) VALUES (?, 'user', ?)")->execute([$conversationId, $message]);
+        $this->pdo->prepare("INSERT INTO ems_ai_messages (conversation_id, role, content) VALUES (?, 'user', ?)")->execute([$conversationId, $message]);
 
         $text = null;
         $source = 'aurora-smart-orchestrator';
@@ -84,8 +84,8 @@ class AIOrchestrator
             $text = $this->engine($message, $user, $conversationId);
         }
 
-        $this->pdo->prepare("INSERT INTO ai_messages (conversation_id, role, content) VALUES (?, 'assistant', ?)")->execute([$conversationId, $text]);
-        $this->pdo->prepare("UPDATE ai_conversations SET context=? WHERE id=?")->execute([json_encode($this->ctx, JSON_UNESCAPED_UNICODE), $conversationId]);
+        $this->pdo->prepare("INSERT INTO ems_ai_messages (conversation_id, role, content) VALUES (?, 'assistant', ?)")->execute([$conversationId, $text]);
+        $this->pdo->prepare("UPDATE ems_ai_conversations SET context=? WHERE id=?")->execute([json_encode($this->ctx, JSON_UNESCAPED_UNICODE), $conversationId]);
 
         return [
             'conversation_id' => $conversationId,
@@ -131,7 +131,7 @@ class AIOrchestrator
     protected function log(int $uid, int $cid, string $tool, array $args, array $res, string $status, int $ms): void
     {
         try {
-            $this->pdo->prepare("INSERT INTO ai_tool_logs (user_id, conversation_id, tool_name, arguments, result, status, execution_time_ms) VALUES (?,?,?,?,?,?,?)")
+            $this->pdo->prepare("INSERT INTO ems_ai_tool_logs (user_id, conversation_id, tool_name, arguments, result, status, execution_time_ms) VALUES (?,?,?,?,?,?,?)")
                 ->execute([$uid ?: null, $cid, $tool, json_encode($args, JSON_UNESCAPED_UNICODE), json_encode($res, JSON_UNESCAPED_UNICODE), $status, $ms]);
         } catch (Throwable $e) { /* log lỗi không được làm hỏng luồng chính */ }
     }
@@ -190,20 +190,20 @@ class AIOrchestrator
         $no = (bool)preg_match('/^(hủy bỏ|huỷ bỏ|không|thôi|no\b|bỏ qua|dừng|đừng)/u', $lower);
         if (!$yes && !$no) return null;
 
-        $s = $this->pdo->prepare("SELECT * FROM ai_pending_actions WHERE conversation_id=? AND status='pending' ORDER BY id DESC LIMIT 1");
+        $s = $this->pdo->prepare("SELECT * FROM ems_ai_pending_actions WHERE conversation_id=? AND status='pending' ORDER BY id DESC LIMIT 1");
         $s->execute([$cid]);
         $p = $s->fetch(PDO::FETCH_ASSOC);
         if (!$p) return null;
 
         if (strtotime($p['expires_at']) < time()) {
-            $this->pdo->prepare("UPDATE ai_pending_actions SET status='expired' WHERE id=?")->execute([$p['id']]);
+            $this->pdo->prepare("UPDATE ems_ai_pending_actions SET status='expired' WHERE id=?")->execute([$p['id']]);
             return "⏱️ Yêu cầu **{$p['summary']}** đã hết hạn xác nhận (5 phút). Vui lòng yêu cầu lại nếu vẫn muốn thực hiện.";
         }
         if ((int)$p['user_id'] !== $user['id']) {
             return "🔒 Hành động này do người dùng khác khởi tạo, bạn không thể xác nhận.";
         }
         if ($no) {
-            $this->pdo->prepare("UPDATE ai_pending_actions SET status='cancelled' WHERE id=?")->execute([$p['id']]);
+            $this->pdo->prepare("UPDATE ems_ai_pending_actions SET status='cancelled' WHERE id=?")->execute([$p['id']]);
             $this->log($user['id'], $cid, $p['action'] . ':cancelled', json_decode($p['payload'], true) ?: [], ['summary' => $p['summary']], 'success', 0);
             return "✅ Đã **hủy bỏ** yêu cầu: {$p['summary']}. Không có dữ liệu nào bị thay đổi.";
         }
@@ -213,16 +213,16 @@ class AIOrchestrator
         if ($p['action'] === 'cancel_booking') {
             try {
                 $this->pdo->beginTransaction();
-                $chk = $this->pdo->prepare("SELECT status FROM bookings WHERE id=? FOR UPDATE");
+                $chk = $this->pdo->prepare("SELECT status FROM ems_bookings WHERE id=? FOR UPDATE");
                 $chk->execute([$payload['booking_id']]);
                 if ($chk->fetchColumn() === 'cancelled') {
                     $this->pdo->rollBack();
                     return "ℹ️ Booking **{$payload['booking_code']}** đã được hủy trước đó.";
                 }
-                $this->pdo->prepare("UPDATE bookings SET status='cancelled' WHERE id=?")->execute([$payload['booking_id']]);
-                $this->pdo->prepare("INSERT INTO pos_transactions (code, type, item_name, quantity, amount, payment_method, status, staff_id) VALUES (?, 'refund', ?, 1, ?, 'refund', 'success', ?)")
+                $this->pdo->prepare("UPDATE ems_bookings SET status='cancelled' WHERE id=?")->execute([$payload['booking_id']]);
+                $this->pdo->prepare("INSERT INTO ems_pos_transactions (code, type, item_name, quantity, amount, payment_method, status, staff_id) VALUES (?, 'refund', ?, 1, ?, 'refund', 'success', ?)")
                     ->execute(['RF' . date('ymdHis') . rand(10, 99), 'Hoàn vé ' . $payload['booking_code'], $payload['amount'], $user['id'] ?: null]);
-                $this->pdo->prepare("UPDATE ai_pending_actions SET status='confirmed' WHERE id=?")->execute([$p['id']]);
+                $this->pdo->prepare("UPDATE ems_ai_pending_actions SET status='confirmed' WHERE id=?")->execute([$p['id']]);
                 $this->pdo->commit();
             } catch (Throwable $e) {
                 if ($this->pdo->inTransaction()) $this->pdo->rollBack();
@@ -246,7 +246,7 @@ class AIOrchestrator
             $defs[] = ['type' => 'function', 'function' => ['name' => $t->name(), 'description' => $t->description(), 'parameters' => $t->schema()]];
         }
 
-        $h = $this->pdo->prepare("SELECT role, content FROM (SELECT id, role, content FROM ai_messages WHERE conversation_id=? AND role IN ('user','assistant') ORDER BY id DESC LIMIT 8) x ORDER BY id");
+        $h = $this->pdo->prepare("SELECT role, content FROM (SELECT id, role, content FROM ems_ai_messages WHERE conversation_id=? AND role IN ('user','assistant') ORDER BY id DESC LIMIT 8) x ORDER BY id");
         $h->execute([$cid]);
         $messages = [['role' => 'system', 'content' => CinemaPrompt::system($user['role'], $this->ctx)]];
         foreach ($h->fetchAll(PDO::FETCH_ASSOC) as $m) $messages[] = ['role' => $m['role'], 'content' => $m['content']];
@@ -441,7 +441,7 @@ class AIOrchestrator
     // =====================================================================
     protected function allMovies(): array
     {
-        if ($this->movies === null) $this->movies = $this->pdo->query("SELECT id, title, original_title FROM movies")->fetchAll(PDO::FETCH_ASSOC);
+        if ($this->movies === null) $this->movies = $this->pdo->query("SELECT id, title, original_title FROM ems_movies")->fetchAll(PDO::FETCH_ASSOC);
         return $this->movies;
     }
 
@@ -511,7 +511,7 @@ class AIOrchestrator
         if ($time === null && $band === 'evening') $time = null;
 
         if ($time || $band) {
-            $sql = "SELECT s.id, s.price, TIME_FORMAT(s.start_at,'%H:%i') t, r.name room, m.title, m.id mid FROM showtimes s JOIN rooms r ON r.id=s.room_id JOIN movies m ON m.id=s.movie_id WHERE DATE(s.start_at)=CURDATE() AND s.status='active'";
+            $sql = "SELECT s.id, s.price, TIME_FORMAT(s.start_at,'%H:%i') t, r.name room, m.title, m.id mid FROM ems_showtimes s JOIN ems_rooms r ON r.id=s.room_id JOIN ems_movies m ON m.id=s.movie_id WHERE DATE(s.start_at)=CURDATE() AND s.status='active'";
             $p = [];
             if ($movieId) { $sql .= " AND s.movie_id=?"; $p[] = $movieId; }
             if ($time) { $sql .= " AND TIME_FORMAT(s.start_at,'%H:%i')=?"; $p[] = $time; }
@@ -533,7 +533,7 @@ class AIOrchestrator
         }
 
         if (!empty($this->ctx['showtime_id'])) {
-            $q = $this->pdo->prepare("SELECT s.id, s.price, TIME_FORMAT(s.start_at,'%H:%i') t, r.name room, m.title FROM showtimes s JOIN rooms r ON r.id=s.room_id JOIN movies m ON m.id=s.movie_id WHERE s.id=?");
+            $q = $this->pdo->prepare("SELECT s.id, s.price, TIME_FORMAT(s.start_at,'%H:%i') t, r.name room, m.title FROM ems_showtimes s JOIN ems_rooms r ON r.id=s.room_id JOIN ems_movies m ON m.id=s.movie_id WHERE s.id=?");
             $q->execute([$this->ctx['showtime_id']]);
             if ($r = $q->fetch(PDO::FETCH_ASSOC)) return ['id' => (int)$r['id'], 'price' => (float)$r['price'], 'time' => $r['t'], 'room' => $r['room'], 'movie' => $r['title']];
         }

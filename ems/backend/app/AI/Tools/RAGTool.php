@@ -47,8 +47,8 @@ class RAGTool implements AITool
 
         $sql = "
             SELECT c.content, d.name AS doc_name, d.category
-            FROM ai_document_chunks c
-            JOIN ai_documents d ON c.document_id = d.id
+            FROM ems_ai_document_chunks c
+            JOIN ems_ai_documents d ON c.document_id = d.id
             WHERE (c.content LIKE ? OR d.name LIKE ? OR d.content_summary LIKE ?)
         ";
         $params = ["%{$query}%", "%{$query}%", "%{$query}%"];
@@ -87,8 +87,8 @@ class RAGTool implements AITool
             if ($matchedPhrase) {
                 $stmtPh = $pdo->prepare("
                     SELECT c.content, d.name AS doc_name, d.category
-                    FROM ai_document_chunks c
-                    JOIN ai_documents d ON c.document_id = d.id
+                    FROM ems_ai_document_chunks c
+                    JOIN ems_ai_documents d ON c.document_id = d.id
                     WHERE (c.content LIKE ? OR d.name LIKE ? OR d.content_summary LIKE ?)
                     LIMIT 3
                 ");
@@ -106,8 +106,8 @@ class RAGTool implements AITool
                     // Lấy tất cả chunks và tính điểm khớp
                     $allStmt = $pdo->query("
                         SELECT c.content, d.name AS doc_name, d.category
-                        FROM ai_document_chunks c
-                        JOIN ai_documents d ON c.document_id = d.id
+                        FROM ems_ai_document_chunks c
+                        JOIN ems_ai_documents d ON c.document_id = d.id
                     ");
                     $allChunks = $allStmt->fetchAll(PDO::FETCH_ASSOC);
                     $scored = [];

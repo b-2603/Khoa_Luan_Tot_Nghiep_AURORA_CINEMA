@@ -2,7 +2,7 @@
 // d:/EMS_AURORA/backend/seed_quizzes_30.php
 // Reads quizzes_240.json and seeds MySQL database with 8 courses, 8 quizzes, and 240 questions (30 per quiz)
 
-$pdo = new PDO('mysql:host=127.0.0.1;port=3306;dbname=aurora_ems;charset=utf8mb4', 'root', '', [
+$pdo = new PDO('mysql:host=127.0.0.1;port=3306;dbname=aurora_db;charset=utf8mb4', 'root', '', [
     PDO::ATTR_ERRMODE => PDO::ERRMODE_EXCEPTION,
     PDO::ATTR_DEFAULT_FETCH_MODE => PDO::FETCH_ASSOC
 ]);
@@ -40,7 +40,7 @@ $c8 = [
     30
 ];
 
-$courseStmt = $pdo->prepare("INSERT INTO courses (id, title, description, category, duration_minutes, is_ctkm, thumbnail, enrolled_count, completed_count, created_at, updated_at)
+$courseStmt = $pdo->prepare("INSERT INTO ems_courses (id, title, description, category, duration_minutes, is_ctkm, thumbnail, enrolled_count, completed_count, created_at, updated_at)
 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, NOW(), NOW())
 ON DUPLICATE KEY UPDATE title = VALUES(title), description = VALUES(description), category = VALUES(category), duration_minutes = VALUES(duration_minutes), updated_at = NOW()");
 
@@ -49,13 +49,13 @@ $courseStmt->execute($c8);
 
 // Disable foreign key checks to safely refresh quizzes and questions
 $pdo->exec("SET FOREIGN_KEY_CHECKS = 0");
-$pdo->exec("DELETE FROM quiz_questions");
-$pdo->exec("DELETE FROM quizzes");
+$pdo->exec("DELETE FROM ems_quiz_questions");
+$pdo->exec("DELETE FROM ems_quizzes");
 $pdo->exec("SET FOREIGN_KEY_CHECKS = 1");
 
-$quizInsertStmt = $pdo->prepare("INSERT INTO quizzes (id, course_id, title, pass_score, duration_minutes, is_ctkm, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, NOW(), NOW())");
+$quizInsertStmt = $pdo->prepare("INSERT INTO ems_quizzes (id, course_id, title, pass_score, duration_minutes, is_ctkm, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, NOW(), NOW())");
 
-$qQuestionStmt = $pdo->prepare("INSERT INTO quiz_questions (quiz_id, question_text, options, correct_answer_index, explanation, created_at, updated_at) VALUES (?, ?, ?, ?, ?, NOW(), NOW())");
+$qQuestionStmt = $pdo->prepare("INSERT INTO ems_quiz_questions (quiz_id, question_text, options, correct_answer_index, explanation, created_at, updated_at) VALUES (?, ?, ?, ?, ?, NOW(), NOW())");
 
 $totalQuestionsInserted = 0;
 
@@ -85,6 +85,6 @@ foreach ($data['quizzes'] as $q) {
 
 echo "=================================================\n";
 echo "SUCCESS: Seeded " . count($data['quizzes']) . " quizzes with $totalQuestionsInserted total questions into MySQL!\n";
-$quizCount = $pdo->query("SELECT count(*) FROM quizzes")->fetchColumn();
-$questionCount = $pdo->query("SELECT count(*) FROM quiz_questions")->fetchColumn();
+$quizCount = $pdo->query("SELECT count(*) FROM ems_quizzes")->fetchColumn();
+$questionCount = $pdo->query("SELECT count(*) FROM ems_quiz_questions")->fetchColumn();
 echo "Verification - MySQL DB contains: $quizCount quizzes and $questionCount quiz questions.\n";

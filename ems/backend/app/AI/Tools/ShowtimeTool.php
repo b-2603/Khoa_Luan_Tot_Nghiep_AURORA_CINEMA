@@ -52,7 +52,7 @@ class ShowtimeTool implements AITool
 
         // Nếu có movie_title mà chưa có movie_id, tìm movie_id
         if (!$movieId && $movieTitle !== '') {
-            $stmM = $pdo->prepare("SELECT id, title FROM movies WHERE title LIKE ? OR original_title LIKE ? LIMIT 1");
+            $stmM = $pdo->prepare("SELECT id, title FROM ems_movies WHERE title LIKE ? OR original_title LIKE ? LIMIT 1");
             $stmM->execute(["%{$movieTitle}%", "%{$movieTitle}%"]);
             $m = $stmM->fetch(PDO::FETCH_ASSOC);
             if ($m) {
@@ -64,9 +64,9 @@ class ShowtimeTool implements AITool
             SELECT s.id, s.movie_id, m.title AS movie_title, m.age_rating,
                    s.room_id, r.name AS room_name, r.type AS room_type,
                    s.start_at, s.end_at, s.price, s.status
-            FROM showtimes s
-            JOIN movies m ON s.movie_id = m.id
-            JOIN rooms r ON s.room_id = r.id
+            FROM ems_showtimes s
+            JOIN ems_movies m ON s.movie_id = m.id
+            JOIN ems_rooms r ON s.room_id = r.id
             WHERE DATE(s.start_at) = ? AND s.status = 'active'
         ";
         $params = [$date];

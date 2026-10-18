@@ -1,6 +1,6 @@
 <?php
 // d:/EMS_AURORA/backend/seed_courses_all.php
-$pdo = new PDO('mysql:host=127.0.0.1;port=3306;dbname=aurora_ems;charset=utf8mb4', 'root', '', [
+$pdo = new PDO('mysql:host=127.0.0.1;port=3306;dbname=aurora_db;charset=utf8mb4', 'root', '', [
     PDO::ATTR_ERRMODE => PDO::ERRMODE_EXCEPTION,
     PDO::ATTR_DEFAULT_FETCH_MODE => PDO::FETCH_ASSOC
 ]);
@@ -16,7 +16,7 @@ $courses = [
     [8, 'Giám Sát Ca Trực Cinema Supervisor & Kiểm Soát Thất Thoát, An Toàn Vệ Sinh HACCP', 'Trách nhiệm Duty Manager: Bảng kiểm tra mở/đóng ca (Opening/Closing Checklist), tiêu chuẩn vệ sinh HACCP, kho mát 0-4°C, kho đông -18°C, lưu mẫu thực phẩm 24h, đối soát két tiền mặt và biên bản sự cố 2h.', 'Quản Lý & Vận Hành', 60, 0, 'https://images.unsplash.com/photo-1573496359142-b8d87734a5a2?w=700&auto=format&fit=crop&q=80', 50, 46],
 ];
 
-$stmt = $pdo->prepare("INSERT INTO courses (id, title, description, category, duration_minutes, is_ctkm, thumbnail, enrolled_count, completed_count, created_at, updated_at) 
+$stmt = $pdo->prepare("INSERT INTO ems_courses (id, title, description, category, duration_minutes, is_ctkm, thumbnail, enrolled_count, completed_count, created_at, updated_at)
 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, NOW(), NOW())
 ON DUPLICATE KEY UPDATE title = VALUES(title), description = VALUES(description), category = VALUES(category), duration_minutes = VALUES(duration_minutes), is_ctkm = VALUES(is_ctkm), thumbnail = VALUES(thumbnail), enrolled_count = VALUES(enrolled_count), completed_count = VALUES(completed_count), updated_at = NOW()");
 
@@ -24,11 +24,11 @@ foreach ($courses as $c) {
     $stmt->execute($c);
 }
 
-// Update quizzes foreign keys to match course ids 1..8
+// Update ems_quizzes foreign keys to match course ids 1..8
 for ($i = 1; $i <= 8; $i++) {
-    $pdo->prepare("UPDATE quizzes SET course_id = ? WHERE id = ?")->execute([$i, $i]);
+    $pdo->prepare("UPDATE ems_quizzes SET course_id = ? WHERE id = ?")->execute([$i, $i]);
 }
 
 echo "Courses and Quizzes synchronized 1-to-1 in MySQL!\n";
-$cnt = $pdo->query("SELECT count(*) FROM courses")->fetchColumn();
+$cnt = $pdo->query("SELECT count(*) FROM ems_courses")->fetchColumn();
 echo "Total courses in DB: $cnt\n";

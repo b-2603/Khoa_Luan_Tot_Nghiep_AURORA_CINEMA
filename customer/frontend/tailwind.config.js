@@ -9,7 +9,7 @@ export default {
       colors: {
         aurora: {
           blue: "#0066cc",
-          darkblue: "#004b99",
+          darkblue: "#0d1b2e",
           lightblue: "#e6f2ff",
           green: "#00b050",
           cyan: "#17a2b8",

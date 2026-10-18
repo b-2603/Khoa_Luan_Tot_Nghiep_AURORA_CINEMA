@@ -340,7 +340,7 @@ export default function AuthModal({
       style={{
         position: 'relative',
         minHeight: 'calc(100vh - 96px)',
-        background: 'linear-gradient(135deg, rgba(6, 17, 33, 0.94) 0%, rgba(8, 22, 42, 0.9) 60%, rgba(4, 12, 24, 0.97) 100%), url("https://images.unsplash.com/photo-1489599849927-2ee91cede3ba?auto=format&fit=crop&w=1920&q=80") center/cover no-repeat',
+        background: 'linear-gradient(135deg, rgba(13,27,46,0.94) 0%, rgba(13,27,46,0.9) 60%, rgba(13,27,46,0.97) 100%), url("https://images.unsplash.com/photo-1489599849927-2ee91cede3ba?auto=format&fit=crop&w=1920&q=80") center/cover no-repeat',
         padding: '36px 20px 54px',
         display: 'flex',
         alignItems: 'flex-start'
@@ -354,7 +354,7 @@ export default function AuthModal({
           left: '10%',
           width: 320,
           height: 320,
-          background: 'radial-gradient(circle, rgba(244, 192, 74, 0.12) 0%, transparent 70%)',
+          background: 'radial-gradient(circle, rgba(244,192,74,0.12) 0%, transparent 70%)',
           pointerEvents: 'none'
         }}
       />
@@ -419,7 +419,7 @@ export default function AuthModal({
                 display: 'flex',
                 alignItems: 'center',
                 gap: 16,
-                background: 'rgba(10, 25, 47, 0.65)',
+                background: 'rgba(13,27,46,0.65)',
                 backdropFilter: 'blur(8px)',
                 border: '1px solid rgba(255, 255, 255, 0.12)',
                 borderRadius: 12,
@@ -431,8 +431,8 @@ export default function AuthModal({
                   width: 42,
                   height: 42,
                   borderRadius: 10,
-                  border: '1.5px solid rgba(244, 192, 74, 0.45)',
-                  background: 'rgba(244, 192, 74, 0.1)',
+                  border: '1.5px solid rgba(244,192,74,0.45)',
+                  background: 'rgba(244,192,74,0.1)',
                   display: 'flex',
                   alignItems: 'center',
                   justifyContent: 'center',
@@ -457,7 +457,7 @@ export default function AuthModal({
                 display: 'flex',
                 alignItems: 'center',
                 gap: 16,
-                background: 'rgba(10, 25, 47, 0.65)',
+                background: 'rgba(13,27,46,0.65)',
                 backdropFilter: 'blur(8px)',
                 border: '1px solid rgba(255, 255, 255, 0.12)',
                 borderRadius: 12,
@@ -469,8 +469,8 @@ export default function AuthModal({
                   width: 42,
                   height: 42,
                   borderRadius: 10,
-                  border: '1.5px solid rgba(244, 192, 74, 0.45)',
-                  background: 'rgba(244, 192, 74, 0.1)',
+                  border: '1.5px solid rgba(244,192,74,0.45)',
+                  background: 'rgba(244,192,74,0.1)',
                   display: 'flex',
                   alignItems: 'center',
                   justifyContent: 'center',
@@ -495,7 +495,7 @@ export default function AuthModal({
                 display: 'flex',
                 alignItems: 'center',
                 gap: 16,
-                background: 'rgba(10, 25, 47, 0.65)',
+                background: 'rgba(13,27,46,0.65)',
                 backdropFilter: 'blur(8px)',
                 border: '1px solid rgba(255, 255, 255, 0.12)',
                 borderRadius: 12,
@@ -507,8 +507,8 @@ export default function AuthModal({
                   width: 42,
                   height: 42,
                   borderRadius: 10,
-                  border: '1.5px solid rgba(244, 192, 74, 0.45)',
-                  background: 'rgba(244, 192, 74, 0.1)',
+                  border: '1.5px solid rgba(244,192,74,0.45)',
+                  background: 'rgba(244,192,74,0.1)',
                   display: 'flex',
                   alignItems: 'center',
                   justifyContent: 'center',
@@ -533,7 +533,7 @@ export default function AuthModal({
                 display: 'flex',
                 alignItems: 'center',
                 gap: 16,
-                background: 'rgba(10, 25, 47, 0.65)',
+                background: 'rgba(13,27,46,0.65)',
                 backdropFilter: 'blur(8px)',
                 border: '1px solid rgba(255, 255, 255, 0.12)',
                 borderRadius: 12,
@@ -545,8 +545,8 @@ export default function AuthModal({
                   width: 42,
                   height: 42,
                   borderRadius: 10,
-                  border: '1.5px solid rgba(244, 192, 74, 0.45)',
-                  background: 'rgba(244, 192, 74, 0.1)',
+                  border: '1.5px solid rgba(244,192,74,0.45)',
+                  background: 'rgba(244,192,74,0.1)',
                   display: 'flex',
                   alignItems: 'center',
                   justifyContent: 'center',
@@ -620,7 +620,7 @@ export default function AuthModal({
                 display: 'flex',
                 alignItems: 'center',
                 justifyContent: 'center',
-                color: '#e5a826',
+                color: '#f4c04a',
                 flexShrink: 0
               }}
             >
@@ -632,7 +632,7 @@ export default function AuthModal({
                   margin: 0,
                   fontSize: 20,
                   fontWeight: 900,
-                  color: '#071526',
+                  color: '#0d1b2e',
                   textTransform: 'uppercase',
                   letterSpacing: 0.5
                 }}
@@ -686,7 +686,7 @@ export default function AuthModal({
                         value={fullName}
                         onChange={e => setFullName(e.target.value)}
                         placeholder="Họ và tên"
-                        style={{ width: '100%', border: 'none', outline: 'none', fontSize: 13, color: '#0f172a' }}
+                        style={{ width: '100%', border: 'none', outline: 'none', fontSize: 13, color: '#0d1b2e' }}
                       />
                     </div>
                   </div>
@@ -714,7 +714,7 @@ export default function AuthModal({
                           value={email}
                           onChange={e => setEmail(e.target.value)}
                           placeholder="Email"
-                          style={{ width: '100%', border: 'none', outline: 'none', fontSize: 13, color: '#0f172a' }}
+                          style={{ width: '100%', border: 'none', outline: 'none', fontSize: 13, color: '#0d1b2e' }}
                         />
                       </div>
                     </div>
@@ -740,7 +740,7 @@ export default function AuthModal({
                           value={phone}
                           onChange={e => setPhone(e.target.value)}
                           placeholder="Số điện thoại"
-                          style={{ width: '100%', border: 'none', outline: 'none', fontSize: 13, color: '#0f172a' }}
+                          style={{ width: '100%', border: 'none', outline: 'none', fontSize: 13, color: '#0d1b2e' }}
                         />
                       </div>
                     </div>
@@ -769,7 +769,7 @@ export default function AuthModal({
                           value={password}
                           onChange={e => setPassword(e.target.value)}
                           placeholder="Mật khẩu"
-                          style={{ width: '100%', border: 'none', outline: 'none', fontSize: 13, color: '#0f172a' }}
+                          style={{ width: '100%', border: 'none', outline: 'none', fontSize: 13, color: '#0d1b2e' }}
                         />
                         <button
                           type="button"
@@ -802,7 +802,7 @@ export default function AuthModal({
                           value={confirmPassword}
                           onChange={e => setConfirmPassword(e.target.value)}
                           placeholder="Nhập lại mật khẩu"
-                          style={{ width: '100%', border: 'none', outline: 'none', fontSize: 13, color: '#0f172a' }}
+                          style={{ width: '100%', border: 'none', outline: 'none', fontSize: 13, color: '#0d1b2e' }}
                         />
                         <button
                           type="button"
@@ -862,7 +862,7 @@ export default function AuthModal({
                           padding: '8px 12px',
                           fontSize: 13,
                           outline: 'none',
-                          color: '#0f172a'
+                          color: '#0d1b2e'
                         }}
                       />
                     </div>
@@ -926,7 +926,7 @@ export default function AuthModal({
                         value={email}
                         onChange={e => setEmail(e.target.value)}
                         placeholder="Nhập email của bạn"
-                        style={{ width: '100%', border: 'none', outline: 'none', fontSize: 13, color: '#0f172a' }}
+                        style={{ width: '100%', border: 'none', outline: 'none', fontSize: 13, color: '#0d1b2e' }}
                       />
                     </div>
                   </div>
@@ -952,7 +952,7 @@ export default function AuthModal({
                         value={password}
                         onChange={e => setPassword(e.target.value)}
                         placeholder="Nhập mật khẩu"
-                        style={{ width: '100%', border: 'none', outline: 'none', fontSize: 13, color: '#0f172a' }}
+                        style={{ width: '100%', border: 'none', outline: 'none', fontSize: 13, color: '#0d1b2e' }}
                       />
                       <button
                         type="button"
@@ -1011,7 +1011,7 @@ export default function AuthModal({
                 style={{
                   width: '100%',
                   padding: '11px 0',
-                  background: isSubmitting ? '#475569' : '#071526',
+                  background: isSubmitting ? '#475569' : '#0d1b2e',
                   color: '#ffffff',
                   border: 'none',
                   borderRadius: 8,
@@ -1021,7 +1021,7 @@ export default function AuthModal({
                   textTransform: 'uppercase',
                   letterSpacing: 0.5,
                   transition: 'background 0.2s',
-                  boxShadow: '0 4px 12px rgba(7, 21, 38, 0.25)'
+                  boxShadow: '0 4px 12px rgba(13,27,46,0.25)'
                 }}
               >
                 {isSubmitting
@@ -1081,7 +1081,7 @@ export default function AuthModal({
                       d="M12 23c2.97 0 5.46-.98 7.28-2.66l-3.57-2.77c-.98.66-2.23 1.06-3.71 1.06-2.86 0-5.29-1.93-6.16-4.53H2.18v2.84C3.99 20.53 7.7 23 12 23z"
                     />
                     <path
-                      fill="#FBBC05"
+                      fill="#f4c04a"
                       d="M5.84 14.09c-.22-.66-.35-1.36-.35-2.09s.13-1.43.35-2.09V7.06H2.18C1.43 8.55 1 10.22 1 12s.43 3.45 1.18 4.94l2.85-2.22.81-.63z"
                     />
                     <path
@@ -1149,7 +1149,7 @@ export default function AuthModal({
         <div
           style={{
             position: 'fixed', inset: 0, zIndex: 120,
-            background: 'rgba(4, 13, 26, 0.82)', backdropFilter: 'blur(8px)',
+            background: 'rgba(13,27,46,0.82)', backdropFilter: 'blur(8px)',
             display: 'flex', alignItems: 'center', justifyContent: 'center', padding: 18
           }}
         >
@@ -1164,7 +1164,7 @@ export default function AuthModal({
               boxShadow: '0 28px 80px rgba(0,0,0,0.48)', border: '1px solid rgba(255,255,255,0.65)'
             }}
           >
-            <div style={{ height: 5, background: 'linear-gradient(90deg, #f4c04a 0%, #f2a91f 45%, #1d68b2 100%)' }} />
+            <div style={{ height: 5, background: 'linear-gradient(90deg, #f4c04a 0%, #f4c04a 45%, #1d68b2 100%)' }} />
             <button
               type="button"
               onClick={closeForgotPassword}
@@ -1183,13 +1183,13 @@ export default function AuthModal({
               <div style={{ display: 'flex', alignItems: 'center', gap: 14, paddingRight: 38 }}>
                 <div style={{
                   width: 48, height: 48, borderRadius: 14, flexShrink: 0,
-                  background: 'linear-gradient(145deg, #fff8e7, #ffedbd)', border: '1px solid #f4c04a',
-                  color: '#b77908', display: 'flex', alignItems: 'center', justifyContent: 'center'
+                  background: 'linear-gradient(145deg, #fff8e7, #f4c04a)', border: '1px solid #f4c04a',
+                  color: '#f4c04a', display: 'flex', alignItems: 'center', justifyContent: 'center'
                 }}>
                   {forgotStep === 'success' ? <CheckCircle2 size={25} /> : <KeyRound size={24} />}
                 </div>
                 <div>
-                  <h2 id="forgot-password-title" style={{ margin: 0, color: '#071526', fontSize: 21, fontWeight: 900 }}>
+                  <h2 id="forgot-password-title" style={{ margin: 0, color: '#0d1b2e', fontSize: 21, fontWeight: 900 }}>
                     {forgotStep === 'success' ? 'Đổi mật khẩu thành công' : 'Khôi phục mật khẩu'}
                   </h2>
                   <p style={{ margin: '4px 0 0', color: '#64748b', fontSize: 12.5, lineHeight: 1.45 }}>
@@ -1214,8 +1214,8 @@ export default function AuthModal({
                     const active = index === activeIndex;
                     return (
                       <div key={item.key} style={{ textAlign: 'center' }}>
-                        <div style={{ height: 3, borderRadius: 3, marginBottom: 8, background: completed || active ? '#f4b62f' : '#e2e8f0' }} />
-                        <div style={{ fontSize: 11, fontWeight: active ? 800 : 650, color: active ? '#8b5a00' : completed ? '#15803d' : '#94a3b8' }}>
+                        <div style={{ height: 3, borderRadius: 3, marginBottom: 8, background: completed || active ? '#f4c04a' : '#e2e8f0' }} />
+                        <div style={{ fontSize: 11, fontWeight: active ? 800 : 650, color: active ? '#f4c04a' : completed ? '#15803d' : '#94a3b8' }}>
                           {completed ? '✓' : item.number}. {item.label}
                         </div>
                       </div>
@@ -1239,7 +1239,7 @@ export default function AuthModal({
                     onClick={() => { setShowForgotModal(false); setMode('login'); setEmail(forgotIdentifier.includes('@') ? forgotIdentifier : ''); }}
                     style={{
                       width: '100%', marginTop: 18, padding: '12px 16px', border: 'none', borderRadius: 10,
-                      background: '#071526', color: '#fff', fontSize: 13, fontWeight: 800, cursor: 'pointer'
+                      background: '#0d1b2e', color: '#fff', fontSize: 13, fontWeight: 800, cursor: 'pointer'
                     }}
                   >
                     QUAY LẠI ĐĂNG NHẬP
@@ -1260,7 +1260,7 @@ export default function AuthModal({
                           onChange={event => setForgotIdentifier(event.target.value)}
                           placeholder="Nhập email hoặc số điện thoại đã đăng ký"
                           autoComplete="username"
-                          style={{ flex: 1, minWidth: 0, border: 'none', outline: 'none', color: '#0f172a', fontSize: 13 }}
+                          style={{ flex: 1, minWidth: 0, border: 'none', outline: 'none', color: '#0d1b2e', fontSize: 13 }}
                         />
                       </div>
                       <div style={{ display: 'flex', gap: 9, marginTop: 12, padding: '11px 12px', borderRadius: 10, background: '#f8fafc', color: '#64748b', fontSize: 11.5, lineHeight: 1.5 }}>
@@ -1273,7 +1273,7 @@ export default function AuthModal({
                   {forgotStep === 'verify' && (
                     <div>
                       <div style={{ textAlign: 'center', color: '#52647a', fontSize: 12.5, marginBottom: 13 }}>
-                        Mã đã được gửi theo thông tin <strong style={{ color: '#0f2742' }}>{forgotIdentifier}</strong>
+                        Mã đã được gửi theo thông tin <strong style={{ color: '#0d1b2e' }}>{forgotIdentifier}</strong>
                       </div>
                       <input
                         autoFocus
@@ -1285,7 +1285,7 @@ export default function AuthModal({
                         aria-label="Mã xác minh 6 chữ số"
                         style={{
                           width: '100%', boxSizing: 'border-box', border: '1.5px solid #b8c7d9', borderRadius: 12,
-                          padding: '13px 16px', outline: 'none', textAlign: 'center', color: '#071526',
+                          padding: '13px 16px', outline: 'none', textAlign: 'center', color: '#0d1b2e',
                           fontSize: 25, fontWeight: 850, letterSpacing: 11, fontFamily: 'monospace'
                         }}
                       />
@@ -1303,7 +1303,7 @@ export default function AuthModal({
                         </button>
                       </div>
                       {developmentCode && (
-                        <div style={{ marginTop: 12, padding: '10px 12px', borderRadius: 10, background: '#fff8e7', border: '1px dashed #e7b43c', color: '#805500', fontSize: 11.5, textAlign: 'center' }}>
+                        <div style={{ marginTop: 12, padding: '10px 12px', borderRadius: 10, background: '#fff8e7', border: '1px dashed #f4c04a', color: '#f4c04a', fontSize: 11.5, textAlign: 'center' }}>
                           Môi trường WAMP local — mã kiểm thử: <strong style={{ fontSize: 15, letterSpacing: 2 }}>{developmentCode}</strong>
                         </div>
                       )}
@@ -1366,8 +1366,8 @@ export default function AuthModal({
                     disabled={forgotLoading || (forgotStep === 'verify' && forgotSeconds <= 0)}
                     style={{
                       width: '100%', marginTop: 18, padding: '12px 16px', border: 'none', borderRadius: 10,
-                      background: forgotLoading ? '#52647a' : '#071526', color: '#fff', fontSize: 13,
-                      fontWeight: 850, cursor: forgotLoading ? 'wait' : 'pointer', boxShadow: '0 8px 18px rgba(7,21,38,0.2)'
+                      background: forgotLoading ? '#52647a' : '#0d1b2e', color: '#fff', fontSize: 13,
+                      fontWeight: 850, cursor: forgotLoading ? 'wait' : 'pointer', boxShadow: '0 8px 18px rgba(13,27,46,0.2)'
                     }}
                   >
                     {forgotLoading ? 'ĐANG XỬ LÝ...' : forgotStep === 'request' ? 'GỬI MÃ XÁC MINH' : forgotStep === 'verify' ? 'XÁC MINH MÃ' : 'CẬP NHẬT MẬT KHẨU'}
@@ -1392,7 +1392,7 @@ export default function AuthModal({
             position: 'fixed',
             inset: 0,
             zIndex: 100,
-            background: 'rgba(7, 21, 38, 0.78)',
+            background: 'rgba(13,27,46,0.78)',
             backdropFilter: 'blur(6px)',
             display: 'flex',
             alignItems: 'center',
@@ -1436,13 +1436,13 @@ export default function AuthModal({
                     display: 'flex',
                     alignItems: 'center',
                     justifyContent: 'center',
-                    color: '#b47805'
+                    color: '#f4c04a'
                   }}
                 >
                   <FileText size={20} />
                 </div>
                 <div>
-                  <h3 style={{ margin: 0, fontSize: 16, fontWeight: 800, color: '#071526' }}>
+                  <h3 style={{ margin: 0, fontSize: 16, fontWeight: 800, color: '#0d1b2e' }}>
                     ĐIỀU KHOẢN VÀ ĐIỀU KIỆN SỬ DỤNG
                   </h3>
                   <p style={{ margin: 0, fontSize: 11.5, color: '#64748b' }}>
@@ -1483,7 +1483,7 @@ export default function AuthModal({
             >
               {/* Section 1 */}
               <div style={{ marginBottom: 18 }}>
-                <h4 style={{ margin: '0 0 6px', fontSize: 13.5, fontWeight: 800, color: '#071526' }}>
+                <h4 style={{ margin: '0 0 6px', fontSize: 13.5, fontWeight: 800, color: '#0d1b2e' }}>
                   1. Giới thiệu chung
                 </h4>
                 <p style={{ margin: 0, color: '#475569' }}>
@@ -1493,7 +1493,7 @@ export default function AuthModal({
 
               {/* Section 2 */}
               <div style={{ marginBottom: 18 }}>
-                <h4 style={{ margin: '0 0 6px', fontSize: 13.5, fontWeight: 800, color: '#071526' }}>
+                <h4 style={{ margin: '0 0 6px', fontSize: 13.5, fontWeight: 800, color: '#0d1b2e' }}>
                   2. Đăng ký & Bảo mật tài khoản
                 </h4>
                 <ul style={{ margin: '0', paddingLeft: 18, color: '#475569' }}>
@@ -1505,7 +1505,7 @@ export default function AuthModal({
 
               {/* Section 3 */}
               <div style={{ marginBottom: 18 }}>
-                <h4 style={{ margin: '0 0 6px', fontSize: 13.5, fontWeight: 800, color: '#071526' }}>
+                <h4 style={{ margin: '0 0 6px', fontSize: 13.5, fontWeight: 800, color: '#0d1b2e' }}>
                   3. Quy định đặt vé & Thanh toán trực tuyến
                 </h4>
                 <ul style={{ margin: '0', paddingLeft: 18, color: '#475569' }}>
@@ -1517,7 +1517,7 @@ export default function AuthModal({
 
               {/* Section 4 */}
               <div style={{ marginBottom: 18 }}>
-                <h4 style={{ margin: '0 0 6px', fontSize: 13.5, fontWeight: 800, color: '#071526' }}>
+                <h4 style={{ margin: '0 0 6px', fontSize: 13.5, fontWeight: 800, color: '#0d1b2e' }}>
                   4. Quyền lợi thành viên & Tích điểm Aurora
                 </h4>
                 <ul style={{ margin: '0', paddingLeft: 18, color: '#475569' }}>
@@ -1529,7 +1529,7 @@ export default function AuthModal({
 
               {/* Section 5 */}
               <div style={{ marginBottom: 18 }}>
-                <h4 style={{ margin: '0 0 6px', fontSize: 13.5, fontWeight: 800, color: '#071526' }}>
+                <h4 style={{ margin: '0 0 6px', fontSize: 13.5, fontWeight: 800, color: '#0d1b2e' }}>
                   5. Quy định văn hóa phòng chiếu & Bản quyền
                 </h4>
                 <ul style={{ margin: '0', paddingLeft: 18, color: '#475569' }}>
@@ -1541,7 +1541,7 @@ export default function AuthModal({
 
               {/* Section 6 */}
               <div>
-                <h4 style={{ margin: '0 0 6px', fontSize: 13.5, fontWeight: 800, color: '#071526' }}>
+                <h4 style={{ margin: '0 0 6px', fontSize: 13.5, fontWeight: 800, color: '#0d1b2e' }}>
                   6. Bảo vệ quyền riêng tư & Dữ liệu cá nhân
                 </h4>
                 <p style={{ margin: 0, color: '#475569' }}>
@@ -1586,7 +1586,7 @@ export default function AuthModal({
                 }}
                 style={{
                   padding: '9px 22px',
-                  background: '#071526',
+                  background: '#0d1b2e',
                   border: 'none',
                   borderRadius: 8,
                   fontSize: 13,
@@ -1596,7 +1596,7 @@ export default function AuthModal({
                   display: 'flex',
                   alignItems: 'center',
                   gap: 8,
-                  boxShadow: '0 4px 12px rgba(7, 21, 38, 0.25)'
+                  boxShadow: '0 4px 12px rgba(13,27,46,0.25)'
                 }}
               >
                 <CheckCircle2 size={16} />

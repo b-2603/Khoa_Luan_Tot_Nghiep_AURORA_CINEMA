@@ -146,7 +146,7 @@ export default function BookingModal({ movie, theater, showtime, user, language,
               </div>
               <div style={styles.ticketRow}>
                 <span style={styles.ticketLabel}>{t('Ghế', 'Seats')}</span>
-                <span style={{ ...styles.ticketVal, color: '#b8860b', fontWeight: 800 }}>
+                <span style={{ ...styles.ticketVal, color: '#f4c04a', fontWeight: 800 }}>
                   {selectedSeats.map(s => `${s.seat_row}${s.seat_number}`).join(', ')}
                 </span>
               </div>
@@ -189,7 +189,7 @@ export default function BookingModal({ movie, theater, showtime, user, language,
             <div style={styles.seatsConfirmTitle}>{t('Ghế đã chọn:', 'Selected seats:')}</div>
             <div style={styles.seatsConfirmList}>
               {selectedSeats.map(seat => (
-                <span key={seat.id} style={{ ...styles.seatPill, background: seat.seat_type === 'VIP' ? '#fef9c3' : seat.seat_type === 'DOUBLE' ? '#fce7f3' : '#f0f4ff', color: seat.seat_type === 'VIP' ? '#92400e' : seat.seat_type === 'DOUBLE' ? '#9d174d' : '#1e40af', borderColor: seat.seat_type === 'VIP' ? '#fbbf24' : seat.seat_type === 'DOUBLE' ? '#f472b6' : '#93c5fd' }}>
+                <span key={seat.id} style={{ ...styles.seatPill, background: seat.seat_type === 'VIP' ? '#fef9c3' : seat.seat_type === 'DOUBLE' ? '#fce7f3' : '#f0f4ff', color: seat.seat_type === 'VIP' ? '#92400e' : seat.seat_type === 'DOUBLE' ? '#9d174d' : '#1e40af', borderColor: seat.seat_type === 'VIP' ? '#f4c04a' : seat.seat_type === 'DOUBLE' ? '#f472b6' : '#93c5fd' }}>
                   {seat.seat_row}{seat.seat_number}
                   <small style={{ fontSize: 9, fontWeight: 600 }}>{seat.seat_type === 'VIP' ? ' VIP' : seat.seat_type === 'DOUBLE' ? ' ĐÔI' : ''}</small>
                 </span>
@@ -274,9 +274,9 @@ export default function BookingModal({ movie, theater, showtime, user, language,
           {/* Seat legend */}
           <div style={styles.legendRow}>
             <div style={styles.legendItem}><div style={{ ...styles.seatDemo, background: '#f1f5f9', borderColor: '#cbd5e1' }} /><span>{t('Ghế trống', 'Available')}</span></div>
-            <div style={styles.legendItem}><div style={{ ...styles.seatDemo, background: '#1e3a5f', borderColor: '#1e3a5f' }} /><span>{t('Đang chọn', 'Selected')}</span></div>
+            <div style={styles.legendItem}><div style={{ ...styles.seatDemo, background: '#0d1b2e', borderColor: '#0d1b2e' }} /><span>{t('Đang chọn', 'Selected')}</span></div>
             <div style={styles.legendItem}><div style={{ ...styles.seatDemo, background: '#cbd5e1', borderColor: '#94a3b8' }} /><span>{t('Đã đặt', 'Taken')}</span></div>
-            <div style={styles.legendItem}><div style={{ ...styles.seatDemo, background: '#fef9c3', borderColor: '#fbbf24' }} /><span>VIP</span></div>
+            <div style={styles.legendItem}><div style={{ ...styles.seatDemo, background: '#fef9c3', borderColor: '#f4c04a' }} /><span>VIP</span></div>
             <div style={styles.legendItem}><div style={{ ...styles.seatDemo, background: '#fce7f3', borderColor: '#f472b6', width: 52 }} /><span>{t('Ghế đôi', 'Double')}</span></div>
           </div>
 
@@ -313,12 +313,12 @@ export default function BookingModal({ movie, theater, showtime, user, language,
                           style={{
                             ...styles.seat,
                             width: isDouble ? 58 : 30,
-                            background: taken ? '#cbd5e1' : isSelected ? '#1e3a5f' : isVip ? '#fef9c3' : isDouble ? '#fce7f3' : '#f1f5f9',
-                            borderColor: taken ? '#94a3b8' : isSelected ? '#1e3a5f' : isVip ? '#fbbf24' : isDouble ? '#f472b6' : '#cbd5e1',
+                            background: taken ? '#cbd5e1' : isSelected ? '#0d1b2e' : isVip ? '#fef9c3' : isDouble ? '#fce7f3' : '#f1f5f9',
+                            borderColor: taken ? '#94a3b8' : isSelected ? '#0d1b2e' : isVip ? '#f4c04a' : isDouble ? '#f472b6' : '#cbd5e1',
                             color: taken ? '#94a3b8' : isSelected ? '#f4c04a' : isVip ? '#92400e' : isDouble ? '#9d174d' : '#475569',
                             cursor: taken ? 'not-allowed' : 'pointer',
                             transform: isSelected ? 'scale(1.12)' : 'scale(1)',
-                            boxShadow: isSelected ? '0 2px 8px rgba(30,58,95,0.3)' : 'none',
+                            boxShadow: isSelected ? '0 2px 8px rgba(13,27,46,0.3)' : 'none',
                           }}
                         >
                           {seat.seat_number}
@@ -335,7 +335,7 @@ export default function BookingModal({ movie, theater, showtime, user, language,
           {/* Seat type legend at bottom */}
           <div style={styles.bottomLegend}>
             <div style={styles.legendItem2}><div style={{ ...styles.seatDemo, background: '#f1f5f9', borderColor: '#cbd5e1', width: 22 }} /><span>{t('Ghế thường', 'Standard')}</span></div>
-            <div style={styles.legendItem2}><div style={{ ...styles.seatDemo, background: '#fef9c3', borderColor: '#fbbf24', width: 22 }} /><span>{t('Ghế VIP', 'VIP')}</span></div>
+            <div style={styles.legendItem2}><div style={{ ...styles.seatDemo, background: '#fef9c3', borderColor: '#f4c04a', width: 22 }} /><span>{t('Ghế VIP', 'VIP')}</span></div>
             <div style={styles.legendItem2}><div style={{ ...styles.seatDemo, background: '#fce7f3', borderColor: '#f472b6', width: 44 }} /><span>{t('Ghế đôi', 'Double')}</span></div>
           </div>
 
@@ -594,7 +594,7 @@ const styles: Record<string, React.CSSProperties> = {
   primaryBtn: {
     border: 0, borderRadius: 10,
     padding: '12px 20px',
-    background: 'linear-gradient(135deg, #0d1b2e 0%, #1e3a5f 100%)',
+    background: 'linear-gradient(135deg, #0d1b2e 0%, #0d1b2e 100%)',
     color: '#f4c04a', fontWeight: 900, cursor: 'pointer',
     display: 'flex', alignItems: 'center', gap: 8,
     fontSize: 13, letterSpacing: 0.5,
@@ -654,7 +654,7 @@ const styles: Record<string, React.CSSProperties> = {
   detailRow: { display: 'flex', alignItems: 'flex-start', gap: 6, fontSize: 11.5 },
   detailIcon: { color: '#94a3b8', flexShrink: 0, marginTop: 1 },
   detailLabel: { color: '#94a3b8', width: 64, flexShrink: 0 },
-  detailValue: { color: '#1a2332', fontWeight: 600, flex: 1, lineHeight: 1.4 },
+  detailValue: { color: '#0d1b2e', fontWeight: 600, flex: 1, lineHeight: 1.4 },
   priceInfoBox: {
     marginTop: 14, background: '#f8fafc',
     borderRadius: 8, padding: '10px 12px',
@@ -668,7 +668,7 @@ const styles: Record<string, React.CSSProperties> = {
   // Confirm step
   sectionBadge: {
     display: 'inline-flex', alignItems: 'center', gap: 6,
-    background: '#fff9e6', color: '#b8860b',
+    background: '#fff9e6', color: '#f4c04a',
     fontSize: 10, fontWeight: 900, letterSpacing: 1,
     padding: '4px 10px', borderRadius: 99,
     border: '1px solid #fde68a', marginBottom: 10,
@@ -677,7 +677,7 @@ const styles: Record<string, React.CSSProperties> = {
   infoGrid: { display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 8, marginBottom: 20 },
   infoItem: {
     display: 'flex', alignItems: 'center', gap: 7,
-    fontSize: 12.5, color: '#1a2332',
+    fontSize: 12.5, color: '#0d1b2e',
     background: '#f8fafc', borderRadius: 8, padding: '8px 12px',
     border: '1px solid #e2e8f0',
   },
@@ -716,7 +716,7 @@ const styles: Record<string, React.CSSProperties> = {
   },
   successBadge: {
     fontSize: 10, fontWeight: 900, letterSpacing: 2,
-    color: '#b8860b', marginBottom: 8,
+    color: '#f4c04a', marginBottom: 8,
   },
   successTitle: {
     fontSize: 22, fontWeight: 900, color: '#0d1b2e',
@@ -735,6 +735,6 @@ const styles: Record<string, React.CSSProperties> = {
   },
   ticketLabel: { fontSize: 12, color: '#94a3b8', fontWeight: 600, flexShrink: 0 },
   ticketCode: { fontSize: 15, fontWeight: 900, color: '#0d1b2e', letterSpacing: 1 },
-  ticketVal: { fontSize: 13, color: '#1a2332', fontWeight: 600, textAlign: 'right' },
+  ticketVal: { fontSize: 13, color: '#0d1b2e', fontWeight: 600, textAlign: 'right' },
   ticketDivider: { height: 1, background: '#f1f5f9', margin: '4px 0' },
 };

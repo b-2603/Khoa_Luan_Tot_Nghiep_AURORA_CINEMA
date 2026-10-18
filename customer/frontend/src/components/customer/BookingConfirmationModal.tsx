@@ -50,13 +50,13 @@ export default function BookingConfirmationModal({ movie, showtime, theater, lan
   );
 }
 
-const overlay: React.CSSProperties = { position: 'fixed', inset: 0, zIndex: 205, display: 'flex', alignItems: 'center', justifyContent: 'center', padding: 20, background: 'rgba(4, 13, 25, .76)' };
+const overlay: React.CSSProperties = { position: 'fixed', inset: 0, zIndex: 205, display: 'flex', alignItems: 'center', justifyContent: 'center', padding: 20, background: 'rgba(13,27,46,.76)' };
 const modal: React.CSSProperties = { position: 'relative', width: 'min(760px, 100%)', background: '#fff', borderRadius: 16, padding: '38px 36px 30px', boxShadow: '0 24px 70px rgba(0,0,0,.35)' };
 const closeButton: React.CSSProperties = { position: 'absolute', top: 18, right: 18, display: 'grid', placeItems: 'center', width: 38, height: 38, border: 0, background: 'transparent', color: '#64748b', cursor: 'pointer' };
-const eyebrow: React.CSSProperties = { color: '#b8860b', fontSize: 10, fontWeight: 900, letterSpacing: 1.2, marginBottom: 8 };
+const eyebrow: React.CSSProperties = { color: '#f4c04a', fontSize: 10, fontWeight: 900, letterSpacing: 1.2, marginBottom: 8 };
 const heading: React.CSSProperties = { margin: 0, color: '#0d1b2e', fontSize: 22, fontWeight: 900, letterSpacing: .2 };
 const divider: React.CSSProperties = { height: 1, background: '#e2e8f0', margin: '28px 0 26px' };
-const movieTitle: React.CSSProperties = { paddingBottom: 18, color: '#b7791f', textAlign: 'center', fontSize: 30, fontWeight: 900, lineHeight: 1.2, borderBottom: '1px solid #edf1f5' };
+const movieTitle: React.CSSProperties = { paddingBottom: 18, color: '#f4c04a', textAlign: 'center', fontSize: 30, fontWeight: 900, lineHeight: 1.2, borderBottom: '1px solid #edf1f5' };
 const details: React.CSSProperties = { display: 'grid', gridTemplateColumns: 'repeat(3, minmax(0, 1fr))', marginTop: 0 };
 const detailLabel: React.CSSProperties = { display: 'flex', justifyContent: 'center', alignItems: 'center', gap: 6, padding: '20px 10px 14px', color: '#334155', fontSize: 14, fontWeight: 800, textAlign: 'center' };
 const detailValue: React.CSSProperties = { padding: '18px 12px', background: '#f6f8fb', color: '#0d1b2e', fontSize: 17, fontWeight: 800, textAlign: 'center' };

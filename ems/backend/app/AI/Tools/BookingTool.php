@@ -49,10 +49,10 @@ class BookingTool implements AITool
                    s.start_at, s.end_at,
                    m.title AS movie_title, m.age_rating,
                    r.name AS room_name, r.type AS room_type
-            FROM bookings b
-            JOIN showtimes s ON b.showtime_id = s.id
-            JOIN movies m ON s.movie_id = m.id
-            JOIN rooms r ON s.room_id = r.id
+            FROM ems_bookings b
+            JOIN ems_showtimes s ON b.showtime_id = s.id
+            JOIN ems_movies m ON s.movie_id = m.id
+            JOIN ems_rooms r ON s.room_id = r.id
             WHERE b.booking_code = ?
             LIMIT 1
         ");
@@ -80,8 +80,8 @@ class BookingTool implements AITool
         // Lấy danh sách ghế đã chọn
         $stmtSeats = $pdo->prepare("
             SELECT s.row, s.number, s.seat_type, bs.price
-            FROM booking_seats bs
-            JOIN seats s ON bs.seat_id = s.id
+            FROM ems_booking_seats bs
+            JOIN ems_seats s ON bs.seat_id = s.id
             WHERE bs.booking_id = ?
             ORDER BY s.row ASC, s.number ASC
         ");

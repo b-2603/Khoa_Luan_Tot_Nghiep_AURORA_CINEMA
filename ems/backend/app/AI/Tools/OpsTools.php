@@ -36,7 +36,7 @@ class EquipmentTool implements AITool
         $onlyIssues = !empty($arguments['only_issues']);
 
         $sql = "SELECT e.id, e.code, e.name, e.category, e.status, e.last_maintenance, e.next_maintenance, r.name room
-                FROM equipment e LEFT JOIN rooms r ON r.id=e.room_id WHERE 1=1";
+                FROM ems_equipment e LEFT JOIN ems_rooms r ON r.id=e.room_id WHERE 1=1";
         $params = [];
         if ($room !== '') { $sql .= " AND r.name = ?"; $params[] = $room; }
         if ($onlyIssues) $sql .= " AND e.status <> 'operational'";
@@ -51,7 +51,7 @@ class EquipmentTool implements AITool
 
         $items = [];
         foreach ($equipment as $e) {
-            $i = $pdo->prepare("SELECT severity, description, status, DATE_FORMAT(reported_at,'%H:%i %d/%m') reported FROM equipment_incidents WHERE equipment_id=? AND status<>'resolved'");
+            $i = $pdo->prepare("SELECT severity, description, status, DATE_FORMAT(reported_at,'%H:%i %d/%m') reported FROM ems_equipment_incidents WHERE equipment_id=? AND status<>'resolved'");
             $i->execute([$e['id']]);
             $items[] = [
                 'code' => $e['code'], 'name' => $e['name'], 'room' => $e['room'], 'category' => $e['category'],
@@ -70,7 +70,7 @@ class EquipmentTool implements AITool
         ];
 
         if ($room !== '') {
-            $s = $pdo->prepare("SELECT TIME_FORMAT(s.start_at,'%H:%i') t, m.title FROM showtimes s JOIN movies m ON m.id=s.movie_id JOIN rooms r ON r.id=s.room_id WHERE r.name=? AND DATE(s.start_at)=CURDATE() ORDER BY s.start_at");
+            $s = $pdo->prepare("SELECT TIME_FORMAT(s.start_at,'%H:%i') t, m.title FROM ems_showtimes s JOIN ems_movies m ON m.id=s.movie_id JOIN ems_rooms r ON r.id=s.room_id WHERE r.name=? AND DATE(s.start_at)=CURDATE() ORDER BY s.start_at");
             $s->execute([$room]);
             $result['showtimes_today'] = $s->fetchAll(PDO::FETCH_ASSOC);
             $bad = array_values(array_filter($items, fn($x) => in_array($x['status'], ['fault', 'maintenance'])));
@@ -106,11 +106,11 @@ class POSTool implements AITool
         $code = strtoupper(trim($arguments['code'] ?? ''));
 
         if ($code === '') {
-            $q = $pdo->query("SELECT code, type, item_name, amount, payment_method, status, error_message, DATE_FORMAT(created_at,'%H:%i') t FROM pos_transactions WHERE status IN ('failed','pending') AND DATE(created_at)=CURDATE() ORDER BY created_at DESC");
+            $q = $pdo->query("SELECT code, type, item_name, amount, payment_method, status, error_message, DATE_FORMAT(created_at,'%H:%i') t FROM ems_pos_transactions WHERE status IN ('failed','pending') AND DATE(created_at)=CURDATE() ORDER BY created_at DESC");
             return ['mode' => 'problem_list', 'transactions' => $q->fetchAll(PDO::FETCH_ASSOC)];
         }
 
-        $q = $pdo->prepare("SELECT p.*, u.name staff_name, DATE_FORMAT(p.created_at,'%H:%i %d/%m/%Y') t FROM pos_transactions p LEFT JOIN users u ON u.id=p.staff_id WHERE p.code=? LIMIT 1");
+        $q = $pdo->prepare("SELECT p.*, u.name staff_name, DATE_FORMAT(p.created_at,'%H:%i %d/%m/%Y') t FROM ems_pos_transactions p LEFT JOIN ems_users u ON u.id=p.staff_id WHERE p.code=? LIMIT 1");
         $q->execute([$code]);
         $tx = $q->fetch(PDO::FETCH_ASSOC);
         if (!$tx) return ['found' => false, 'message' => "Không tìm thấy giao dịch {$code}."];
@@ -160,7 +160,7 @@ class StaffScheduleTool implements AITool
         $isManager = ($user['role'] ?? 'staff') === 'manager';
 
         $sql = "SELECT u.id uid, u.name, u.department, sh.name shift, TIME_FORMAT(sh.start_time,'%H:%i') st, TIME_FORMAT(sh.end_time,'%H:%i') et, w.location, w.status
-                FROM work_schedules w JOIN users u ON u.id=w.user_id JOIN shifts sh ON sh.id=w.shift_id WHERE w.date=?";
+                FROM ems_work_schedules w JOIN ems_users u ON u.id=w.user_id JOIN ems_shifts sh ON sh.id=w.shift_id WHERE w.date=?";
         $params = [$date];
         if (!$isManager) {
             $sql .= " AND u.id=?"; $params[] = (int)($user['id'] ?? 0);
@@ -174,7 +174,7 @@ class StaffScheduleTool implements AITool
 
         $pending = 0;
         if ($isManager) {
-            $p = $pdo->prepare("SELECT COUNT(*) FROM shift_registrations WHERE status='pending' AND date>=?");
+            $p = $pdo->prepare("SELECT COUNT(*) FROM ems_shift_registrations WHERE status='pending' AND date>=?");
             $p->execute([date('Y-m-d')]);
             $pending = (int)$p->fetchColumn();
         }
@@ -215,24 +215,24 @@ class TrainingTool implements AITool
 
         if ($isManager && $name === '') {
             $rows = $pdo->query("SELECT u.name, COUNT(DISTINCT c.id) certs, COUNT(DISTINCT a.id) attempts, ROUND(AVG(a.score),1) avg_score
-                                 FROM users u LEFT JOIN certificates c ON c.user_id=u.id LEFT JOIN quiz_attempts a ON a.user_id=u.id
+                                 FROM ems_users u LEFT JOIN ems_certificates c ON c.user_id=u.id LEFT JOIN ems_quiz_attempts a ON a.user_id=u.id
                                  WHERE u.role='staff' GROUP BY u.id ORDER BY certs DESC")->fetchAll(PDO::FETCH_ASSOC);
             return ['scope' => 'toàn bộ nhân viên', 'staff' => $rows];
         }
 
         $uid = (int)($user['id'] ?? 0);
         if ($isManager) {
-            $f = $pdo->prepare("SELECT id FROM users WHERE name LIKE ? LIMIT 1");
+            $f = $pdo->prepare("SELECT id FROM ems_users WHERE name LIKE ? LIMIT 1");
             $f->execute(["%{$name}%"]);
             $uid = (int)$f->fetchColumn();
             if (!$uid) return ['found' => false, 'message' => "Không tìm thấy nhân viên '{$name}'."];
         }
 
-        $c = $pdo->prepare("SELECT co.title, c.score, c.issued_at, c.certificate_code FROM certificates c JOIN courses co ON co.id=c.course_id WHERE c.user_id=? ORDER BY c.issued_at DESC");
+        $c = $pdo->prepare("SELECT co.title, c.score, c.issued_at, c.certificate_code FROM ems_certificates c JOIN ems_courses co ON co.id=c.course_id WHERE c.user_id=? ORDER BY c.issued_at DESC");
         $c->execute([$uid]);
-        $a = $pdo->prepare("SELECT q.title, a.score, a.passed, DATE_FORMAT(a.completed_at,'%d/%m/%Y') d FROM quiz_attempts a JOIN quizzes q ON q.id=a.quiz_id WHERE a.user_id=? ORDER BY a.completed_at DESC LIMIT 10");
+        $a = $pdo->prepare("SELECT q.title, a.score, a.passed, DATE_FORMAT(a.completed_at,'%d/%m/%Y') d FROM ems_quiz_attempts a JOIN ems_quizzes q ON q.id=a.quiz_id WHERE a.user_id=? ORDER BY a.completed_at DESC LIMIT 10");
         $a->execute([$uid]);
-        $total = (int)$pdo->query("SELECT COUNT(*) FROM quizzes")->fetchColumn();
+        $total = (int)$pdo->query("SELECT COUNT(*) FROM ems_quizzes")->fetchColumn();
 
         return [
             'found' => true,

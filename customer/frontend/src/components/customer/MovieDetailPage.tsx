@@ -18,9 +18,9 @@ export default function MovieDetailPage({ movie, theaters, theater, showtimes, d
 
   return <main style={{ maxWidth: 1120, margin: '0 auto', padding: '22px 20px 54px' }}>
     <button onClick={onBack} style={backButton}><ArrowLeft size={16} /> VỀ TRANG CHỦ</button>
-    <div style={{ color: '#64748b', fontSize: 12, margin: '18px 0 14px' }}>Trang chủ <span style={{ color: '#c08a13' }}>›</span> Chi tiết phim <span style={{ color: '#c08a13' }}>›</span> {movie.title}</div>
+    <div style={{ color: '#64748b', fontSize: 12, margin: '18px 0 14px' }}>Trang chủ <span style={{ color: '#f4c04a' }}>›</span> Chi tiết phim <span style={{ color: '#f4c04a' }}>›</span> {movie.title}</div>
     <section style={hero}>
-      <div style={{ width: 250, minHeight: 365, borderRadius: 14, background: movie.posterUrl ? `url("${movie.posterUrl}") center/cover` : 'linear-gradient(145deg,#142945,#071526)', display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 }}>
+      <div style={{ width: 250, minHeight: 365, borderRadius: 14, background: movie.posterUrl ? `url("${movie.posterUrl}") center/cover` : 'linear-gradient(145deg,#0d1b2e,#0d1b2e)', display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 }}>
         {!movie.posterUrl && <Film size={54} color="#f4c04a" />}
       </div>
       <div style={{ flex: 1 }}>
@@ -40,12 +40,12 @@ export default function MovieDetailPage({ movie, theaters, theater, showtimes, d
 
 const backButton: React.CSSProperties = { display: 'inline-flex', alignItems: 'center', gap: 7, border: '1px solid #cbd5e1', background: '#fff', color: '#0d1b2e', borderRadius: 8, padding: '8px 12px', fontWeight: 800, fontSize: 11, cursor: 'pointer' };
 const hero: React.CSSProperties = { display: 'flex', gap: 30, background: '#fff', borderRadius: 18, padding: 26, boxShadow: '0 5px 20px rgba(13,27,46,.07)', border: '1px solid #e7edf3' };
-const eyebrow: React.CSSProperties = { color: '#b8860b', fontSize: 10, fontWeight: 900, letterSpacing: 1 };
+const eyebrow: React.CSSProperties = { color: '#f4c04a', fontSize: 10, fontWeight: 900, letterSpacing: 1 };
 const meta: React.CSSProperties = { display: 'flex', flexWrap: 'wrap', gap: 14, alignItems: 'center', color: '#64748b', fontSize: 12 };
 const rating: React.CSSProperties = { background: '#f4c04a', color: '#0d1b2e', borderRadius: 5, padding: '4px 8px', fontWeight: 900 };
 const description: React.CSSProperties = { color: '#475569', fontSize: 14, lineHeight: 1.75, margin: '20px 0' };
 const facts: React.CSSProperties = { display: 'grid', gridTemplateColumns: '110px 1fr', gap: '9px 18px', fontSize: 13, color: '#475569', borderTop: '1px solid #eef2f6', paddingTop: 15 };
 const sectionTitle: React.CSSProperties = { display: 'flex', alignItems: 'center', gap: 8, color: '#0d1b2e', fontSize: 15, fontWeight: 900, letterSpacing: .3, marginBottom: 14 };
-const trailerCard: React.CSSProperties = { background: '#071526', borderRadius: 18, padding: 24, marginTop: 18, color: '#fff' };
+const trailerCard: React.CSSProperties = { background: '#0d1b2e', borderRadius: 18, padding: 24, marginTop: 18, color: '#fff' };
 const trailerFrame: React.CSSProperties = { aspectRatio: '16 / 9', maxWidth: 850, margin: '0 auto', overflow: 'hidden', borderRadius: 12, background: '#000' };
 const videoFrame: React.CSSProperties = { display: 'block', width: '100%', height: '100%', border: 0 };
