@@ -68,21 +68,13 @@ export const AiAssistantModal: React.FC<AiAssistantModalProps> = ({
   const initialWelcomeMessage: ChatMessage = {
     id: 'msg-welcome',
     sender: 'ai',
-    text: `Chào bạn${userName ? ' ' + userName : ''}! Tôi là **Cinema AI** — Trợ lý ảo hỗ trợ vận hành và nghiệp vụ tại cụm rạp **Aurora Cinemas**.
-
-Tôi có thể đồng hành và giải đáp cho bạn các nội dung:
-• 🍿 **Nghiệp vụ quầy & phòng chiếu:** Công thức bắp nước F&B, quy trình bán vé Box Office, hỗ trợ kỹ thuật máy chiếu và an toàn PCCC.
-• 📚 **Đào tạo & Sát hạch:** Tra cứu quy trình SOP, hướng dẫn hoàn thành các khóa học nghiệp vụ và bài kiểm tra cấp chứng chỉ.
-• 📅 **Ca làm & Chấm công:** Hướng dẫn quy định đăng ký ca làm, quy trình giải trình chấm công và các thủ tục nội bộ rạp.
-• 🎬 **Thông tin rạp & Phim ảnh:** Hỗ trợ tra cứu lịch chiếu, phòng chiếu, tình trạng ghế và giải đáp thắc mắc dịch vụ.
-
-*Bạn có thể bấm chọn các phím tắt bên dưới hoặc gõ trực tiếp câu hỏi để bắt đầu nhé!*`,
+    text: `Chào bạn${userName ? ' ' + userName : ''}! Tôi là **Cinema AI** — Trợ lý ảo hỗ trợ vận hành và nghiệp vụ tại cụm rạp **Aurora Cinemas**. Bạn có thể đặt câu hỏi hoặc chọn các chức năng bên dưới.`,
     time: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
     actions: userRole === 'manager' ? [
       { label: '📊 Tổng Quan Quản Trị', tab: 'dashboard' },
-      { label: '🗓️ Xếp Lịch Phân Ca AI', tab: 'manager-scheduler' },
+      { label: '🗓️ Phân Ca & Xếp Lịch Làm Việc', tab: 'manager-scheduler' },
       { label: '⏰ Quản Lý Chấm Công', tab: 'attendance' },
-      { label: '✨ Tạo Khóa Học / Quiz AI', tab: 'manager-quiz-creator' },
+      { label: '✨ Soạn Khóa Học & Đề Khảo Thí', tab: 'manager-quiz-creator' },
     ] : [
       { label: '📚 Khóa Học Nghiệp Vụ', tab: 'courses' },
       { label: '🎯 Làm Bài Kiểm Tra', tab: 'quizzes' },
@@ -455,7 +447,7 @@ Tôi có thể đồng hành và giải đáp cho bạn các nội dung:
                           <span>{m.time}</span>
                           <span className="text-slate-600">•</span>
                           <span className="text-emerald-400 flex items-center gap-1 font-mono">
-                            <Sparkles className="w-3 h-3" /> Cinema AI Verified
+                            <Sparkles className="w-3 h-3" /> Chuẩn Quy Trình Rạp
                           </span>
                         </div>
 
@@ -596,7 +588,7 @@ Tôi có thể đồng hành và giải đáp cho bạn các nội dung:
             <div className="flex items-center justify-between pb-3 border-b border-slate-800">
               <div className="flex items-center gap-2">
                 <Terminal className="w-5 h-5 text-cyan-400" />
-                <h4 className="font-black text-sm text-white">TRÌNH GIÁM SÁT CINEMA AI (AUDIT LOGS & 16 TOOLS)</h4>
+                <h4 className="font-black text-sm text-white">NHẬT KÝ HỆ THỐNG & CÔNG CỤ VẬN HÀNH</h4>
               </div>
               <div className="flex items-center gap-2">
                 <div className="flex bg-slate-900 rounded-xl p-1 border border-slate-800">

@@ -23,23 +23,24 @@ export const Navbar: React.FC<NavbarProps> = ({
 
   return (
     <header className="glass-nav sticky top-0 z-40 px-4 lg:px-8 py-3 flex items-center justify-between shadow-sm bg-white/95 border-b border-slate-200">
-      {/* Brand & Logo */}
-      <div className="flex items-center gap-3">
-        <div className="w-10 h-10 rounded-2xl bg-gradient-to-tr from-amber-500 via-purple-600 to-cyan-500 p-0.5 shadow-md shadow-amber-500/20">
-          <div className="w-full h-full bg-slate-950 rounded-[14px] flex items-center justify-center">
-            <Film className="w-5 h-5 text-amber-400" />
-          </div>
-        </div>
-        <div>
+      {/* Brand & Logo - Synchronized with POS and TMS */}
+      <div className="flex items-center gap-3.5">
+        <img
+          src="/aurora-logo.svg"
+          alt="Aurora Cinema"
+          className="h-10 w-auto object-contain cursor-pointer"
+        />
+        <div className="h-7 w-px bg-slate-200 hidden sm:block" />
+        <div className="hidden sm:flex flex-col">
           <div className="flex items-center gap-2">
-            <h1 className="font-black text-lg tracking-wide bg-gradient-to-r from-amber-600 via-purple-600 to-cyan-600 bg-clip-text text-transparent">
-              AURORA CINEMAS
-            </h1>
-            <span className="px-2 py-0.5 text-[10px] font-bold uppercase tracking-wider rounded-full bg-cyan-50 text-cyan-700 border border-cyan-200">
-              EMS AI v2.6
+            <span className="font-black text-xs tracking-wider text-slate-900 uppercase">
+              Hệ Thống EMS
+            </span>
+            <span className="px-2 py-0.5 text-[9px] font-bold uppercase tracking-wider rounded-full bg-amber-50 text-amber-800 border border-amber-300">
+              Quản Trị Rạp
             </span>
           </div>
-          <p className="text-xs text-slate-500 font-medium">Hệ thống QL Nhân sự & Đào tạo Rạp Phim</p>
+          <p className="text-[11px] text-slate-500 font-medium">Quản lý Đào tạo & Nhân sự Cụm Rạp</p>
         </div>
       </div>
 
@@ -48,10 +49,10 @@ export const Navbar: React.FC<NavbarProps> = ({
         {/* AI Assistant Button */}
         <button
           onClick={onOpenAiAssistant}
-          className="flex items-center gap-1.5 px-3.5 py-1.5 text-xs font-bold bg-gradient-to-r from-purple-600 to-cyan-600 hover:from-purple-500 hover:to-cyan-500 text-white rounded-xl shadow-md transition cursor-pointer"
+          className="flex items-center gap-1.5 px-3.5 py-1.5 text-xs font-bold bg-gradient-to-r from-purple-600 to-indigo-600 hover:from-purple-500 hover:to-indigo-500 text-white rounded-xl shadow-md transition cursor-pointer"
         >
-          <Bot className="w-4 h-4 text-cyan-100 animate-pulse" />
-          <span>Trợ Lý AI</span>
+          <Bot className="w-4 h-4 text-cyan-100" />
+          <span>Trợ Lý Nghiệp Vụ</span>
         </button>
 
         {/* User Info Capsule */}

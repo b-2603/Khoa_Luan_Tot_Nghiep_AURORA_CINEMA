@@ -51,7 +51,7 @@ export const CertificatesPage: React.FC<CertificatesPageProps> = ({ currentUser 
         <div>
           <h2 className="text-xl font-black text-slate-900 tracking-tight">Hồ Sơ Chứng Chỉ Đào Tạo & Nghiệp Vụ Rạp</h2>
           <p className="text-xs text-slate-500 mt-1">
-            Hệ thống chứng chỉ số hóa (Digital Certificates) cấp tự động kèm con dấu bảo chứng và mã QR xác thực chính thức của Aurora Cinemas
+            Danh sách chứng chỉ đào tạo và nghiệp vụ.
           </p>
         </div>
 
@@ -88,7 +88,7 @@ export const CertificatesPage: React.FC<CertificatesPageProps> = ({ currentUser 
           <div className="space-y-1">
             <h3 className="font-extrabold text-base text-slate-800">Chưa Có Chứng Chỉ Đào Tạo Trong Hồ Sơ</h3>
             <p className="text-xs text-slate-500 max-w-md mx-auto">
-              Hãy tham gia các khóa học nghiệp vụ tại mục Đào Tạo và hoàn thành bài kiểm tra đánh giá (điểm từ 80% trở lên) để được cấp chứng chỉ danh giá của Cụm Rạp!
+              Hoàn thành các bài kiểm tra nghiệp vụ để nhận chứng chỉ.
             </p>
           </div>
         </div>

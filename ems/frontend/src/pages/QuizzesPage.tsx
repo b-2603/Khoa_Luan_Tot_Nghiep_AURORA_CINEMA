@@ -180,11 +180,8 @@ export const QuizzesPage: React.FC<QuizzesPageProps> = ({
         <div>
           <div className="flex items-center gap-2">
             <h2 className="text-xl font-bold text-slate-900">Kiểm Tra Đánh Giá Nghiệp Vụ Rạp Phim</h2>
-            <span className="text-[10px] font-extrabold px-2 py-0.5 rounded-full bg-emerald-50 text-emerald-700 border border-emerald-200">
-              Chuẩn 30 Câu/Đề
-            </span>
           </div>
-          <p className="text-xs text-slate-500 mt-1">Hệ thống 8 bộ đề thi trắc nghiệm nghiệp vụ toàn diện 2026, mỗi đề gồm đúng 30 câu hỏi tình huống thực tế</p>
+          <p className="text-xs text-slate-500 mt-1">Đánh giá kiến thức và nghiệp vụ định kỳ.</p>
         </div>
 
         {onNavigateToCourses && (

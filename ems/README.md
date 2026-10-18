@@ -53,6 +53,25 @@ EMS_AURORA/
 
 ---
 
+## 🔐 Danh Sách Tài Khoản Đăng Nhập Nội Bộ (EMS Accounts)
+
+> **Cơ chế xác thực phân quyền nội bộ:**
+> - **Tên đăng nhập:** Mã nhân viên chính là **Số điện thoại (SĐT)** của nhân sự.
+> - **Mật khẩu ban đầu mặc định:** `8888` (có thể tự đổi mật khẩu mới trong mục *Hồ Sơ* sau khi đăng nhập).
+> - **Quy định cấp phát:**
+>   - Tài khoản **Nhân viên (Staff)**: Do **Quản lý Nhân sự (Manager)** khởi tạo trong mục *"Tạo Tài Khoản Nhân Viên"*.
+>   - Tài khoản **Quản lý (Manager)**: Do **Admin tổng** cấp phát và phân quyền.
+
+| Vai trò hệ thống | Họ và Tên | Mã NV / Số Điện Thoại | Mật khẩu mặc định | Bộ phận trực thuộc & Quyền hạn |
+|---|---|---|---|---|
+| **Quản lý Đào tạo & Nhân sự (Manager)** | **Phạm Thu Hương** | `0988888888` | `8888` | Quản trị nhân sự toàn diện, duyệt ca & xếp lịch AI, tạo khóa học/đề thi, chấm công |
+| **Nhân viên Rạp (Staff)** | **Nguyễn Văn Minh** | `0901234567` | `8888` | Vé & CSKH • Điểm danh Face ID, xem ca làm, đăng ký ca, học tập & thi định kỳ |
+| **Nhân viên Rạp (Staff)** | **Trần Thị Mai** | `0912345678` | `8888` | Bắp nước & Concession • Điểm danh Face ID, xem ca làm, đăng ký ca, học tập & thi |
+| **Nhân viên Rạp (Staff)** | **Lê Hoàng Nam** | `0923456789` | `8888` | Kỹ thuật Phim & Âm thanh • Điểm danh Face ID, xem ca làm, đăng ký ca, học tập |
+| **Nhân viên Rạp (Staff)** | **Nguyễn Trần Thái Bảo** | `0395852972` | `8888` | Nhân sự vận hành tại cụm rạp |
+
+---
+
 ## ⚡ Hướng Dẫn Khởi Chạy Ứng Dụng (Fullstack 1 Lệnh Duy Nhất)
 
 ### 👉 Khởi chạy trọn gói (Frontend + Backend + Database):

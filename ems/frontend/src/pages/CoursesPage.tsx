@@ -71,7 +71,7 @@ export const CoursesPage: React.FC<CoursesPageProps> = ({ onNavigateToQuiz }) =>
     setAiChatLog([
       { 
         sender: 'ai', 
-        text: `Xin chào! Tôi là Trợ lý AI Đào Tạo Aurora. Tôi sẵn sàng hỗ trợ giải đáp mọi quy chuẩn nghiệp vụ liên quan đến khóa học "${c.title}". Bạn có thắc mắc gì không?` 
+        text: `Xin chào! Tôi là Trợ lý Hỗ Trợ Đào Tạo Aurora. Tôi luôn sẵn sàng giải đáp các quy chuẩn nghiệp vụ liên quan đến khóa học "${c.title}". Bạn có câu hỏi nào cần hỗ trợ không?` 
       }
     ]);
   };
@@ -106,7 +106,7 @@ export const CoursesPage: React.FC<CoursesPageProps> = ({ onNavigateToQuiz }) =>
       const answer = await askCinemaAiAssistant(prompt, 'staff');
       setAiChatLog(prev => [...prev, { sender: 'ai', text: answer.text }]);
     } catch {
-      setAiChatLog(prev => [...prev, { sender: 'ai', text: 'Xin lỗi, hiện tại Trợ lý AI đang bận. Vui lòng thử lại sau.' }]);
+      setAiChatLog(prev => [...prev, { sender: 'ai', text: 'Hệ thống hỗ trợ hiện đang bận. Vui lòng gửi lại câu hỏi sau giây lát.' }]);
     } finally {
       setIsAiAnswering(false);
     }
@@ -168,7 +168,7 @@ export const CoursesPage: React.FC<CoursesPageProps> = ({ onNavigateToQuiz }) =>
             </h1>
 
             <p className="text-xs sm:text-sm text-slate-300 leading-relaxed">
-              Khung chuẩn hóa kỹ năng dịch vụ rạp chiếu phim 5 sao: Kỹ thuật rang bắp Concession, vận hành máy vé POS, máy chiếu Laser IMAX & an toàn khẩn cấp.
+              Chương trình đào tạo và nâng cao nghiệp vụ nhân sự rạp chiếu phim.
             </p>
           </div>
 
@@ -480,7 +480,7 @@ export const CoursesPage: React.FC<CoursesPageProps> = ({ onNavigateToQuiz }) =>
                         }`}
                       >
                         <Sparkles className="w-3.5 h-3.5 text-amber-300" />
-                        <span>Hỏi Trợ Lý AI</span>
+                        <span>Hỏi Đáp Nghiệp Vụ</span>
                       </button>
                     </div>
 
@@ -721,7 +721,7 @@ export const CoursesPage: React.FC<CoursesPageProps> = ({ onNavigateToQuiz }) =>
                         <div className="border-b border-slate-100 pb-2 flex items-center justify-between">
                           <div className="flex items-center gap-1.5 text-xs font-bold text-purple-900">
                             <Sparkles className="w-4 h-4 text-purple-600" />
-                            <span>Hỏi Đáp Nghiệp Vụ Với Trợ Lý AI</span>
+                            <span>Hỏi Đáp Nghiệp Vụ Khóa Học</span>
                           </div>
                           <span className="text-[10px] text-slate-400">Được tối ưu theo quy chuẩn rạp</span>
                         </div>
@@ -743,7 +743,7 @@ export const CoursesPage: React.FC<CoursesPageProps> = ({ onNavigateToQuiz }) =>
                           {isAiAnswering && (
                             <div className="p-3 bg-purple-50 text-purple-900 rounded-2xl border border-purple-100 text-xs italic flex items-center gap-2">
                               <span className="w-2 h-2 rounded-full bg-purple-600 animate-ping"></span>
-                              <span>Trợ lý AI đang tra cứu tiêu chuẩn rạp...</span>
+                              <span>Đang tra cứu tiêu chuẩn vận hành rạp...</span>
                             </div>
                           )}
                         </div>

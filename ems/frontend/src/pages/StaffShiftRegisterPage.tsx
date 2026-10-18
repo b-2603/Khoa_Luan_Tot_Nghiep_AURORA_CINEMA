@@ -93,7 +93,7 @@ export const StaffShiftRegisterPage: React.FC<StaffShiftRegisterPageProps> = ({ 
         <div>
           <h2 className="text-xl font-bold text-slate-900">Đăng Ký Lịch Làm Việc Tuần Tới</h2>
           <p className="text-xs text-slate-500 mt-1">
-            Đăng ký nguyện vọng ca làm việc trước <strong>20:00 Thứ 5</strong> hàng tuần. Quản lý và Trợ lý AI sẽ căn cứ vào đây để xếp lịch chính thức.
+            Đăng ký nguyện vọng ca làm việc trong tuần.
           </p>
         </div>
 
@@ -103,7 +103,7 @@ export const StaffShiftRegisterPage: React.FC<StaffShiftRegisterPageProps> = ({ 
             className="px-4 py-2 bg-gradient-to-r from-emerald-600 to-teal-600 hover:from-emerald-500 hover:to-teal-500 text-white font-bold text-xs rounded-xl shadow-md flex items-center gap-2 transition shrink-0"
           >
             <ShieldCheck className="w-4 h-4" />
-            <span>Xem Lịch Chính Thức Đã Xuất Bản</span>
+            <span>Xem Lịch Chính Thức</span>
             <ArrowRight className="w-3.5 h-3.5" />
           </button>
         )}
@@ -128,14 +128,14 @@ export const StaffShiftRegisterPage: React.FC<StaffShiftRegisterPageProps> = ({ 
       )}
 
       {/* Thống kê tiến độ đăng ký của nhân viên */}
-      <div className="grid grid-cols-1 sm:grid-cols-4 gap-4">
+      <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
         <div className="bg-white border border-slate-200 rounded-2xl p-4 shadow-sm">
           <div className="text-xs text-slate-500 font-medium">Tổng ca đã đăng ký</div>
           <div className="text-2xl font-black text-slate-900 mt-1 flex items-baseline gap-1.5">
             <span>{registrations.length}</span>
             <span className="text-xs font-normal text-slate-400">/ 7 ngày</span>
           </div>
-          <div className="text-[11px] text-slate-500 mt-1">Đạt yêu cầu tối thiểu (5 ca/tuần)</div>
+          <div className="text-[11px] text-slate-500 mt-1">Tiêu chuẩn: 5 ca/tuần</div>
         </div>
 
         <div className="bg-white border border-slate-200 rounded-2xl p-4 shadow-sm">
@@ -149,30 +149,20 @@ export const StaffShiftRegisterPage: React.FC<StaffShiftRegisterPageProps> = ({ 
         </div>
 
         <div className="bg-white border border-slate-200 rounded-2xl p-4 shadow-sm">
-          <div className="text-xs text-slate-500 font-medium">Đang chờ AI & Quản lý duyệt</div>
+          <div className="text-xs text-slate-500 font-medium">Đang chờ duyệt</div>
           <div className="text-2xl font-black text-amber-600 mt-1">
             {pendingCount} <span className="text-xs font-normal text-slate-400">nguyện vọng</span>
           </div>
           <div className="text-[11px] text-amber-600 mt-1 flex items-center gap-1">
-            <Clock className="w-3 h-3" /> Có thể bấm để hủy/đổi ca
+            <Clock className="w-3 h-3" /> Chờ quản lý xếp lịch
           </div>
-        </div>
-
-        <div className="bg-gradient-to-br from-amber-500/10 via-purple-500/5 to-white border border-amber-200 rounded-2xl p-4 shadow-sm">
-          <div className="text-xs text-amber-900 font-bold flex items-center gap-1.5">
-            <Sparkles className="w-3.5 h-3.5 text-amber-600" />
-            <span>Quy Trình Xếp Ca AI</span>
-          </div>
-          <p className="text-[11px] text-slate-600 mt-1.5 leading-relaxed">
-            Nguyện vọng của bạn sẽ được AI ưu tiên 100% khi phân bổ ca trực và vị trí tại cụm rạp.
-          </p>
         </div>
       </div>
 
       {/* Chú giải các ca làm việc tại rạp phim */}
       <div className="bg-white border border-slate-200 rounded-2xl p-4 shadow-sm">
         <div className="text-xs font-bold text-slate-700 mb-3 uppercase tracking-wider">
-          Khung giờ các ca làm việc tại cụm rạp Aurora Cinemas
+          Khung giờ các ca làm việc tại rạp
         </div>
         <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
           {shifts.map(s => (

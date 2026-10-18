@@ -101,7 +101,7 @@ export const getAiRecommendation = (reg: ShiftRegistration, staff?: User, shift?
     location,
     fitScore,
     reason,
-    badgeText: `AI Khuyên Duyệt (${fitScore}%)`
+    badgeText: `Độ phù hợp: ${fitScore}%`
   };
 };
 
@@ -327,7 +327,7 @@ export const ManagerShiftSchedulerPage: React.FC = () => {
           shiftName: item.shiftName,
           location: item.location as any,
           status: 'assigned',
-          assignedBy: 'Smart AI Scheduler (Khớp Nguyện Vọng Đăng Ký)'
+          assignedBy: 'Hệ Thống Tự Động (Khớp Nguyện Vọng Đăng Ký)'
         }));
 
         saveWorkSchedules(newSchedules);
@@ -346,18 +346,18 @@ export const ManagerShiftSchedulerPage: React.FC = () => {
           return r;
         }));
 
-        const logs = reportData.schedules.map(r => `AI: Phân ${r.userName} vào ${r.shiftName} (${r.location}) - ${r.reason}`);
+        const logs = reportData.schedules.map(r => `Tự động: Phân ${r.userName} vào ${r.shiftName} (${r.location}) - ${r.reason}`);
         setAiSuggestionsLog(logs);
         setAiReport(reportData);
 
         // BẬT CỬA SỔ POP-UP BÁO CÁO KẾT QUẢ AI NGAY LẬP TỨC
         setIsAiModalOpen(true);
 
-        showToast('success', `Trợ lý AI đã xếp ca và tự động phê duyệt cho ngày ${reportData.dateLabel} (${targetDate}) thành công!`);
+        showToast('success', `Hệ thống đã phân ca và tự động phê duyệt cho ngày ${reportData.dateLabel} (${targetDate}) thành công!`);
       }
     } catch (err) {
       console.error(err);
-      showToast('error', 'Lỗi khi kích hoạt AI xếp lịch.');
+      showToast('error', 'Lỗi khi tự động xếp lịch.');
     } finally {
       setIsAiLoading(false);
     }
@@ -371,11 +371,11 @@ export const ManagerShiftSchedulerPage: React.FC = () => {
         await triggerAiAutoScheduler(d.date);
       }
       await loadData();
-      showToast('success', 'Trợ lý AI đã tối ưu và xếp lịch hoàn chỉnh cho toàn bộ 7 ngày trong tuần (21/09 - 27/09)!');
+      showToast('success', 'Đã hoàn tất phân bổ và xếp lịch làm việc cho toàn bộ 7 ngày trong tuần!');
       setActiveViewTab('matrix');
     } catch (err) {
       console.error(err);
-      showToast('error', 'Lỗi khi kích hoạt AI xếp lịch cả tuần.');
+      showToast('error', 'Lỗi khi xếp lịch cả tuần.');
     } finally {
       setIsAiLoading(false);
     }
@@ -386,9 +386,9 @@ export const ManagerShiftSchedulerPage: React.FC = () => {
       {/* Header */}
       <div className="flex flex-col lg:flex-row lg:items-center justify-between gap-4 border-b border-slate-200 pb-4">
         <div>
-          <h2 className="text-xl font-bold text-slate-900">Phê Duyệt Đăng Ký Ca & Xếp Lịch AI</h2>
+          <h2 className="text-xl font-bold text-slate-900">Phê Duyệt Đăng Ký Ca & Xếp Lịch Làm Việc</h2>
           <p className="text-xs text-slate-500 mt-1">
-            Xem xét và phê duyệt nguyện vọng ca trực của nhân viên rạp, hoặc kích hoạt Trợ lý AI tự động tối ưu hóa và gán quầy trực.
+            Phê duyệt nguyện vọng ca trực và phân công lịch làm việc.
           </p>
         </div>
 
@@ -413,17 +413,17 @@ export const ManagerShiftSchedulerPage: React.FC = () => {
             onClick={handleAiAutoSchedule}
             disabled={isAiLoading}
             className="px-4 py-2.5 bg-gradient-to-r from-purple-600 via-indigo-600 to-amber-500 hover:from-purple-500 hover:to-amber-400 text-white font-extrabold text-xs rounded-xl shadow-md flex items-center gap-2 transition cursor-pointer disabled:opacity-50"
-            title="AI xếp ca cho ngày đang chọn và mở ngay bảng báo cáo kết quả chi tiết"
+            title="Tự động phân ca cho ngày đang chọn và mở ngay bảng báo cáo kết quả chi tiết"
           >
             {isAiLoading ? (
               <>
                 <RefreshCw className="w-4 h-4 animate-spin" />
-                <span>AI Đang Xếp Lịch...</span>
+                <span>Đang Tự Động Phân Ca...</span>
               </>
             ) : (
               <>
                 <Sparkles className="w-4 h-4 text-amber-300" />
-                <span>Kích Hoạt AI Xếp Ca & Duyệt Lịch</span>
+                <span>Tự Động Phân Ca & Duyệt Lịch</span>
               </>
             )}
           </button>
@@ -435,7 +435,7 @@ export const ManagerShiftSchedulerPage: React.FC = () => {
             title="Tự động xếp lịch tối ưu cho toàn bộ 7 ngày trong tuần"
           >
             <Zap className="w-4 h-4 text-amber-500" />
-            <span>AI Xếp Lịch Cả Tuần (7 Ngày)</span>
+            <span>Tự Động Xếp Lịch Toàn Tuần</span>
           </button>
         </div>
       </div>
@@ -463,7 +463,7 @@ export const ManagerShiftSchedulerPage: React.FC = () => {
               onClick={() => setIsAiModalOpen(true)}
               className="text-[11px] font-bold underline hover:opacity-80 shrink-0 cursor-pointer"
             >
-              Mở lại Báo cáo AI
+              Xem Báo Cáo Phân Ca
             </button>
           )}
         </div>
@@ -478,7 +478,7 @@ export const ManagerShiftSchedulerPage: React.FC = () => {
             <span className="text-xs font-normal text-slate-400">ca cần xử lý</span>
           </div>
           <div className="text-[11px] text-amber-600 mt-1 flex items-center gap-1 font-semibold">
-            <Clock className="w-3.5 h-3.5" /> Có thể duyệt lẻ hoặc dùng AI tự động
+            <Clock className="w-3.5 h-3.5" /> Có thể duyệt lẻ hoặc dùng tự động phân bổ
           </div>
         </div>
 
@@ -506,7 +506,7 @@ export const ManagerShiftSchedulerPage: React.FC = () => {
           <div className="flex items-center justify-between">
             <div className="text-xs text-purple-900 font-bold flex items-center gap-1.5">
               <Sparkles className="w-3.5 h-3.5 text-purple-600" />
-              <span>AI Auto-Scheduler</span>
+              <span>Phân Bổ Ca Tự Động</span>
             </div>
             {aiReport && (
               <span className="text-[10px] font-bold px-1.5 py-0.2 rounded bg-purple-200 text-purple-900">
@@ -522,7 +522,7 @@ export const ManagerShiftSchedulerPage: React.FC = () => {
               onClick={() => setIsAiModalOpen(true)}
               className="text-[10px] text-purple-700 font-bold mt-1.5 flex items-center gap-1 hover:underline cursor-pointer"
             >
-              <span>Xem báo cáo AI vừa tạo</span>
+              <span>Xem báo cáo phân ca vừa tạo</span>
               <ChevronRight className="w-3 h-3" />
             </button>
           )}
@@ -596,7 +596,7 @@ export const ManagerShiftSchedulerPage: React.FC = () => {
                     : 'Tất cả nguyện vọng đăng ký ca đã được xử lý hoàn tất!'}
                 </h3>
                 <p className="text-[11px] text-amber-800 mt-0.5">
-                  Bấm <strong>"Phê Duyệt Ca"</strong> để duyệt từng ca lẻ, hoặc bấm <strong>"Kích Hoạt AI Xếp Ca & Duyệt Lịch"</strong> ở góc trên để AI tự động tối ưu hóa toàn bộ.
+                  Bấm <strong>"Phê Duyệt Ca"</strong> để duyệt từng ca lẻ, hoặc bấm <strong>"Tự Động Phân Ca & Duyệt Lịch"</strong> ở góc trên để hệ thống tự động tối ưu hóa toàn bộ.
                 </p>
               </div>
             </div>
@@ -620,11 +620,11 @@ export const ManagerShiftSchedulerPage: React.FC = () => {
               </div>
               <div className="max-w-md mx-auto space-y-1">
                 <h3 className="font-black text-base text-slate-900">
-                  {aiReport ? 'Toàn Bộ Ca Đã Được Trợ Lý AI Xếp & Phê Duyệt!' : 'Không Có Yêu Cầu Chờ Duyệt'}
+                  {aiReport ? 'Toàn Bộ Ca Đã Được Phân Bổ & Phê Duyệt Thành Công!' : 'Không Có Yêu Cầu Chờ Duyệt'}
                 </h3>
                 <p className="text-xs text-slate-500 leading-relaxed">
                   {aiReport 
-                    ? `Trợ lý AI vừa hoàn tất phê duyệt và phân bổ ca làm việc tối ưu cho nhân viên. Lịch làm việc chính thức đã được xuất bản tới toàn bộ nhân sự rạp.`
+                    ? `Hệ thống đã hoàn tất phân bổ và phê duyệt ca làm việc. Lịch làm việc chính thức đã được cập nhật tới toàn bộ nhân sự rạp.`
                     : 'Toàn bộ nguyện vọng đăng ký ca của nhân viên đã được xử lý hoàn tất hoặc chưa có đăng ký mới.'}
                 </p>
               </div>
@@ -639,7 +639,7 @@ export const ManagerShiftSchedulerPage: React.FC = () => {
                     onClick={() => setIsAiModalOpen(true)}
                     className="text-[11px] text-purple-700 hover:text-purple-900 underline font-bold cursor-pointer"
                   >
-                    Mở lại báo cáo AI
+                    Xem báo cáo phân ca
                   </button>
                 </div>
               )}
@@ -725,7 +725,7 @@ export const ManagerShiftSchedulerPage: React.FC = () => {
                         <div className="flex items-center justify-between">
                           <span className="text-[10px] font-extrabold uppercase tracking-wider text-purple-900 flex items-center gap-1">
                             <Sparkles className="w-3.5 h-3.5 text-purple-600" />
-                            <span>Gợi Ý Của Trợ Lý AI:</span>
+                            <span>Đề Xuất Phân Bổ Vị Trí:</span>
                           </span>
                           <span className="text-[10px] px-2 py-0.5 rounded-full font-bold bg-emerald-100 text-emerald-800 border border-emerald-200 flex items-center gap-1">
                             <ThumbsUp className="w-3 h-3 text-emerald-600" />
@@ -748,14 +748,14 @@ export const ManagerShiftSchedulerPage: React.FC = () => {
                         onClick={() => handleApproveSingle(reg, aiAdvice.recommendedLocation)}
                         disabled={isItemProcessing}
                         className="flex-1 py-2.5 bg-gradient-to-r from-purple-600 via-indigo-600 to-emerald-600 hover:from-purple-500 hover:to-emerald-500 text-white font-extrabold text-xs rounded-xl shadow-xs flex items-center justify-center gap-1.5 transition cursor-pointer disabled:opacity-50"
-                        title="Duyệt ca này và tự động gán vị trí quầy rạp theo gợi ý của AI"
+                        title="Duyệt ca này và tự động gán vị trí quầy rạp theo đề xuất"
                       >
                         {isItemProcessing ? (
                           <RefreshCw className="w-4 h-4 animate-spin" />
                         ) : (
                           <Sparkles className="w-4 h-4 text-amber-300" />
                         )}
-                        <span>Duyệt Theo Gợi Ý AI</span>
+                        <span>Duyệt & Gán Vị Trí Này</span>
                       </button>
 
                       <button
@@ -806,7 +806,7 @@ export const ManagerShiftSchedulerPage: React.FC = () => {
                 className="px-3 py-1.5 bg-purple-600 hover:bg-purple-500 text-white rounded-xl text-xs font-bold transition flex items-center gap-1.5 cursor-pointer shadow-xs"
               >
                 <Sparkles className="w-3.5 h-3.5 text-amber-300" />
-                <span>AI Xếp Ca Toàn Tuần</span>
+                <span>Tự Động Xếp Ca Toàn Tuần</span>
               </button>
               <span className="text-xs text-slate-400 font-mono">
                 Tổng số {registrations.length} lượt đăng ký
@@ -909,12 +909,12 @@ export const ManagerShiftSchedulerPage: React.FC = () => {
                   <div className="flex items-center gap-2">
                     <span className="px-2 py-0.5 rounded-full text-[10px] font-mono font-bold bg-amber-400 text-purple-950 uppercase flex items-center gap-1">
                       <Sparkles className="w-3 h-3" />
-                      AI Optimization Active
+                      Đã Phân Bổ Tự Động
                     </span>
                     <span className="text-xs text-purple-200 font-semibold">Ngày: {aiReport.dateLabel} ({aiReport.date})</span>
                   </div>
                   <h3 className="font-extrabold text-base text-white">
-                    Trợ Lý AI Đã Phân Phối Tối Ưu Cho {aiReport.totalStaff} Nhân Viên
+                    Hệ Thống Đã Phân Bổ Ca Phù Hợp Cho {aiReport.totalStaff} Nhân Viên
                   </h3>
                   <p className="text-xs text-purple-200/90">
                     Đáp ứng {aiReport.satisfactionRate} nguyện vọng ca đăng ký và tự động gán cụm rạp chuẩn chuyên môn.
@@ -927,7 +927,7 @@ export const ManagerShiftSchedulerPage: React.FC = () => {
                     className="px-4 py-2 bg-white/10 hover:bg-white/20 border border-white/20 text-white text-xs font-bold rounded-xl transition flex items-center gap-1.5 cursor-pointer backdrop-blur-sm"
                   >
                     <Bot className="w-4 h-4 text-amber-300" />
-                    <span>Xem Báo Cáo Phân Tích AI</span>
+                    <span>Xem Báo Cáo Phân Ca Chi Tiết</span>
                   </button>
                   <button
                     onClick={handleAiAutoSchedule}
@@ -942,12 +942,12 @@ export const ManagerShiftSchedulerPage: React.FC = () => {
             </div>
           )}
 
-          {/* AI Logs if available */}
+          {/* Nhật ký phân bổ */}
           {aiSuggestionsLog.length > 0 && (
             <div className="bg-purple-50/60 border border-purple-200 rounded-2xl p-4 space-y-2">
               <div className="text-xs font-bold text-purple-900 flex items-center gap-1.5">
                 <Sparkles className="w-4 h-4 text-purple-600" />
-                <span>Nhật Ký Tối Ưu Hóa & Đối Chiếu Nguyện Vọng Của Trợ Lý AI:</span>
+                <span>Nhật Ký Phân Bổ & Đối Chiếu Nguyện Vọng Nhân Viên:</span>
               </div>
               <div className="space-y-1 text-[11px] font-mono text-purple-950 max-h-48 overflow-y-auto">
                 {aiSuggestionsLog.map((log, idx) => (
@@ -984,7 +984,7 @@ export const ManagerShiftSchedulerPage: React.FC = () => {
                   className="text-purple-700 hover:text-purple-900 font-bold flex items-center gap-1 cursor-pointer"
                 >
                   <Sparkles className="w-3.5 h-3.5" />
-                  <span>Xếp lại ngày này bằng AI</span>
+                  <span>Tự động phân lại ca ngày này</span>
                 </button>
                 <span className="text-slate-400">|</span>
                 <span className="text-slate-500 font-mono">
@@ -1055,7 +1055,7 @@ export const ManagerShiftSchedulerPage: React.FC = () => {
                             {isAiAssigned && (
                               <span className="text-[10px] font-semibold text-purple-700 flex items-center gap-1">
                                 <Sparkles className="w-3 h-3 text-purple-600" />
-                                <span>AI Auto-Scheduled</span>
+                                <span>Tự Động Phân Bổ</span>
                               </span>
                             )}
                           </div>
@@ -1104,12 +1104,12 @@ export const ManagerShiftSchedulerPage: React.FC = () => {
               <div className="flex items-center gap-2 mb-2">
                 <span className="px-2.5 py-0.5 rounded-full text-[10px] font-mono font-black uppercase tracking-wider bg-amber-400 text-purple-950 flex items-center gap-1 shadow-xs">
                   <Sparkles className="w-3 h-3 text-purple-950" />
-                  AI SCHEDULER ENGINE
+                  HỆ THỐNG PHÂN CA TỰ ĐỘNG
                 </span>
                 <span className="text-purple-200 text-xs font-semibold">Tối Ưu Hóa & Tự Động Duyệt Ca</span>
               </div>
 
-              <h2 className="text-xl font-black">Báo Cáo Phân Ca Thông Minh Của Trợ Lý AI</h2>
+              <h2 className="text-xl font-black">Báo Cáo Kết Quả Phân Bổ Ca Làm Việc</h2>
               <p className="text-xs text-purple-100/90 mt-1">
                 Lịch làm việc ngày <strong>{aiReport.dateLabel} ({aiReport.date})</strong> đã được tính toán cân bằng theo lưu lượng khách và nguyện vọng nhân viên.
               </p>
@@ -1192,7 +1192,7 @@ export const ManagerShiftSchedulerPage: React.FC = () => {
                         ) : (
                           <span className="px-2.5 py-1 rounded-lg bg-purple-100 text-purple-800 text-[11px] font-bold flex items-center gap-1 border border-purple-200">
                             <Sparkles className="w-3.5 h-3.5 text-purple-600" />
-                            <span>AI Cân Bằng Tải Khách</span>
+                            <span>Cân Bằng Định Biên Nhân Sự</span>
                           </span>
                         )}
                       </div>

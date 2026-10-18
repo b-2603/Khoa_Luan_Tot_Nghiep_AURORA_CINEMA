@@ -29,7 +29,15 @@ function setItem<T>(key: string, val: T): void {
 }
 
 export function initializeStorage() {
-  if (!localStorage.getItem(KEYS.USERS)) setItem(KEYS.USERS, INITIAL_USERS);
+  const existingUsers = getItem<User[]>(KEYS.USERS, []);
+  if (!localStorage.getItem(KEYS.USERS) || (existingUsers.length > 0 && existingUsers[0].staffCode === 'AR-STAFF-001')) {
+    setItem(KEYS.USERS, INITIAL_USERS);
+  } else {
+    const filteredUsers = existingUsers.filter(u => u.staffCode !== 'khach_hang_01' && !u.staffCode?.toLowerCase().includes('khach'));
+    if (filteredUsers.length !== existingUsers.length) {
+      setItem(KEYS.USERS, filteredUsers);
+    }
+  }
   
   // Đồng bộ nâng cấp toàn diện 8 khóa học chuẩn rạp phim kèm 30 checkpoints sát hạch
   const existingCourses = getItem<Course[]>(KEYS.COURSES, []);

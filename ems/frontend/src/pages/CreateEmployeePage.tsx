@@ -9,15 +9,15 @@ export const CreateEmployeePage: React.FC = () => {
   const [phone, setPhone] = useState('');
   const [department, setDepartment] = useState<Department>('Vé & Chăm sóc Khách hàng');
   const [role, setRole] = useState<Role>('staff');
-  const [password, setPassword] = useState('Aurora@2026');
+  const [password, setPassword] = useState('8888');
   const [submitted, setSubmitted] = useState(false);
   const [createdCode, setCreatedCode] = useState('');
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!name || !email) return;
+    if (!name || !email || !phone) return;
 
-    const staffCode = `AR-${role === 'manager' ? 'MGR' : 'STAFF'}-${Math.floor(100 + Math.random() * 900)}`;
+    const staffCode = phone.trim();
 
     await createEmployee({
       staffCode,
@@ -50,7 +50,7 @@ export const CreateEmployeePage: React.FC = () => {
       {/* Header */}
       <div className="border-b border-slate-200 pb-4">
         <h2 className="text-xl font-bold text-slate-900">Tạo Tài Khoản Nhân Viên Mới</h2>
-        <p className="text-xs text-slate-500 mt-1">Cấp tài khoản đăng nhập EMS, gán vai trò & phòng ban làm việc tại cụm rạp Aurora Cinema</p>
+        <p className="text-xs text-slate-500 mt-1">Cấp tài khoản nhân viên mới và thiết lập phòng ban làm việc.</p>
       </div>
 
       {submitted ? (
@@ -63,7 +63,7 @@ export const CreateEmployeePage: React.FC = () => {
             Tài khoản đã được tạo và kích hoạt trên hệ thống EMS Aurora Cinema.
           </p>
           <div className="p-4 bg-slate-50 border border-slate-200 rounded-xl text-xs font-mono text-left space-y-1.5 max-w-sm mx-auto">
-            <div><span className="text-slate-500">Mã Nhân Sự:</span> <span className="text-amber-700 font-bold">{createdCode}</span></div>
+            <div><span className="text-slate-500">Mã Đăng Nhập (SĐT):</span> <span className="text-amber-700 font-bold">{createdCode}</span></div>
             <div><span className="text-slate-500">Họ Tên:</span> <span className="text-slate-900 font-semibold">{name}</span></div>
             <div><span className="text-slate-500">Email:</span> <span className="text-slate-900 font-semibold">{email}</span></div>
             <div><span className="text-slate-500">Mật khẩu khởi tạo:</span> <span className="text-emerald-700 font-bold">{password}</span></div>
@@ -111,10 +111,11 @@ export const CreateEmployeePage: React.FC = () => {
             <div>
               <label className="block text-xs font-semibold text-slate-700 mb-1.5 flex items-center gap-1.5">
                 <Phone className="w-3.5 h-3.5 text-emerald-600" />
-                <span>Số Điện Thoại</span>
+                <span>Số Điện Thoại (Mã Đăng Nhập) *</span>
               </label>
               <input
                 type="text"
+                required
                 placeholder="0901234567"
                 value={phone}
                 onChange={(e) => setPhone(e.target.value)}
@@ -160,7 +161,7 @@ export const CreateEmployeePage: React.FC = () => {
           <div>
             <label className="block text-xs font-semibold text-slate-700 mb-1.5 flex items-center gap-1.5">
               <Lock className="w-3.5 h-3.5 text-rose-600" />
-              <span>Mật Khẩu Ban Đầu</span>
+              <span>Mật Khẩu Ban Đầu (Mặc định: 8888)</span>
             </label>
             <input
               type="text"

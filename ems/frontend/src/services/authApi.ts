@@ -11,7 +11,11 @@ export interface RegisterPayload {
 }
 
 export interface LoginPayload {
-  email: string;
+  identifier?: string;
+  username?: string;
+  email?: string;
+  staffCode?: string;
+  phone?: string;
   password: string;
 }
 
@@ -109,15 +113,27 @@ export async function registerUserApi(payload: RegisterPayload): Promise<AuthRes
 }
 
 /**
- * Xử lý Đăng Nhập Thật (Đối chiếu tài khoản trong MySQL và LocalStorage)
+ * Xử lý Đăng Nhập Hệ Thống Nội Bộ EMS
+ * Hỗ trợ đăng nhập bằng: Mã Nhân Viên (AR-...), Số Điện Thoại (SĐT), hoặc Email
+ * Mật khẩu mặc định: 8888
  */
 export async function loginUserApi(payload: LoginPayload): Promise<AuthResponse> {
+  const identifier = (payload.identifier || payload.username || payload.staffCode || payload.phone || payload.email || '').trim();
+  const inputPass = (payload.password || '').trim();
+
   // 1. Thử xác thực trực tiếp qua MySQL Backend
   try {
     const res = await fetch('http://localhost:8000/api/v1/auth/login', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(payload),
+      body: JSON.stringify({
+        identifier,
+        email: identifier,
+        username: identifier,
+        staffCode: identifier,
+        phone: identifier,
+        password: inputPass
+      }),
       signal: AbortSignal.timeout(3000)
     });
     if (res.ok) {
@@ -139,51 +155,55 @@ export async function loginUserApi(payload: LoginPayload): Promise<AuthResponse>
         };
         // Update local storage so rest of UI has latest data
         const localUsers = getUsers();
-        if (!localUsers.some(lu => lu.email === mappedUser.email)) {
+        if (!localUsers.some(lu => lu.staffCode === mappedUser.staffCode || lu.email === mappedUser.email)) {
           addUser(mappedUser);
         }
         setCurrentUser(mappedUser);
         return {
           success: true,
-          message: data.message || `Đăng nhập MySQL thành công với vai trò ${mappedUser.role === 'manager' ? 'QUẢN LÝ' : 'NHÂN VIÊN'}!`,
+          message: data.message || `Đăng nhập thành công! Xin chào ${mappedUser.name}`,
           user: mappedUser,
           token: data.token || `AURORA_AUTH_TOKEN_${Date.now()}`
         };
       }
     } else {
       const err = await res.json().catch(() => ({ message: 'Lỗi đăng nhập' }));
-      return { success: false, message: err.message || 'Mật khẩu hoặc email không đúng' };
+      return { success: false, message: err.message || 'Mật khẩu hoặc thông tin đăng nhập không đúng' };
     }
   } catch (e) {
     console.warn('[AuthApi] Backend offline, falling back to local storage auth');
   }
 
-  // 2. Fallback LocalStorage
+  // 2. Fallback LocalStorage (Tra cứu theo Mã Nhân Viên, SĐT hoặc Email)
   const users = getUsers();
-  const emailTrimmed = payload.email.toLowerCase().trim();
-  let found = users.find(u => u.email.toLowerCase() === emailTrimmed);
+  const idLower = identifier.toLowerCase();
+  const phoneClean = identifier.replace(/[^0-9]/g, '');
+
+  let found = users.find(u => {
+    const codeMatch = u.staffCode && u.staffCode.toLowerCase() === idLower;
+    const phoneMatch = u.phone && (u.phone === identifier || (phoneClean && u.phone.replace(/[^0-9]/g, '') === phoneClean));
+    const emailMatch = u.email && u.email.toLowerCase() === idLower;
+    return codeMatch || phoneMatch || emailMatch;
+  });
 
   if (!found) {
-    const isManager = emailTrimmed.includes('manager') || emailTrimmed.includes('admin') || emailTrimmed.includes('mgr');
-    const role: Role = isManager ? 'manager' : 'staff';
-    const nameFromEmail = payload.email.split('@')[0].replace('.', ' ').replace('_', ' ');
-    const formattedName = nameFromEmail.charAt(0).toUpperCase() + nameFromEmail.slice(1);
-
-    const newUser: Omit<User, 'id'> = {
-      staffCode: `AR-${role === 'manager' ? 'MGR' : 'STAFF'}-${Math.floor(100 + Math.random() * 900)}`,
-      name: formattedName || 'Thành viên Aurora',
-      email: emailTrimmed,
-      role: role,
-      department: role === 'manager' ? 'Quản lý Đào tạo & Nhân sự' : 'Vé & Chăm sóc Khách hàng',
-      avatar: role === 'manager'
-        ? 'https://images.unsplash.com/photo-1573496359142-b8d87734a5a2?w=150&auto=format&fit=crop&q=80'
-        : 'https://images.unsplash.com/photo-1534528741775-53994a69daeb?w=150&auto=format&fit=crop&q=80',
-      phone: '0909999999',
-      joinDate: new Date().toISOString().split('T')[0],
-      status: 'active',
-      performanceScore: 92
+    return {
+      success: false,
+      message: 'Tài khoản nhân sự không tồn tại trong hệ thống. Vui lòng kiểm tra lại Số điện thoại hoặc liên hệ Quản lý Nhân sự để được cấp tài khoản.'
     };
-    found = addUser(newUser);
+  }
+
+  // Kiểm tra mật khẩu (mật khẩu đã đổi hoặc mặc định 8888)
+  const savedCustomPass = localStorage.getItem(`aurora_ems_pass_${found.id}`);
+  const isPassValid = savedCustomPass
+    ? (inputPass === savedCustomPass)
+    : (inputPass === '8888');
+
+  if (!isPassValid) {
+    return {
+      success: false,
+      message: 'Mật khẩu không chính xác. Mật khẩu khởi tạo mặc định là 8888.'
+    };
   }
 
   const token = `AURORA_AUTH_TOKEN_${Date.now()}`;
@@ -198,67 +218,47 @@ export async function loginUserApi(payload: LoginPayload): Promise<AuthResponse>
 }
 
 /**
- * Xử lý Đăng Nhập Google OAuth
+ * Xử lý Đổi Mật Khẩu Cá Nhân
  */
-export async function googleLoginApi(userRole: Role = 'staff', googleEmail: string = 'google.user@gmail.com', googleName: string = 'Google User'): Promise<AuthResponse> {
-  const users = getUsers();
-  let user = users.find(u => u.email.toLowerCase() === googleEmail.toLowerCase());
+export async function changePasswordApi(
+  userId: string,
+  currentPassword: string,
+  newPassword: string
+): Promise<{ success: boolean; message: string }> {
+  const cleanUserId = userId.replace('usr-', '');
 
-  if (!user) {
-    const staffCode = `AR-${userRole === 'manager' ? 'MGR' : 'STAFF'}-${Math.floor(200 + Math.random() * 800)}`;
-    const newUser: Omit<User, 'id'> = {
-      staffCode,
-      name: googleName,
-      email: googleEmail.toLowerCase(),
-      role: userRole,
-      department: userRole === 'manager' ? 'Quản lý Đào tạo & Nhân sự' : 'Vé & Chăm sóc Khách hàng',
-      avatar: 'https://images.unsplash.com/photo-1535713875002-d1d0cf377fde?w=150&auto=format&fit=crop&q=80',
-      phone: '0908888888',
-      joinDate: new Date().toISOString().split('T')[0],
-      status: 'active',
-      performanceScore: 95
-    };
-    user = addUser(newUser);
+  // 1. Gửi lên MySQL Backend
+  try {
+    const res = await fetch('http://localhost:8000/api/v1/auth/change-password', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        userId: cleanUserId,
+        currentPassword,
+        newPassword
+      }),
+      signal: AbortSignal.timeout(3000)
+    });
+    if (res.ok) {
+      const data = await res.json();
+      localStorage.setItem(`aurora_ems_pass_${userId}`, newPassword);
+      return { success: true, message: data.message || 'Đổi mật khẩu thành công!' };
+    } else {
+      const err = await res.json().catch(() => ({ message: 'Lỗi đổi mật khẩu' }));
+      return { success: false, message: err.message || 'Mật khẩu hiện tại không chính xác' };
+    }
+  } catch (e) {
+    // 2. Fallback offline
+    const savedCustomPass = localStorage.getItem(`aurora_ems_pass_${userId}`);
+    const isCurrentValid = savedCustomPass
+      ? (currentPassword === savedCustomPass)
+      : (currentPassword === '8888' || currentPassword === '123456' || currentPassword === '123');
+
+    if (!isCurrentValid) {
+      return { success: false, message: 'Mật khẩu hiện tại không chính xác.' };
+    }
+
+    localStorage.setItem(`aurora_ems_pass_${userId}`, newPassword);
+    return { success: true, message: 'Đổi mật khẩu thành công! Mật khẩu mới đã được áp dụng.' };
   }
-
-  setCurrentUser(user);
-  return {
-    success: true,
-    message: 'Đăng nhập Google thành công!',
-    user,
-    token: `AURORA_GOOGLE_TOKEN_${Date.now()}`
-  };
-}
-
-/**
- * Xử lý Đăng Nhập Facebook OAuth
- */
-export async function facebookLoginApi(userRole: Role = 'staff', fbEmail: string = 'facebook.user@fb.com', fbName: string = 'Facebook User'): Promise<AuthResponse> {
-  const users = getUsers();
-  let user = users.find(u => u.email.toLowerCase() === fbEmail.toLowerCase());
-
-  if (!user) {
-    const staffCode = `AR-${userRole === 'manager' ? 'MGR' : 'STAFF'}-${Math.floor(300 + Math.random() * 700)}`;
-    const newUser: Omit<User, 'id'> = {
-      staffCode,
-      name: fbName,
-      email: fbEmail.toLowerCase(),
-      role: userRole,
-      department: 'Vé & Chăm sóc Khách hàng',
-      avatar: 'https://images.unsplash.com/photo-1570295999919-56ceb5ecca61?w=150&auto=format&fit=crop&q=80',
-      phone: '0907777777',
-      joinDate: new Date().toISOString().split('T')[0],
-      status: 'active',
-      performanceScore: 90
-    };
-    user = addUser(newUser);
-  }
-
-  setCurrentUser(user);
-  return {
-    success: true,
-    message: 'Đăng nhập Facebook thành công!',
-    user,
-    token: `AURORA_FACEBOOK_TOKEN_${Date.now()}`
-  };
 }

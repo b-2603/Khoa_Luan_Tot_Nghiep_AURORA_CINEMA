@@ -71,7 +71,7 @@ export const Sidebar: React.FC<SidebarProps> = ({ userRole, activeTab, onTabChan
     { id: 'dashboard', label: 'Trang Chủ Quản Trị', icon: Home },
     { id: 'employees', label: 'Tra Cứu Danh Sách Nhân Viên', icon: Users },
     { id: 'create-employee', label: 'Tạo Tài Khoản Nhân Viên', icon: UserPlus },
-    { id: 'manager-scheduler', label: 'Duyệt Ca & Xếp Lịch AI', icon: CalendarRange, badge: 'AI', isAi: true },
+    { id: 'manager-scheduler', label: 'Duyệt Ca & Xếp Lịch Làm Việc', icon: CalendarRange, badge: 'Tự động', isAi: true },
     { id: 'attendance', label: 'Quản Lý Chấm Công', icon: Clock },
     { 
       id: 'attendance-exceptions', 
@@ -79,7 +79,7 @@ export const Sidebar: React.FC<SidebarProps> = ({ userRole, activeTab, onTabChan
       icon: AlertCircle,
       badge: pendingCount > 0 ? `${pendingCount} Chờ duyệt` : undefined 
     },
-    { id: 'manager-quiz-creator', label: 'Tạo Khóa Học / AI Quiz CTKM', icon: Sparkles, badge: 'AI', isAi: true },
+    { id: 'manager-quiz-creator', label: 'Tạo Khóa Học & Đề Khảo Thí', icon: Sparkles, badge: 'Đề thi', isAi: true },
   ];
 
   const menu = userRole === 'manager' ? managerMenuItems : staffMenuItems;
@@ -89,7 +89,7 @@ export const Sidebar: React.FC<SidebarProps> = ({ userRole, activeTab, onTabChan
       <div className="space-y-6">
         <div>
           <div className="text-[11px] font-bold uppercase tracking-wider text-slate-400 px-3 mb-3">
-            {userRole === 'manager' ? 'MENU QUẢN LÝ ĐÀO TẠO & HR' : 'MENU NHÂN VIÊN RẠP PHIM'}
+            {userRole === 'manager' ? 'QUẢN LÝ' : 'NHÂN VIÊN'}
           </div>
           <nav className="space-y-1">
             {menu.map((item) => {
@@ -116,7 +116,7 @@ export const Sidebar: React.FC<SidebarProps> = ({ userRole, activeTab, onTabChan
                         ? 'bg-purple-50 text-purple-700 border border-purple-200' 
                         : 'bg-slate-100 text-slate-500 border border-slate-200'
                     }`}>
-                      {item.isAi ? 'AI' : item.badge}
+                      {item.badge}
                     </span>
                   )}
                 </button>
@@ -132,7 +132,7 @@ export const Sidebar: React.FC<SidebarProps> = ({ userRole, activeTab, onTabChan
           <Sparkles className="w-3.5 h-3.5 text-amber-500" />
           <span>AURORA CINEMAS EMS</span>
         </div>
-        <p className="text-[10px] text-slate-500">Tích hợp OpenAI API Smart AI</p>
+        <p className="text-[10px] text-slate-500">Hệ thống quản lý nhân sự</p>
       </div>
     </aside>
   );

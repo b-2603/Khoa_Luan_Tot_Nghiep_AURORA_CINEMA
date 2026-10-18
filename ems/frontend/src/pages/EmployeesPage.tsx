@@ -11,7 +11,7 @@ import {
   Search, Filter, Eye, X, Star, UserPlus, 
   Edit3, Trash2, CheckCircle2, AlertTriangle, 
   Phone, Mail, Shield, Building, Award, UserCheck, 
-  UserX, RefreshCw, Camera, Sparkles, Upload
+  UserX, RefreshCw, Camera, Sparkles, Upload, Check
 } from 'lucide-react';
 
 export const EmployeesPage: React.FC = () => {
@@ -31,6 +31,7 @@ export const EmployeesPage: React.FC = () => {
   // Face ID Manager Modal State (Quản lý đăng ký Face ID cho nhân viên)
   const [faceModalUser, setFaceModalUser] = useState<User | null>(null);
   const [enrolledFaceForUser, setEnrolledFaceForUser] = useState<FaceFeatures | null>(null);
+  const [capturedFacePreview, setCapturedFacePreview] = useState<string | null>(null);
   const [faceCameraReady, setFaceCameraReady] = useState(false);
   const [faceCameraError, setFaceCameraError] = useState(false);
   const [faceCameraErrorMessage, setFaceCameraErrorMessage] = useState('');
@@ -92,6 +93,7 @@ export const EmployeesPage: React.FC = () => {
   const handleOpenFaceModal = (u: User) => {
     setFaceModalUser(u);
     setEnrolledFaceForUser(getEnrolledFace(u.id));
+    setCapturedFacePreview(null);
     setFaceCameraReady(false);
     setFaceCameraError(false);
   };
@@ -102,6 +104,7 @@ export const EmployeesPage: React.FC = () => {
       faceMediaStreamRef.current = null;
     }
     setFaceModalUser(null);
+    setCapturedFacePreview(null);
     setFaceCameraReady(false);
   };
 
@@ -155,8 +158,8 @@ export const EmployeesPage: React.FC = () => {
       saveEnrolledFace(faceModalUser.id, face);
       setEnrolledFaceForUser(face);
       setFaceVersion(v => v + 1);
-      handleCloseFaceModal();
-      showNotification('success', `Đã kích hoạt Face ID cho nhân viên ${faceModalUser.name} từ file ảnh trên máy tính thành công!`);
+      setCapturedFacePreview(face.capturedImage);
+      showNotification('success', `Đã kích hoạt Face ID cho nhân viên ${faceModalUser.name} từ file ảnh thành công!`);
     };
     reader.onerror = () => {
       setIsFaceUploading(false);
@@ -184,24 +187,24 @@ export const EmployeesPage: React.FC = () => {
     };
   }, [faceModalUser]);
 
-  const handleCaptureFaceForEmployee = () => {
+  const handleCaptureFaceForEmployee = async () => {
     const video = faceVideoRef.current;
     if (!video || !faceCameraReady || !faceModalUser) {
       alert('Camera chưa sẵn sàng!');
       return;
     }
 
-    const face = extractFaceFromVideo(video);
+    const face = await extractFaceFromVideo(video);
     if (!face) {
-      alert('Không nhận được khung hình từ camera. Hãy yêu cầu nhân viên nhìn thẳng vào camera và thử lại!');
+      alert('Chưa nhận diện được khuôn mặt thật. Hãy yêu cầu nhân viên nhìn thẳng vào giữa vòng tròn, bỏ tay/vật che ra và thử lại!');
       return;
     }
 
     saveEnrolledFace(faceModalUser.id, face);
     setEnrolledFaceForUser(face);
     setFaceVersion(v => v + 1);
-    handleCloseFaceModal();
-    showNotification('success', `Đã kích hoạt Face ID thành công cho nhân viên ${faceModalUser.name} (${faceModalUser.staffCode})!`);
+    setCapturedFacePreview(face.capturedImage);
+    showNotification('success', `Đã chụp và kích hoạt Face ID thành công cho nhân viên ${faceModalUser.name} (${faceModalUser.staffCode})!`);
   };
 
   const handleRemoveFaceForEmployee = () => {
@@ -358,7 +361,7 @@ export const EmployeesPage: React.FC = () => {
         <div>
           <h2 className="text-xl font-bold text-slate-900">Quản Lý & Hồ Sơ Nhân Sự</h2>
           <p className="text-xs text-slate-500 mt-1">
-            Tra cứu, thêm mới, cập nhật hồ sơ và điều chuyển nhân sự toàn bộ cụm rạp Aurora Cinema
+            Tra cứu và quản lý hồ sơ nhân viên cụm rạp.
           </p>
         </div>
 
@@ -946,7 +949,7 @@ export const EmployeesPage: React.FC = () => {
             </div>
 
             <p className="text-[11px] text-rose-600 font-medium">
-              ⚠️ Lưu ý: Thao tác này không thể hoàn tác sau khi thực hiện.
+              Thao tác này không thể hoàn tác sau khi thực hiện.
             </p>
 
             <div className="flex gap-2.5 pt-2">
@@ -1011,7 +1014,7 @@ export const EmployeesPage: React.FC = () => {
             <div className="flex items-center justify-between mb-2.5 px-1">
               <div className="flex items-center gap-1.5 text-xs font-semibold text-slate-700">
                 <span className="w-2 h-2 rounded-full bg-emerald-500 animate-pulse"></span>
-                <span>Camera máy này: <strong className="text-purple-700">{activeFaceCameraName || 'Webcam tích hợp máy tính'}</strong></span>
+                <span>Camera: <strong className="text-purple-700">{activeFaceCameraName || 'Camera thiết bị'}</strong></span>
               </div>
 
               {availableFaceCameras.length > 1 && (
@@ -1033,82 +1036,109 @@ export const EmployeesPage: React.FC = () => {
               )}
             </div>
 
-            {/* Camera Viewport */}
-            <div className="relative bg-slate-950 rounded-2xl overflow-hidden h-64 flex items-center justify-center border-2 border-slate-800 shadow-inner">
-              <video
-                ref={faceVideoRef}
-                autoPlay
-                playsInline
-                muted
-                className="w-full h-full object-cover transform -scale-x-100 block"
-              />
-
-              {/* Error if camera blocked */}
-              {faceCameraError && (
-                <div className="absolute inset-0 bg-slate-950/95 flex flex-col items-center justify-center p-4 text-center z-20">
-                  <AlertTriangle className="w-10 h-10 text-amber-500 mb-2" />
-                  <span className="text-xs text-rose-300 font-semibold mb-2 leading-relaxed max-w-sm">
-                    {faceCameraErrorMessage || 'Không thể truy cập camera!'}
-                  </span>
-                  <button
-                    type="button"
-                    onClick={() => initFaceCamera()}
-                    className="px-4 py-2 bg-cyan-600 hover:bg-cyan-700 text-white font-bold text-xs rounded-xl shadow-sm transition flex items-center gap-1.5 cursor-pointer"
-                  >
-                    <RefreshCw className="w-3.5 h-3.5" />
-                    Thử Lại Kết Nối Camera
-                  </button>
+            {/* Camera Viewport or Captured Photo Preview */}
+            {capturedFacePreview ? (
+              <div className="relative bg-slate-950 rounded-2xl overflow-hidden p-6 flex flex-col items-center justify-center border-2 border-emerald-500 shadow-xl animate-in fade-in zoom-in-95 duration-200">
+                <div className="relative mb-3">
+                  <img
+                    src={capturedFacePreview}
+                    alt="Ảnh Face ID vừa chụp"
+                    className="w-36 h-44 rounded-[40%] object-cover ring-4 ring-emerald-400 shadow-[0_0_30px_rgba(52,211,153,0.7)]"
+                  />
+                  <div className="absolute -bottom-2 -right-2 bg-emerald-500 text-white p-1.5 rounded-full shadow-lg ring-2 ring-white">
+                    <CheckCircle2 className="w-5 h-5" />
+                  </div>
                 </div>
-              )}
 
-              {/* Neon oval frame */}
-              {!faceCameraError && (
-                <div className="absolute inset-0 pointer-events-none flex items-center justify-center z-10">
-                  <div className="w-44 h-52 rounded-[45%] border-2 border-purple-400 shadow-[0_0_25px_rgba(168,85,247,0.8)]" />
-                </div>
-              )}
-
-              {/* Instruction tag */}
-              {!faceCameraError && (
-                <div className="absolute bottom-2.5 px-3 py-1 bg-slate-900/85 backdrop-blur-md rounded-full text-[11px] font-semibold text-white border border-slate-700/80 z-20 text-center">
-                  Nhìn thẳng vào webcam của máy này và bấm nút chụp
-                </div>
-              )}
-            </div>
-
-            {/* Option 2: Upload photo directly from computer without camera */}
-            <div className="mt-3 p-3 bg-slate-50 border border-slate-200 rounded-2xl flex flex-col sm:flex-row items-center justify-between gap-2.5">
-              <div className="text-left w-full sm:w-auto">
-                <div className="text-xs font-bold text-slate-800 flex items-center gap-1.5">
-                  <Upload className="w-3.5 h-3.5 text-amber-600" />
-                  <span>Hoặc Tải Ảnh Chân Dung Từ Máy Tính</span>
-                </div>
-                <div className="text-[11px] text-slate-500 mt-0.5">
-                  Chọn ảnh chân dung nhân viên có sẵn trên máy để hệ thống tự trích xuất Face ID (không cần kết nối điện thoại)
+                <div className="text-center">
+                  <div className="text-emerald-400 font-extrabold text-sm flex items-center justify-center gap-1.5">
+                    <Sparkles className="w-4 h-4 text-amber-300" />
+                    Đã Kích Hoạt Face ID Thành Công!
+                  </div>
+                  <p className="text-slate-300 text-xs mt-1">
+                    Dữ liệu khuôn mặt mẫu của <strong className="text-white">{faceModalUser?.name}</strong> ({faceModalUser?.staffCode}) đã được kích hoạt trong hệ thống.
+                  </p>
                 </div>
               </div>
+            ) : (
+              <div className="relative bg-slate-950 rounded-2xl overflow-hidden h-64 flex items-center justify-center border-2 border-slate-800 shadow-inner">
+                <video
+                  ref={faceVideoRef}
+                  autoPlay
+                  playsInline
+                  muted
+                  className="w-full h-full object-cover transform -scale-x-100 block"
+                />
 
-              <input
-                type="file"
-                ref={fileInputFaceRef}
-                accept="image/*"
-                onChange={handleUploadFaceImage}
-                className="hidden"
-              />
+                {/* Error if camera blocked */}
+                {faceCameraError && (
+                  <div className="absolute inset-0 bg-slate-950/95 flex flex-col items-center justify-center p-4 text-center z-20">
+                    <AlertTriangle className="w-10 h-10 text-amber-500 mb-2" />
+                    <span className="text-xs text-rose-300 font-semibold mb-2 leading-relaxed max-w-sm">
+                      {faceCameraErrorMessage || 'Không thể truy cập camera!'}
+                    </span>
+                    <button
+                      type="button"
+                      onClick={() => initFaceCamera()}
+                      className="px-4 py-2 bg-cyan-600 hover:bg-cyan-700 text-white font-bold text-xs rounded-xl shadow-sm transition flex items-center gap-1.5 cursor-pointer"
+                    >
+                      <RefreshCw className="w-3.5 h-3.5" />
+                      Thử Lại Kết Nối Camera
+                    </button>
+                  </div>
+                )}
 
-              <button
-                type="button"
-                onClick={() => fileInputFaceRef.current?.click()}
-                disabled={isFaceUploading}
-                className="w-full sm:w-auto px-3.5 py-2 bg-white hover:bg-slate-100 text-slate-700 font-bold text-xs rounded-xl border border-slate-300 shadow-xs flex items-center justify-center gap-1.5 transition cursor-pointer shrink-0"
-              >
-                <Upload className="w-3.5 h-3.5 text-purple-600" />
-                {isFaceUploading ? 'Đang Xử Lý...' : 'Chọn File Ảnh'}
-              </button>
-            </div>
+                {/* Neon oval frame */}
+                {!faceCameraError && (
+                  <div className="absolute inset-0 pointer-events-none flex items-center justify-center z-10">
+                    <div className="w-44 h-52 rounded-[45%] border-2 border-purple-400 shadow-[0_0_25px_rgba(168,85,247,0.8)]" />
+                  </div>
+                )}
+
+                {/* Instruction tag */}
+                {!faceCameraError && (
+                  <div className="absolute bottom-2.5 px-3 py-1 bg-slate-900/85 backdrop-blur-md rounded-full text-[11px] font-semibold text-white border border-slate-700/80 z-20 text-center">
+                    Nhìn thẳng chính diện vào camera
+                  </div>
+                )}
+              </div>
+            )}
+
+            {/* Option 2: Upload photo directly from computer without camera */}
+            {!capturedFacePreview && (
+              <div className="mt-3 p-3 bg-slate-50 border border-slate-200 rounded-2xl flex flex-col sm:flex-row items-center justify-between gap-2.5">
+                <div className="text-left w-full sm:w-auto">
+                  <div className="text-xs font-bold text-slate-800 flex items-center gap-1.5">
+                    <Upload className="w-3.5 h-3.5 text-amber-600" />
+                    <span>Hoặc Tải Ảnh Chân Dung Từ Máy Tính</span>
+                  </div>
+                  <div className="text-[11px] text-slate-500 mt-0.5">
+                    Tải ảnh chân dung từ thiết bị để trích xuất dữ liệu Face ID
+                  </div>
+                </div>
+
+                <input
+                  type="file"
+                  ref={fileInputFaceRef}
+                  accept="image/*"
+                  onChange={handleUploadFaceImage}
+                  className="hidden"
+                />
+
+                <button
+                  type="button"
+                  onClick={() => fileInputFaceRef.current?.click()}
+                  disabled={isFaceUploading}
+                  className="w-full sm:w-auto px-3.5 py-2 bg-white hover:bg-slate-100 text-slate-700 font-bold text-xs rounded-xl border border-slate-300 shadow-xs flex items-center justify-center gap-1.5 transition cursor-pointer shrink-0"
+                >
+                  <Upload className="w-3.5 h-3.5 text-purple-600" />
+                  {isFaceUploading ? 'Đang Xử Lý...' : 'Chọn File Ảnh'}
+                </button>
+              </div>
+            )}
 
             {/* Existing face thumbnail preview if any */}
-            {enrolledFaceForUser && (
+            {!capturedFacePreview && enrolledFaceForUser && (
               <div className="mt-3 p-2.5 bg-purple-50/70 border border-purple-200 rounded-xl flex items-center justify-between text-xs">
                 <div className="flex items-center gap-2.5">
                   <img
@@ -1132,23 +1162,50 @@ export const EmployeesPage: React.FC = () => {
             )}
 
             {/* Modal Actions */}
-            <div className="flex items-center justify-end gap-3 pt-4 border-t border-slate-100 mt-4">
-              <button
-                type="button"
-                onClick={handleCloseFaceModal}
-                className="px-4 py-2.5 border border-slate-200 text-slate-600 hover:bg-slate-100 text-xs font-semibold rounded-xl transition cursor-pointer"
-              >
-                Đóng
-              </button>
+            <div className="flex items-center justify-between gap-3 pt-4 border-t border-slate-100 mt-4">
+              {capturedFacePreview ? (
+                <>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setCapturedFacePreview(null);
+                      initFaceCamera();
+                    }}
+                    className="px-4 py-2.5 bg-slate-100 hover:bg-slate-200 text-slate-700 font-bold text-xs rounded-xl transition flex items-center gap-1.5 cursor-pointer"
+                  >
+                    <RefreshCw className="w-4 h-4 text-purple-600" />
+                    Chụp Lại Ảnh Khác
+                  </button>
 
-              <button
-                type="button"
-                onClick={handleCaptureFaceForEmployee}
-                className="px-6 py-2.5 bg-purple-600 hover:bg-purple-700 active:bg-purple-800 text-white font-extrabold text-xs rounded-xl shadow-md flex items-center gap-2 transition cursor-pointer"
-              >
-                <Camera className="w-4 h-4 text-amber-300" />
-                {enrolledFaceForUser ? 'Chụp Lại Bằng Webcam Máy Này' : 'Chụp Bằng Webcam Máy Này'}
-              </button>
+                  <button
+                    type="button"
+                    onClick={handleCloseFaceModal}
+                    className="px-6 py-2.5 bg-emerald-600 hover:bg-emerald-700 active:bg-emerald-800 text-white font-extrabold text-xs rounded-xl shadow-md flex items-center gap-2 transition cursor-pointer"
+                  >
+                    <Check className="w-4 h-4" />
+                    Hoàn Tất & Đóng
+                  </button>
+                </>
+              ) : (
+                <>
+                  <button
+                    type="button"
+                    onClick={handleCloseFaceModal}
+                    className="px-4 py-2.5 border border-slate-200 text-slate-600 hover:bg-slate-100 text-xs font-semibold rounded-xl transition cursor-pointer"
+                  >
+                    Đóng
+                  </button>
+
+                  <button
+                    type="button"
+                    onClick={handleCaptureFaceForEmployee}
+                    className="px-6 py-2.5 bg-purple-600 hover:bg-purple-700 active:bg-purple-800 text-white font-extrabold text-xs rounded-xl shadow-md flex items-center gap-2 transition cursor-pointer"
+                  >
+                    <Camera className="w-4 h-4 text-amber-300" />
+                    {enrolledFaceForUser ? 'Chụp Lại Bằng Webcam Máy Này' : 'Chụp Bằng Webcam Máy Này'}
+                  </button>
+                </>
+              )}
             </div>
           </div>
         </div>
