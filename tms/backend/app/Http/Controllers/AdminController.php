@@ -34,6 +34,37 @@ class AdminController
         return strcmp($left['start'], $right['start']);
     }
 
+    /**
+     * Operational scheduling rules live in aurora_db so frontend suggestions
+     * and the final transactional validation always use the same values.
+     */
+    private function getScheduleAutomationRules()
+    {
+        $this->db->query("CREATE TABLE IF NOT EXISTS system_configs (
+            id BIGINT UNSIGNED NOT NULL AUTO_INCREMENT PRIMARY KEY,
+            config_key VARCHAR(100) NOT NULL UNIQUE,
+            config_value TEXT NULL,
+            description VARCHAR(255) NULL,
+            updated_at DATETIME NULL
+        ) ENGINE=InnoDB DEFAULT CHARSET=utf8");
+        $this->db->query("INSERT IGNORE INTO system_configs (config_key,config_value,description,updated_at) VALUES
+            ('schedule_same_screen_gap_minutes','15','Khoang dem sau khi phim ket thuc neu xep tiep cung phong',NOW()),
+            ('schedule_cross_screen_stagger_minutes','5','Do lech gio bat dau giua cac phong trong cung dot tao lich',NOW()),
+            ('schedule_operating_start_time','09:00','Gio bat dau van hanh mac dinh cua lich chieu',NOW())");
+        $values = array(
+            'same_screen_gap_minutes' => 15,
+            'cross_screen_stagger_minutes' => 5,
+            'operating_start_time' => '09:00'
+        );
+        $rows = $this->rows("SELECT config_key,config_value FROM system_configs WHERE config_key IN ('schedule_same_screen_gap_minutes','schedule_cross_screen_stagger_minutes','schedule_operating_start_time')");
+        foreach ($rows as $row) {
+            if ($row['config_key'] === 'schedule_same_screen_gap_minutes') $values['same_screen_gap_minutes'] = max(1, min(120, (int)$row['config_value']));
+            if ($row['config_key'] === 'schedule_cross_screen_stagger_minutes') $values['cross_screen_stagger_minutes'] = max(1, min(60, (int)$row['config_value']));
+            if ($row['config_key'] === 'schedule_operating_start_time' && preg_match('/^([01]\d|2[0-3]):[0-5]\d$/', trim($row['config_value']))) $values['operating_start_time'] = trim($row['config_value']);
+        }
+        return $values;
+    }
+
     // WAMP đang dùng PHP 5.2/MySQLi cũ, chưa có begin_transaction(),
     // commit() và rollback(). Dùng lệnh SQL để các thao tác ghi vẫn nguyên tử.
     private function beginDbTransaction()
@@ -2482,8 +2513,9 @@ class AdminController
             }
         }
         $duration = (int)$movie[0]['duration_minutes'];
+        $scheduleRules = $this->getScheduleAutomationRules();
         // Non-negotiable turnaround time for cleaning, safety and room reset.
-        $turnaroundMinutes = 10;
+        $turnaroundMinutes = (int)$scheduleRules['same_screen_gap_minutes'];
         if ($duration < 1 || $duration > 600) jsonResponse(array('success'=>false, 'message'=>'Thời lượng phim trong Aurora DB không hợp lệ.'), 400);
         $screenMap = array(); foreach ($screens as $screenRow) $screenMap[(int)$screenRow['id']] = $screenRow;
         $slots = array(); $seenSlots = array(); $ticketTypeSql = implode(',', $ticketTypeIds);
@@ -2620,7 +2652,11 @@ class AdminController
         }
         usort($occupied, array('AdminController', 'compareScheduleSlots'));
         $duration = (int)$movie['duration_minutes'];
-        $turnaroundMinutes = 10;
+        $scheduleRules = $this->getScheduleAutomationRules();
+        $turnaroundMinutes = (int)$scheduleRules['same_screen_gap_minutes'];
+        $staggerMinutes = (int)$scheduleRules['cross_screen_stagger_minutes'];
+        $operatingStart = $scheduleRules['operating_start_time'];
+        $operatingStartMinute = ((int)substr($operatingStart,0,2))*60 + (int)substr($operatingStart,3,2);
         $requested = null;
         if (preg_match('/^\d{2}:\d{2}$/', $requestedStart)) {
             $requestedHour = (int)substr($requestedStart, 0, 2);
@@ -2647,10 +2683,59 @@ class AdminController
             );
             }
         }
+        // Determine the intended start from the batch order. Reusing a room
+        // continues after that room's previous film +15 minutes. The first
+        // occurrence of each additional room is staggered +5 minutes from the
+        // earliest batch start (+5, +10, +15...) for auditorium hand-off.
+        $priorDrafts = array();
+        foreach ($draftSlots as $draft) {
+            if (!is_array($draft)) continue;
+            $draftKey = isset($draft['key']) ? trim((string)$draft['key']) : '';
+            if ($currentSlotKey !== '' && $draftKey === $currentSlotKey) break;
+            $draftScreenId = isset($draft['screen_id']) ? (int)$draft['screen_id'] : 0;
+            $draftStart = isset($draft['start_time']) ? substr(trim((string)$draft['start_time']),0,5) : '';
+            $draftEnd = isset($draft['end_time']) ? substr(trim((string)$draft['end_time']),0,5) : '';
+            if ($draftScreenId > 0 && preg_match('/^\d{2}:\d{2}$/',$draftStart) && preg_match('/^\d{2}:\d{2}$/',$draftEnd)) {
+                $priorDrafts[] = array('screen_id'=>$draftScreenId,'start'=>$draftStart,'end'=>$draftEnd);
+            }
+        }
+        $automaticMinute = $operatingStartMinute;
+        $automaticStrategy = 'operating_start';
+        $automaticOffset = 0;
+        $automaticMessage = 'Suất đầu tiên bắt đầu theo giờ vận hành sớm nhất.';
+        if ($excludeId > 0 && preg_match('/^\d{2}:\d{2}$/',$requestedStart)) {
+            $automaticMinute = ((int)substr($requestedStart,0,2))*60 + (int)substr($requestedStart,3,2);
+            $automaticStrategy = 'manual_edit';
+            $automaticMessage = 'Giữ giờ hiện tại khi chỉnh sửa một suất chiếu.';
+        } else if (count($priorDrafts)) {
+            $sameScreenLatestEnd = -1;
+            $earliestBatchStart = 1440;
+            $distinctScreens = array();
+            foreach ($priorDrafts as $priorDraft) {
+                $priorStartMinute = ((int)substr($priorDraft['start'],0,2))*60 + (int)substr($priorDraft['start'],3,2);
+                $priorEndMinute = ((int)substr($priorDraft['end'],0,2))*60 + (int)substr($priorDraft['end'],3,2);
+                if ($priorStartMinute < $earliestBatchStart) $earliestBatchStart = $priorStartMinute;
+                $distinctScreens[(int)$priorDraft['screen_id']] = true;
+                if ((int)$priorDraft['screen_id'] === $screenId && $priorEndMinute > $sameScreenLatestEnd) $sameScreenLatestEnd = $priorEndMinute;
+            }
+            if ($sameScreenLatestEnd >= 0) {
+                $automaticMinute = $sameScreenLatestEnd + $turnaroundMinutes;
+                $automaticStrategy = 'same_screen_turnaround';
+                $automaticOffset = $turnaroundMinutes;
+                $automaticMessage = 'Cùng phòng: bắt đầu sau khi phim trước kết thúc '.$turnaroundMinutes.' phút.';
+            } else {
+                $automaticOffset = count($distinctScreens) * $staggerMinutes;
+                $automaticMinute = $earliestBatchStart + $automaticOffset;
+                $automaticStrategy = 'cross_screen_stagger';
+                $automaticMessage = 'Phòng mới: lệch +'.$automaticOffset.' phút so với giờ bắt đầu sớm nhất để nhân viên tắt đèn và bàn giao phòng.';
+            }
+        }
+        if ($automaticMinute < $operatingStartMinute) $automaticMinute = $operatingStartMinute;
+
         $suggestions = array();
-        // Operating window: 09:00-24:00. In 5-minute increments so the
-        // selected time always remains usable by the editor's 24-hour picker.
-        for ($minute=540; $minute+$duration<=1440 && count($suggestions)<4; $minute+=5) {
+        // Search forward from the rule-derived target in five-minute steps.
+        // Existing aurora_db showtimes and draft rows are both respected.
+        for ($minute=$automaticMinute; $minute+$duration<=1440 && count($suggestions)<4; $minute+=5) {
             $candidateStart = sprintf('%02d:%02d', (int)floor($minute / 60), $minute % 60);
             $candidateEndMinutes = $minute + $duration;
             $candidateEnd = sprintf('%02d:%02d', (int)floor($candidateEndMinutes / 60), $candidateEndMinutes % 60);
@@ -2658,13 +2743,35 @@ class AdminController
             foreach ($occupied as $busy) {
                 $busyStart = ((int)substr($busy['start'],0,2))*60 + (int)substr($busy['start'],3,2);
                 $busyEnd = ((int)substr($busy['end'],0,2))*60 + (int)substr($busy['end'],3,2);
-                // Reserve ten minutes before/after each existing showtime for
-                // cleaning and auditorium preparation. Exactly ten is allowed.
+                // Reserve the database-configured same-room reset time before
+                // and after every existing or draft showtime.
                 if ($minute < $busyEnd + $turnaroundMinutes && $candidateEndMinutes > $busyStart - $turnaroundMinutes) { $free = false; break; }
             }
             if ($free) $suggestions[] = array('start'=>$candidateStart, 'end'=>$candidateEnd);
         }
-        jsonResponse(array('success'=>true, 'data'=>array('screen'=>array('id'=>(int)$screen['id'], 'name'=>$screen['name']), 'date'=>$date, 'duration_minutes'=>$duration, 'turnaround_minutes'=>$turnaroundMinutes, 'requested'=>$requested, 'occupied'=>$occupied, 'suggestions'=>$suggestions, 'suggested'=>count($suggestions) ? $suggestions[0] : null)));
+        $suggested = count($suggestions) ? $suggestions[0] : null;
+        $automatic = $suggested ? array(
+            'start'=>$suggested['start'],
+            'end'=>$suggested['end'],
+            'target_start'=>sprintf('%02d:%02d',(int)floor($automaticMinute/60),$automaticMinute%60),
+            'strategy'=>$automaticStrategy,
+            'offset_minutes'=>$automaticOffset,
+            'adjusted_for_conflict'=>$suggested['start'] !== sprintf('%02d:%02d',(int)floor($automaticMinute/60),$automaticMinute%60),
+            'message'=>$automaticMessage
+        ) : null;
+        jsonResponse(array('success'=>true, 'data'=>array(
+            'screen'=>array('id'=>(int)$screen['id'], 'name'=>$screen['name']),
+            'date'=>$date,
+            'duration_minutes'=>$duration,
+            'turnaround_minutes'=>$turnaroundMinutes,
+            'stagger_minutes'=>$staggerMinutes,
+            'operating_start_time'=>$operatingStart,
+            'requested'=>$requested,
+            'occupied'=>$occupied,
+            'suggestions'=>$suggestions,
+            'suggested'=>$suggested,
+            'automatic'=>$automatic
+        )));
     }
 
     private function ensureSchedulePublishSchema()

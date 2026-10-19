@@ -1200,6 +1200,88 @@ function aurora_membership_card_for_user($db, $userId) {
     return null;
 }
 
+function aurora_ensure_membership_tiers($db) {
+    $created = $db->query("CREATE TABLE IF NOT EXISTS customer_membership_tiers (
+        id INT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
+        tier_code VARCHAR(20) NOT NULL UNIQUE,
+        tier_name VARCHAR(60) NOT NULL,
+        min_points INT UNSIGNED NOT NULL DEFAULT 0,
+        theme_color VARCHAR(20) NOT NULL,
+        benefits_json TEXT NOT NULL,
+        sort_order SMALLINT UNSIGNED NOT NULL DEFAULT 0,
+        is_active TINYINT(1) NOT NULL DEFAULT 1,
+        created_at DATETIME NOT NULL,
+        updated_at DATETIME NOT NULL
+    ) ENGINE=InnoDB DEFAULT CHARSET=utf8");
+    if (!$created) return false;
+    return $db->query("INSERT IGNORE INTO customer_membership_tiers (tier_code,tier_name,min_points,theme_color,benefits_json,sort_order,is_active,created_at,updated_at) VALUES
+        ('STANDARD','Standard',0,'#50708f','[\"Tích điểm sau mỗi giao dịch\",\"Nhận ưu đãi thành viên\",\"Quản lý vé trực tuyến\"]',1,1,NOW(),NOW()),
+        ('SILVER','Silver',500,'#7891a8','[\"Tăng 5% điểm thưởng\",\"Ưu tiên thông báo phim mới\",\"Quà sinh nhật Aurora\"]',2,1,NOW(),NOW()),
+        ('GOLD','Gold',2000,'#d69b26','[\"Tăng 10% điểm thưởng\",\"Ưu đãi combo độc quyền\",\"Ưu tiên hỗ trợ thành viên\"]',3,1,NOW(),NOW()),
+        ('PLATINUM','Platinum',5000,'#46566b','[\"Tăng 15% điểm thưởng\",\"Đặc quyền suất chiếu sớm\",\"Quà tri ân hằng năm\"]',4,1,NOW(),NOW())");
+}
+
+function aurora_ensure_support_schema($db) {
+    $ok = $db->query("CREATE TABLE IF NOT EXISTS customer_support_categories (
+        id INT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
+        category_code VARCHAR(30) NOT NULL UNIQUE,
+        category_name VARCHAR(100) NOT NULL,
+        description VARCHAR(255) NOT NULL DEFAULT '',
+        icon_name VARCHAR(40) NOT NULL DEFAULT 'help',
+        sort_order SMALLINT UNSIGNED NOT NULL DEFAULT 0,
+        is_active TINYINT(1) NOT NULL DEFAULT 1
+    ) ENGINE=InnoDB DEFAULT CHARSET=utf8");
+    if (!$ok) return false;
+    $ok = $db->query("CREATE TABLE IF NOT EXISTS customer_support_faqs (
+        id BIGINT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
+        category_code VARCHAR(30) NOT NULL,
+        question VARCHAR(255) NOT NULL,
+        answer_text TEXT NOT NULL,
+        sort_order SMALLINT UNSIGNED NOT NULL DEFAULT 0,
+        is_active TINYINT(1) NOT NULL DEFAULT 1,
+        created_at DATETIME NOT NULL,
+        updated_at DATETIME NOT NULL,
+        KEY idx_support_faq_category (category_code,is_active,sort_order)
+    ) ENGINE=InnoDB DEFAULT CHARSET=utf8");
+    if (!$ok) return false;
+    $ok = $db->query("CREATE TABLE IF NOT EXISTS customer_support_tickets (
+        id BIGINT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
+        ticket_code VARCHAR(24) NOT NULL UNIQUE,
+        user_id BIGINT UNSIGNED NULL,
+        session_key VARCHAR(128) NOT NULL,
+        full_name VARCHAR(120) NOT NULL,
+        email VARCHAR(150) NOT NULL,
+        phone VARCHAR(30) NOT NULL DEFAULT '',
+        category_code VARCHAR(30) NOT NULL,
+        subject VARCHAR(180) NOT NULL,
+        message_text TEXT NOT NULL,
+        status VARCHAR(20) NOT NULL DEFAULT 'NEW',
+        priority VARCHAR(20) NOT NULL DEFAULT 'NORMAL',
+        created_at DATETIME NOT NULL,
+        updated_at DATETIME NOT NULL,
+        KEY idx_support_ticket_user (user_id,created_at),
+        KEY idx_support_ticket_status (status,created_at)
+    ) ENGINE=InnoDB DEFAULT CHARSET=utf8");
+    if (!$ok) return false;
+    $db->query("INSERT IGNORE INTO customer_support_categories (category_code,category_name,description,icon_name,sort_order,is_active) VALUES
+        ('BOOKING','Đặt vé & ghế ngồi','Hỗ trợ chọn suất, ghế và mã đặt vé.','ticket',1,1),
+        ('PAYMENT','Thanh toán & hoàn tiền','Kiểm tra giao dịch, thanh toán và hoàn tiền.','credit-card',2,1),
+        ('MEMBERSHIP','Thành viên & điểm','Thẻ thành viên, điểm thưởng và hạng thẻ.','star',3,1),
+        ('TECHNICAL','Tài khoản & kỹ thuật','Đăng nhập, cập nhật hồ sơ và lỗi website.','settings',4,1)");
+    $countResult = $db->query("SELECT COUNT(*) total FROM customer_support_faqs");
+    $countRow = $countResult ? $countResult->fetch_assoc() : array('total'=>0);
+    if ((int)$countRow['total'] === 0) {
+        $db->query("INSERT INTO customer_support_faqs (category_code,question,answer_text,sort_order,is_active,created_at,updated_at) VALUES
+            ('BOOKING','Làm sao để đổi ghế sau khi đặt?','Ghế đã thanh toán không thể tự đổi trên website. Hãy gửi yêu cầu kèm mã đặt vé để Aurora kiểm tra trước giờ chiếu.',1,1,NOW(),NOW()),
+            ('BOOKING','Tôi nên đến rạp trước bao lâu?','Aurora khuyến nghị đến rạp trước ít nhất 15 phút để nhận vé, mua bắp nước và vào phòng đúng giờ.',2,1,NOW(),NOW()),
+            ('PAYMENT','Thanh toán bị trừ tiền nhưng chưa có vé?','Hãy kiểm tra lịch sử đặt vé trong tài khoản. Nếu chưa có mã vé sau 10 phút, gửi yêu cầu kèm mã giao dịch.',1,1,NOW(),NOW()),
+            ('PAYMENT','Khi nào tôi nhận được tiền hoàn?','Thời gian hoàn tiền phụ thuộc phương thức thanh toán và thường mất 3 đến 10 ngày làm việc.',2,1,NOW(),NOW()),
+            ('MEMBERSHIP','Điểm Aurora được tính như thế nào?','Mỗi 1.000 đồng chi tiêu hợp lệ được quy đổi thành 1 điểm và ghi vào số điểm sau khi thanh toán thành công.',1,1,NOW(),NOW()),
+            ('TECHNICAL','Tôi quên mật khẩu thì làm gì?','Chọn Quên mật khẩu tại màn hình đăng nhập và làm theo hướng dẫn gửi đến email đã đăng ký.',1,1,NOW(),NOW())");
+    }
+    return true;
+}
+
 function aurora_award_booking_points($db, $userId, $bookingId, $amount) {
     $earned = max(0, (int)floor(((float)$amount) / 1000));
     if ($earned < 1) return 0;
@@ -2109,6 +2191,73 @@ if ($resource === 'loyalty') {
         $history[] = $row;
     }
     aurora_response(array('member' => aurora_public_user($db, $userId), 'history' => $history), 200);
+}
+
+// ── /membership_overview (GET) ──────────────────────────────────────────────
+if ($resource === 'membership_overview') {
+    aurora_method('GET');
+    if (!aurora_ensure_membership_tiers($db)) aurora_response(array('message'=>'Không thể tải cấu hình thành viên từ aurora_db.'),500);
+    $tiers = array();
+    $tierResult = $db->query("SELECT tier_code,tier_name,min_points,theme_color,benefits_json FROM customer_membership_tiers WHERE is_active=1 ORDER BY sort_order,id");
+    while ($tierResult && ($tier = $tierResult->fetch_assoc())) {
+        $tiers[] = array('code'=>$tier['tier_code'],'name'=>$tier['tier_name'],'minPoints'=>(int)$tier['min_points'],'color'=>$tier['theme_color'],'benefits'=>aurora_json_list($tier['benefits_json']));
+    }
+    $member = null; $history = array(); $userId = aurora_user_id();
+    if ($userId > 0) {
+        $card = aurora_membership_card_for_user($db,$userId);
+        $userResult = $db->query("SELECT full_name,membership_level,points FROM users WHERE id=".(int)$userId." LIMIT 1");
+        if ($card && $userResult && ($user=$userResult->fetch_assoc())) {
+            $points = max(0,(int)$user['points']); $level = $user['membership_level'] ? $user['membership_level'] : aurora_membership_level($points);
+            $thresholds=array('STANDARD'=>500,'SILVER'=>2000,'GOLD'=>5000); $nextNames=array('STANDARD'=>'SILVER','SILVER'=>'GOLD','GOLD'=>'PLATINUM');
+            $nextThreshold=isset($thresholds[$level])?$thresholds[$level]:null;
+            $member=array('fullName'=>$user['full_name'],'cardNumber'=>$card['card_number'],'level'=>$level,'points'=>$points,'activatedAt'=>$card['activated_at'],'expiresAt'=>$card['expires_at'],'nextLevel'=>isset($nextNames[$level])?$nextNames[$level]:null,'nextThreshold'=>$nextThreshold,'pointsToNext'=>$nextThreshold===null?0:max(0,$nextThreshold-$points));
+            if (aurora_ensure_loyalty_schema($db)) {
+                $historyResult=$db->query("SELECT id,points_change,balance_after,transaction_type,description,created_at FROM loyalty_point_transactions WHERE user_id=".(int)$userId." ORDER BY id DESC LIMIT 8");
+                while ($historyResult && ($row=$historyResult->fetch_assoc())) { $row['id']=(int)$row['id'];$row['points_change']=(int)$row['points_change'];$row['balance_after']=(int)$row['balance_after'];$history[]=$row; }
+            }
+        }
+    }
+    aurora_response(array('tiers'=>$tiers,'member'=>$member,'history'=>$history,'rules'=>array('earnRate'=>'1 điểm / 1.000đ','source'=>'aurora_db')),200);
+}
+
+// ── /support_center (GET) ──────────────────────────────────────────────────
+if ($resource === 'support_center') {
+    aurora_method('GET');
+    if (!aurora_ensure_support_schema($db)) aurora_response(array('message'=>'Không thể chuẩn bị trung tâm hỗ trợ trong aurora_db.'),500);
+    $categories=array();$faqs=array();$tickets=array();
+    $categoryResult=$db->query("SELECT category_code,category_name,description,icon_name FROM customer_support_categories WHERE is_active=1 ORDER BY sort_order,id");
+    while ($categoryResult && ($row=$categoryResult->fetch_assoc())) $categories[]=array('code'=>$row['category_code'],'name'=>$row['category_name'],'description'=>$row['description'],'icon'=>$row['icon_name']);
+    $faqResult=$db->query("SELECT id,category_code,question,answer_text FROM customer_support_faqs WHERE is_active=1 ORDER BY category_code,sort_order,id");
+    while ($faqResult && ($row=$faqResult->fetch_assoc())) $faqs[]=array('id'=>(int)$row['id'],'categoryCode'=>$row['category_code'],'question'=>$row['question'],'answer'=>$row['answer_text']);
+    $userId=aurora_user_id();
+    if ($userId>0) {
+        $ticketResult=$db->query("SELECT ticket_code,category_code,subject,status,priority,created_at,updated_at FROM customer_support_tickets WHERE user_id=".(int)$userId." ORDER BY id DESC LIMIT 20");
+        while ($ticketResult && ($row=$ticketResult->fetch_assoc())) $tickets[]=array('code'=>$row['ticket_code'],'categoryCode'=>$row['category_code'],'subject'=>$row['subject'],'status'=>$row['status'],'priority'=>$row['priority'],'createdAt'=>$row['created_at'],'updatedAt'=>$row['updated_at']);
+    }
+    aurora_response(array('categories'=>$categories,'faqs'=>$faqs,'tickets'=>$tickets,'contact'=>array('hotline'=>'1900 1234','email'=>'support@auroracinema.vn','hours'=>'08:00 – 23:00 mỗi ngày')),200);
+}
+
+// ── /support_ticket (POST) ─────────────────────────────────────────────────
+if ($resource === 'support_ticket') {
+    aurora_method('POST');
+    if (!aurora_ensure_support_schema($db)) aurora_response(array('message'=>'Không thể chuẩn bị dữ liệu hỗ trợ trong aurora_db.'),500);
+    $input=aurora_body();$userId=aurora_user_id();
+    $fullName=trim(isset($input['fullName'])?(string)$input['fullName']:'');$email=strtolower(trim(isset($input['email'])?(string)$input['email']:''));$phone=trim(isset($input['phone'])?(string)$input['phone']:'');
+    $category=strtoupper(trim(isset($input['categoryCode'])?(string)$input['categoryCode']:''));$subject=trim(isset($input['subject'])?(string)$input['subject']:'');$message=trim(isset($input['message'])?(string)$input['message']:'');
+    if ($userId>0) { $userResult=$db->query("SELECT full_name,email,phone FROM users WHERE id=".(int)$userId." LIMIT 1"); if ($userResult && ($user=$userResult->fetch_assoc())) { if ($fullName==='')$fullName=$user['full_name'];if ($email==='')$email=$user['email'];if ($phone==='')$phone=$user['phone']; } }
+    if (strlen($fullName)<2||strlen($fullName)>120||!filter_var($email,FILTER_VALIDATE_EMAIL)||strlen($phone)>30) aurora_response(array('message'=>'Vui lòng nhập thông tin liên hệ hợp lệ.'),422);
+    $categoryCheck=preg_match('/^[A-Z_]{3,30}$/',$category)?$db->query("SELECT id FROM customer_support_categories WHERE category_code='".$db->real_escape_string($category)."' AND is_active=1 LIMIT 1"):false;
+    if (!$categoryCheck||$categoryCheck->num_rows<1) aurora_response(array('message'=>'Nhóm hỗ trợ không hợp lệ.'),422);
+    if (strlen($subject)<5||strlen($subject)>180||strlen($message)<20||strlen($message)>3000) aurora_response(array('message'=>'Tiêu đề cần 5–180 ký tự và nội dung cần 20–3.000 ký tự.'),422);
+    $sessionEsc=$db->real_escape_string(session_id());$userSql=$userId>0?(string)$userId:'NULL';
+    $recentResult=$db->query("SELECT id FROM customer_support_tickets WHERE ".($userId>0?'user_id='.(int)$userId:"session_key='{$sessionEsc}'")." AND created_at>=DATE_SUB(NOW(),INTERVAL 1 DAY)");
+    $recent=$recentResult?$recentResult->num_rows:0;
+    if ($recent>=5) aurora_response(array('message'=>'Bạn đã gửi tối đa 5 yêu cầu trong 24 giờ. Vui lòng liên hệ hotline nếu khẩn cấp.'),429);
+    $code='AUR'.date('ymd').strtoupper(substr(sha1(session_id().'|'.microtime(true).'|'.$email),0,6));
+    $codeEsc=$db->real_escape_string($code);$nameEsc=$db->real_escape_string($fullName);$emailEsc=$db->real_escape_string($email);$phoneEsc=$db->real_escape_string($phone);$categoryEsc=$db->real_escape_string($category);$subjectEsc=$db->real_escape_string($subject);$messageEsc=$db->real_escape_string($message);
+    $inserted=$db->query("INSERT INTO customer_support_tickets (ticket_code,user_id,session_key,full_name,email,phone,category_code,subject,message_text,status,priority,created_at,updated_at) VALUES ('{$codeEsc}',{$userSql},'{$sessionEsc}','{$nameEsc}','{$emailEsc}','{$phoneEsc}','{$categoryEsc}','{$subjectEsc}','{$messageEsc}','NEW','NORMAL',NOW(),NOW())");
+    if (!$inserted) aurora_response(array('message'=>'Không thể ghi yêu cầu hỗ trợ vào aurora_db.'),500);
+    aurora_response(array('message'=>'Yêu cầu đã được tiếp nhận. Aurora sẽ phản hồi sớm nhất có thể.','ticket'=>array('code'=>$code,'status'=>'NEW','createdAt'=>aurora_vietnam_now())),201);
 }
 
 // ── /logout ───────────────────────────────────────────────────────────────────

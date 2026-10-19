@@ -298,7 +298,7 @@ interface ScheduleItem { id: number; screen_id: number; movie_id: number; theate
 type ScheduleView = 'active' | 'upcoming' | 'history' | 'all';
 interface ScheduleMeta { page: number; per_page: number; total: number; total_pages: number; view: ScheduleView; theater_id?: number; summary: { scheduled: number; running: number; finished: number; active_rooms: number; booked_seats: number; theaters: number; }; }
 interface ScheduleDeleteError extends Error { blockedIds?: number[]; }
-interface ScheduleSlotAvailability { screen?: { id:number; name:string }; requested?: { start:string; end:string; available:boolean; conflict?: { source:'saved'|'draft'; id:number; start:string; end:string } | null } | null; occupied: Array<{ source:'saved'|'draft'; id:number; start:string; end:string }>; suggestions: Array<{ start:string; end:string }>; suggested?: { start:string; end:string } | null; duration_minutes?: number; turnaround_minutes?: number; }
+interface ScheduleSlotAvailability { screen?: { id:number; name:string }; requested?: { start:string; end:string; available:boolean; conflict?: { source:'saved'|'draft'; id:number; start:string; end:string } | null } | null; occupied: Array<{ source:'saved'|'draft'; id:number; start:string; end:string }>; suggestions: Array<{ start:string; end:string }>; suggested?: { start:string; end:string } | null; automatic?: { start:string; end:string; target_start:string; strategy:'operating_start'|'same_screen_turnaround'|'cross_screen_stagger'|'manual_edit'; offset_minutes:number; adjusted_for_conflict:boolean; message:string } | null; duration_minutes?: number; turnaround_minutes?: number; stagger_minutes?: number; operating_start_time?: string; }
 const canDeleteSchedule = (schedule: ScheduleItem) => Number(schedule.can_delete) === 1;
 const scheduleDeleteBlockLabel = (schedule: ScheduleItem) => schedule.delete_block_reason === 'has_booking_history'
   ? 'Suất chiếu đã có lịch sử đặt vé'
@@ -2064,6 +2064,38 @@ export default function App() {
     return date.toTimeString().slice(0, 5);
   };
 
+  const scheduleTimeToMinutes = (value: string) => {
+    const parts = String(value || '00:00').split(':').map(Number);
+    return (parts[0] || 0) * 60 + (parts[1] || 0);
+  };
+
+  const scheduleMinutesToTime = (minutes: number) => {
+    const safeMinutes = Math.max(0, Math.min(1439, minutes));
+    return `${String(Math.floor(safeMinutes / 60)).padStart(2, '0')}:${String(safeMinutes % 60).padStart(2, '0')}`;
+  };
+
+  const addAutomaticScheduleSlot = () => {
+    const rooms = getScheduleScreens();
+    const currentSlots = scheduleForm.time_slots;
+    const usedRoomIds = new Set(currentSlots.map(slot => Number(slot.screen_id)).filter(Boolean));
+    const nextUnusedRoom = rooms.find(room => !usedRoomIds.has(Number(room.id)));
+    let screenId = Number(nextUnusedRoom?.id || currentSlots[currentSlots.length - 1]?.screen_id || rooms[0]?.id || 0);
+    let startMinutes = 9 * 60;
+    if (nextUnusedRoom && currentSlots.length) {
+      const earliestStart = Math.min(...currentSlots.map(slot => scheduleTimeToMinutes(slot.start_time)));
+      startMinutes = earliestStart + usedRoomIds.size * 5;
+    } else {
+      const sameRoomSlots = currentSlots.filter(slot => Number(slot.screen_id) === screenId);
+      const latestEnd = sameRoomSlots.length ? Math.max(...sameRoomSlots.map(slot => scheduleTimeToMinutes(slot.end_time))) : 9 * 60;
+      startMinutes = latestEnd + 15;
+    }
+    const start = scheduleMinutesToTime(startMinutes);
+    const slot = { key:`slot-${Date.now()}`, screen_id:screenId, start_time:start, end_time:calculateScheduleEndTime(start, scheduleForm.movie_id) };
+    delete scheduleSlotManuallyEdited.current[slot.key];
+    const slots = [...currentSlots, slot];
+    setScheduleForm({ ...scheduleForm, time_slots:slots, screen_ids:Array.from(new Set(slots.map(item=>item.screen_id).filter(Boolean))) });
+  };
+
   const getScheduleMovieOptions = (showDate: string) => {
     const unique = new Map<number, ScheduleMovieItem>();
     scheduleMoviesList.forEach(movie => {
@@ -2131,19 +2163,22 @@ export default function App() {
       if (scheduleAvailabilitySequence.current[slotKey] !== requestSequence) return;
       const availability = result.data as ScheduleSlotAvailability;
       setScheduleSlotAvailability(current => ({ ...current, [slotKey]:availability }));
-      if (availability.requested?.available || !availability.suggested || scheduleSlotManuallyEdited.current[slotKey]) return;
+      const automaticSlot = availability.automatic || availability.suggested;
+      if (!automaticSlot || scheduleSlotManuallyEdited.current[slotKey]) return;
       setScheduleForm(current => {
         if (current.show_date !== showDate || Number(current.movie_id) !== Number(movieId)) return current;
         const currentSlot = current.time_slots.find(item => item.key === slotKey);
         if (!currentSlot || Number(currentSlot.screen_id) !== Number(screenId) || currentSlot.start_time !== requestedStart) return current;
+        if (currentSlot.start_time === automaticSlot.start && currentSlot.end_time === automaticSlot.end) return current;
         const slots = current.time_slots.map(item => item.key === slotKey
-          ? { ...item, start_time:availability.suggested!.start, end_time:availability.suggested!.end }
+          ? { ...item, start_time:automaticSlot.start, end_time:automaticSlot.end }
           : item);
         return { ...current, time_slots:slots, start_time:slots[0]?.start_time || current.start_time, end_time:slots[0]?.end_time || current.end_time };
       });
     } catch { /* saveSchedule remains the server-side guard if the check is temporarily unavailable */ }
   };
 
+  const scheduleFormMovie = scheduleMoviesList.find(movie => Number(movie.id) === Number(scheduleForm.movie_id)) || moviesList.find(movie => Number(movie.id) === Number(scheduleForm.movie_id));
   const scheduleSlotSignature = scheduleForm.time_slots.map(slot => `${slot.key}:${slot.screen_id}:${slot.start_time}`).join('|');
   const scheduleAvailabilityPending = showScheduleModal && scheduleForm.time_slots.some(slot => {
     const availability = scheduleSlotAvailability[slot.key];
@@ -3956,7 +3991,7 @@ export default function App() {
           <section className="schedule-movie-detail-hero">
             <button type="button" onClick={()=>{setScheduleMovieId(0);setScheduleSearch('');setSchedulePage(1);}}><span>←</span> Tất cả phim</button>
             <div className="schedule-movie-detail-title"><div className="schedule-movie-detail-poster">{selectedScheduleMovie?.poster_url ? <img src={selectedScheduleMovie.poster_url} alt="Poster phim"/> : <Film size={24}/>}</div><div><small>LỊCH CHIẾU THEO PHIM</small><h2>{selectedScheduleMovie?.title || 'Phim đã chọn'}</h2><p>{selectedScheduleMovie?.genre || 'Thông tin phim'} · {selectedScheduleMovie?.duration_minutes || '—'} phút · {selectedScheduleMovie?.age_rating || 'P'}</p></div></div>
-            {canEdit&&<button type="button" className="tms-btn tms-btn-primary" onClick={()=>openNewSchedule(Number(scheduleMovieId))}><Plus size={16}/> Thêm suất cho phim</button>}
+            {canEdit&&<button type="button" className="tms-btn tms-btn-primary" disabled={scheduleBusy} onClick={()=>openNewSchedule(Number(scheduleMovieId))}><Plus size={16}/> Thêm suất cho phim</button>}
           </section>
           {isSystemSchedule && <section className="schedule-system-scope">
             <div className="schedule-scope-intro"><span><Globe size={20}/></span><div><small>PHẠM VI ĐIỀU PHỐI</small><b>{scheduleScopeName}</b><p>{scheduleTheaterFilter ? `${selectedScheduleTheater?.address || selectedScheduleTheater?.city || 'Dữ liệu cụm rạp đã chọn'}` : `Tổng hợp lịch từ ${theatersList.length} cụm rạp trong aurora_db`}</p></div></div>
@@ -3974,7 +4009,6 @@ export default function App() {
             <label className="schedule-filter-field"><span>Ngày chiếu</span><VietnameseDateInput disabled={scheduleBulkDeleting} value={scheduleDateFilter} onChange={date => { setScheduleDateFilter(date); setSchedulePage(1); setSelectedScheduleIds([]); }} ariaLabel="Lọc theo ngày" /></label>
             <label className="schedule-filter-field"><span>Trạng thái</span><select disabled={scheduleBulkDeleting} value={scheduleStatusFilter} onChange={event => { setScheduleStatusFilter(event.target.value as 'all' | ScheduleItem['status']); setSchedulePage(1); setSelectedScheduleIds([]); }}><option value="all">Tất cả trạng thái</option>{scheduleView!=='history'&&<option value="scheduled">Sắp chiếu · Mở bán</option>}{scheduleView!=='history'&&scheduleView!=='upcoming'&&<option value="running">Đang chiếu</option>}{(scheduleView==='history'||scheduleView==='all')&&<option value="finished">Đã kết thúc</option>}{(scheduleView==='history'||scheduleView==='all')&&<option value="cancelled">Đã hủy</option>}</select></label>
             <button type="button" className="account-refresh-btn" aria-busy={schedulesLoading} disabled={scheduleBusy} onClick={() => { void loadSchedules(); }}><RefreshCw size={15}/>{schedulesLoading ? 'Đang tải...' : 'Làm mới'}</button>
-            {canEdit&&<button className="tms-btn tms-btn-primary" disabled={scheduleBusy} onClick={()=>openNewSchedule()}><Plus size={16}/><span>Tạo suất chiếu</span></button>}
           </div>
           {canEdit && selectedScheduleIds.length > 0 && <div className="schedule-selection-bar"><span><CheckCircle2 size={17}/><b>{selectedScheduleIds.length} suất đã chọn</b><small>Chỉ các suất chưa bắt đầu và chưa có đặt vé mới có thể xóa.</small></span><div><button type="button" className="schedule-clear-selection" disabled={scheduleBusy} onClick={() => setSelectedScheduleIds([])}>Bỏ chọn</button><button type="button" className="schedule-bulk-delete-btn" aria-busy={scheduleBulkDeleting} disabled={scheduleBusy} onClick={handleDeleteSelectedSchedules}><Trash2 size={15}/>{scheduleBulkDeleting ? 'Đang xóa...' : `Xóa ${selectedScheduleIds.length} suất`}</button></div></div>}
           <div className="schedule-table-scroll"><table className="tms-data-table" aria-busy={scheduleBusy}>
@@ -3986,7 +4020,7 @@ export default function App() {
                 <td><span className={`schedule-status-badge ${s.status}`}>{statusLabel[s.status]}</span></td>
                 <td>{canEdit ? <div className="schedule-row-actions"><button className="tms-btn tms-btn-outline" aria-label={`Sửa suất chiếu ${s.movie_title}`} title="Chỉnh sửa" disabled={scheduleBusy || s.status==='finished'} onClick={() => { const startTime=String(s.start_time).slice(0,5), endTime=String(s.end_time).slice(0,5); setScheduleForm({ id:s.id, movie_id:Number(s.movie_id), screen_ids:[Number(s.screen_id)], ticket_type_ids:String(s.ticket_type_ids || '').split(',').filter(Boolean).map(Number), show_date:s.show_date, start_time:startTime, end_time:endTime, time_slots:[{key:'slot-1',screen_id:Number(s.screen_id),start_time:startTime,end_time:endTime}], ticket_price:Number(s.ticket_price || 0), operational_note:s.operational_note || '', status:s.status }); setShowScheduleModal(true); }}><Edit size={13}/></button><button className="tms-btn tms-btn-outline danger" aria-label={`Xóa suất chiếu ${s.movie_title}`} title={canDeleteSchedule(s) ? 'Xóa suất chiếu' : scheduleDeleteBlockLabel(s)} disabled={scheduleBusy || !canDeleteSchedule(s)} onClick={() => handleDeleteSchedule(s.id)}><Trash2 size={13}/></button></div> : <span className="schedule-readonly">Chỉ xem</span>}</td>
               </tr>
-            )) : <tr><td colSpan={(canEdit ? 8 : 7) + (isSystemSchedule ? 1 : 0)}><div className="schedule-empty-state"><CalendarDays size={28}/><b>{schedulesLoading ? 'Đang tải lịch chiếu...' : scheduleView==='history' ? 'Chưa có lịch sử suất chiếu' : 'Chưa có suất chiếu phù hợp'}</b><span>{schedulesLoading ? 'Đang đồng bộ dữ liệu mới nhất từ aurora_db.' : (scheduleSearch || scheduleDateFilter || scheduleStatusFilter!=='all' || scheduleTheaterFilter>0) ? `Không tìm thấy kết quả trong phạm vi ${scheduleScopeName}. Hãy điều chỉnh bộ lọc.` : scheduleView==='history' ? 'Các suất đã kết thúc hoặc đã hủy sẽ được lưu tại đây.' : 'Tạo suất chiếu mới để bắt đầu mở bán và vận hành phòng.'}</span>{canEdit && !schedulesLoading && scheduleView!=='history' && !scheduleSearch && !scheduleDateFilter && scheduleStatusFilter==='all' && <button type="button" onClick={()=>openNewSchedule()}><Plus size={14}/> Tạo suất chiếu</button>}</div></td></tr>}</tbody>
+            )) : <tr><td colSpan={(canEdit ? 8 : 7) + (isSystemSchedule ? 1 : 0)}><div className="schedule-empty-state"><CalendarDays size={28}/><b>{schedulesLoading ? 'Đang tải lịch chiếu...' : scheduleView==='history' ? 'Chưa có lịch sử suất chiếu' : 'Chưa có suất chiếu phù hợp'}</b><span>{schedulesLoading ? 'Đang đồng bộ dữ liệu mới nhất từ aurora_db.' : (scheduleSearch || scheduleDateFilter || scheduleStatusFilter!=='all' || scheduleTheaterFilter>0) ? `Không tìm thấy kết quả trong phạm vi ${scheduleScopeName}. Hãy điều chỉnh bộ lọc.` : scheduleView==='history' ? 'Các suất đã kết thúc hoặc đã hủy sẽ được lưu tại đây.' : 'Sử dụng nút “Thêm suất cho phim” phía trên để bắt đầu mở bán và vận hành phòng.'}</span></div></td></tr>}</tbody>
           </table></div>
           <div className="schedule-pagination"><span>Hiển thị <b>{pageStart}–{pageEnd}</b> trong <b>{scheduleMeta.total.toLocaleString('vi-VN')}</b> suất</span><div><button type="button" aria-label="Trang trước" disabled={scheduleBusy || scheduleMeta.page<=1} onClick={() => { setSchedulePage(page => Math.max(1,page-1)); setSelectedScheduleIds([]); }}>‹</button><span>Trang <b>{scheduleMeta.page}</b> / {scheduleMeta.total_pages}</span><button type="button" aria-label="Trang sau" disabled={scheduleBusy || scheduleMeta.page>=scheduleMeta.total_pages} onClick={() => { setSchedulePage(page => Math.min(scheduleMeta.total_pages,page+1)); setSelectedScheduleIds([]); }}>›</button></div></div>
           </div>
@@ -5050,7 +5084,7 @@ export default function App() {
                       {!scheduleForm.id && <div className="schedule-date-quick"><span>Chọn nhanh</span><button type="button" className={scheduleForm.show_date===localIsoDate(1)?'active':''} onClick={()=>applyScheduleDate(localIsoDate(1))}>Ngày mai</button><button type="button" className={scheduleForm.show_date===localIsoDate(2)?'active':''} onClick={()=>applyScheduleDate(localIsoDate(2))}>Sau 2 ngày</button><button type="button" className={scheduleForm.show_date===localIsoDate(7)?'active':''} onClick={()=>applyScheduleDate(localIsoDate(7))}>Sau 7 ngày</button></div>}
                     </div>
                     <div className="schedule-time-slot-list">{scheduleForm.time_slots.map((slot, index) => { const availability=scheduleSlotAvailability[slot.key]; const scheduleRooms=getScheduleScreens(); const selectedTimeChecked=availability?.requested?.start===slot.start_time&&Number(availability.screen?.id||0)===Number(slot.screen_id); return <div className={`schedule-time-slot-row ${selectedTimeChecked&&!availability?.requested?.available?'conflict':''}`} key={slot.key}><span className="schedule-time-slot-number">{index + 1}</span><div><label className="tms-form-label">Phòng chiếu <em>*</em></label><select required className="tms-form-select" value={slot.screen_id || 0} onChange={e => { const screenId=Number(e.target.value); delete scheduleSlotManuallyEdited.current[slot.key]; setScheduleSlotAvailability(current=>{const next={...current};delete next[slot.key];return next;}); const slots=scheduleForm.time_slots.map(item=>item.key===slot.key?{...item,screen_id:screenId}:item); setScheduleForm({...scheduleForm,time_slots:slots,screen_ids:Array.from(new Set(slots.map(item=>item.screen_id).filter(Boolean)))}); }}><option value={0} disabled>Chọn phòng</option>{scheduleRooms.map(s=><option key={s.id} value={s.id}>{screenDisplayName(s.name,s.id)} · {s.total_seats} ghế</option>)}</select><small>{scheduleRooms.find(s=>Number(s.id)===Number(slot.screen_id))?.screen_type || 'Phòng đang hoạt động'}</small></div><div><label className="tms-form-label">Giờ bắt đầu <em>*</em></label><div className="schedule-clock-control"><select aria-label="Giờ bắt đầu" value={String(slot.start_time).slice(0,2)} onChange={event=>updateScheduleSlotStart(slot.key,`${event.target.value}:${String(slot.start_time).slice(3,5)}`)}>{Array.from({length:24},(_,hour)=>String(hour).padStart(2,'0')).map(hour=><option key={hour}>{hour}</option>)}</select><i>:</i><select aria-label="Phút bắt đầu" value={String(slot.start_time).slice(3,5)} onChange={event=>updateScheduleSlotStart(slot.key,`${String(slot.start_time).slice(0,2)}:${event.target.value}`)}>{Array.from(new Set([...Array.from({length:12},(_,minute)=>String(minute*5).padStart(2,'0')),String(slot.start_time).slice(3,5)])).sort().map(minute=><option key={minute}>{minute}</option>)}</select><b>24H</b></div><small>Định dạng 24 giờ</small>{selectedTimeChecked&&!availability?.requested?.available?<span className="schedule-slot-conflict"><AlertTriangle size={12}/> Giờ này bị trùng{availability?.suggested&&<button type="button" onClick={()=>acceptScheduleSuggestion(slot.key,availability.suggested!)}>Dùng {availability.suggested.start}–{availability.suggested.end}</button>}</span>:availability?.occupied?.length?<span className="schedule-busy-slots">Đã bận: {availability.occupied.filter(item=>item.source==='saved').map(item=>`${item.start}–${item.end}`).join(', ') || 'suất đang thêm'}</span>:<span className="schedule-busy-slots free">Phòng còn trống trong ngày</span>}</div><div><label className="tms-form-label">Giờ kết thúc tự động</label><output>{slot.end_time}</output><small>{(scheduleMoviesList.find(movie => Number(movie.id) === Number(scheduleForm.movie_id)) || moviesList.find(movie => Number(movie.id) === Number(scheduleForm.movie_id)))?.duration_minutes || 0} phút</small></div>{!scheduleForm.id && <button type="button" className="schedule-time-slot-remove" disabled={scheduleForm.time_slots.length === 1} aria-label="Xóa suất chiếu" onClick={() => { const slots = scheduleForm.time_slots.filter(item => item.key !== slot.key); setScheduleForm({...scheduleForm, time_slots:slots, screen_ids:Array.from(new Set(slots.map(item=>item.screen_id).filter(Boolean))), start_time:slots[0].start_time, end_time:slots[0].end_time}); }}><Trash2 size={15}/></button>}</div>; })}</div>
-                    {!scheduleForm.id && <button type="button" className="schedule-time-slot-add" onClick={() => { const last = scheduleForm.time_slots[scheduleForm.time_slots.length - 1]; const date = new Date(`2000-01-01T${last.end_time}:00`); date.setMinutes(date.getMinutes() + 15); const start = date.toTimeString().slice(0,5); const slot = { key:`slot-${Date.now()}`, screen_id:last.screen_id || getScheduleScreens()[0]?.id || 0, start_time:start, end_time:calculateScheduleEndTime(start, scheduleForm.movie_id) }; const slots=[...scheduleForm.time_slots,slot]; setScheduleForm({...scheduleForm, time_slots:slots, screen_ids:Array.from(new Set(slots.map(item=>item.screen_id).filter(Boolean)))}); }}><Plus size={15}/> Thêm suất chiếu</button>}
+                    {!scheduleForm.id && <button type="button" className="schedule-time-slot-add" onClick={addAutomaticScheduleSlot}><Plus size={15}/> Thêm suất chiếu</button>}
                     <div className="schedule-section-heading pricing"><DollarSign size={16}/><div><b>Loại vé và ghi chú vận hành</b><small>Chọn loại vé áp dụng cho suất chiếu và thêm ghi chú khi cần.</small></div></div>
                     <div className="schedule-editor-grid"><div className="tms-form-group ticket-type-picker"><label className="tms-form-label">Loại vé áp dụng <em>*</em></label><div className="ticket-type-select-list">{ticketTypesList.length ? ticketTypesList.map(ticketType => { const available = isTicketAvailableForSchedule(ticketType, scheduleForm.show_date, scheduleForm.start_time); const effectivePrice = getEffectiveTicketPrice(ticketType, scheduleForm.show_date, scheduleForm.start_time); return <label key={ticketType.id} className={`${scheduleForm.ticket_type_ids.includes(Number(ticketType.id)) ? 'selected' : ''} ${available ? '' : 'disabled'}`}><input type="checkbox" disabled={!available} checked={scheduleForm.ticket_type_ids.includes(Number(ticketType.id))} onChange={() => { const checked = scheduleForm.ticket_type_ids.includes(Number(ticketType.id)); const nextIds = checked ? scheduleForm.ticket_type_ids.filter(id => id !== Number(ticketType.id)) : [...scheduleForm.ticket_type_ids, Number(ticketType.id)]; const selectedPrices = ticketTypesList.filter(item => nextIds.includes(Number(item.id))).map(item => getEffectiveTicketPrice(item, scheduleForm.show_date, scheduleForm.start_time)); setScheduleForm({...scheduleForm, ticket_type_ids:nextIds, ticket_price:selectedPrices.length ? Math.min(...selectedPrices) : 0}); }}/><span><b>{ticketType.name}</b><small>{available ? ticketType.code : `${ticketType.code} · Không áp dụng`}</small></span><strong>{available ? effectivePrice === 0 ? 'Miễn phí' : `${effectivePrice.toLocaleString('vi-VN')} ₫` : '—'}</strong><Check size={15}/></label>; }) : <span className="ticket-type-loading">Chưa có loại vé hoạt động trong Aurora DB.</span>}</div></div><div className="tms-form-group"><label className="tms-form-label">Ghi chú vận hành</label><input maxLength={500} className="tms-form-input" value={scheduleForm.operational_note} onChange={e => setScheduleForm({...scheduleForm,operational_note:e.target.value})} placeholder="Ví dụ: Ưu tiên quầy vé 1, kiểm tra kính 3D"/></div></div>
                   </section>
@@ -5060,8 +5094,8 @@ export default function App() {
                       <span className="schedule-summary-db"><i /> AURORA DB</span>
                     </header>
                     <section className="schedule-summary-movie">
-                      <span className="schedule-summary-movie-icon"><Film size={20}/></span>
-                      <div><small>PHIM ĐANG CHỌN</small><b>{(scheduleMoviesList.find(movie => Number(movie.id) === Number(scheduleForm.movie_id)) || moviesList.find(movie => Number(movie.id) === Number(scheduleForm.movie_id)))?.title || 'Chưa chọn phim'}</b><p>{(scheduleMoviesList.find(movie => Number(movie.id) === Number(scheduleForm.movie_id)) || moviesList.find(movie => Number(movie.id) === Number(scheduleForm.movie_id)))?.duration_minutes || 0} phút <i /> {(scheduleMoviesList.find(movie => Number(movie.id) === Number(scheduleForm.movie_id)) || moviesList.find(movie => Number(movie.id) === Number(scheduleForm.movie_id)))?.age_rating || 'Chưa phân loại'}</p></div>
+                      <span className={`schedule-summary-movie-icon ${scheduleFormMovie?.poster_url ? 'has-poster' : ''}`}>{scheduleFormMovie?.poster_url ? <img src={scheduleFormMovie.poster_url} alt={`Poster ${scheduleFormMovie.title}`} /> : <Film size={22}/>}</span>
+                      <div><small>PHIM ĐANG CHỌN</small><b>{scheduleFormMovie?.title || 'Chưa chọn phim'}</b><p>{scheduleFormMovie?.duration_minutes || 0} phút <i /> {scheduleFormMovie?.age_rating || 'Chưa phân loại'}</p></div>
                     </section>
                     <section className="schedule-summary-primary">
                       <div><span><CalendarDays size={16}/></span><small>NGÀY CHIẾU</small><b>{formatVietnameseDate(scheduleForm.show_date)}</b></div>
@@ -5079,7 +5113,6 @@ export default function App() {
                     <div className={`schedule-sale-status ${scheduleForm.status}`}>
                       {scheduleForm.status === 'cancelled' ? <XCircle size={16}/> : <CheckCircle2 size={16}/>}<span><small>TRẠNG THÁI MỞ BÁN</small><b>{scheduleForm.status === 'scheduled' ? 'Sắp chiếu · Đang mở bán' : scheduleForm.status === 'running' ? 'Đang chiếu · Tự động' : scheduleForm.status === 'finished' ? 'Đã kết thúc · Tự động' : 'Đã hủy · Ngừng bán'}</b></span>
                     </div>
-                    <footer className="schedule-summary-footer"><span className="schedule-summary-footer-icon"><ShieldCheck size={15}/></span><span><b>Lưu an toàn vào Aurora DB</b><small>Hệ thống tự kiểm tra lịch trùng trước khi tạo suất chiếu.</small></span></footer>
                   </aside>
                 </div>
               </div>

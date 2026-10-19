@@ -17,6 +17,8 @@ import TicketPricingPage from './components/customer/TicketPricingPage';
 import CustomerHome from './components/customer/CustomerHome';
 import PromotionsPage from './components/customer/PromotionsPage';
 import SafeAvatar from './components/customer/SafeAvatar';
+import MembershipPage from './components/customer/MembershipPage';
+import SupportPage from './components/customer/SupportPage';
 
 const API_URL = 'http://localhost/AURORA%20CINEMA/customer/backend/public/api.php';
 
@@ -144,7 +146,7 @@ export default function App() {
   const [showUserMenu, setShowUserMenu] = useState<boolean>(false);
   const [showAccount, setShowAccount] = useState<boolean>(false);
   const [accountTab, setAccountTab] = useState('info');
-  const [currentPage, setCurrentPage] = useState<'home' | 'schedule' | 'movies' | 'theaters' | 'ticket-prices' | 'offers'>('home');
+  const [currentPage, setCurrentPage] = useState<'home' | 'schedule' | 'movies' | 'theaters' | 'ticket-prices' | 'offers' | 'membership' | 'support'>('home');
   const [footerPage, setFooterPage] = useState<'faq' | 'booking-guide' | 'privacy' | 'terms' | null>(null);
   const copy = COPY[language];
   const t = (vi: string, en: string) => language === 'en' ? en : vi;
@@ -441,6 +443,16 @@ export default function App() {
     scrollContentToTop();
   }
 
+  function handleGoMembership() {
+    setAuthMode(null); setShowAccount(false); setDetailMovie(null); setShowTheaterMenu(false); setShowUserMenu(false);
+    setCurrentPage('membership'); setFooterPage(null); scrollContentToTop();
+  }
+
+  function handleGoSupport() {
+    setAuthMode(null); setShowAccount(false); setDetailMovie(null); setShowTheaterMenu(false); setShowUserMenu(false);
+    setCurrentPage('support'); setFooterPage(null); scrollContentToTop();
+  }
+
   function openFooterPage(page: 'faq' | 'booking-guide' | 'privacy' | 'terms') {
     setAuthMode(null);
     setShowAccount(false);
@@ -654,7 +666,9 @@ export default function App() {
                 (i === 2 && currentPage === 'movies' && !authMode && !footerPage && !showAccount && !detailMovie) ||
                 (i === 3 && currentPage === 'theaters' && !authMode && !footerPage && !showAccount && !detailMovie) ||
                 (i === 4 && currentPage === 'ticket-prices' && !authMode && !footerPage && !showAccount && !detailMovie) ||
-                (i === 5 && currentPage === 'offers' && !authMode && !footerPage && !showAccount && !detailMovie);
+                (i === 5 && currentPage === 'offers' && !authMode && !footerPage && !showAccount && !detailMovie) ||
+                (i === 6 && currentPage === 'membership' && !authMode && !footerPage && !showAccount && !detailMovie) ||
+                (i === 7 && currentPage === 'support' && !authMode && !footerPage && !showAccount && !detailMovie);
 
               const handleClick =
                 i === 0 ? handleGoHome :
@@ -662,7 +676,9 @@ export default function App() {
                 i === 2 ? handleGoMovies :
                 i === 3 ? handleGoTheaters :
                 i === 4 ? handleGoTicketPrices :
-                i === 5 ? handleGoOffers : undefined;
+                i === 5 ? handleGoOffers :
+                i === 6 ? handleGoMembership :
+                i === 7 ? handleGoSupport : undefined;
 
               return (
                 <button
@@ -1057,6 +1073,20 @@ export default function App() {
           error={promotionsError}
           onRetry={loadPromotions}
           onBook={handleGoSchedule}
+        />
+      ) : currentPage === 'membership' ? (
+        <MembershipPage
+          language={language}
+          user={authUser}
+          onRegister={() => setAuthMode(authUser ? null : 'register')}
+          onOpenAccount={() => openAccountTab('member')}
+          onOpenOffers={handleGoOffers}
+        />
+      ) : currentPage === 'support' ? (
+        <SupportPage
+          language={language}
+          user={authUser}
+          onLogin={() => setAuthMode('login')}
         />
       ) : currentPage === 'home' ? (
         <CustomerHome

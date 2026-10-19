@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import {
   ArrowRight, CalendarDays, Check, ChevronLeft, ChevronRight, Clock3,
   Film, Gift, MapPin, Play, Search, ShieldCheck, Smartphone, Sparkles,
@@ -69,6 +69,8 @@ export default function CustomerHome({
   const dates = useMemo(dateRange, []);
   const [activeMovieTab, setActiveMovieTab] = useState<'NOW_SHOWING' | 'COMING_SOON' | 'SPECIAL_SHOWING'>('NOW_SHOWING');
   const [heroIndex, setHeroIndex] = useState(0);
+  const [isHeroPaused, setIsHeroPaused] = useState(false);
+  const heroTouchStartX = useRef<number | null>(null);
   const [quickTheaterId, setQuickTheaterId] = useState<number>(selectedTheaterId || 0);
   const [quickMovieId, setQuickMovieId] = useState<number>(0);
   const [quickDate, setQuickDate] = useState(dates[0]);
@@ -90,6 +92,26 @@ export default function CustomerHome({
   const memberPoints = Number(user?.points || 0);
   const nextTarget = memberPoints < 500 ? 500 : memberPoints < 2000 ? 2000 : memberPoints < 5000 ? 5000 : 10000;
   const memberProgress = Math.min(100, Math.round(memberPoints * 100 / nextTarget));
+
+  useEffect(() => {
+    if (heroIndex >= featuredMovies.length) setHeroIndex(0);
+  }, [featuredMovies.length, heroIndex]);
+
+  useEffect(() => {
+    if (featuredMovies.length < 2 || isHeroPaused || window.matchMedia('(prefers-reduced-motion: reduce)').matches) return;
+    const timer = window.setTimeout(() => {
+      setHeroIndex(index => (index + 1) % featuredMovies.length);
+    }, 6500);
+    return () => window.clearTimeout(timer);
+  }, [featuredMovies.length, heroIndex, isHeroPaused]);
+
+  function showPreviousHero() {
+    setHeroIndex(index => (index - 1 + featuredMovies.length) % featuredMovies.length);
+  }
+
+  function showNextHero() {
+    setHeroIndex(index => (index + 1) % featuredMovies.length);
+  }
 
   function recordEvent(eventType: string, entityType = '', entityId = 0, metadata: Record<string, unknown> = {}) {
     fetch(`${API_URL}?action=home_event`, {
@@ -130,10 +152,33 @@ export default function CustomerHome({
 
   return <main className="home-v2">
     <section className="home-v2-hero-grid" aria-label={t('Nội dung nổi bật', 'Featured content')}>
-      <article className="home-v2-hero">
-        {heroMovie?.bannerUrl || heroMovie?.posterUrl || heroMovie?.poster ? <img className="home-v2-hero-backdrop" src={heroMovie.bannerUrl || heroMovie.posterUrl || heroMovie.poster} alt="" /> : null}
+      <article
+        className={`home-v2-hero${isHeroPaused ? ' is-paused' : ''}`}
+        aria-roledescription="carousel"
+        aria-label={t('Phim nổi bật', 'Featured movies')}
+        onMouseEnter={() => setIsHeroPaused(true)}
+        onMouseLeave={() => setIsHeroPaused(false)}
+        onFocusCapture={() => setIsHeroPaused(true)}
+        onBlurCapture={event => {
+          if (!event.currentTarget.contains(event.relatedTarget as Node | null)) setIsHeroPaused(false);
+        }}
+        onTouchStart={event => {
+          heroTouchStartX.current = event.touches[0]?.clientX ?? null;
+          setIsHeroPaused(true);
+        }}
+        onTouchEnd={event => {
+          const startX = heroTouchStartX.current;
+          const endX = event.changedTouches[0]?.clientX;
+          if (startX !== null && endX !== undefined && Math.abs(startX - endX) > 50) {
+            startX > endX ? showNextHero() : showPreviousHero();
+          }
+          heroTouchStartX.current = null;
+          setIsHeroPaused(false);
+        }}
+      >
+        {heroMovie?.bannerUrl || heroMovie?.posterUrl || heroMovie?.poster ? <img key={`hero-image-${heroMovie.id}`} className="home-v2-hero-backdrop" src={heroMovie.bannerUrl || heroMovie.posterUrl || heroMovie.poster} alt="" /> : null}
         <div className="home-v2-hero-overlay" />
-        <div className="home-v2-hero-content">
+        <div key={`hero-content-${heroMovie?.id || heroIndex}`} className="home-v2-hero-content">
           <span className="home-v2-eyebrow"><Sparkles size={14}/>{t('Trải nghiệm điện ảnh Aurora', 'The Aurora cinema experience')}</span>
           <h1>{heroMovie?.title || t('Chạm vào từng khoảnh khắc điện ảnh', 'Experience every cinematic moment')}</h1>
           <p>{heroMovie?.description || t('Khám phá phim mới, chọn suất chiếu phù hợp và đặt ghế chỉ trong vài phút.', 'Discover new movies, find the right showtime and reserve your seats in minutes.')}</p>
@@ -146,9 +191,18 @@ export default function CustomerHome({
           </div>
         </div>
         {featuredMovies.length > 1 && <div className="home-v2-hero-nav">
-          <button aria-label={t('Phim trước', 'Previous movie')} onClick={() => setHeroIndex(index => (index - 1 + featuredMovies.length) % featuredMovies.length)}><ChevronLeft size={18}/></button>
-          <span>{String(heroIndex + 1).padStart(2, '0')} / {String(featuredMovies.length).padStart(2, '0')}</span>
-          <button aria-label={t('Phim tiếp theo', 'Next movie')} onClick={() => setHeroIndex(index => (index + 1) % featuredMovies.length)}><ChevronRight size={18}/></button>
+          <button className="home-v2-hero-arrow" aria-label={t('Phim trước', 'Previous movie')} onClick={showPreviousHero}><ChevronLeft size={18}/></button>
+          <div className="home-v2-hero-dots" aria-label={t('Chọn phim nổi bật', 'Choose featured movie')}>
+            {featuredMovies.map((movie, index) => <button
+              key={movie.id}
+              className={index === heroIndex ? 'active' : ''}
+              aria-label={`${t('Chuyển đến', 'Go to')} ${movie.title}`}
+              aria-current={index === heroIndex ? 'true' : undefined}
+              onClick={() => setHeroIndex(index)}
+            ><i /></button>)}
+          </div>
+          <span aria-live="polite"><b>{String(heroIndex + 1).padStart(2, '0')}</b> / {String(featuredMovies.length).padStart(2, '0')}</span>
+          <button className="home-v2-hero-arrow" aria-label={t('Phim tiếp theo', 'Next movie')} onClick={showNextHero}><ChevronRight size={18}/></button>
         </div>}
       </article>
 

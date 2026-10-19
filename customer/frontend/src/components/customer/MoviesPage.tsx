@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState } from 'react';
 import {
-  CalendarDays, ChevronRight, Clock3, Film, MapPin, Play, Search,
+  CalendarDays, ChevronLeft, ChevronRight, Clock3, Film, MapPin, Pause, Play, Search,
   SlidersHorizontal, Sparkles, Ticket, Users, X,
 } from 'lucide-react';
 
@@ -70,6 +70,8 @@ export default function MoviesPage({
   const [searchQuery, setSearchQuery] = useState('');
   const [selectedGenre, setSelectedGenre] = useState('ALL');
   const [sortMode, setSortMode] = useState<SortMode>('featured');
+  const [heroIndex, setHeroIndex] = useState(0);
+  const [heroPaused, setHeroPaused] = useState(false);
 
   const tabMovies = useMemo(() => movies.filter(movie => movie.status === activeTab), [movies, activeTab]);
   const genres = useMemo(() => {
@@ -95,8 +97,35 @@ export default function MoviesPage({
     });
   }, [tabMovies, searchQuery, selectedGenre, sortMode, locale]);
 
-  const highlightedMovie = tabMovies.find(movie => movie.isHot) || tabMovies[0];
+  const heroMovies = useMemo(() => [...tabMovies]
+    .sort((a, b) => Number(Boolean(b.isHot)) - Number(Boolean(a.isHot)) || Number(b.upcomingShowtimeCount || 0) - Number(a.upcomingShowtimeCount || 0))
+    .slice(0, 6), [tabMovies]);
+  const highlightedMovie = heroMovies[heroIndex] || heroMovies[0];
   const totalUpcomingShows = tabMovies.reduce((total, movie) => total + Number(movie.upcomingShowtimeCount || 0), 0);
+
+  useEffect(() => {
+    setHeroIndex(0);
+  }, [activeTab]);
+
+  useEffect(() => {
+    if (heroIndex >= heroMovies.length) setHeroIndex(0);
+  }, [heroIndex, heroMovies.length]);
+
+  useEffect(() => {
+    if (heroPaused || heroMovies.length < 2) return;
+    const timer = window.setTimeout(() => {
+      setHeroIndex(index => (index + 1) % heroMovies.length);
+    }, 4500);
+    return () => window.clearTimeout(timer);
+  }, [heroPaused, heroIndex, heroMovies.length]);
+
+  function showPreviousHero() {
+    setHeroIndex(index => (index - 1 + heroMovies.length) % heroMovies.length);
+  }
+
+  function showNextHero() {
+    setHeroIndex(index => (index + 1) % heroMovies.length);
+  }
 
   function recordEvent(eventType: string, movieId = 0, overrides: Partial<{ statusFilter: MovieTab; genreFilter: string; searchQuery: string }> = {}) {
     fetch(`${API_URL}?action=movie_catalog_event`, {
@@ -151,16 +180,23 @@ export default function MoviesPage({
 
   return <main className="movie-catalog-v2">
     <div className="movie-catalog-shell">
-      <header className="movie-catalog-hero">
-        {highlightedMovie?.bannerUrl || highlightedMovie?.posterUrl || highlightedMovie?.poster ? <img src={highlightedMovie.bannerUrl || highlightedMovie.posterUrl || highlightedMovie.poster} alt=""/> : null}
+      <header className={`movie-catalog-hero${heroPaused ? ' is-paused' : ''}`} aria-roledescription="carousel" aria-label={t('Phim nổi bật tự động', 'Automatic featured movies')}>
+        {highlightedMovie?.bannerUrl || highlightedMovie?.posterUrl || highlightedMovie?.poster ? <img key={`catalog-hero-${highlightedMovie.id}`} src={highlightedMovie.bannerUrl || highlightedMovie.posterUrl || highlightedMovie.poster} alt=""/> : null}
         <div className="movie-catalog-hero-shade"/>
-        <div className="movie-catalog-hero-copy">
+        <div key={`catalog-copy-${highlightedMovie?.id || heroIndex}`} className="movie-catalog-hero-copy">
           <span><Sparkles size={14}/>{t('Danh mục phim Aurora', 'Aurora movie catalogue')}</span>
-          <h1>{t('Mỗi bộ phim, một thế giới mới', 'Every movie opens a new world')}</h1>
-          <p>{t('Khám phá các tác phẩm đang mở bán, phim sắp khởi chiếu và những suất chiếu giới hạn tại Aurora Cinema.', 'Discover movies on sale, upcoming releases and limited screenings at Aurora Cinema.')}</p>
+          <h1>{highlightedMovie?.title || t('Mỗi bộ phim, một thế giới mới', 'Every movie opens a new world')}</h1>
+          <p>{highlightedMovie?.description || t('Khám phá các tác phẩm đang mở bán, phim sắp khởi chiếu và những suất chiếu giới hạn tại Aurora Cinema.', 'Discover movies on sale, upcoming releases and limited screenings at Aurora Cinema.')}</p>
           <div><button onClick={() => highlightedMovie && viewMovie(highlightedMovie)}>{t('Khám phá phim nổi bật', 'Explore featured movie')}<ChevronRight size={16}/></button><small><MapPin size={13}/>{selectedTheater || t('Tất cả cụm rạp Aurora', 'All Aurora cinemas')}</small></div>
         </div>
         <div className="movie-catalog-hero-stats"><div><b>{tabMovies.length}</b><span>{t('phim trong danh mục', 'movies in category')}</span></div><div><b>{totalUpcomingShows}</b><span>{t('suất đang mở', 'open sessions')}</span></div></div>
+        {heroMovies.length > 1 && <nav className="movie-catalog-hero-nav" aria-label={t('Điều khiển quảng cáo', 'Banner controls')}>
+          <button aria-label={t('Phim trước', 'Previous movie')} onClick={showPreviousHero}><ChevronLeft size={16}/></button>
+          <div>{heroMovies.map((movie,index)=><button key={movie.id} className={index===heroIndex?'active':''} aria-label={`${t('Xem', 'View')} ${movie.title}`} aria-current={index===heroIndex?'true':undefined} onClick={()=>setHeroIndex(index)}><i/></button>)}</div>
+          <span><b>{String(heroIndex+1).padStart(2,'0')}</b> / {String(heroMovies.length).padStart(2,'0')}</span>
+          <button aria-label={heroPaused?t('Tiếp tục tự động lướt', 'Resume autoplay'):t('Tạm dừng tự động lướt', 'Pause autoplay')} onClick={()=>setHeroPaused(value=>!value)}>{heroPaused?<Play size={14}/>:<Pause size={14}/>}</button>
+          <button aria-label={t('Phim tiếp theo', 'Next movie')} onClick={showNextHero}><ChevronRight size={16}/></button>
+        </nav>}
       </header>
 
       <section className="movie-catalog-tabs" role="tablist" aria-label={t('Danh mục phim', 'Movie categories')}>

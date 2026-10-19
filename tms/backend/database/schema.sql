@@ -302,5 +302,8 @@ INSERT INTO `system_configs` (`config_key`, `config_value`, `description`)
 VALUES
 ('cinema_name', 'Aurora Cinema', 'Tên rạp'),
 ('default_currency', 'VND', 'Đơn vị tiền tệ mặc định'),
-('booking_close_minutes', '15', 'Thời gian đóng đặt vé trước giờ chiếu')
+('booking_close_minutes', '15', 'Thời gian đóng đặt vé trước giờ chiếu'),
+('schedule_same_screen_gap_minutes', '15', 'Khoảng đệm sau khi phim kết thúc nếu xếp tiếp cùng phòng'),
+('schedule_cross_screen_stagger_minutes', '5', 'Độ lệch giờ bắt đầu giữa các phòng trong cùng đợt tạo lịch'),
+('schedule_operating_start_time', '09:00', 'Giờ bắt đầu vận hành mặc định của lịch chiếu')
 ON DUPLICATE KEY UPDATE `config_value` = VALUES(`config_value`);
