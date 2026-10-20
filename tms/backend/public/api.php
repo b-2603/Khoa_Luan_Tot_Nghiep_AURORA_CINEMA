@@ -135,6 +135,164 @@ if (!$db->query("SET time_zone = '+07:00'")) {
     jsonResponse(array('success' => false, 'message' => 'Không thể đặt múi giờ Việt Nam cho kết nối aurora_db: ' . $db->error), 500);
 }
 
+function ensureTmsNotificationSchema($db) {
+    $notifications = $db->query("CREATE TABLE IF NOT EXISTS tms_notifications (
+        id BIGINT UNSIGNED NOT NULL AUTO_INCREMENT PRIMARY KEY,
+        notification_key VARCHAR(160) NOT NULL,
+        category VARCHAR(40) NOT NULL DEFAULT 'system',
+        severity VARCHAR(20) NOT NULL DEFAULT 'info',
+        title VARCHAR(180) NOT NULL,
+        message VARCHAR(600) NOT NULL,
+        target_roles VARCHAR(255) NOT NULL DEFAULT 'all',
+        target_user_id BIGINT UNSIGNED NULL,
+        theater_id BIGINT UNSIGNED NULL,
+        action_view VARCHAR(80) NULL,
+        action_label VARCHAR(100) NULL,
+        entity_type VARCHAR(60) NULL,
+        entity_id BIGINT UNSIGNED NULL,
+        created_by VARCHAR(120) NOT NULL DEFAULT 'Aurora System',
+        created_at DATETIME NOT NULL,
+        expires_at DATETIME NULL,
+        UNIQUE KEY uq_tms_notification_key (notification_key),
+        KEY idx_tms_notification_scope (target_user_id, theater_id, created_at),
+        KEY idx_tms_notification_roles (target_roles),
+        KEY idx_tms_notification_expiry (expires_at)
+    ) ENGINE=InnoDB DEFAULT CHARSET=utf8");
+    if (!$notifications) return false;
+
+    return (bool)$db->query("CREATE TABLE IF NOT EXISTS tms_notification_receipts (
+        notification_id BIGINT UNSIGNED NOT NULL,
+        user_id BIGINT UNSIGNED NOT NULL,
+        read_at DATETIME NULL,
+        dismissed_at DATETIME NULL,
+        created_at DATETIME NOT NULL,
+        updated_at DATETIME NOT NULL,
+        PRIMARY KEY (notification_id, user_id),
+        KEY idx_tms_notification_receipt_user (user_id, read_at, dismissed_at)
+    ) ENGINE=InnoDB DEFAULT CHARSET=utf8");
+}
+
+function tmsNotificationTableExists($db, $table) {
+    $safe = $db->real_escape_string($table);
+    $result = $db->query("SHOW TABLES LIKE '{$safe}'");
+    return $result && $result->num_rows > 0;
+}
+
+function tmsNotificationColumnExists($db, $table, $column) {
+    $safeTable = preg_replace('/[^a-zA-Z0-9_]/', '', $table);
+    $safeColumn = $db->real_escape_string($column);
+    $result = $db->query("SHOW COLUMNS FROM {$safeTable} LIKE '{$safeColumn}'");
+    return $result && $result->num_rows > 0;
+}
+
+// Convert outstanding operational work into durable, de-duplicated inbox
+// records. Source rows stay authoritative; this function never creates demo
+// requests and can safely run whenever the notification center refreshes.
+function syncTmsOperationalNotifications($db) {
+    if (tmsNotificationTableExists($db, 'refunds')) {
+        $db->query("UPDATE tms_notifications n SET n.expires_at=NOW()
+            WHERE n.entity_type='refund' AND NOT EXISTS
+            (SELECT 1 FROM refunds r WHERE r.id=n.entity_id AND r.status='pending')");
+        $db->query("INSERT INTO tms_notifications
+            (notification_key,category,severity,title,message,target_roles,action_view,action_label,entity_type,entity_id,created_by,created_at)
+            SELECT CONCAT('refund:',r.id),'refund','warning',
+                   CONCAT('Yêu cầu hoàn tiền #',r.id),
+                   CONCAT('Giao dịch ',COALESCE(t.transaction_code,CONCAT('#',r.transaction_id)),' đang chờ duyệt · ',FORMAT(r.amount,0),' đ'),
+                   'super_admin,supervisor,accounting','refunds','Xem yêu cầu','refund',r.id,'Aurora Finance',COALESCE(r.created_at,NOW())
+            FROM refunds r LEFT JOIN transactions t ON t.id=r.transaction_id
+            WHERE r.status='pending'
+            ON DUPLICATE KEY UPDATE title=VALUES(title),message=VALUES(message),severity=VALUES(severity),target_roles=VALUES(target_roles),action_view=VALUES(action_view),expires_at=NULL");
+    }
+
+    if (tmsNotificationTableExists($db, 'transactions') && tmsNotificationColumnExists($db, 'transactions', 'cancel_requested')) {
+        $db->query("UPDATE tms_notifications n SET n.expires_at=NOW()
+            WHERE n.entity_type='transaction' AND n.notification_key LIKE 'cancel-transaction:%' AND NOT EXISTS
+            (SELECT 1 FROM transactions t WHERE t.id=n.entity_id AND t.cancel_requested=1)");
+        $db->query("INSERT INTO tms_notifications
+            (notification_key,category,severity,title,message,target_roles,action_view,action_label,entity_type,entity_id,created_by,created_at)
+            SELECT CONCAT('cancel-transaction:',id),'transaction','critical','Yêu cầu hủy giao dịch',
+                   CONCAT(transaction_code,' đang chờ phê duyệt · ',FORMAT(amount,0),' đ'),
+                   'super_admin,supervisor,accounting','transactions','Kiểm tra giao dịch','transaction',id,'Aurora POS',COALESCE(updated_at,created_at,NOW())
+            FROM transactions WHERE cancel_requested=1
+            ON DUPLICATE KEY UPDATE message=VALUES(message),severity=VALUES(severity),target_roles=VALUES(target_roles),action_view=VALUES(action_view),expires_at=NULL");
+    }
+
+    if (tmsNotificationTableExists($db, 'movie_allocations')) {
+        $db->query("UPDATE tms_notifications n SET n.expires_at=NOW()
+            WHERE n.entity_type='movie_allocation' AND NOT EXISTS
+            (SELECT 1 FROM movie_allocations a WHERE a.id=n.entity_id AND a.status='pending')");
+        $db->query("INSERT INTO tms_notifications
+            (notification_key,category,severity,title,message,target_roles,theater_id,action_view,action_label,entity_type,entity_id,created_by,created_at)
+            SELECT CONCAT('movie-allocation:',id),'movie_plan','info','Có kế hoạch phim mới cần tiếp nhận',
+                   CONCAT(movie_title,' · ',allocated_start_date,' đến ',allocated_end_date),
+                   'cinema_admin',theater_id,'movie_plan','Mở kế hoạch phim','movie_allocation',id,'Admin Tổng',NOW()
+            FROM movie_allocations WHERE status='pending'
+            ON DUPLICATE KEY UPDATE title=VALUES(title),message=VALUES(message),theater_id=VALUES(theater_id),action_view=VALUES(action_view),expires_at=NULL");
+    }
+
+    if (tmsNotificationTableExists($db, 'product_plan_theaters') && tmsNotificationTableExists($db, 'product_plans')) {
+        $db->query("UPDATE tms_notifications n SET n.expires_at=NOW()
+            WHERE n.entity_type='product_plan_assignment' AND NOT EXISTS
+            (SELECT 1 FROM product_plan_theaters pt WHERE pt.id=n.entity_id AND pt.status='sent')");
+        $db->query("INSERT INTO tms_notifications
+            (notification_key,category,severity,title,message,target_roles,theater_id,action_view,action_label,entity_type,entity_id,created_by,created_at)
+            SELECT CONCAT('product-plan-assignment:',pt.id),'product_plan','info','Kế hoạch hàng hóa mới từ Admin Tổng',
+                   CONCAT(p.plan_code,' · ',p.title,' · áp dụng ',DATE_FORMAT(p.effective_date,'%d/%m/%Y')),
+                   'cinema_admin',pt.theater_id,'products','Xem và xác nhận','product_plan_assignment',pt.id,
+                   COALESCE(NULLIF(p.sent_by_name,''),'Admin Tổng'),COALESCE(pt.sent_at,p.sent_at,NOW())
+            FROM product_plan_theaters pt INNER JOIN product_plans p ON p.id=pt.plan_id
+            WHERE pt.status='sent' AND p.status='sent'
+            ON DUPLICATE KEY UPDATE title=VALUES(title),message=VALUES(message),theater_id=VALUES(theater_id),action_view=VALUES(action_view),action_label=VALUES(action_label),expires_at=NULL");
+    }
+
+    // Marketing movie-plan approvals are submitted in another TMS workspace,
+    // but Admin Tổng must receive them in the same durable inbox.  The
+    // submission timestamp is part of the key so a revised and re-submitted
+    // plan becomes a genuinely new unread notification.
+    if (tmsNotificationTableExists($db, 'movie_plans')
+        && tmsNotificationColumnExists($db, 'movie_plans', 'approval_status')
+        && tmsNotificationColumnExists($db, 'movie_plans', 'marketing_owner_id')) {
+        $db->query("UPDATE tms_notifications n SET n.expires_at=NOW()
+            WHERE n.entity_type='marketing_movie_plan'
+              AND n.category='marketing_approval'
+              AND NOT EXISTS (
+                  SELECT 1 FROM movie_plans mp
+                  WHERE mp.id=n.entity_id
+                    AND mp.approval_status='pending_approval'
+                    AND n.notification_key=CONCAT('marketing-plan-approval:',mp.id,':',DATE_FORMAT(COALESCE(mp.submitted_at,mp.updated_at,mp.created_at),'%Y%m%d%H%i%s'))
+              )");
+        $db->query("INSERT INTO tms_notifications
+            (notification_key,category,severity,title,message,target_roles,action_view,action_label,entity_type,entity_id,created_by,created_at)
+            SELECT CONCAT('marketing-plan-approval:',mp.id,':',DATE_FORMAT(COALESCE(mp.submitted_at,mp.updated_at,mp.created_at),'%Y%m%d%H%i%s')),
+                   'marketing_approval','warning','Kế hoạch Marketing chờ phê duyệt',
+                   CONCAT(COALESCE(NULLIF(mp.plan_code,''),CONCAT('KH-',mp.id)),' · ',COALESCE(NULLIF(mp.plan_name,''),mp.movie_title),' · ',COALESCE(mp.movie_title,'Chưa đặt tên')),
+                   'super_admin','marketing_approvals','Xem và phê duyệt','marketing_movie_plan',mp.id,
+                   COALESCE(NULLIF(mp.submitted_by,''),'Marketing'),COALESCE(mp.submitted_at,mp.updated_at,mp.created_at,NOW())
+            FROM movie_plans mp
+            WHERE mp.marketing_owner_id IS NOT NULL AND mp.approval_status='pending_approval'
+            ON DUPLICATE KEY UPDATE title=VALUES(title),message=VALUES(message),severity=VALUES(severity),target_roles=VALUES(target_roles),action_view=VALUES(action_view),action_label=VALUES(action_label),created_by=VALUES(created_by),expires_at=NULL");
+
+        // Return the decision to the exact Marketing owner. These records are
+        // generated only after a real review timestamp exists, avoiding demo
+        // or historical draft data from creating noise.
+        $db->query("INSERT INTO tms_notifications
+            (notification_key,category,severity,title,message,target_roles,target_user_id,action_view,action_label,entity_type,entity_id,created_by,created_at)
+            SELECT CONCAT('marketing-plan-result:',mp.id,':',DATE_FORMAT(mp.reviewed_at,'%Y%m%d%H%i%s')),
+                   'marketing_result',IF(mp.approval_status='approved','success','warning'),
+                   IF(mp.approval_status='approved','Kế hoạch đã được phê duyệt','Kế hoạch cần chỉnh sửa'),
+                   CONCAT(COALESCE(NULLIF(mp.plan_code,''),CONCAT('KH-',mp.id)),' · ',COALESCE(NULLIF(mp.plan_name,''),mp.movie_title),
+                          IF(mp.approval_status='revision_requested' AND COALESCE(mp.approval_note,'')<>'',CONCAT(' · ',mp.approval_note),'')),
+                   'marketing_manager',mp.marketing_owner_id,'mkt-plans','Xem kết quả','marketing_movie_plan',mp.id,
+                   COALESCE(NULLIF(mp.reviewed_by,''),'Admin Tổng'),mp.reviewed_at
+            FROM movie_plans mp
+            WHERE mp.marketing_owner_id IS NOT NULL
+              AND mp.approval_status IN ('approved','revision_requested')
+              AND mp.reviewed_at IS NOT NULL
+              AND mp.reviewed_at>'1970-01-02 00:00:00'
+            ON DUPLICATE KEY UPDATE title=VALUES(title),message=VALUES(message),severity=VALUES(severity),target_user_id=VALUES(target_user_id),action_view=VALUES(action_view),action_label=VALUES(action_label),created_by=VALUES(created_by),expires_at=NULL");
+    }
+}
+
 // Scope every cinema operator to one cinema.  This migration is intentionally
 // here (before session restoration) so both a fresh login and an existing
 // signed session receive the same theater_id from aurora_db.
@@ -180,9 +338,11 @@ restoreTmsIdentity();
 require_once dirname(__FILE__) . '/../app/Http/Controllers/AdminController.php';
 require_once dirname(__FILE__) . '/../app/Http/Controllers/RevenueController.php';
 require_once dirname(__FILE__) . '/../app/Http/Controllers/MarketingController.php';
+require_once dirname(__FILE__) . '/../app/Http/Controllers/ProductPlanningController.php';
 $controller = new AdminController($db);
 $revenueController = new RevenueController($db);
 $marketingController = new MarketingController($db);
+$productPlanningController = new ProductPlanningController($db);
 $action = isset($_GET['action']) ? $_GET['action'] : 'health';
 
 // Pricing is a dedicated, audited matrix rather than a generic CRUD list.
@@ -192,6 +352,16 @@ if ($action === 'ticket-pricing-policies') {
     if ($requestMethod === 'GET') $controller->ticketPricingPolicies();
     if ($requestMethod === 'POST' || $requestMethod === 'PUT') $controller->saveTicketPricingPolicy();
     jsonResponse(array('success' => false, 'message' => 'Phương thức không được hỗ trợ.'), 405);
+}
+
+if ($action === 'product-catalog-workflow') {
+    $productPlanningController->handle('catalog', $requestMethod);
+}
+if ($action === 'product-product-image') {
+    $productPlanningController->handle('media', $requestMethod);
+}
+if ($action === 'product-plans') {
+    $productPlanningController->handle('plans', $requestMethod);
 }
 
 if ($action === 'pos-staff') {
@@ -556,6 +726,90 @@ if ($action === 'me') {
 if ($action === 'roles') {
     requireAdmin();
     jsonResponse(array('success' => true, 'roles' => array_values(AdminController::getRoleDefinitions())));
+}
+
+if ($action === 'notifications') {
+    $user = requireAdmin();
+    if (!ensureTmsNotificationSchema($db)) {
+        jsonResponse(array('success' => false, 'message' => 'Không thể khởi tạo trung tâm thông báo trong aurora_db.'), 500);
+    }
+    syncTmsOperationalNotifications($db);
+
+    $userId = (int)$user['id'];
+    $role = $db->real_escape_string(AdminController::normalizeRole($user['role']));
+    $theaterId = isset($user['theater_id']) ? (int)$user['theater_id'] : 0;
+    $displayName = $db->real_escape_string(isset($user['full_name']) ? $user['full_name'] : $user['username']);
+    $welcomeKey = $db->real_escape_string('tms-welcome:' . $userId);
+    $db->query("INSERT IGNORE INTO tms_notifications
+        (notification_key,category,severity,title,message,target_roles,target_user_id,action_view,action_label,created_by,created_at)
+        VALUES ('{$welcomeKey}','system','success','Trung tâm thông báo đã sẵn sàng',
+        'Xin chào {$displayName}. Các công việc cần xử lý sẽ được cập nhật tại đây theo đúng vai trò và phạm vi rạp.',
+        'all',{$userId},'dashboard','Về tổng quan','Aurora System',NOW())");
+
+    $scope = "(n.target_user_id={$userId} OR (n.target_user_id IS NULL AND (n.target_roles='all' OR FIND_IN_SET('{$role}',n.target_roles)>0)))";
+    if ($role !== 'super_admin' && $theaterId > 0) {
+        $scope .= " AND (n.theater_id IS NULL OR n.theater_id={$theaterId})";
+    } else if ($role !== 'super_admin') {
+        $scope .= " AND n.theater_id IS NULL";
+    }
+    $scope .= " AND (n.expires_at IS NULL OR n.expires_at>NOW())";
+
+    if ($requestMethod === 'GET') {
+        $filter = isset($_GET['filter']) && $_GET['filter'] === 'unread' ? 'unread' : 'all';
+        $limit = isset($_GET['limit']) ? (int)$_GET['limit'] : 40;
+        if ($limit < 1) $limit = 1;
+        if ($limit > 100) $limit = 100;
+        $unreadOnly = $filter === 'unread' ? ' AND r.read_at IS NULL' : '';
+        $result = $db->query("SELECT n.id,n.category,n.severity,n.title,n.message,n.theater_id,n.action_view,n.action_label,
+                n.entity_type,n.entity_id,n.created_by,n.created_at,r.read_at
+            FROM tms_notifications n
+            LEFT JOIN tms_notification_receipts r ON r.notification_id=n.id AND r.user_id={$userId}
+            WHERE {$scope} AND r.dismissed_at IS NULL{$unreadOnly}
+            ORDER BY (r.read_at IS NULL) DESC,n.created_at DESC,n.id DESC LIMIT {$limit}");
+        if (!$result) jsonResponse(array('success' => false, 'message' => 'Không thể tải thông báo từ aurora_db: '.$db->error), 500);
+        $items = array();
+        while ($row = $result->fetch_assoc()) {
+            $row['id'] = (int)$row['id'];
+            $row['theater_id'] = $row['theater_id'] === null ? null : (int)$row['theater_id'];
+            $row['entity_id'] = $row['entity_id'] === null ? null : (int)$row['entity_id'];
+            $row['is_read'] = $row['read_at'] !== null;
+            $items[] = $row;
+        }
+        $countResult = $db->query("SELECT COUNT(*) FROM tms_notifications n
+            LEFT JOIN tms_notification_receipts r ON r.notification_id=n.id AND r.user_id={$userId}
+            WHERE {$scope} AND r.dismissed_at IS NULL AND r.read_at IS NULL");
+        $countRow = $countResult ? $countResult->fetch_row() : array(0);
+        jsonResponse(array('success' => true, 'data' => $items, 'summary' => array(
+            'unread' => (int)$countRow[0], 'returned' => count($items), 'filter' => $filter,
+            'source' => 'aurora_db', 'refreshed_at' => date('Y-m-d H:i:s')
+        )));
+    }
+
+    if ($requestMethod === 'POST' || $requestMethod === 'PUT') {
+        $input = requestJson();
+        $operation = isset($input['operation']) ? (string)$input['operation'] : 'read';
+        $notificationId = isset($input['notification_id']) ? (int)$input['notification_id'] : 0;
+        if (!in_array($operation, array('read','read_all','dismiss'), true)) {
+            jsonResponse(array('success' => false, 'message' => 'Thao tác thông báo không hợp lệ.'), 422);
+        }
+        if (($operation === 'read' || $operation === 'dismiss') && $notificationId < 1) {
+            jsonResponse(array('success' => false, 'message' => 'Thiếu mã thông báo.'), 422);
+        }
+
+        $idCondition = $operation === 'read_all' ? '' : ' AND n.id=' . $notificationId;
+        $dismissedValue = $operation === 'dismiss' ? 'NOW()' : 'NULL';
+        $sql = "INSERT INTO tms_notification_receipts (notification_id,user_id,read_at,dismissed_at,created_at,updated_at)
+            SELECT n.id,{$userId},NOW(),{$dismissedValue},NOW(),NOW() FROM tms_notifications n
+            WHERE {$scope}{$idCondition}
+            ON DUPLICATE KEY UPDATE read_at=NOW(),dismissed_at=" . ($operation === 'dismiss' ? 'NOW()' : 'dismissed_at') . ",updated_at=NOW()";
+        if (!$db->query($sql)) jsonResponse(array('success' => false, 'message' => 'Không thể cập nhật trạng thái thông báo: '.$db->error), 500);
+        if ($operation !== 'read_all' && $db->affected_rows < 1) {
+            jsonResponse(array('success' => false, 'message' => 'Thông báo không tồn tại hoặc không thuộc phạm vi của bạn.'), 404);
+        }
+        jsonResponse(array('success' => true, 'message' => $operation === 'dismiss' ? 'Đã ẩn thông báo.' : 'Đã cập nhật trạng thái đã đọc.'));
+    }
+
+    jsonResponse(array('success' => false, 'message' => 'Phương thức không được hỗ trợ cho thông báo.'), 405);
 }
 
 if (strpos($action, 'marketing-') === 0) {

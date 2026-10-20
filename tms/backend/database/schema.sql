@@ -136,10 +136,19 @@ CREATE TABLE IF NOT EXISTS `products` (
   `id` BIGINT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
   `name` VARCHAR(150) NOT NULL,
   `sku` VARCHAR(50) NOT NULL UNIQUE,
-  `category` VARCHAR(80) NOT NULL DEFAULT 'Concession',
-  `price` DECIMAL(12,2) NOT NULL DEFAULT 0,
+  `category` VARCHAR(80) NOT NULL DEFAULT 'Popcorn',
+  `description` TEXT NULL,
+  `unit` VARCHAR(40) NOT NULL DEFAULT 'Sản phẩm',
+  `cost_price` DECIMAL(12,2) NOT NULL DEFAULT 0,
+  `price` DECIMAL(12,2) NOT NULL DEFAULT 0 COMMENT 'Giá bán thực tế và giá thành viên Aurora',
+  `customer_price` DECIMAL(12,2) NOT NULL DEFAULT 0 COMMENT 'Giá website = price + 10000',
+  `pos_price` DECIMAL(12,2) NOT NULL DEFAULT 0 COMMENT 'Giá tại quầy cho khách thường = price + 10000',
+  `member_price` DECIMAL(12,2) NOT NULL DEFAULT 0 COMMENT 'Giá POS thành viên = price',
   `stock_quantity` INT UNSIGNED NOT NULL DEFAULT 0,
-  `status` ENUM('active','inactive') NOT NULL DEFAULT 'active',
+  `status` VARCHAR(20) NOT NULL DEFAULT 'active',
+  `image_url` VARCHAR(500) NULL,
+  `created_by` BIGINT UNSIGNED NULL,
+  `updated_by` BIGINT UNSIGNED NULL,
   `created_at` TIMESTAMP NULL DEFAULT CURRENT_TIMESTAMP,
   `updated_at` DATETIME NULL DEFAULT NULL
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8 COLLATE=utf8_unicode_ci;
@@ -272,11 +281,12 @@ VALUES
 ('Trẻ em', 'CHILD', 70000, 'active')
 ON DUPLICATE KEY UPDATE `price` = VALUES(`price`);
 
-INSERT INTO `products` (`name`, `sku`, `category`, `price`, `stock_quantity`, `status`)
+INSERT INTO `products` (`name`, `sku`, `category`, `cost_price`, `price`, `customer_price`, `pos_price`, `member_price`, `stock_quantity`, `status`)
 VALUES
-('Bắp rang bơ', 'POPCORN_LARGE', 'Concession', 60000, 200, 'active'),
-('Nước ngọt', 'SODA_330', 'Concession', 25000, 300, 'active')
-ON DUPLICATE KEY UPDATE `price` = VALUES(`price`);
+('Bắp rang bơ', 'POPCORN_LARGE', 'Popcorn', 30000, 50000, 60000, 60000, 50000, 200, 'active'),
+('Nước ngọt', 'SODA_330', 'Beverages', 10000, 15000, 25000, 25000, 15000, 300, 'active'),
+('Combo bắp nước', 'COMBO_POPCORN_DRINK', 'Combo', 45000, 70000, 80000, 80000, 70000, 100, 'active')
+ON DUPLICATE KEY UPDATE `cost_price`=VALUES(`cost_price`),`price`=VALUES(`price`),`customer_price`=VALUES(`customer_price`),`pos_price`=VALUES(`pos_price`),`member_price`=VALUES(`member_price`);
 
 INSERT INTO `vouchers` (`code`, `name`, `discount_type`, `discount_value`, `starts_at`, `ends_at`, `usage_limit`, `status`)
 VALUES

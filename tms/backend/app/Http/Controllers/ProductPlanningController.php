@@ -1,0 +1,134 @@
+<?php
+
+class ProductPlanningController
+{
+    private $db;
+    public function __construct($db) { $this->db=$db; }
+
+    private function rows($sql) {
+        $result=$this->db->query($sql);
+        if(!$result) jsonResponse(array('success'=>false,'message'=>'Không thể đọc dữ liệu hàng hóa từ aurora_db: '.$this->db->error),500);
+        $rows=array(); while($row=$result->fetch_assoc())$rows[]=$row; $result->free(); return $rows;
+    }
+    private function scalar($sql) { $r=$this->db->query($sql);if(!$r)jsonResponse(array('success'=>false,'message'=>'Không thể đọc dữ liệu: '.$this->db->error),500);$row=$r->fetch_row();$r->free();return isset($row[0])?$row[0]:0; }
+    private function columnExists($table,$column) { $t=$this->db->real_escape_string($table);$c=$this->db->real_escape_string($column);return (int)$this->scalar("SELECT COUNT(*) FROM information_schema.COLUMNS WHERE TABLE_SCHEMA=DATABASE() AND TABLE_NAME='{$t}' AND COLUMN_NAME='{$c}'")>0; }
+    private function actor() {
+        $user=requireAdmin();$role=AdminController::normalizeRole($user['role']);
+        if(!in_array($role,array('super_admin','cinema_admin'),true))jsonResponse(array('success'=>false,'message'=>'Chức năng kế hoạch hàng hóa chỉ dành cho Admin Tổng và Admin Rạp.'),403);
+        $user['role']=$role;return $user;
+    }
+
+    private function ensureSchema() {
+        $statusType=$this->rows("SELECT COLUMN_TYPE FROM information_schema.COLUMNS WHERE TABLE_SCHEMA=DATABASE() AND TABLE_NAME='products' AND COLUMN_NAME='status' LIMIT 1");
+        if($statusType&&strpos(strtolower($statusType[0]['COLUMN_TYPE']),'enum')===0&&!$this->db->query("ALTER TABLE products MODIFY status VARCHAR(20) NOT NULL DEFAULT 'active'"))jsonResponse(array('success'=>false,'message'=>'Không thể bổ sung trạng thái nháp hàng hóa: '.$this->db->error),500);
+        $columns=array('description'=>'TEXT NULL','unit'=>"VARCHAR(40) NOT NULL DEFAULT 'Sản phẩm'",'cost_price'=>'DECIMAL(12,2) NOT NULL DEFAULT 0','customer_price'=>'DECIMAL(12,2) NOT NULL DEFAULT 0','pos_price'=>'DECIMAL(12,2) NOT NULL DEFAULT 0','member_price'=>'DECIMAL(12,2) NOT NULL DEFAULT 0','image_url'=>'VARCHAR(500) NULL','created_by'=>'BIGINT UNSIGNED NULL','updated_by'=>'BIGINT UNSIGNED NULL');
+        foreach($columns as $column=>$definition)if(!$this->columnExists('products',$column)&&!$this->db->query("ALTER TABLE products ADD COLUMN `{$column}` {$definition}"))jsonResponse(array('success'=>false,'message'=>'Không thể nâng cấp danh mục hàng hóa: '.$this->db->error),500);
+        $queries=array(
+            "CREATE TABLE IF NOT EXISTS product_categories (id INT UNSIGNED AUTO_INCREMENT PRIMARY KEY,code VARCHAR(40) NOT NULL UNIQUE,name VARCHAR(100) NOT NULL,sku_prefix VARCHAR(12) NOT NULL,default_unit VARCHAR(40) NOT NULL,status VARCHAR(20) NOT NULL DEFAULT 'active',sort_order INT NOT NULL DEFAULT 0) ENGINE=InnoDB DEFAULT CHARSET=utf8 COLLATE=utf8_unicode_ci",
+            "CREATE TABLE IF NOT EXISTS product_units (id INT UNSIGNED AUTO_INCREMENT PRIMARY KEY,code VARCHAR(40) NOT NULL UNIQUE,name VARCHAR(80) NOT NULL,status VARCHAR(20) NOT NULL DEFAULT 'active',sort_order INT NOT NULL DEFAULT 0) ENGINE=InnoDB DEFAULT CHARSET=utf8 COLLATE=utf8_unicode_ci",
+            "CREATE TABLE IF NOT EXISTS product_plans (id BIGINT UNSIGNED AUTO_INCREMENT PRIMARY KEY,plan_code VARCHAR(40) NOT NULL UNIQUE,title VARCHAR(180) NOT NULL,effective_date DATE NOT NULL,status VARCHAR(20) NOT NULL DEFAULT 'draft',note TEXT NULL,created_by BIGINT UNSIGNED NOT NULL,created_by_name VARCHAR(120) NOT NULL,sent_by BIGINT UNSIGNED NULL,sent_by_name VARCHAR(120) NULL,created_at DATETIME NOT NULL,updated_at DATETIME NOT NULL,sent_at DATETIME NULL,KEY idx_product_plan_status(status,effective_date)) ENGINE=InnoDB DEFAULT CHARSET=utf8 COLLATE=utf8_unicode_ci",
+            "CREATE TABLE IF NOT EXISTS product_plan_items (id BIGINT UNSIGNED AUTO_INCREMENT PRIMARY KEY,plan_id BIGINT UNSIGNED NOT NULL,product_id BIGINT UNSIGNED NOT NULL,sku VARCHAR(50) NOT NULL,product_name VARCHAR(150) NOT NULL,category VARCHAR(80) NOT NULL,unit VARCHAR(40) NOT NULL,cost_price DECIMAL(12,2) NOT NULL DEFAULT 0,sale_price DECIMAL(12,2) NOT NULL DEFAULT 0,planned_quantity INT UNSIGNED NOT NULL DEFAULT 0,note VARCHAR(500) NULL,UNIQUE KEY uq_product_plan_item(plan_id,product_id),KEY idx_product_plan_item_product(product_id)) ENGINE=InnoDB DEFAULT CHARSET=utf8 COLLATE=utf8_unicode_ci",
+            "CREATE TABLE IF NOT EXISTS product_plan_theaters (id BIGINT UNSIGNED AUTO_INCREMENT PRIMARY KEY,plan_id BIGINT UNSIGNED NOT NULL,theater_id BIGINT UNSIGNED NOT NULL,status VARCHAR(20) NOT NULL DEFAULT 'sent',sent_at DATETIME NOT NULL,acknowledged_by BIGINT UNSIGNED NULL,acknowledged_by_name VARCHAR(120) NULL,acknowledged_at DATETIME NULL,response_note VARCHAR(500) NULL,UNIQUE KEY uq_product_plan_theater(plan_id,theater_id),KEY idx_product_plan_theater_scope(theater_id,status)) ENGINE=InnoDB DEFAULT CHARSET=utf8 COLLATE=utf8_unicode_ci"
+        );
+        foreach($queries as $query)if(!$this->db->query($query))jsonResponse(array('success'=>false,'message'=>'Không thể khởi tạo kế hoạch hàng hóa trong aurora_db: '.$this->db->error),500);
+        $this->db->query("INSERT INTO product_units(code,name,status,sort_order) VALUES('portion','Phần','active',10),('cup','Ly','active',20),('bottle','Chai','active',30),('box','Hộp','active',40),('pack','Gói','active',50),('combo','Combo','active',60),('item','Sản phẩm','active',70) ON DUPLICATE KEY UPDATE name=VALUES(name),status='active',sort_order=VALUES(sort_order)");
+        $this->db->query("DELETE FROM product_categories WHERE code NOT IN ('Popcorn','Beverages','Snacks','Hot Food','Ice Cream & Desserts','Combo','Special / Limited Edition','Upgrade','Promotion')");
+        $this->db->query("INSERT INTO product_categories(code,name,sku_prefix,default_unit,status,sort_order) VALUES('Popcorn','Popcorn','POP','Hộp','active',10),('Beverages','Beverages','BEV','Ly','active',20),('Snacks','Snacks','SNK','Gói','active',30),('Hot Food','Hot Food','HOT','Phần','active',40),('Ice Cream & Desserts','Ice Cream & Desserts','ICE','Phần','active',50),('Combo','Combo','CMB','Combo','active',60),('Special / Limited Edition','Special / Limited Edition','SPL','Sản phẩm','active',70),('Upgrade','Upgrade','UPG','Phần','active',80),('Promotion','Promotion','PRO','Sản phẩm','active',90) ON DUPLICATE KEY UPDATE name=VALUES(name),sku_prefix=VALUES(sku_prefix),default_unit=VALUES(default_unit),status='active',sort_order=VALUES(sort_order)");
+        $this->db->query("UPDATE products SET unit='Gói' WHERE category='Snacks' AND (unit IS NULL OR TRIM(unit)='' OR unit='Sản phẩm')");
+        $this->db->query("UPDATE products SET customer_price=price+10000,pos_price=price+10000,member_price=price WHERE customer_price<=0 OR pos_price<=0 OR member_price<=0");
+    }
+
+    private function generateSku($category) {
+        $categoryEsc=$this->db->real_escape_string($category);$rows=$this->rows("SELECT sku_prefix FROM product_categories WHERE code='{$categoryEsc}' AND status='active' LIMIT 1");
+        $prefix=$rows?strtoupper($rows[0]['sku_prefix']):'PRD';$matches=$this->rows("SELECT sku FROM products WHERE sku LIKE '".$this->db->real_escape_string($prefix)."\\_%'");$max=0;
+        foreach($matches as $row)if(preg_match('/^'.preg_quote($prefix,'/').'_([0-9]+)$/',$row['sku'],$found))$max=max($max,(int)$found[1]);
+        do{$max++;$sku=$prefix.'_'.str_pad((string)$max,3,'0',STR_PAD_LEFT);$skuEsc=$this->db->real_escape_string($sku);}while((int)$this->scalar("SELECT COUNT(*) FROM products WHERE sku='{$skuEsc}'")>0);
+        return $sku;
+    }
+
+    private function catalogMeta() {
+        $categories=$this->rows("SELECT code,name,sku_prefix,default_unit FROM product_categories WHERE status='active' ORDER BY sort_order,id");
+        foreach($categories as &$category)$category['suggested_sku']=$this->generateSku($category['code']);unset($category);
+        return array('categories'=>$categories,'units'=>$this->rows("SELECT code,name FROM product_units WHERE status='active' ORDER BY sort_order,id"));
+    }
+
+    public function handle($resource,$method) {
+        $user=$this->actor();$this->ensureSchema();
+        if($resource==='catalog')return $this->catalog($user,$method);
+        if($resource==='media')return $this->uploadImage($user,$method);
+        if($resource==='plans')return $this->plans($user,$method);
+        jsonResponse(array('success'=>false,'message'=>'Tài nguyên hàng hóa không hợp lệ.'),404);
+    }
+
+    private function catalog($user,$method) {
+        if($method==='GET'){
+            $where=$user['role']==='super_admin'?'1=1':"status='active'";
+            $q=isset($_GET['q'])?trim((string)$_GET['q']):'';if($q!==''){$q=$this->db->real_escape_string($q);$where.=" AND (sku LIKE '%{$q}%' OR name LIKE '%{$q}%' OR category LIKE '%{$q}%')";}
+            $data=$this->rows("SELECT id,sku,name,category,unit,description,cost_price,price,customer_price,pos_price,member_price,stock_quantity,status,image_url,created_at,updated_at FROM products WHERE {$where} ORDER BY CASE status WHEN 'draft' THEN 0 WHEN 'active' THEN 1 ELSE 2 END,updated_at DESC,id DESC");
+            jsonResponse(array('success'=>true,'data'=>$data,'meta'=>$this->catalogMeta(),'summary'=>array('total'=>(int)$this->scalar('SELECT COUNT(*) FROM products'),'draft'=>(int)$this->scalar("SELECT COUNT(*) FROM products WHERE status='draft'"),'active'=>(int)$this->scalar("SELECT COUNT(*) FROM products WHERE status='active'"),'inactive'=>(int)$this->scalar("SELECT COUNT(*) FROM products WHERE status='inactive'"))));
+        }
+        if($user['role']!=='super_admin')jsonResponse(array('success'=>false,'message'=>'Chỉ Admin Tổng được tạo và cập nhật hàng hóa.'),403);
+        $input=requestJson();$id=isset($input['id'])?(int)$input['id']:(isset($_GET['id'])?(int)$_GET['id']:0);
+        if($method==='DELETE'){
+            $row=$this->rows("SELECT status FROM products WHERE id={$id} LIMIT 1");if(!$row)jsonResponse(array('success'=>false,'message'=>'Không tìm thấy hàng hóa.'),404);if($row[0]['status']!=='draft')jsonResponse(array('success'=>false,'message'=>'Chỉ được xóa hàng hóa đang ở trạng thái nháp.'),409);
+            if((int)$this->scalar("SELECT COUNT(*) FROM product_plan_items WHERE product_id={$id}")>0)jsonResponse(array('success'=>false,'message'=>'Hàng hóa đang thuộc một kế hoạch. Hãy gỡ khỏi kế hoạch trước.'),409);
+            if(!$this->db->query("DELETE FROM products WHERE id={$id} LIMIT 1"))jsonResponse(array('success'=>false,'message'=>'Không thể xóa hàng hóa: '.$this->db->error),500);jsonResponse(array('success'=>true,'message'=>'Đã xóa bản nháp hàng hóa.'));
+        }
+        if(!in_array($method,array('POST','PUT'),true))jsonResponse(array('success'=>false,'message'=>'Phương thức không được hỗ trợ.'),405);
+        $sku=strtoupper(trim(isset($input['sku'])?(string)$input['sku']:''));$name=trim(isset($input['name'])?(string)$input['name']:'');$category=trim(isset($input['category'])?(string)$input['category']:'');$unit=trim(isset($input['unit'])?(string)$input['unit']:'');$description=trim(isset($input['description'])?(string)$input['description']:'');$cost=isset($input['cost_price'])?(float)$input['cost_price']:0;$price=isset($input['price'])?(float)$input['price']:0;$stock=isset($input['stock_quantity'])?max(0,(int)$input['stock_quantity']):0;$image=trim(isset($input['image_url'])?(string)$input['image_url']:'');
+        if(!$id)$sku=$this->generateSku($category);
+        $categoryEsc=$this->db->real_escape_string($category);$unitEsc=$this->db->real_escape_string($unit);
+        if(!preg_match('/^[A-Z0-9_-]{3,50}$/',$sku)||$name===''||$category===''||$unit===''||$price<=0||$cost<0||(int)$this->scalar("SELECT COUNT(*) FROM product_categories WHERE code='{$categoryEsc}' AND status='active'")<1||(int)$this->scalar("SELECT COUNT(*) FROM product_units WHERE name='{$unitEsc}' AND status='active'")<1)jsonResponse(array('success'=>false,'message'=>'Vui lòng chọn danh mục, đơn vị hợp lệ và nhập tên, giá bán hàng hóa.'),422);
+        $customerPrice=$price+10000;$posPrice=$price+10000;$memberPrice=$price;
+        $sku=$this->db->real_escape_string($sku);$name=$this->db->real_escape_string($name);$category=$this->db->real_escape_string($category);$unit=$this->db->real_escape_string($unit);$description=$this->db->real_escape_string($description);$image=$this->db->real_escape_string($image);$actor=(int)$user['id'];
+        if($id>0){$current=$this->rows("SELECT status FROM products WHERE id={$id} LIMIT 1");if(!$current)jsonResponse(array('success'=>false,'message'=>'Không tìm thấy hàng hóa.'),404);if($current[0]['status']!=='draft')jsonResponse(array('success'=>false,'message'=>'Chỉ được chỉnh sửa bản nháp; hàng đã phát hành cần lập kế hoạch mới.'),409);$sql="UPDATE products SET sku='{$sku}',name='{$name}',category='{$category}',unit='{$unit}',description='{$description}',cost_price={$cost},price={$price},customer_price={$customerPrice},pos_price={$posPrice},member_price={$memberPrice},stock_quantity={$stock},image_url='{$image}',updated_by={$actor},updated_at=NOW() WHERE id={$id}";}
+        else{$sql="INSERT INTO products(sku,name,category,unit,description,cost_price,price,customer_price,pos_price,member_price,stock_quantity,status,image_url,created_by,updated_by,created_at,updated_at) VALUES('{$sku}','{$name}','{$category}','{$unit}','{$description}',{$cost},{$price},{$customerPrice},{$posPrice},{$memberPrice},{$stock},'draft','{$image}',{$actor},{$actor},NOW(),NOW())";}
+        if(!$this->db->query($sql))jsonResponse(array('success'=>false,'message'=>$this->db->errno===1062?'SKU đã tồn tại trong danh mục.':'Không thể lưu bản nháp hàng hóa: '.$this->db->error),409);$savedId=$id?$id:$this->db->insert_id;jsonResponse(array('success'=>true,'message'=>$id?'Đã cập nhật bản nháp hàng hóa.':'Đã tạo bản nháp hàng hóa trong aurora_db.','data'=>array('id'=>$savedId)),$id?200:201);
+    }
+
+    private function uploadImage($user,$method) {
+        if($user['role']!=='super_admin')jsonResponse(array('success'=>false,'message'=>'Chỉ Admin Tổng được tải ảnh hàng hóa.'),403);
+        if($method!=='POST')jsonResponse(array('success'=>false,'message'=>'Phương thức không được hỗ trợ.'),405);
+        if(!isset($_FILES['image'])||!is_uploaded_file($_FILES['image']['tmp_name']))jsonResponse(array('success'=>false,'message'=>'Vui lòng chọn một ảnh hàng hóa.'),422);
+        $file=$_FILES['image'];if((int)$file['error']!==UPLOAD_ERR_OK)jsonResponse(array('success'=>false,'message'=>'Tải ảnh không thành công. Vui lòng thử lại.'),422);if((int)$file['size']>5*1024*1024)jsonResponse(array('success'=>false,'message'=>'Ảnh không được vượt quá 5 MB.'),422);
+        $info=@getimagesize($file['tmp_name']);$types=array(IMAGETYPE_JPEG=>'jpg',IMAGETYPE_PNG=>'png');if(defined('IMAGETYPE_WEBP'))$types[IMAGETYPE_WEBP]='webp';if(!$info||!isset($types[$info[2]]))jsonResponse(array('success'=>false,'message'=>'Chỉ hỗ trợ ảnh JPG, PNG hoặc WebP.'),422);
+        $directory=dirname(dirname(dirname(dirname(__FILE__)))).DIRECTORY_SEPARATOR.'public'.DIRECTORY_SEPARATOR.'uploads'.DIRECTORY_SEPARATOR.'products';if(!is_dir($directory)&&!mkdir($directory,0775,true))jsonResponse(array('success'=>false,'message'=>'Không thể tạo thư mục lưu ảnh hàng hóa.'),500);
+        $filename='product_'.date('YmdHis').'_'.substr(sha1(uniqid('',true)),0,10).'.'.$types[$info[2]];$target=$directory.DIRECTORY_SEPARATOR.$filename;if(!move_uploaded_file($file['tmp_name'],$target))jsonResponse(array('success'=>false,'message'=>'Không thể lưu ảnh hàng hóa trên máy chủ.'),500);
+        $scheme=(!empty($_SERVER['HTTPS'])&&$_SERVER['HTTPS']!=='off')?'https':'http';$base=rtrim(str_replace('\\','/',dirname($_SERVER['SCRIPT_NAME'])),'/');$url=$scheme.'://'.$_SERVER['HTTP_HOST'].$base.'/uploads/products/'.$filename;
+        jsonResponse(array('success'=>true,'message'=>'Đã tải ảnh hàng hóa.','data'=>array('url'=>$url)),201);
+    }
+
+    private function plans($user,$method) {
+        if($method==='GET'){
+            $where='1=1';if($user['role']==='cinema_admin'){$theater=(int)$user['theater_id'];$where="EXISTS(SELECT 1 FROM product_plan_theaters pt WHERE pt.plan_id=p.id AND pt.theater_id={$theater})";}
+            $plans=$this->rows("SELECT p.*,(SELECT COUNT(*) FROM product_plan_items pi WHERE pi.plan_id=p.id) item_count,(SELECT COUNT(*) FROM product_plan_theaters pt WHERE pt.plan_id=p.id) theater_count,(SELECT COUNT(*) FROM product_plan_theaters pt WHERE pt.plan_id=p.id AND pt.status='acknowledged') acknowledged_count FROM product_plans p WHERE {$where} ORDER BY CASE p.status WHEN 'draft' THEN 0 WHEN 'sent' THEN 1 ELSE 2 END,p.updated_at DESC,p.id DESC");
+            foreach($plans as &$plan){$id=(int)$plan['id'];$plan['items']=$this->rows("SELECT id,product_id,sku,product_name,category,unit,cost_price,sale_price,planned_quantity,note FROM product_plan_items WHERE plan_id={$id} ORDER BY product_name");$targetScope=$user['role']==='cinema_admin'?' AND pt.theater_id='.(int)$user['theater_id']:'';$plan['theaters']=$this->rows("SELECT pt.id,pt.theater_id,t.name theater_name,t.city,pt.status,pt.sent_at,pt.acknowledged_by_name,pt.acknowledged_at,pt.response_note FROM product_plan_theaters pt INNER JOIN theaters t ON t.id=pt.theater_id WHERE pt.plan_id={$id}{$targetScope} ORDER BY t.name");}
+            unset($plan);$meta=array();if($user['role']==='super_admin'){$meta['products']=$this->rows("SELECT id,sku,name,category,unit,cost_price,price,stock_quantity,status FROM products WHERE status IN ('draft','active') ORDER BY name");$meta['theaters']=$this->rows("SELECT id,name,city FROM theaters ORDER BY name");}
+            jsonResponse(array('success'=>true,'data'=>$plans,'meta'=>$meta,'summary'=>array('plan_draft'=>(int)$this->scalar("SELECT COUNT(*) FROM product_plans WHERE status='draft'"),'plan_sent'=>(int)$this->scalar("SELECT COUNT(*) FROM product_plans WHERE status='sent'"),'pending_ack'=>(int)$this->scalar("SELECT COUNT(*) FROM product_plan_theaters WHERE status='sent'"))));
+        }
+        $input=requestJson();$operation=isset($input['operation'])?trim((string)$input['operation']):'save';$id=isset($input['id'])?(int)$input['id']:(isset($_GET['id'])?(int)$_GET['id']:0);
+        if($operation==='acknowledge')return $this->acknowledge($user,$id,$input);
+        if($user['role']!=='super_admin')jsonResponse(array('success'=>false,'message'=>'Chỉ Admin Tổng được lập và gửi kế hoạch hàng hóa.'),403);
+        if($method==='DELETE'){$row=$this->rows("SELECT status FROM product_plans WHERE id={$id} LIMIT 1");if(!$row||$row[0]['status']!=='draft')jsonResponse(array('success'=>false,'message'=>'Chỉ được xóa kế hoạch nháp.'),409);$this->db->query('START TRANSACTION');$this->db->query("DELETE FROM product_plan_items WHERE plan_id={$id}");$this->db->query("DELETE FROM product_plan_theaters WHERE plan_id={$id}");if(!$this->db->query("DELETE FROM product_plans WHERE id={$id}")){$this->db->query('ROLLBACK');jsonResponse(array('success'=>false,'message'=>'Không thể xóa kế hoạch.'),500);}$this->db->query('COMMIT');jsonResponse(array('success'=>true,'message'=>'Đã xóa kế hoạch nháp.'));}
+        if($operation==='send')return $this->sendPlan($user,$id);
+        if(!in_array($method,array('POST','PUT'),true))jsonResponse(array('success'=>false,'message'=>'Phương thức không được hỗ trợ.'),405);
+        $title=trim(isset($input['title'])?(string)$input['title']:'');$date=trim(isset($input['effective_date'])?(string)$input['effective_date']:'');$note=trim(isset($input['note'])?(string)$input['note']:'');$items=isset($input['items'])&&is_array($input['items'])?$input['items']:array();$theaters=isset($input['theater_ids'])&&is_array($input['theater_ids'])?array_values(array_unique(array_filter(array_map('intval',$input['theater_ids'])))):array();
+        if($title===''||!preg_match('/^\d{4}-\d{2}-\d{2}$/',$date)||!$items||!$theaters)jsonResponse(array('success'=>false,'message'=>'Kế hoạch cần có tên, ngày áp dụng, hàng hóa và ít nhất một rạp nhận.'),422);
+        $productIds=array();$quantities=array();foreach($items as $item){$pid=isset($item['product_id'])?(int)$item['product_id']:0;$qty=isset($item['planned_quantity'])?(int)$item['planned_quantity']:0;if($pid<1||$qty<0)jsonResponse(array('success'=>false,'message'=>'Danh sách hàng hóa hoặc số lượng dự kiến không hợp lệ.'),422);$productIds[]=$pid;$quantities[$pid]=$qty;}$productIds=array_values(array_unique($productIds));
+        if((int)$this->scalar('SELECT COUNT(*) FROM products WHERE id IN ('.implode(',',$productIds).") AND status IN ('draft','active')")!==count($productIds))jsonResponse(array('success'=>false,'message'=>'Có hàng hóa không tồn tại hoặc không còn khả dụng.'),422);if((int)$this->scalar('SELECT COUNT(*) FROM theaters WHERE id IN ('.implode(',',$theaters).')')!==count($theaters))jsonResponse(array('success'=>false,'message'=>'Danh sách rạp nhận không hợp lệ.'),422);
+        $titleEsc=$this->db->real_escape_string($title);$noteEsc=$this->db->real_escape_string($note);$actor=(int)$user['id'];$actorName=$this->db->real_escape_string($user['full_name']);$this->db->query('START TRANSACTION');
+        if($id){$row=$this->rows("SELECT status FROM product_plans WHERE id={$id} LIMIT 1");if(!$row||$row[0]['status']!=='draft'){$this->db->query('ROLLBACK');jsonResponse(array('success'=>false,'message'=>'Chỉ được cập nhật kế hoạch nháp.'),409);}if(!$this->db->query("UPDATE product_plans SET title='{$titleEsc}',effective_date='{$date}',note='{$noteEsc}',updated_at=NOW() WHERE id={$id}")){$this->db->query('ROLLBACK');jsonResponse(array('success'=>false,'message'=>'Không thể cập nhật kế hoạch.'),500);}}
+        else{$code='HH-'.date('Ymd').'-'.strtoupper(substr(sha1(uniqid('',true)),0,6));if(!$this->db->query("INSERT INTO product_plans(plan_code,title,effective_date,status,note,created_by,created_by_name,created_at,updated_at) VALUES('{$code}','{$titleEsc}','{$date}','draft','{$noteEsc}',{$actor},'{$actorName}',NOW(),NOW())")){$this->db->query('ROLLBACK');jsonResponse(array('success'=>false,'message'=>'Không thể tạo kế hoạch: '.$this->db->error),500);}$id=(int)$this->db->insert_id;}
+        $this->db->query("DELETE FROM product_plan_items WHERE plan_id={$id}");$this->db->query("DELETE FROM product_plan_theaters WHERE plan_id={$id}");$products=$this->rows('SELECT id,sku,name,category,unit,cost_price,price FROM products WHERE id IN ('.implode(',',$productIds).')');foreach($products as $product){$pid=(int)$product['id'];$values=array();foreach(array('sku','name','category','unit') as $key)$values[$key]=$this->db->real_escape_string($product[$key]);if(!$this->db->query("INSERT INTO product_plan_items(plan_id,product_id,sku,product_name,category,unit,cost_price,sale_price,planned_quantity) VALUES({$id},{$pid},'{$values['sku']}','{$values['name']}','{$values['category']}','{$values['unit']}',".(float)$product['cost_price'].','.(float)$product['price'].','.(int)$quantities[$pid].')')){$this->db->query('ROLLBACK');jsonResponse(array('success'=>false,'message'=>'Không thể lưu hàng hóa trong kế hoạch: '.$this->db->error),500);}}foreach($theaters as $theater)if(!$this->db->query("INSERT INTO product_plan_theaters(plan_id,theater_id,status,sent_at) VALUES({$id},{$theater},'draft','1970-01-01 00:00:00')")){$this->db->query('ROLLBACK');jsonResponse(array('success'=>false,'message'=>'Không thể lưu rạp nhận kế hoạch.'),500);}
+        if(!$this->db->query('COMMIT'))jsonResponse(array('success'=>false,'message'=>'Không thể hoàn tất lưu kế hoạch.'),500);jsonResponse(array('success'=>true,'message'=>'Đã lưu kế hoạch hàng hóa ở trạng thái nháp.','data'=>array('id'=>$id)),$method==='POST'?201:200);
+    }
+
+    private function sendPlan($user,$id) {
+        $row=$this->rows("SELECT status FROM product_plans WHERE id={$id} LIMIT 1");if(!$row||$row[0]['status']!=='draft')jsonResponse(array('success'=>false,'message'=>'Kế hoạch không tồn tại hoặc đã được gửi.'),409);if(!(int)$this->scalar("SELECT COUNT(*) FROM product_plan_items WHERE plan_id={$id}")||!(int)$this->scalar("SELECT COUNT(*) FROM product_plan_theaters WHERE plan_id={$id}"))jsonResponse(array('success'=>false,'message'=>'Kế hoạch chưa có hàng hóa hoặc rạp nhận.'),422);
+        $actor=(int)$user['id'];$name=$this->db->real_escape_string($user['full_name']);$this->db->query('START TRANSACTION');if(!$this->db->query("UPDATE product_plans SET status='sent',sent_by={$actor},sent_by_name='{$name}',sent_at=NOW(),updated_at=NOW() WHERE id={$id} AND status='draft'")||$this->db->affected_rows!==1){$this->db->query('ROLLBACK');jsonResponse(array('success'=>false,'message'=>'Kế hoạch vừa được xử lý ở phiên khác.'),409);}if(!$this->db->query("UPDATE product_plan_theaters SET status='sent',sent_at=NOW() WHERE plan_id={$id}")){ $this->db->query('ROLLBACK');jsonResponse(array('success'=>false,'message'=>'Không thể gửi kế hoạch đến rạp.'),500);}if(!$this->db->query("UPDATE products p INNER JOIN product_plan_items pi ON pi.product_id=p.id SET p.status='active',p.updated_at=NOW() WHERE pi.plan_id={$id} AND p.status='draft'")){ $this->db->query('ROLLBACK');jsonResponse(array('success'=>false,'message'=>'Không thể phát hành danh mục hàng hóa.'),500);}if(!$this->db->query('COMMIT'))jsonResponse(array('success'=>false,'message'=>'Không thể hoàn tất gửi kế hoạch.'),500);jsonResponse(array('success'=>true,'message'=>'Đã phát hành hàng hóa và gửi kế hoạch đến các Admin Rạp.'));
+    }
+
+    private function acknowledge($user,$id,$input) {
+        if($user['role']!=='cinema_admin')jsonResponse(array('success'=>false,'message'=>'Chỉ Admin Rạp được xác nhận đã nắm kế hoạch.'),403);$theater=(int)$user['theater_id'];if($theater<1)jsonResponse(array('success'=>false,'message'=>'Tài khoản chưa được gán rạp.'),409);$note=$this->db->real_escape_string(trim(isset($input['response_note'])?(string)$input['response_note']:''));$actor=(int)$user['id'];$name=$this->db->real_escape_string($user['full_name']);if(!$this->db->query("UPDATE product_plan_theaters SET status='acknowledged',acknowledged_by={$actor},acknowledged_by_name='{$name}',acknowledged_at=NOW(),response_note='{$note}' WHERE plan_id={$id} AND theater_id={$theater} AND status='sent'")||$this->db->affected_rows!==1)jsonResponse(array('success'=>false,'message'=>'Kế hoạch không tồn tại, đã xác nhận hoặc không thuộc rạp của bạn.'),409);jsonResponse(array('success'=>true,'message'=>'Đã xác nhận rạp nắm thông tin kế hoạch hàng hóa.'));
+    }
+}

@@ -19,6 +19,7 @@ import PromotionsPage from './components/customer/PromotionsPage';
 import SafeAvatar from './components/customer/SafeAvatar';
 import MembershipPage from './components/customer/MembershipPage';
 import SupportPage from './components/customer/SupportPage';
+import VnpayResultPage from './components/customer/VnpayResultPage';
 
 const API_URL = 'http://localhost/AURORA%20CINEMA/customer/backend/public/api.php';
 
@@ -122,6 +123,7 @@ export default function App() {
   const [chatMsg, setChatMsg] = useState('');
   const [authMode, setAuthMode] = useState<'login' | 'register' | null>(null);
   const [authUser, setAuthUser] = useState<{ fullName: string; email: string; membershipLevel?: string; points?: number; avatarUrl?: string | null } | null>(null);
+  const [authChecked, setAuthChecked] = useState(false);
   const [oauthError, setOauthError] = useState('');
   const [oauthNotice, setOauthNotice] = useState('');
   const [moviesList, setMoviesList] = useState<any[]>([]);
@@ -213,12 +215,38 @@ export default function App() {
     setPendingBooking({ movie, showtime, theater });
   }
 
-  function confirmBooking() {
+  function openPendingBooking() {
     if (!pendingBooking) return;
     setSelectedTheater(pendingBooking.theater);
     setSelectedTheaterId(pendingBooking.showtime.theater_id);
     setBooking({ movie: pendingBooking.movie, showtime: pendingBooking.showtime });
     setPendingBooking(null);
+  }
+
+  async function confirmBooking() {
+    if (!pendingBooking) return;
+
+    let currentUser = authUser;
+    if (!authChecked) {
+      try {
+        const response = await fetch(`${API_URL}?action=me`, { credentials: 'include', cache: 'no-store' });
+        const result = await response.json();
+        currentUser = result.user || null;
+        setAuthUser(currentUser);
+      } catch {
+        currentUser = null;
+        setAuthUser(null);
+      } finally {
+        setAuthChecked(true);
+      }
+    }
+
+    if (!currentUser) {
+      setAuthMode('login');
+      setOauthError('');
+      return;
+    }
+    openPendingBooking();
   }
 
   const featuredMovies = moviesList
@@ -311,7 +339,8 @@ export default function App() {
     fetch(`${API_URL}?action=me`, { credentials: 'include' })
       .then(response => response.json())
       .then(result => setAuthUser(result.user))
-      .catch(() => setAuthUser(null));
+      .catch(() => setAuthUser(null))
+      .finally(() => setAuthChecked(true));
 
     // Lấy dữ liệu phim trực tiếp từ MySQL Database aurora_db
     fetch(`${API_URL}?action=movies&_=${Date.now()}`, { cache: 'no-store' })
@@ -472,6 +501,10 @@ export default function App() {
   }
 
   /* ── Trang đặt vé – render toàn trang, thay thế toàn bộ layout thông thường ── */
+  const paymentResult=new URLSearchParams(window.location.search).get('vnpay_result');
+  const paymentTxnRef=new URLSearchParams(window.location.search).get('txn_ref')||'';
+  if(paymentResult)return <VnpayResultPage apiBase={API_URL} result={paymentResult} txnRef={paymentTxnRef} language={language} onHome={()=>{window.history.replaceState({},'',window.location.pathname);window.location.reload();}}/>;
+
   if (booking) {
     return (
       <BookingPage
@@ -485,6 +518,7 @@ export default function App() {
           scrollContentToTop();
         }}
         onRequireLogin={() => {
+          setPendingBooking({ movie: booking.movie, showtime: booking.showtime, theater: selectedTheater });
           setBooking(null);
           setAuthMode('login');
         }}
@@ -1002,12 +1036,17 @@ export default function App() {
         <AuthModal
           mode={authMode}
           initialError={oauthError}
+          notice={pendingBooking
+            ? t('Đăng nhập hoặc đăng ký tài khoản để xem sơ đồ ghế và tiếp tục đặt vé.', 'Sign in or create an account to view the seat map and continue booking.')
+            : undefined}
           onClose={() => { setAuthMode(null); setOauthError(''); }}
           onSwitchMode={newMode => { setAuthMode(newMode); setOauthError(''); }}
           onAuthenticated={account => {
             setAuthUser(account);
+            setAuthChecked(true);
             setAuthMode(null);
             setOauthError('');
+            if (pendingBooking) openPendingBooking();
           }}
         />
       ) : showAccount ? (
@@ -1545,7 +1584,7 @@ export default function App() {
       )}
       <SiteFooter language={language} onNavigate={openFooterPage} />
       </div>
-      {pendingBooking && <BookingConfirmationModal
+      {pendingBooking && !authMode && <BookingConfirmationModal
         movie={pendingBooking.movie}
         showtime={pendingBooking.showtime}
         theater={pendingBooking.theater}

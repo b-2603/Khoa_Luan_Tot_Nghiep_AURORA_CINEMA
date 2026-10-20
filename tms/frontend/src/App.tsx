@@ -2,7 +2,10 @@ import { useState, useEffect, FormEvent, useRef } from 'react';
 import * as XLSX from 'xlsx';
 import AccountManagementPage from './components/AccountManagementPage';
 import MarketingWorkspace, { MarketingPlanApproval } from './components/MarketingWorkspace';
+import NotificationCenter from './components/NotificationCenter';
+import ProductCatalogManagement from './components/ProductCatalogManagement';
 import './components/MarketingWorkspace.css';
+import './components/MarketingReviewHierarchy.css';
 import './components/MarketingWorkspace.layout.css';
 import { formatVietnameseDate, VietnameseDateInput } from './components/VietnameseDateInput';
 import {
@@ -103,14 +106,14 @@ const PAGE_TITLES: Record<string, string> = {
   catalog: 'Danh mục dùng chung', promotions: 'Khuyến mãi & Ưu đãi', products: 'Quản lý hàng hóa', staff: 'Nhân viên & Ca làm việc',
   reports: 'Báo cáo vận hành', pos_devices: 'Thiết bị POS', audit_log: 'Nhật ký hệ thống', settings: 'Cấu hình hệ thống',
   transactions: 'Giao dịch', refunds: 'Hoàn tiền', showtimes: 'Lịch chiếu', shifts: 'Phiên làm việc'
-  , 'mkt-dashboard':'Dashboard Marketing', 'mkt-movies':'Danh sách phim', 'mkt-plans':'Kế hoạch phim', 'mkt-campaigns':'Quảng bá phim',
+  , 'mkt-dashboard':'Tổng quan', 'mkt-movies':'Danh sách phim', 'mkt-plans':'Kế hoạch phim', 'mkt-campaigns':'Quảng bá phim',
   'mkt-promotions':'Chương trình khuyến mãi', 'mkt-vouchers':'Voucher', 'mkt-contents':'Nội dung Customer Website',
   'mkt-notifications':'Thông báo Marketing', 'mkt-segments':'Phân nhóm khách hàng', 'mkt-reports':'Báo cáo Marketing', 'mkt-account':'Thông tin cá nhân'
   , marketing_approvals:'Duyệt kế hoạch Marketing'
 };
 
 function pageTitleFor(active: string, role?: TMSRole) {
-  if (active === 'dashboard') return role === 'marketing_manager' ? 'Dashboard Marketing' : role === 'accounting' ? 'Tổng quan tài chính' : role === 'supervisor' ? 'Tổng quan vận hành' : role === 'cinema_admin' ? 'Tổng quan rạp' : 'Tổng quan hệ thống';
+  if (active === 'dashboard') return role === 'marketing_manager' ? 'Tổng quan' : role === 'accounting' ? 'Tổng quan tài chính' : role === 'supervisor' ? 'Tổng quan vận hành' : role === 'cinema_admin' ? 'Tổng quan rạp' : 'Tổng quan hệ thống';
   return PAGE_TITLES[active] || active;
 }
 
@@ -171,7 +174,7 @@ function getRoleNavItems(role: TMSRole): NavItem[] {
       ];
     case 'marketing_manager':
       return [
-        { id: 'dashboard', name: 'Dashboard Marketing', icon: Home },
+        { id: 'dashboard', name: 'Tổng quan', icon: Home },
         { id: 'mkt-movies', name: 'Danh sách phim', icon: Film },
         { id: 'mkt-plans', name: 'Kế hoạch phim', icon: CalendarCheck },
         { id: 'mkt-campaigns', name: 'Quảng bá phim', icon: Megaphone },
@@ -218,7 +221,7 @@ const allowedTmsViews = (role: TMSRole) => {
     (item.children || []).forEach(child => allowed.add(child));
   });
   const operationalViews: Record<TMSRole, string[]> = {
-    super_admin: ['screens', 'transactions', 'movies'],
+    super_admin: ['screens', 'transactions', 'refunds', 'movies', 'marketing_approvals'],
     cinema_admin: ['screens', 'movie_plan', 'schedules'],
     supervisor: ['screens', 'showtimes', 'transactions', 'refunds'],
     accounting: ['transactions', 'refunds'],
@@ -584,7 +587,6 @@ export default function App() {
   const [active, setActive] = useState('dashboard');
   const [expanded, setExpanded] = useState('');
   const [sidebarOpen, setSidebarOpen] = useState(() => window.innerWidth > 760);
-  const [noticeOpen, setNoticeOpen] = useState(false);
   const [userDropdownOpen, setUserDropdownOpen] = useState(false);
   const [reportDate, setReportDate] = useState(() => localIsoDate());
 
@@ -4367,23 +4369,8 @@ export default function App() {
       </div>
     );
 
-    // PRODUCTS
-    if (a === 'products' || a === 'Hàng hóa' || a === 'catalog' || a === 'Danh mục dùng chung') return (
-      <div className="tms-card-table">
-        <div className="tms-table-toolbar"><div className="tms-search-input"><Package size={16} color="#94a3b8"/><input placeholder="Tìm hàng hóa..."/></div><button className="tms-btn tms-btn-primary" onClick={()=>alert('Thêm hàng hóa')}><Plus size={16}/><span>Thêm hàng hóa</span></button></div>
-        <table className="tms-data-table">
-          <thead><tr><th>SKU</th><th>Tên hàng hóa</th><th>Danh mục</th><th>Giá bán</th><th>Tồn kho</th><th>Trạng thái</th></tr></thead>
-          <tbody>{[
-            {sku:'FNB_001',name:'Bắp rang bơ (Lớn)',cat:'F&B',price:65000,stock:120,ok:true},
-            {sku:'FNB_002',name:'Coca-Cola 500ml',cat:'F&B',price:35000,stock:240,ok:true},
-            {sku:'FNB_003',name:'Combo Bắp + 2 Nước',cat:'Combo',price:120000,stock:80,ok:true},
-            {sku:'FNB_004',name:'Nước khoáng 500ml',cat:'F&B',price:20000,stock:15,ok:false},
-          ].map(p=>(
-            <tr key={p.sku}><td><code>{p.sku}</code></td><td style={{fontWeight:700}}>{p.name}</td><td>{p.cat}</td><td style={{fontWeight:800,color:'#059669'}}>{p.price.toLocaleString('vi-VN')} đ</td><td style={{fontWeight:600,color:p.stock<20?'#dc2626':'#0d1b2e'}}>{p.stock}</td><td><span style={{fontSize:'0.73rem',fontWeight:700,padding:'2px 7px',borderRadius:4,background:p.ok?'#ecfdf5':'#fef3c7',color:p.ok?'#065f46':'#92400e'}}>{p.ok?'Còn hàng':'Sắp hết'}</span></td></tr>
-          ))}</tbody>
-        </table>
-      </div>
-    );
+    // PRODUCT MASTER DATA & THEATER DISTRIBUTION PLANS
+    if (a === 'products' || a === 'Hàng hóa' || a === 'catalog' || a === 'Danh mục dùng chung') return <ProductCatalogManagement apiBase={API_BASE} role={role!} theaterName={currentUser?.theater_name} notify={showSystemNotice} requestConfirm={requestSystemConfirmation}/>;
 
     // REPORTS
     if (a === 'reports' || a === 'Báo cáo tổng hợp' || a === 'Báo cáo rạp' || a === 'Báo cáo vận hành' || a === 'Báo cáo' || a === 'Báo cáo doanh thu' || a === 'Báo cáo bán vé' || a === 'Báo cáo bán hàng' || a === 'Báo cáo phương thức TT') return (
@@ -4606,22 +4593,14 @@ export default function App() {
           <div className="topbar-spacer" />
           <div className="topbar-actions">
             {/* Notifications */}
-            <div className="notification">
-              <button type="button" className={`notification-trigger ${noticeOpen ? 'active' : ''}`} onClick={() => { setNoticeOpen(open => !open); setUserDropdownOpen(false); }} aria-label="Mở thông báo hệ thống" aria-expanded={noticeOpen}>
-                <Bell size={23} />
-                {totalNotif > 0 && <b>{totalNotif}</b>}
-              </button>
-              {noticeOpen && (
-                <div className="notification-pop" role="dialog" aria-label="Thông báo hệ thống">
-                  <header><div><b>Thông báo</b><span>{totalNotif ? `${totalNotif} mục cần xử lý` : 'Bạn đã xem hết thông báo'}</span></div><button type="button" onClick={() => setNoticeOpen(false)} aria-label="Đóng thông báo"><X size={15} /></button></header>
-                  <div className="notification-list">
-                    {pendingRefunds > 0 && <button type="button" onClick={() => { setActive('refunds'); setNoticeOpen(false); }}><span className="notification-dot amber"><DollarSign size={14} /></span><p><b>{pendingRefunds} yêu cầu hoàn tiền</b><small>Cần kiểm tra và xử lý</small></p><ChevronDown size={15} /></button>}
-                    {cancelRequests > 0 && <button type="button" onClick={() => { setActive('transactions'); setNoticeOpen(false); }}><span className="notification-dot red"><Receipt size={14} /></span><p><b>{cancelRequests} yêu cầu hủy giao dịch</b><small>Cần phê duyệt trước khi hoàn tất</small></p><ChevronDown size={15} /></button>}
-                    {totalNotif === 0 && <div className="notification-empty"><CheckCircle2 size={21} /><b>Không có thông báo mới</b><span>Mọi tác vụ đang được cập nhật.</span></div>}
-                  </div>
-                </div>
-              )}
-            </div>
+            <NotificationCenter
+              apiBase={API_BASE}
+              enabled={isLoggedIn && Boolean(currentUser)}
+              userKey={currentUser?.id || currentUser?.username}
+              onOpen={() => setUserDropdownOpen(false)}
+              onNavigate={view => { setActive(view); setUserDropdownOpen(false); }}
+              onError={message => setSystemNotice({ message, type: 'error' })}
+            />
 
             {/* User info - NO ROLE SWITCHER */}
             <div className="topbar-user-wrap">

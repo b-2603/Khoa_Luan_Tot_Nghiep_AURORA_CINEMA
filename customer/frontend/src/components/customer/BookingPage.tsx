@@ -28,7 +28,7 @@ type Showtime = {
   theater_id: number; theater_name: string; theater_address: string; city: string;
   starts_at: string; ends_at: string; ticket_price: number; status: string; show_date: string;
 };
-type PayMethod = 'qr_vnpay' | 'qr_momo' | 'qr_zalopay';
+type PayMethod = 'qr_vnpay';
 type Combo = { id: string; name: string; price: number; description: string };
 type VoucherSuggestion = { id: number; code: string; name: string; discountType?: string; discountValue?: number };
 
@@ -189,9 +189,9 @@ function SummaryPanel({
       background: '#ffffff',
       borderLeft: '1px solid #e2e8f0',
       display: 'flex', flexDirection: 'column',
-      position: 'sticky', top: 0,
-      height: 'calc(100vh - 104px)',
-      overflow: 'visible',
+      position: 'relative',
+      height: '100%', minHeight: 0,
+      overflowY: 'auto', overscrollBehavior: 'contain',
       boxShadow: '-4px 0 20px rgba(13,27,46,0.03)',
       zIndex: 10,
     }}>
@@ -486,6 +486,9 @@ export default function BookingPage({ movie, showtime: initShowtime, theater: in
   const [combos, setCombos] = useState<Combo[]>([]);
   const [voucherSuggestions, setVoucherSuggestions] = useState<VoucherSuggestion[]>([]);
   const [payMethod, setPayMethod] = useState<PayMethod>('qr_vnpay');
+  const [vnpayConfig,setVnpayConfig]=useState<{
+    enabled:boolean; mode:string; credentialsConfigured:boolean; httpsReady:boolean;
+  }|null>(null);
   const [bookingResult, setBookingResult] = useState<any>(null);
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState('');
@@ -504,6 +507,13 @@ export default function BookingPage({ movie, showtime: initShowtime, theater: in
   useEffect(() => {
     fetch(`${API}?action=concessions`).then(r => r.json()).then(res => setCombos(Array.isArray(res.concessions) ? res.concessions : [])).catch(() => setCombos([]));
     fetch(`${API}?action=promotions`, { credentials:'include', cache:'no-store' }).then(r => r.json()).then(res => setVoucherSuggestions(Array.isArray(res.promotions) ? res.promotions : [])).catch(() => setVoucherSuggestions([]));
+    fetch(`${API}?action=vnpay_config`,{credentials:'include',cache:'no-store'})
+      .then(r=>r.json())
+      .then(result=>setVnpayConfig({
+        enabled:Boolean(result.enabled), mode:String(result.mode||'sandbox'),
+        credentialsConfigured:Boolean(result.credentialsConfigured), httpsReady:Boolean(result.httpsReady),
+      }))
+      .catch(()=>setVnpayConfig({enabled:false,mode:'unavailable',credentialsConfigured:false,httpsReady:false}));
   }, []);
 
   /* ── Load suất chiếu theo phim ── */
@@ -557,7 +567,15 @@ export default function BookingPage({ movie, showtime: initShowtime, theater: in
     loadedShowtimeIdRef.current = selectedShowtime.id;
     setSeatsLoading(true);
     fetch(`${API}?action=showtime_seats&showtime_id=${selectedShowtime.id}`, { credentials:'include' })
-      .then(r => r.json())
+      .then(async r => {
+        const result = await r.json();
+        if (r.status === 401) {
+          onRequireLogin();
+          throw new Error(result.message || t('Vui lòng đăng nhập để xem sơ đồ ghế.','Please sign in to view the seat map.',lang));
+        }
+        if (!r.ok) throw new Error(result.message || t('Không thể tải sơ đồ ghế.','Failed to load seat map.',lang));
+        return result;
+      })
       .then(res => {
         const liveSeats = res.seats || [];
         setSeats(liveSeats);
@@ -566,7 +584,7 @@ export default function BookingPage({ movie, showtime: initShowtime, theater: in
         if (heldIds.length) setSelectedSeatIds(heldIds);
         if (res.hold_seconds) setTimeLeft(Number(res.hold_seconds));
       })
-      .catch(() => setError(t('Không thể tải sơ đồ ghế.','Failed to load seat map.',lang)))
+      .catch(loadError => setError(loadError instanceof Error ? loadError.message : t('Không thể tải sơ đồ ghế.','Failed to load seat map.',lang)))
       .finally(() => setSeatsLoading(false));
   }, [step, selectedShowtime]);
 
@@ -604,6 +622,10 @@ export default function BookingPage({ movie, showtime: initShowtime, theater: in
   );
 
   function pickShowtime(st: Showtime) {
+    if (!user) {
+      onRequireLogin();
+      return;
+    }
     if (selectedShowtime?.id !== st.id) {
       setSelectedSeatIds([]);
       setSeats([]);
@@ -627,9 +649,13 @@ export default function BookingPage({ movie, showtime: initShowtime, theater: in
     try {
       const response = await fetch(`${API}?action=seat_hold`, { method:'POST', credentials:'include', headers:{'Content-Type':'application/json'}, body:JSON.stringify({ showtimeId:selectedShowtime?.id, seatIds:nextSeatIds }) });
       const result = await response.json();
+      if (response.status === 401) {
+        onRequireLogin();
+        return;
+      }
       if (!response.ok) throw new Error(result.message || t('Không thể giữ ghế đã chọn.','Unable to hold selected seats.',lang));
       setSelectedSeatIds(result.seat_ids || nextSeatIds);
-      if (result.hold_seconds) setTimeLeft(Number(result.hold_seconds));
+      if (result.hold_seconds !== undefined) setTimeLeft(current => Math.min(current, Math.max(0, Number(result.hold_seconds))));
     } catch (holdError) {
       setSelectedSeatIds(selectedSeatIds);
       setError(holdError instanceof Error ? holdError.message : t('Không thể giữ ghế đã chọn.','Unable to hold selected seats.',lang));
@@ -665,14 +691,10 @@ export default function BookingPage({ movie, showtime: initShowtime, theater: in
       });
       const data = await res.json();
       if (!res.ok) { setError(data.message || t('Đặt vé thất bại.','Booking failed.',lang)); return; }
-      if (timerRef.current) {
-        clearInterval(timerRef.current);
-        timerRef.current = null;
-      }
-      setBookingResult(data.booking);
-      setStep(4);
-      window.scrollTo({ top:0, behavior:'smooth' });
-    } catch { setError('Lỗi kết nối.'); }
+      if(!data.payment?.paymentUrl)throw new Error(t('VNPAY không trả về địa chỉ thanh toán hợp lệ.','VNPAY did not return a valid payment URL.',lang));
+      sessionStorage.setItem('aurora-vnpay-pending',JSON.stringify({txnRef:data.payment.txnRef,bookingCode:data.booking?.code,amount:data.payment.amount,expiresAt:data.payment.expiresAt}));
+      window.location.assign(data.payment.paymentUrl);
+    } catch(submitError) { setError(submitError instanceof Error?submitError.message:t('Không thể kết nối cổng VNPAY.','Unable to connect to VNPAY.',lang)); }
     finally { setSubmitting(false); }
   }
 
@@ -708,14 +730,14 @@ export default function BookingPage({ movie, showtime: initShowtime, theater: in
     : step === 2
     ? t('TIẾP TỤC →','CONTINUE →',lang)
     : step === 3
-    ? (submitting ? t('Đang xử lý...','Processing...',lang) : t('XÁC NHẬN ĐẶT VÉ','CONFIRM BOOKING',lang))
+    ? (submitting ? t('ĐANG KẾT NỐI VNPAY...','CONNECTING TO VNPAY...',lang) : t('THANH TOÁN QUA VNPAY','PAY WITH VNPAY',lang))
     : '';
   const ctaDisabled = step === 1
     ? !selectedShowtime
     : step === 2
     ? selectedSeatIds.length === 0
     : step === 3
-    ? submitting
+    ? submitting||vnpayConfig?.enabled!==true
     : false;
 
   function handleCTA() {
@@ -736,10 +758,10 @@ export default function BookingPage({ movie, showtime: initShowtime, theater: in
 
   /* ═══════════════════════════════════════════════════════ RENDER ═══ */
   return (
-    <div style={{ minHeight:'100vh', background:'#f8fafc', fontFamily:"'Inter','Segoe UI',Arial,sans-serif", display:'flex', flexDirection:'column' }}>
+    <div style={{ height:'100vh', minHeight:'100vh', maxHeight:'100dvh', overflow:'hidden', background:'#f8fafc', fontFamily:"'Inter','Segoe UI',Arial,sans-serif", display:'flex', flexDirection:'column' }}>
 
       {/* ── TOP HEADER ── */}
-      <div style={{ background:'linear-gradient(90deg, #0d1b2e, #0d1b2e 50%, #0d1b2e)', color:'#dce8f5', padding:'0 24px', height:56, display:'flex', alignItems:'center', justifyContent:'space-between', flexShrink:0, borderBottom:'1px solid rgba(244,192,74,0.2)', boxShadow:'0 2px 10px rgba(0,0,0,0.15)' }}>
+      <div style={{ position:'relative', zIndex:102, background:'linear-gradient(90deg, #0d1b2e, #0d1b2e 50%, #0d1b2e)', color:'#dce8f5', padding:'0 24px', height:56, display:'flex', alignItems:'center', justifyContent:'space-between', flexShrink:0, borderBottom:'1px solid rgba(244,192,74,0.2)', boxShadow:'0 2px 10px rgba(0,0,0,0.15)' }}>
         <button
           onClick={handleGoBack}
           style={{
@@ -787,7 +809,7 @@ export default function BookingPage({ movie, showtime: initShowtime, theater: in
       </div>
 
       {/* ── BREADCRUMB + STEP BAR ── */}
-      <div style={{ background:'#ffffff', borderBottom:'1px solid #e2e8f0', padding:'12px 24px', boxShadow:'0 1px 3px rgba(0,0,0,0.02)' }}>
+      <div style={{ position:'relative', zIndex:101, flexShrink:0, background:'#ffffff', borderBottom:'1px solid #e2e8f0', padding:'12px 24px', boxShadow:'0 4px 12px rgba(15,23,42,0.06)' }}>
         {/* Breadcrumb */}
         <div style={{ display:'flex', alignItems:'center', gap:6, fontSize:12, color:'#94a3b8', marginBottom:12, flexWrap:'wrap' }}>
           <span onClick={onClose} style={{ cursor:'pointer', color:'#64748b', fontWeight:500 }}>{t('Trang chủ','Home',lang)}</span>
@@ -827,10 +849,10 @@ export default function BookingPage({ movie, showtime: initShowtime, theater: in
       </div>
 
       {/* ── MAIN CONTENT ── */}
-      <div style={{ flex:1, display:'flex', overflow:'hidden', maxWidth:'100%' }}>
+      <div style={{ flex:1, minHeight:0, display:'flex', overflow:'hidden', maxWidth:'100%' }}>
 
         {/* LEFT: nội dung theo bước */}
-        <main style={{ flex:1, overflowY:'auto', padding:'24px 28px' }}>
+        <main style={{ flex:1, minWidth:0, minHeight:0, overflowY:'auto', overscrollBehavior:'contain', padding:'24px 28px' }}>
 
           {/* ─── BƯỚC 4: THÀNH CÔNG ─── */}
           {step === 4 && bookingResult && (
@@ -850,7 +872,7 @@ export default function BookingPage({ movie, showtime: initShowtime, theater: in
               voucherInfo={voucherInfo} voucherError={voucherError} voucherLoading={voucherLoading}
               onApplyVoucher={applyVoucher} onRemoveVoucher={() => { setVoucherInfo(null); setVoucherCode(''); }}
               payMethod={payMethod} setPayMethod={setPayMethod}
-              user={user} error={error} onBack={() => goStep(2)}
+              user={user} error={error} onBack={() => goStep(2)} vnpayConfig={vnpayConfig}
             />
           )}
 
@@ -1252,30 +1274,16 @@ function PaymentStep({
   lang, movie, showtime, theater, selectedSeats, subtotal, discount, totalFinal,
   comboItems, comboTotal, comboQuantities, combos, onChangeCombo,
   voucherCode, setVoucherCode, voucherSuggestions, voucherInfo, voucherError, voucherLoading,
-  onApplyVoucher, onRemoveVoucher, payMethod, setPayMethod, user, error, onBack
+  onApplyVoucher, onRemoveVoucher, payMethod, setPayMethod, user, error, onBack, vnpayConfig
 }: any) {
   const ticketPrice = showtime.ticket_price;
   const PAY_METHODS = [
     {
       id: 'qr_vnpay',
-      title: 'VNPay QR',
-      desc: t('Quét mã qua 40+ ứng dụng ngân hàng & ví điện tử', 'Scan via 40+ banking apps & e-wallets', lang),
-      badge: 'Khuyên dùng',
+      title: 'VNPAY Payment Gateway',
+      desc: t('Thanh toán thật trên cổng VNPAY bằng QR, thẻ ATM hoặc tài khoản ngân hàng', 'Real payment on VNPAY by QR, ATM card or bank account', lang),
+      badge: 'Bảo mật',
       icon: <QrCode size={20} color="#0d1b2e" />,
-    },
-    {
-      id: 'qr_momo',
-      title: 'Ví MoMo',
-      desc: t('Thanh toán tức thì qua ứng dụng MoMo', 'Instant payment with MoMo app', lang),
-      badge: null,
-      icon: <Smartphone size={20} color="#a50064" />,
-    },
-    {
-      id: 'qr_zalopay',
-      title: 'Ví ZaloPay',
-      desc: t('Thanh toán tiện lợi qua ví ZaloPay', 'Convenient with ZaloPay', lang),
-      badge: null,
-      icon: <Zap size={20} color="#0068ff" />,
     },
   ];
 
@@ -1663,30 +1671,11 @@ function PaymentStep({
           })}
         </div>
 
-        {/* QR simulator helper */}
-        {payMethod.startsWith('qr_') && (
-          <div className="checkout-qr-note" style={{ marginTop: 16, padding: '20px', background: '#f8fafc', borderRadius: 12, border: '1px dashed #cbd5e1', display: 'flex', alignItems: 'center', gap: 18 }}>
-            <div style={{ width: 84, height: 84, background: '#ffffff', border: '1px solid #e2e8f0', borderRadius: 10, display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0, boxShadow: '0 2px 8px rgba(0,0,0,0.05)' }}>
-              <QrCode size={56} color="#0d1b2e" />
-            </div>
-            <div>
-              <div style={{ fontSize: 13, fontWeight: 800, color: '#0d1b2e', marginBottom: 4 }}>
-                {t('Quét mã QR để thanh toán', 'Scan QR code to pay', lang)}
-              </div>
-              <p style={{ fontSize: 12, color: '#64748b', margin: 0, lineHeight: 1.5 }}>
-                {t('Mã QR động tương ứng với tổng tiền sẽ được hiển thị ngay sau khi bấm xác nhận. Hỗ trợ quét bằng mọi app ngân hàng & ví điện tử.', 'Dynamic QR code will appear after confirmation. Supports all Vietnamese bank apps.', lang)}
-              </p>
-              <div style={{ display: 'flex', gap: 12, marginTop: 8, fontSize: 11, color: '#16a34a', fontWeight: 600 }}>
-                <span style={{ display: 'flex', alignItems: 'center', gap: 4 }}>
-                  <ShieldCheck size={13} /> {t('Mã hóa SSL 256-bit', '256-bit SSL', lang)}
-                </span>
-                <span style={{ display: 'flex', alignItems: 'center', gap: 4 }}>
-                  <Check size={13} /> {t('Xác nhận tức thì', 'Instant confirmation', lang)}
-                </span>
-              </div>
-            </div>
-          </div>
-        )}
+        <div className={`checkout-qr-note ${vnpayConfig?.enabled?'ready':'unavailable'}`} style={{ marginTop: 16, padding: '16px 18px', borderRadius: 12, display: 'flex', alignItems: 'center', gap: 14 }}>
+          <div style={{ width: 46, height: 46, background: '#ffffff', border: '1px solid #dbe4ec', borderRadius: 10, display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 }}><ShieldCheck size={23} color={vnpayConfig?.enabled?'#15803d':'#b45309'}/></div>
+          <div style={{flex:1}}><div style={{fontSize:12.5,fontWeight:850,color:'#0d1b2e'}}>{vnpayConfig===null?t('Đang kiểm tra kết nối VNPAY…','Checking VNPAY connection…',lang):vnpayConfig.enabled?t(`Cổng VNPAY ${vnpayConfig.mode==='production'?'Production':'Sandbox'} đã sẵn sàng`,`VNPAY ${vnpayConfig.mode==='production'?'Production':'Sandbox'} is ready`,lang):!vnpayConfig.credentialsConfigured?t('Chưa có thông tin merchant VNPAY','VNPAY merchant credentials are missing',lang):!vnpayConfig.httpsReady?t('Return URL / IPN URL chưa dùng HTTPS','Return URL / IPN URL must use HTTPS',lang):t('Cổng VNPAY chưa sẵn sàng','VNPAY gateway is unavailable',lang)}</div><p style={{margin:'4px 0 0',fontSize:11.5,lineHeight:1.5,color:'#64748b'}}>{vnpayConfig?.enabled?t('Bạn sẽ được chuyển sang trang bảo mật của VNPAY. Vé chỉ phát hành sau khi Aurora nhận và xác minh IPN trực tiếp từ VNPAY.','You will be redirected to VNPAY. Tickets are issued only after Aurora receives and verifies VNPAY IPN.',lang):!vnpayConfig?.credentialsConfigured?t('Quản trị viên cần khai báo TmnCode và HashSecret do VNPAY cấp. Aurora không sử dụng giao dịch mô phỏng.','An administrator must configure the VNPAY-issued TmnCode and HashSecret. Aurora does not simulate payments.',lang):t('Môi trường Production cần Return URL và IPN URL công khai sử dụng HTTPS, đồng thời IPN URL phải được đăng ký với VNPAY.','Production requires public HTTPS Return and IPN URLs, with the IPN URL registered at VNPAY.',lang)}</p></div>
+          {vnpayConfig?.enabled&&<span style={{padding:'5px 8px',borderRadius:99,background:'#dcfce7',color:'#15803d',fontSize:10,fontWeight:900}}>ONLINE</span>}
+        </div>
       </div>
 
       {/* CARD 5: THÔNG TIN NGƯỜI ĐẶT */}

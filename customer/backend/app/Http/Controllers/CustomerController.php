@@ -76,8 +76,13 @@ class CustomerController extends Controller
         return response()->json(['showtimes' => $query->orderBy('showtimes.starts_at')->get()]);
     }
 
-    public function seats(int $showtime): JsonResponse
+    public function seats(Request $request, int $showtime): JsonResponse
     {
+        $userId = $this->customerSessionId($request);
+        if (!$userId) {
+            return response()->json(['message' => 'Vui lòng đăng nhập tài khoản khách hàng để xem sơ đồ ghế và đặt vé.'], 401);
+        }
+
         $item = DB::table('showtimes')->where('id', $showtime)->where('status', 'OPEN')->first();
         if (!$item) return response()->json(['message' => 'Suất chiếu không tồn tại hoặc đã đóng.'], 404);
 
@@ -92,8 +97,8 @@ class CustomerController extends Controller
 
     public function createBooking(Request $request): JsonResponse
     {
-        $userId = $request->session()->get('user_id');
-        if (!$userId) return response()->json(['message' => 'Vui lòng đăng nhập để đặt vé.'], 401);
+        $userId = $this->customerSessionId($request);
+        if (!$userId) return response()->json(['message' => 'Vui lòng đăng nhập tài khoản khách hàng để đặt vé.'], 401);
 
         $data = $request->validate([
             'showtimeId' => ['required', 'integer'],
@@ -151,7 +156,8 @@ class CustomerController extends Controller
 
         $id = DB::table('users')->insertGetId([
             'full_name' => $data['fullName'], 'email' => $data['email'],
-            'password_hash' => Hash::make($data['password']), 'created_at' => now(), 'updated_at' => now(),
+            'password_hash' => Hash::make($data['password']), 'role' => 'customer', 'status' => 'active',
+            'created_at' => now(), 'updated_at' => now(),
         ]);
         $request->session()->put('user_id', $id);
 
@@ -161,7 +167,8 @@ class CustomerController extends Controller
     public function login(Request $request): JsonResponse
     {
         $data = $request->validate(['email' => ['required', 'email'], 'password' => ['required', 'string']]);
-        $user = DB::table('users')->where('email', $data['email'])->first();
+        $user = DB::table('users')->where('email', $data['email'])
+            ->where('role', 'customer')->where('status', 'active')->first();
 
         if (!$user || !Hash::check($data['password'], $user->password_hash)) {
             return response()->json(['message' => 'Email hoặc mật khẩu không đúng.'], 401);
@@ -437,9 +444,24 @@ class CustomerController extends Controller
     private function publicUser(?int $id): ?array
     {
         if (!$id) return null;
-        $user = DB::table('users')->where('id', $id)->first();
+        $user = DB::table('users')->where('id', $id)
+            ->where('role', 'customer')->where('status', 'active')->first();
         return $user ? ['id' => $user->id, 'fullName' => $user->full_name, 'email' => $user->email,
             'membershipLevel' => $user->membership_level, 'points' => $user->points] : null;
+    }
+
+    private function customerSessionId(Request $request): ?int
+    {
+        $id = (int) $request->session()->get('user_id', 0);
+        if ($id <= 0) return null;
+
+        $valid = DB::table('users')->where('id', $id)
+            ->where('role', 'customer')->where('status', 'active')->exists();
+        if (!$valid) {
+            $request->session()->forget('user_id');
+            return null;
+        }
+        return $id;
     }
 
     private function showtimesQuery()

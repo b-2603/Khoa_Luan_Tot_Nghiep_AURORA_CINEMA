@@ -200,16 +200,24 @@ function ensurePosSalesTables($db) {
 
 function posComboCatalog($db, $user = null) {
     $catalog = array();
-    $allowed=array();
-    if (!$user || !empty($user['capabilities']['sell_concessions']) || $user['role']==='admin') $allowed[]="LOWER(category) IN ('concession','f&b','food','beverage')";
-    if (!$user || !empty($user['capabilities']['sell_merchandise']) || $user['role']==='admin') $allowed[]="LOWER(category) IN ('merchandise','merchandising')";
-    if (!$allowed) return $catalog;
-    $result = $db->query("SELECT sku,name,price,category,stock_quantity FROM products WHERE status='active' AND stock_quantity>0 AND (".implode(' OR ',$allowed).") ORDER BY category,name");
+    $canSellProducts=!$user || !empty($user['capabilities']['sell_concessions']) || !empty($user['capabilities']['sell_merchandise']) || $user['role']==='admin';
+    if (!$canSellProducts) return $catalog;
+    foreach(array('customer_price','pos_price','member_price') as $priceColumn){$check=$db->query("SHOW COLUMNS FROM products LIKE '{$priceColumn}'");if(!$check||$check->num_rows<1){if(!$db->query("ALTER TABLE products ADD COLUMN `{$priceColumn}` DECIMAL(12,2) NOT NULL DEFAULT 0"))return $catalog;}}
+    $db->query("UPDATE products SET customer_price=price+10000,pos_price=price+10000,member_price=price WHERE customer_price<=0 OR pos_price<=0 OR member_price<=0");
+    // POS được bán toàn bộ danh mục. Giá thường và giá thành viên được lưu
+    // tách biệt để mọi giao dịch đều được backend tính lại.
+    $result = $db->query("SELECT sku,name,COALESCE(NULLIF(pos_price,0),price+10000) price,COALESCE(NULLIF(member_price,0),price) member_price,category,stock_quantity FROM products WHERE status='active' AND stock_quantity>0 ORDER BY category,name");
     if (!$result) return $catalog;
     while ($row = $result->fetch_assoc()) {
-        $catalog[$row['sku']] = array('name'=>$row['name'],'price'=>(float)$row['price'],'category'=>$row['category'],'stock_quantity'=>(int)$row['stock_quantity']);
+        $catalog[$row['sku']] = array('name'=>$row['name'],'price'=>(float)$row['price'],'member_price'=>(float)$row['member_price'],'category'=>$row['category'],'stock_quantity'=>(int)$row['stock_quantity']);
     }
     return $catalog;
+}
+
+function posMembershipCustomer($db, $customerId) {
+    $customerId=(int)$customerId;if($customerId<1)return null;
+    $result=$db->query("SELECT u.id,u.full_name,u.email,u.phone,COALESCE(c.card_number,'') card_number FROM users u LEFT JOIN customer_membership_cards c ON c.user_id=u.id WHERE u.id={$customerId} AND u.role='customer' AND u.status='active' LIMIT 1");
+    return $result?$result->fetch_assoc():null;
 }
 
 function posHasBookingShowtimeColumn($db) {
@@ -600,9 +608,20 @@ if ($action === 'sales_catalog' && $requestMethod === 'GET') {
     }
 
     $combos = array();
-    foreach (posComboCatalog($db,$posUser) as $code => $combo) $combos[] = array('code'=>$code,'name'=>$combo['name'],'price'=>$combo['price'],'category'=>$combo['category'],'stock_quantity'=>$combo['stock_quantity']);
+    foreach (posComboCatalog($db,$posUser) as $code => $combo) $combos[] = array('code'=>$code,'name'=>$combo['name'],'price'=>$combo['price'],'member_price'=>$combo['member_price'],'category'=>$combo['category'],'stock_quantity'=>$combo['stock_quantity']);
     $theater = getPosTheater($db, $theaterId);
     jsonResponse(array('success'=>true,'data'=>array('theater'=>$theater,'dates'=>$dates,'selected_date'=>$requestedDate,'showtimes'=>$showtimes,'combos'=>$combos,'products'=>$combos,'counter_role'=>array('code'=>$posUser['counter_role_code'],'name'=>$posUser['counter_role_name']),'capabilities'=>$posUser['capabilities'])));
+}
+
+if ($action === 'member_lookup' && $requestMethod === 'GET') {
+    requirePosUser();
+    $query=isset($_GET['q'])?trim((string)$_GET['q']):'';
+    if(strlen($query)<3)jsonResponse(array('success'=>false,'message'=>'Nhập ít nhất 3 ký tự của SĐT, email hoặc mã thẻ.'),422);
+    $safe=$db->real_escape_string($query);
+    $sql="SELECT u.id,u.full_name,u.email,u.phone,COALESCE(c.card_number,'') card_number FROM users u LEFT JOIN customer_membership_cards c ON c.user_id=u.id WHERE u.role='customer' AND u.status='active' AND (u.phone LIKE '%{$safe}%' OR u.email LIKE '%{$safe}%' OR c.card_number LIKE '%{$safe}%') ORDER BY u.id DESC LIMIT 8";
+    $result=$db->query($sql);$members=array();
+    if($result)while($row=$result->fetch_assoc()){$row['id']=(int)$row['id'];$members[]=$row;}
+    jsonResponse(array('success'=>true,'data'=>$members));
 }
 
 if ($action === 'sales_seats' && $requestMethod === 'GET') {
@@ -662,17 +681,17 @@ if ($action === 'product_order' && $requestMethod === 'POST') {
     $posUser=requirePosUser();$canProducts=!empty($posUser['capabilities']['sell_concessions'])||!empty($posUser['capabilities']['sell_merchandise'])||$posUser['role']==='admin';
     if(!$canProducts)jsonResponse(array('success'=>false,'message'=>'Vai trò hiện tại không có quyền bán sản phẩm.'),403);
     $shift=posCurrentShift($db,(int)$posUser['id']);if(!$shift||$shift['status']!=='active')jsonResponse(array('success'=>false,'message'=>'Phiên bán hàng chưa hoạt động.'),409);
-    $input=requestJson();$itemsInput=isset($input['items'])&&is_array($input['items'])?$input['items']:array();$method=isset($input['payment_method'])?strtoupper((string)$input['payment_method']):'CASH';$received=isset($input['amount_received'])?(float)$input['amount_received']:0;
+    $input=requestJson();$itemsInput=isset($input['items'])&&is_array($input['items'])?$input['items']:array();$method=isset($input['payment_method'])?strtoupper((string)$input['payment_method']):'CASH';$received=isset($input['amount_received'])?(float)$input['amount_received']:0;$member=posMembershipCustomer($db,isset($input['customer_id'])?(int)$input['customer_id']:0);$isMember=$member!==null;
     if(!in_array($method,array('CASH','CARD','TRANSFER'),true))jsonResponse(array('success'=>false,'message'=>'Phương thức thanh toán không hợp lệ.'),422);
-    $catalog=posComboCatalog($db,$posUser);$items=array();$total=0;
+    $catalog=posComboCatalog($db,$posUser);$items=array();$subtotal=0;$total=0;
     foreach($itemsInput as $requested){$code=is_array($requested)&&isset($requested['code'])?(string)$requested['code']:'';$quantity=is_array($requested)&&isset($requested['quantity'])?(int)$requested['quantity']:0;if($quantity>0&&$quantity<=20&&isset($catalog[$code])){$items[$code]=min(20,(isset($items[$code])?$items[$code]:0)+$quantity);}}
     if(!$items)jsonResponse(array('success'=>false,'message'=>'Vui lòng chọn ít nhất một sản phẩm.'),422);
-    foreach($items as $code=>$quantity)$total+=$catalog[$code]['price']*$quantity;if($method!=='CASH')$received=$total;if($received<$total)jsonResponse(array('success'=>false,'message'=>'Số tiền khách đưa chưa đủ.'),422);$change=$received-$total;
-    $db->autocommit(false);try{$code='POS-'.strtoupper(substr(md5(uniqid((string)mt_rand(),true)),0,10));$cashierId=(int)$posUser['id'];$shiftId=(int)$shift['id'];$customerId=null;
-      $stmt=$db->prepare("INSERT INTO orders (booking_id,customer_id,cashier_id,pos_shift_id,order_code,channel,subtotal,discount_amount,total_amount,payment_method,amount_received,change_amount,status) VALUES (NULL,?,?,?,?, 'POS',?,0,?,?,?,?, 'PAID')");$stmt->bind_param('iiisddsdd',$customerId,$cashierId,$shiftId,$code,$total,$total,$method,$received,$change);if(!$stmt->execute())throw new Exception('Không thể lưu đơn hàng.');$orderId=(int)$stmt->insert_id;$stmt->close();
+    foreach($items as $itemCode=>$quantity){$subtotal+=$catalog[$itemCode]['price']*$quantity;$total+=($isMember?$catalog[$itemCode]['member_price']:$catalog[$itemCode]['price'])*$quantity;}$discount=$subtotal-$total;if($method!=='CASH')$received=$total;if($received<$total)jsonResponse(array('success'=>false,'message'=>'Số tiền khách đưa chưa đủ.'),422);$change=$received-$total;
+    $db->autocommit(false);try{$code='POS-'.strtoupper(substr(md5(uniqid((string)mt_rand(),true)),0,10));$cashierId=(int)$posUser['id'];$shiftId=(int)$shift['id'];$customerId=$isMember?(int)$member['id']:0;
+      $stmt=$db->prepare("INSERT INTO orders (booking_id,customer_id,cashier_id,pos_shift_id,order_code,channel,subtotal,discount_amount,total_amount,payment_method,amount_received,change_amount,status) VALUES (NULL,?,?,?,?, 'POS',?,?,?,?,?,?, 'PAID')");$stmt->bind_param('iiisdddsdd',$customerId,$cashierId,$shiftId,$code,$subtotal,$discount,$total,$method,$received,$change);if(!$stmt->execute())throw new Exception('Không thể lưu đơn hàng.');$orderId=(int)$stmt->insert_id;$stmt->close();
       $itemStmt=$db->prepare("INSERT INTO order_items (order_id,item_type,item_code,item_name,quantity,unit_price,seat_id) VALUES (?,'COMBO',?,?,?,?,NULL)");$stockStmt=$db->prepare("UPDATE products SET stock_quantity=stock_quantity-? WHERE sku=? AND stock_quantity>=?");
-      foreach($items as $sku=>$quantity){$product=$catalog[$sku];$itemStmt->bind_param('issid',$orderId,$sku,$product['name'],$quantity,$product['price']);if(!$itemStmt->execute())throw new Exception('Không thể lưu sản phẩm.');$stockStmt->bind_param('isi',$quantity,$sku,$quantity);$stockStmt->execute();if($stockStmt->affected_rows<1)throw new Exception('Sản phẩm '.$product['name'].' không đủ tồn kho.');}$itemStmt->close();$stockStmt->close();
-      $pay=$db->prepare('INSERT INTO payments (order_id,method,amount,reference_code) VALUES (?,?,?,?)');$pay->bind_param('isds',$orderId,$method,$total,$code);if(!$pay->execute())throw new Exception('Không thể lưu thanh toán.');$pay->close();$db->commit();$db->autocommit(true);jsonResponse(array('success'=>true,'data'=>array('order_id'=>$orderId,'code'=>$code,'total'=>$total,'amount_received'=>$received,'change'=>$change,'payment_method'=>$method)),201);
+      foreach($items as $sku=>$quantity){$product=$catalog[$sku];$unitPrice=$isMember?$product['member_price']:$product['price'];$itemStmt->bind_param('issid',$orderId,$sku,$product['name'],$quantity,$unitPrice);if(!$itemStmt->execute())throw new Exception('Không thể lưu sản phẩm.');$stockStmt->bind_param('isi',$quantity,$sku,$quantity);$stockStmt->execute();if($stockStmt->affected_rows<1)throw new Exception('Sản phẩm '.$product['name'].' không đủ tồn kho.');}$itemStmt->close();$stockStmt->close();
+      $pay=$db->prepare('INSERT INTO payments (order_id,method,amount,reference_code) VALUES (?,?,?,?)');$pay->bind_param('isds',$orderId,$method,$total,$code);if(!$pay->execute())throw new Exception('Không thể lưu thanh toán.');$pay->close();$db->commit();$db->autocommit(true);jsonResponse(array('success'=>true,'data'=>array('order_id'=>$orderId,'code'=>$code,'subtotal'=>$subtotal,'discount'=>$discount,'total'=>$total,'member'=>$member,'amount_received'=>$received,'change'=>$change,'payment_method'=>$method)),201);
     }catch(Exception $e){$db->rollback();$db->autocommit(true);jsonResponse(array('success'=>false,'message'=>$e->getMessage()),409);}
 }
 
@@ -692,6 +711,7 @@ if ($action === 'sales_order' && $requestMethod === 'POST') {
     $paymentMethod = isset($input['payment_method']) ? strtoupper(trim((string)$input['payment_method'])) : 'CASH';
     $amountReceived = isset($input['amount_received']) ? (float)$input['amount_received'] : 0;
     $combosInput = isset($input['combos']) && is_array($input['combos']) ? $input['combos'] : array();
+    $member=posMembershipCustomer($db,isset($input['customer_id'])?(int)$input['customer_id']:0);$isMember=$member!==null;
     if ($showtimeId < 1 || count($seatIds) < 1 || count($seatIds) > 12) jsonResponse(array('success' => false, 'message' => 'Vui lòng chọn suất chiếu và từ 1 đến 12 ghế.'), 422);
     if (!in_array($paymentMethod, array('CASH', 'CARD', 'TRANSFER'), true)) jsonResponse(array('success' => false, 'message' => 'Phương thức thanh toán không hợp lệ.'), 422);
 
@@ -729,14 +749,15 @@ if ($action === 'sales_order' && $requestMethod === 'POST') {
             if ($seat['type'] === 'VIP') $price += 20000; else if ($seat['type'] === 'COUPLE') $price *= 2;
             $ticketTotal += $price; $items[] = array('type' => 'TICKET', 'code' => 'SEAT-' . $seatId, 'name' => 'Vé ' . $seat['label'] . ' (' . $seat['type'] . ')', 'quantity' => 1, 'price' => $price, 'seat_id' => $seatId);
         }
-        $comboTotal = 0;
-        foreach ($combos as $code => $quantity) { $comboTotal += $catalog[$code]['price'] * $quantity; $items[] = array('type' => 'COMBO', 'code' => $code, 'name' => $catalog[$code]['name'], 'quantity' => $quantity, 'price' => $catalog[$code]['price'], 'seat_id' => null); }
+        $comboSubtotal = 0; $comboTotal = 0;
+        foreach ($combos as $code => $quantity) { $unitPrice=$isMember?$catalog[$code]['member_price']:$catalog[$code]['price'];$comboSubtotal += $catalog[$code]['price'] * $quantity;$comboTotal += $unitPrice * $quantity; $items[] = array('type' => 'COMBO', 'code' => $code, 'name' => $catalog[$code]['name'], 'quantity' => $quantity, 'price' => $unitPrice, 'seat_id' => null); }
         $total = $ticketTotal + $comboTotal;
+        $subtotal = $ticketTotal + $comboSubtotal; $discount=$subtotal-$total;
         if ($paymentMethod !== 'CASH') $amountReceived = $total;
         if ($amountReceived < $total) throw new Exception('Số tiền khách đưa chưa đủ.');
         $change = $amountReceived - $total;
 
-        $userResult = $db->query('SELECT id FROM users ORDER BY id LIMIT 1'); $userRow = $userResult ? $userResult->fetch_assoc() : null; $customerId = $userRow ? (int)$userRow['id'] : 0;
+        if($isMember){$customerId=(int)$member['id'];}else{$userResult = $db->query('SELECT id FROM users ORDER BY id LIMIT 1'); $userRow = $userResult ? $userResult->fetch_assoc() : null; $customerId = $userRow ? (int)$userRow['id'] : 0;}
         if ($customerId < 1) throw new Exception('Chưa có tài khoản khách hàng hệ thống để ghi nhận booking.');
         $code = 'POS-' . strtoupper(substr(md5(uniqid((string)mt_rand(), true)), 0, 10)); $now = date('Y-m-d H:i:s');
         $stmt = $db->prepare("INSERT INTO bookings (user_id, showtime_id, booking_code, total_amount, status, created_at, updated_at) VALUES (?, ?, ?, ?, 'PAID', ?, ?)"); $stmt->bind_param('iisdss', $customerId, $showtimeId, $code, $total, $now, $now); if (!$stmt->execute()) throw new Exception('Không thể tạo booking.'); $bookingId = (int)$stmt->insert_id; $stmt->close();
@@ -745,12 +766,12 @@ if ($action === 'sales_order' && $requestMethod === 'POST') {
         foreach ($seatIds as $seatId) { $price = 0 + $ticketPrice; if ($seatInfo[$seatId]['type'] === 'VIP') $price += 20000; else if ($seatInfo[$seatId]['type'] === 'COUPLE') $price *= 2; if ($hasShowtimeColumn) { $seatStmt->bind_param('iiid', $bookingId, $showtimeId, $seatId, $price); } else { $seatStmt->bind_param('iid', $bookingId, $seatId, $price); } if (!$seatStmt->execute()) throw new Exception('Không thể giữ ghế.'); }
         $seatStmt->close();
 
-        $cashier = posUser(); $cashierId = (int)$cashier['id']; $posShiftId = isset($_SESSION['pos_shift_id']) ? (int)$_SESSION['pos_shift_id'] : 0; $stmt = $db->prepare("INSERT INTO orders (booking_id, customer_id, cashier_id, pos_shift_id, order_code, channel, subtotal, discount_amount, total_amount, payment_method, amount_received, change_amount, status) VALUES (?, ?, ?, ?, ?, 'POS', ?, 0, ?, ?, ?, ?, 'PAID')"); $stmt->bind_param('iiiisddsdd', $bookingId, $customerId, $cashierId, $posShiftId, $code, $total, $total, $paymentMethod, $amountReceived, $change); if (!$stmt->execute()) throw new Exception('Không thể lưu đơn hàng.'); $orderId = (int)$stmt->insert_id; $stmt->close();
+        $cashier = posUser(); $cashierId = (int)$cashier['id']; $posShiftId = isset($_SESSION['pos_shift_id']) ? (int)$_SESSION['pos_shift_id'] : 0; $stmt = $db->prepare("INSERT INTO orders (booking_id, customer_id, cashier_id, pos_shift_id, order_code, channel, subtotal, discount_amount, total_amount, payment_method, amount_received, change_amount, status) VALUES (?, ?, ?, ?, ?, 'POS', ?, ?, ?, ?, ?, ?, 'PAID')"); $stmt->bind_param('iiiisdddsdd', $bookingId, $customerId, $cashierId, $posShiftId, $code, $subtotal, $discount, $total, $paymentMethod, $amountReceived, $change); if (!$stmt->execute()) throw new Exception('Không thể lưu đơn hàng.'); $orderId = (int)$stmt->insert_id; $stmt->close();
         $itemStmt = $db->prepare('INSERT INTO order_items (order_id, item_type, item_code, item_name, quantity, unit_price, seat_id) VALUES (?, ?, ?, ?, ?, ?, ?)');
         foreach ($items as $item) { $itemStmt->bind_param('isssidi', $orderId, $item['type'], $item['code'], $item['name'], $item['quantity'], $item['price'], $item['seat_id']); if (!$itemStmt->execute()) throw new Exception('Không thể lưu chi tiết đơn hàng.'); }
         $itemStmt->close(); $reference = $code; $stmt = $db->prepare('INSERT INTO payments (order_id, method, amount, reference_code) VALUES (?, ?, ?, ?)'); $stmt->bind_param('isds', $orderId, $paymentMethod, $total, $reference); if (!$stmt->execute()) throw new Exception('Không thể lưu thanh toán.'); $stmt->close();
         $db->commit(); $db->autocommit(true);
-        jsonResponse(array('success' => true, 'data' => array('order_id' => $orderId, 'booking_id' => $bookingId, 'code' => $code, 'total' => $total, 'amount_received' => $amountReceived, 'change' => $change, 'payment_method' => $paymentMethod, 'items' => $items)), 201);
+        jsonResponse(array('success' => true, 'data' => array('order_id' => $orderId, 'booking_id' => $bookingId, 'code' => $code, 'subtotal'=>$subtotal,'discount'=>$discount,'total' => $total,'member'=>$member, 'amount_received' => $amountReceived, 'change' => $change, 'payment_method' => $paymentMethod, 'items' => $items)), 201);
     } catch (Exception $exception) { $db->rollback(); $db->autocommit(true); $errorMessage = $exception->getMessage(); if (!$errorMessage) $errorMessage = 'Không thể hoàn tất giao dịch.'; jsonResponse(array('success' => false, 'message' => $errorMessage), 409); }
 }
 

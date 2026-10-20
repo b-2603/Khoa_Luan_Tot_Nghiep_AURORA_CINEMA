@@ -175,7 +175,10 @@ class MarketingController
                 plan_id BIGINT UNSIGNED NOT NULL,
                 review_round INT UNSIGNED NOT NULL DEFAULT 1,
                 section_key VARCHAR(40) NOT NULL,
+                section_label VARCHAR(120) NOT NULL DEFAULT '',
+                field_key VARCHAR(60) NOT NULL DEFAULT '',
                 field_label VARCHAR(120) NOT NULL,
+                current_value TEXT NULL,
                 comment TEXT NOT NULL,
                 status VARCHAR(20) NOT NULL DEFAULT 'open',
                 created_by BIGINT UNSIGNED NULL,
@@ -207,6 +210,16 @@ class MarketingController
         foreach ($planColumns as $column => $definition) {
             if (!$this->columnExists('movie_plans', $column) && !$this->db->query("ALTER TABLE movie_plans ADD COLUMN `{$column}` {$definition}")) {
                 jsonResponse(array('success'=>false,'message'=>'Không thể nâng cấp quy trình duyệt kế hoạch phim: '.$this->db->error),500);
+            }
+        }
+        $reviewColumns = array(
+            'section_label' => "VARCHAR(120) NOT NULL DEFAULT ''",
+            'field_key' => "VARCHAR(60) NOT NULL DEFAULT ''",
+            'current_value' => 'TEXT NULL'
+        );
+        foreach ($reviewColumns as $column => $definition) {
+            if (!$this->columnExists('marketing_movie_plan_review_items', $column) && !$this->db->query("ALTER TABLE marketing_movie_plan_review_items ADD COLUMN `{$column}` {$definition}")) {
+                jsonResponse(array('success'=>false,'message'=>'Không thể nâng cấp dữ liệu phản hồi phê duyệt: '.$this->db->error),500);
             }
         }
         if (!$this->columnExists('movies', 'marketing_owner_id') && !$this->db->query("ALTER TABLE movies ADD COLUMN marketing_owner_id BIGINT UNSIGNED NULL")) {
@@ -498,7 +511,7 @@ class MarketingController
             ORDER BY CASE mp.approval_status WHEN 'pending_approval' THEN 0 WHEN 'revision_requested' THEN 1 WHEN 'draft' THEN 2 ELSE 3 END,mp.updated_at DESC,mp.id DESC");
         foreach ($data as &$plan) {
             $plan['history'] = $this->rows("SELECT action_name,from_status,to_status,actor_name,actor_role,note,created_at FROM marketing_movie_plan_history WHERE plan_id=".(int)$plan['id']." ORDER BY id DESC");
-            $plan['review_items'] = $this->rows("SELECT id,review_round,section_key,field_label,comment,status,created_by_name,created_at,resolved_at FROM marketing_movie_plan_review_items WHERE plan_id=".(int)$plan['id']." ORDER BY review_round DESC,id ASC");
+            $plan['review_items'] = $this->rows("SELECT id,review_round,section_key,section_label,field_key,field_label,current_value,comment,status,created_by_name,created_at,resolved_at FROM marketing_movie_plan_review_items WHERE plan_id=".(int)$plan['id']." ORDER BY review_round DESC,id ASC");
             $plan['theater_ids'] = array_values(array_filter(array_map('intval', explode(',', (string)$plan['planned_theater_ids']))));
         }
         unset($plan);
@@ -662,10 +675,22 @@ class MarketingController
     {
         $user=requireAdmin();if(AdminController::normalizeRole($user['role'])!=='super_admin')jsonResponse(array('success'=>false,'message'=>'Chỉ Admin Tổng được phê duyệt.'),403);
         $input=requestJson();$id=isset($input['id'])?(int)$input['id']:0;$decision=isset($input['decision'])?trim($input['decision']):'';$note=isset($input['note'])?trim($input['note']):'';$rawReviewItems=isset($input['review_items'])&&is_array($input['review_items'])?$input['review_items']:array();$reviewItems=array();
-        $allowedSections=array('movie'=>'Thông tin hồ sơ phim','media'=>'Media và phiên bản','schedule'=>'Thời gian dự kiến','reason'=>'Lý do đề xuất','revenue'=>'Doanh thu và mục tiêu vé','screenings'=>'Chỉ tiêu suất chiếu','priority'=>'Mức độ ưu tiên','theaters'=>'Rạp đề xuất','campaign'=>'Kế hoạch quảng bá','rights'=>'Quyền phát hành và phân loại','note'=>'Ghi chú triển khai');
-        foreach($rawReviewItems as $item){$section=isset($item['section_key'])?trim((string)$item['section_key']):'';$comment=isset($item['comment'])?trim((string)$item['comment']):'';if(isset($allowedSections[$section])&&$comment!=='')$reviewItems[]=array('section_key'=>$section,'field_label'=>$allowedSections[$section],'comment'=>$comment);}
+        $reviewTaxonomy=array(
+            'movie'=>array('label'=>'Thông tin phim','fields'=>array('title'=>'Tên phim','original_title'=>'Tên phim gốc','genre'=>'Thể loại','age_rating'=>'Phân loại độ tuổi','duration'=>'Thời lượng','director'=>'Đạo diễn','cast'=>'Diễn viên','production_country'=>'Quốc gia sản xuất','description'=>'Tóm tắt nội dung')),
+            'release'=>array('label'=>'Phát hành và phiên bản','fields'=>array('format'=>'Định dạng chiếu','language'=>'Ngôn ngữ âm thanh','subtitles'=>'Phụ đề / lồng tiếng','distributor'=>'Nhà phát hành','release_date'=>'Ngày khởi chiếu','end_date'=>'Ngày kết thúc dự kiến','rights'=>'Quyền phát hành','classification'=>'Kiểm tra phân loại','poster'=>'Poster','banner'=>'Banner','trailer'=>'Trailer')),
+            'business'=>array('label'=>'Kế hoạch kinh doanh và quảng bá','fields'=>array('plan_name'=>'Tên kế hoạch','expected_period'=>'Thời gian phát hành dự kiến','target_revenue'=>'Doanh thu mục tiêu','target_tickets'=>'Mục tiêu vé bán','screenings'=>'Chỉ tiêu suất chiếu','priority'=>'Mức độ ưu tiên','campaign'=>'Chiến dịch quảng bá','budget'=>'Ngân sách Marketing','promotion'=>'Khuyến mãi đi kèm','reason'=>'Lý do đề xuất','note'=>'Ghi chú triển khai')),
+            'theaters'=>array('label'=>'Rạp đề xuất triển khai','fields'=>array('theater_list'=>'Danh sách rạp đề xuất'))
+        );
+        $seenReviewFields=array();
+        foreach($rawReviewItems as $item){
+            $section=isset($item['section_key'])?trim((string)$item['section_key']):'';$field=isset($item['field_key'])?trim((string)$item['field_key']):'';$comment=isset($item['comment'])?trim((string)$item['comment']):'';$currentValue=isset($item['current_value'])?trim((string)$item['current_value']):'';$unique=$section.'.'.$field;
+            if(!isset($reviewTaxonomy[$section])||!isset($reviewTaxonomy[$section]['fields'][$field])||isset($seenReviewFields[$unique]))continue;
+            if($comment===''||strlen($comment)>3000)jsonResponse(array('success'=>false,'message'=>'Mỗi trường được chọn phải có nội dung yêu cầu chỉnh sửa từ 1 đến 3000 ký tự.'),422);
+            if(strlen($currentValue)>2000)$currentValue=substr($currentValue,0,2000);
+            $seenReviewFields[$unique]=true;$reviewItems[]=array('section_key'=>$section,'section_label'=>$reviewTaxonomy[$section]['label'],'field_key'=>$field,'field_label'=>$reviewTaxonomy[$section]['fields'][$field],'current_value'=>$currentValue,'comment'=>$comment);
+        }
         if(!in_array($decision,array('approved','revision_requested'),true))jsonResponse(array('success'=>false,'message'=>'Quyết định phê duyệt không hợp lệ.'),422);
-        if($decision==='revision_requested'&&$note===''&&!$reviewItems)jsonResponse(array('success'=>false,'message'=>'Vui lòng chỉ rõ ít nhất một hạng mục Marketing cần chỉnh sửa.'),422);
+        if($decision==='revision_requested'&&!$reviewItems)jsonResponse(array('success'=>false,'message'=>'Vui lòng chọn ít nhất một trường dữ liệu và nhập yêu cầu chỉnh sửa cụ thể.'),422);
         $rows=$this->rows("SELECT * FROM movie_plans WHERE id={$id} AND marketing_owner_id IS NOT NULL LIMIT 1");
         if(!$rows)jsonResponse(array('success'=>false,'message'=>'Không tìm thấy kế hoạch Marketing.'),404);
         $plan=$rows[0];if($plan['approval_status']!=='pending_approval')jsonResponse(array('success'=>false,'message'=>'Kế hoạch không còn ở trạng thái chờ duyệt.'),409);
@@ -677,8 +702,8 @@ class MarketingController
         if($decision==='revision_requested'){
             $round=(int)$this->scalar("SELECT COALESCE(MAX(review_round),0)+1 FROM marketing_movie_plan_review_items WHERE plan_id={$id}");
             foreach($reviewItems as $item){
-                $section=$this->db->real_escape_string($item['section_key']);$label=$this->db->real_escape_string($item['field_label']);$comment=$this->db->real_escape_string($item['comment']);
-                if(!$this->db->query("INSERT INTO marketing_movie_plan_review_items(plan_id,review_round,section_key,field_label,comment,status,created_by,created_by_name,created_at) VALUES({$id},{$round},'{$section}','{$label}','{$comment}','open',".(int)$user['id'].",'{$actor}',NOW())")){$error=$this->db->error;$this->db->query('ROLLBACK');jsonResponse(array('success'=>false,'message'=>'Không thể lưu nội dung phản hồi: '.$error),500);}
+                $section=$this->db->real_escape_string($item['section_key']);$sectionLabel=$this->db->real_escape_string($item['section_label']);$field=$this->db->real_escape_string($item['field_key']);$label=$this->db->real_escape_string($item['field_label']);$currentValue=$this->db->real_escape_string($item['current_value']);$comment=$this->db->real_escape_string($item['comment']);
+                if(!$this->db->query("INSERT INTO marketing_movie_plan_review_items(plan_id,review_round,section_key,section_label,field_key,field_label,current_value,comment,status,created_by,created_by_name,created_at) VALUES({$id},{$round},'{$section}','{$sectionLabel}','{$field}','{$label}','{$currentValue}','{$comment}','open',".(int)$user['id'].",'{$actor}',NOW())")){$error=$this->db->error;$this->db->query('ROLLBACK');jsonResponse(array('success'=>false,'message'=>'Không thể lưu nội dung phản hồi: '.$error),500);}
             }
         }
         if($decision==='approved'&&!$this->distributeApprovedPlan($plan)){$error=$this->db->error;$this->db->query('ROLLBACK');jsonResponse(array('success'=>false,'message'=>'Không thể phân bổ kế hoạch đến Admin Rạp: '.$error),500);}

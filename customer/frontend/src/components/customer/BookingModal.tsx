@@ -41,8 +41,17 @@ export default function BookingModal({ movie, theater, showtime, user, language,
 
   // Tải sơ đồ ghế
   useEffect(() => {
+    if (!user) {
+      onRequireLogin();
+      return;
+    }
     fetch(`${API_URL}?action=showtime_seats&showtime_id=${showtime.id}`, { credentials: 'include' })
-      .then(r => r.json())
+      .then(async r => {
+        const result = await r.json();
+        if (r.status === 401) onRequireLogin();
+        if (!r.ok) throw new Error(result.message || t('Không thể tải sơ đồ ghế.', 'Failed to load seat map.'));
+        return result;
+      })
       .then(result => setSeats(result.seats || []))
       .catch(() => setError(t('Không thể tải sơ đồ ghế.', 'Failed to load seat map.')))
       .finally(() => setLoading(false));

@@ -43,7 +43,7 @@ export default function BookingConfirmationModal({ movie, showtime, theater, lan
 
         <div style={footer}>
           <button type="button" onClick={onClose} style={cancelButton}>{t('QUAY LẠI', 'GO BACK')}</button>
-          <button type="button" onClick={onConfirm} style={confirmButton}>{t('ĐỒNG Ý', 'CONFIRM')}</button>
+          <button type="button" onClick={onConfirm} style={confirmButton}>{t('ĐẶT VÉ NGAY', 'BOOK NOW')}</button>
         </div>
       </section>
     </div>

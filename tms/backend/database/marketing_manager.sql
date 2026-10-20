@@ -146,7 +146,10 @@ CREATE TABLE IF NOT EXISTS marketing_movie_plan_review_items (
   plan_id BIGINT UNSIGNED NOT NULL,
   review_round INT UNSIGNED NOT NULL DEFAULT 1,
   section_key VARCHAR(40) NOT NULL,
+  section_label VARCHAR(120) NOT NULL DEFAULT '',
+  field_key VARCHAR(60) NOT NULL DEFAULT '',
   field_label VARCHAR(120) NOT NULL,
+  current_value TEXT NULL,
   comment TEXT NOT NULL,
   status ENUM('open','resolved') NOT NULL DEFAULT 'open',
   created_by BIGINT UNSIGNED NULL,
@@ -155,6 +158,10 @@ CREATE TABLE IF NOT EXISTS marketing_movie_plan_review_items (
   resolved_at DATETIME NULL,
   KEY idx_mkt_plan_review (plan_id,status,review_round)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8 COLLATE=utf8_unicode_ci;
+
+SET @ddl = IF((SELECT COUNT(*) FROM information_schema.COLUMNS WHERE TABLE_SCHEMA=DATABASE() AND TABLE_NAME='marketing_movie_plan_review_items' AND COLUMN_NAME='section_label')=0,"ALTER TABLE marketing_movie_plan_review_items ADD section_label VARCHAR(120) NOT NULL DEFAULT ''",'SELECT 1'); PREPARE stmt FROM @ddl; EXECUTE stmt; DEALLOCATE PREPARE stmt;
+SET @ddl = IF((SELECT COUNT(*) FROM information_schema.COLUMNS WHERE TABLE_SCHEMA=DATABASE() AND TABLE_NAME='marketing_movie_plan_review_items' AND COLUMN_NAME='field_key')=0,"ALTER TABLE marketing_movie_plan_review_items ADD field_key VARCHAR(60) NOT NULL DEFAULT ''",'SELECT 1'); PREPARE stmt FROM @ddl; EXECUTE stmt; DEALLOCATE PREPARE stmt;
+SET @ddl = IF((SELECT COUNT(*) FROM information_schema.COLUMNS WHERE TABLE_SCHEMA=DATABASE() AND TABLE_NAME='marketing_movie_plan_review_items' AND COLUMN_NAME='current_value')=0,'ALTER TABLE marketing_movie_plan_review_items ADD current_value TEXT NULL','SELECT 1'); PREPARE stmt FROM @ddl; EXECUTE stmt; DEALLOCATE PREPARE stmt;
 
 SET @ddl = IF((SELECT COUNT(*) FROM information_schema.COLUMNS WHERE TABLE_SCHEMA=DATABASE() AND TABLE_NAME='movie_plans' AND COLUMN_NAME='marketing_owner_id')=0,'ALTER TABLE movie_plans ADD marketing_owner_id BIGINT UNSIGNED NULL','SELECT 1'); PREPARE stmt FROM @ddl; EXECUTE stmt; DEALLOCATE PREPARE stmt;
 SET @ddl = IF((SELECT COUNT(*) FROM information_schema.COLUMNS WHERE TABLE_SCHEMA=DATABASE() AND TABLE_NAME='movie_plans' AND COLUMN_NAME='approval_status')=0,"ALTER TABLE movie_plans ADD approval_status VARCHAR(30) NOT NULL DEFAULT 'draft'",'SELECT 1'); PREPARE stmt FROM @ddl; EXECUTE stmt; DEALLOCATE PREPARE stmt;

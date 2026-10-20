@@ -24,6 +24,7 @@ type AuthModalProps = {
   onAuthenticated: (account: AuthenticatedAccount) => void;
   onSwitchMode?: (mode: AuthMode) => void;
   initialError?: string;
+  notice?: string;
 };
 
 const API_URL = 'http://localhost/AURORA%20CINEMA/customer/backend/public/api.php';
@@ -33,7 +34,8 @@ export default function AuthModal({
   onClose,
   onAuthenticated,
   onSwitchMode,
-  initialError = ''
+  initialError = '',
+  notice = ''
 }: AuthModalProps) {
   const [mode, setMode] = useState<AuthMode>(initialMode);
   const [fullName, setFullName] = useState('');
@@ -653,6 +655,21 @@ export default function AuthModal({
               justifyContent: 'space-between'
             }}
           >
+            {notice && (
+              <div role="status" style={{
+                marginBottom: 10,
+                padding: '9px 11px',
+                borderRadius: 8,
+                border: '1px solid #bfdbfe',
+                background: '#eff6ff',
+                color: '#1e5d9b',
+                fontSize: 11.5,
+                lineHeight: 1.45,
+                fontWeight: 650
+              }}>
+                {notice}
+              </div>
+            )}
             {/* FIELDS CONTAINER (STABLE HEIGHT ACROSS MODES) */}
             <div
               style={{
