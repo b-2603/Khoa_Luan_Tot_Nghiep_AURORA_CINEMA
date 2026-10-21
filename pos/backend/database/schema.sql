@@ -42,7 +42,7 @@ CREATE TABLE IF NOT EXISTS pos_shifts (
   cash_at_close DECIMAL(12,2) NULL,
   expected_cash DECIMAL(12,2) NULL,
   cash_difference DECIMAL(12,2) NULL,
-  sales_areas VARCHAR(255) NOT NULL DEFAULT 'box_office',
+  sales_areas VARCHAR(255) NOT NULL DEFAULT 'box_ticket',
   status ENUM('active','paused','closed') NOT NULL DEFAULT 'active',
   opened_at DATETIME NOT NULL,
   closed_at DATETIME NULL,
@@ -94,6 +94,37 @@ CREATE TABLE IF NOT EXISTS pos_login_events (
   created_at TIMESTAMP NULL DEFAULT CURRENT_TIMESTAMP,
   KEY idx_pos_login_user_created (user_id, created_at),
   KEY idx_pos_login_username_created (username, created_at)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8 COLLATE=utf8_unicode_ci;
+
+CREATE TABLE IF NOT EXISTS theater_product_inventory (
+  id BIGINT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
+  theater_id BIGINT UNSIGNED NOT NULL,
+  product_id BIGINT UNSIGNED NOT NULL,
+  stock_quantity INT UNSIGNED NOT NULL DEFAULT 0,
+  reorder_level INT UNSIGNED NOT NULL DEFAULT 10,
+  last_plan_id BIGINT UNSIGNED NULL,
+  updated_at DATETIME NOT NULL,
+  UNIQUE KEY uq_theater_product_inventory (theater_id, product_id),
+  KEY idx_theater_inventory_stock (theater_id, stock_quantity)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8 COLLATE=utf8_unicode_ci;
+
+CREATE TABLE IF NOT EXISTS product_inventory_movements (
+  id BIGINT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
+  theater_id BIGINT UNSIGNED NOT NULL,
+  product_id BIGINT UNSIGNED NOT NULL,
+  order_id BIGINT UNSIGNED NULL,
+  plan_id BIGINT UNSIGNED NULL,
+  movement_type VARCHAR(30) NOT NULL,
+  quantity INT NOT NULL,
+  stock_before INT UNSIGNED NOT NULL,
+  stock_after INT UNSIGNED NOT NULL,
+  reference_code VARCHAR(80) NULL,
+  performed_by BIGINT UNSIGNED NULL,
+  performed_by_name VARCHAR(120) NULL,
+  created_at DATETIME NOT NULL,
+  KEY idx_inventory_movement_theater (theater_id, created_at),
+  KEY idx_inventory_movement_product (product_id, created_at),
+  KEY idx_inventory_movement_order (order_id)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8 COLLATE=utf8_unicode_ci;
 
 -- Demo personnel. Change these initial credentials before production use.

@@ -209,15 +209,15 @@ function aurora_calculate_seat_price($seatType, $basePrice, $rules) {
 function aurora_public_seat_pricing($basePrice, $rules) {
     return array(
         'STANDARD'=>aurora_calculate_seat_price('STANDARD', $basePrice, $rules),
-        'VIP'=>aurora_calculate_seat_price('VIP', $basePrice, $rules),
+        'VIP'=>(float)$basePrice,
         'COUPLE'=>aurora_calculate_seat_price('COUPLE', $basePrice, $rules)
     );
 }
 
-// Resolve the sell price from Aurora DB's audited ticket-price matrix. A
+// Resolve the final sell price from Aurora DB's audited ticket-price matrix. A
 // showtime-specific snapshot wins so a later policy edit cannot rewrite the
-// price of a showtime that TMS already published. Legacy/seed showtimes use
-// the active matrix row for their date and start time instead.
+// price of a showtime that TMS already published. TMS prices are final: seat
+// presentation must not add a second VIP surcharge on top of this snapshot.
 function aurora_showtime_seat_pricing($db, $showtimeId, $startsAt, $fallbackBase, $rules) {
     $ticketPrices = array();
     $showtimeId = (int)$showtimeId;
@@ -254,7 +254,7 @@ function aurora_showtime_seat_pricing($db, $showtimeId, $startsAt, $fallbackBase
     $standard = isset($ticketPrices['TICKET_REGULAR']) ? $ticketPrices['TICKET_REGULAR'] : (float)$fallbackBase;
     return array(
         'STANDARD'=>$standard,
-        'VIP'=>aurora_calculate_seat_price('VIP', $standard, $rules),
+        'VIP'=>$standard,
         'COUPLE'=>isset($ticketPrices['TICKET_COUPLE']) ? $ticketPrices['TICKET_COUPLE'] : aurora_calculate_seat_price('COUPLE', $standard, $rules)
     );
 }
@@ -1582,9 +1582,19 @@ if ($resource === 'showtime_seats') {
             ORDER BY seats.seat_row, seats.seat_number";
     $stmt = $db->query($sql);
     if (!$stmt) aurora_response(array('message' => 'Không thể tải sơ đồ ghế.'), 500);
-    $seats = array();
-    while ($seat = $stmt->fetch_assoc()) $seats[] = array('id'=>(int)$seat['id'], 'seat_row'=>$seat['seat_row'], 'seat_number'=>(int)$seat['seat_number'], 'seat_type'=>$seat['seat_type'], 'price'=>aurora_resolved_seat_price($seat['seat_type'], $seatPricing), 'is_available'=>(int)$seat['is_available'], 'held_by_you'=>(int)$seat['held_by_you']);
-    $stmt->free(); aurora_response(array('showtime_id'=>$showtimeId,'expires_at'=>$holdExpires,'hold_seconds'=>$holdSeconds,'pricing'=>$seatPricing,'pricing_source'=>'aurora_db','seats'=>$seats),200);
+    $seats = array(); $layoutRows = array(); $layoutColumns = 0;
+    while ($seat = $stmt->fetch_assoc()) {
+        $seatType = strtoupper((string)$seat['seat_type']);
+        if ($seatType === 'DOUBLE') $seatType = 'COUPLE';
+        $seatNumber = (int)$seat['seat_number']; $seatSpan = $seatType === 'COUPLE' ? 2 : 1;
+        $layoutColumns = max($layoutColumns, $seatNumber * $seatSpan);
+        if (!isset($layoutRows[$seat['seat_row']])) $layoutRows[$seat['seat_row']] = array('row'=>$seat['seat_row'],'seat_count'=>0,'seat_type'=>$seatType);
+        $layoutRows[$seat['seat_row']]['seat_count']++;
+        $seats[] = array('id'=>(int)$seat['id'], 'seat_row'=>$seat['seat_row'], 'seat_number'=>$seatNumber, 'seat_type'=>$seatType, 'price'=>aurora_resolved_seat_price($seatType, $seatPricing), 'is_available'=>(int)$seat['is_available'], 'held_by_you'=>(int)$seat['held_by_you']);
+    }
+    if ($layoutColumns < 1) $layoutColumns = 12;
+    $layout = array('version'=>1,'columns'=>$layoutColumns,'aisle_after'=>(int)floor($layoutColumns/2),'rows'=>array_values($layoutRows));
+    $stmt->free(); aurora_response(array('showtime_id'=>$showtimeId,'expires_at'=>$holdExpires,'hold_seconds'=>$holdSeconds,'pricing'=>$seatPricing,'pricing_source'=>'aurora_db','layout'=>$layout,'seats'=>$seats),200);
 }
 
 if ($resource === 'seat_hold') {

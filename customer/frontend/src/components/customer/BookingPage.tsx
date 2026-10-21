@@ -23,6 +23,7 @@ const HOLD_SECONDS = 600; // 10 phút giữ ghế
 type Lang = 'vi' | 'en';
 type Step = 1 | 2 | 3 | 4;
 type Seat = { id: number; seat_row: string; seat_number: number; seat_type: 'STANDARD' | 'VIP' | 'COUPLE' | 'DOUBLE'; price?: number; is_available: number; held_by_you?: number };
+type SeatLayout = { version:number; columns:number; aisle_after:number; rows:Array<{row:string;seat_count:number;seat_type:string}> };
 type Showtime = {
   id: number; screen_id: number; screen_name: string; total_seats: number; seats_left: number;
   theater_id: number; theater_name: string; theater_address: string; city: string;
@@ -475,6 +476,7 @@ export default function BookingPage({ movie, showtime: initShowtime, theater: in
   const [showtimesError, setShowtimesError] = useState('');
   const [showtimesReloadKey, setShowtimesReloadKey] = useState(0);
   const [seats, setSeats] = useState<Seat[]>([]);
+  const [seatLayout,setSeatLayout]=useState<SeatLayout>({version:1,columns:12,aisle_after:6,rows:[]});
   const [seatPricing, setSeatPricing] = useState<Record<string, number>>({});
   const [selectedSeatIds, setSelectedSeatIds] = useState<number[]>([]);
   const [seatsLoading, setSeatsLoading] = useState(false);
@@ -579,6 +581,7 @@ export default function BookingPage({ movie, showtime: initShowtime, theater: in
       .then(res => {
         const liveSeats = res.seats || [];
         setSeats(liveSeats);
+        setSeatLayout(res.layout||{version:1,columns:12,aisle_after:6,rows:[]});
         setSeatPricing(res.pricing || {});
         const heldIds = liveSeats.filter((seat: Seat) => seat.held_by_you).map((seat: Seat) => seat.id);
         if (heldIds.length) setSelectedSeatIds(heldIds);
@@ -659,7 +662,7 @@ export default function BookingPage({ movie, showtime: initShowtime, theater: in
     } catch (holdError) {
       setSelectedSeatIds(selectedSeatIds);
       setError(holdError instanceof Error ? holdError.message : t('Không thể giữ ghế đã chọn.','Unable to hold selected seats.',lang));
-      if (selectedShowtime) fetch(`${API}?action=showtime_seats&showtime_id=${selectedShowtime.id}`, { credentials:'include' }).then(r => r.json()).then(result => { setSeats(result.seats || []); setSeatPricing(result.pricing || {}); }).catch(() => {});
+      if (selectedShowtime) fetch(`${API}?action=showtime_seats&showtime_id=${selectedShowtime.id}`, { credentials:'include' }).then(r => r.json()).then(result => { setSeats(result.seats || []); setSeatLayout(result.layout||{version:1,columns:12,aisle_after:6,rows:[]}); setSeatPricing(result.pricing || {}); }).catch(() => {});
     }
   }
 
@@ -883,7 +886,7 @@ export default function BookingPage({ movie, showtime: initShowtime, theater: in
               seats={seats} seatsLoading={seatsLoading}
               seatRows={seatRows} sortedRows={sortedRows}
               selectedSeatIds={selectedSeatIds} onToggleSeat={toggleSeat}
-              error={error} onBack={() => goStep(1)} seatPricing={seatPricing}
+              error={error} onBack={() => goStep(1)} seatPricing={seatPricing} seatLayout={seatLayout}
             />
           )}
 
@@ -1096,7 +1099,7 @@ function ShowtimeCard({ st, selected, lang, onClick }: { st:Showtime; selected:b
 }
 
 /* ═══════════════════════════════ STEP 2 ═══════════════════════════════ */
-function SeatStep({ lang, movie, showtime, theater, seats, seatsLoading, seatRows, sortedRows, selectedSeatIds, onToggleSeat, error, onBack, seatPricing }: any) {
+function SeatStep({ lang, movie, showtime, theater, seats, seatsLoading, seatRows, sortedRows, selectedSeatIds, onToggleSeat, error, onBack, seatPricing, seatLayout }: any) {
   const availableSeatCount = seats.filter((seat: Seat) => seat.is_available).length;
   const selectedSeatCount = selectedSeatIds.length;
   return (
@@ -1158,87 +1161,11 @@ function SeatStep({ lang, movie, showtime, theater, seats, seatsLoading, seatRow
         <div style={{ borderLeft:'1px solid rgba(255,255,255,.15)', paddingLeft:14, textAlign:'right' }}><b style={{ display:'block', color:'#f4c04a', fontSize:17 }}>{selectedSeatCount}</b><span style={{ color:'#a8c0d9', fontSize:10 }}>{t('đang giữ','held',lang)}</span></div>
       </div>
 
-      {/* Legend */}
-      <div className="aurora-booking-card" style={{ padding: '12px 18px', marginBottom: 24, display: 'flex', gap: 18, flexWrap: 'wrap', justifyContent: 'center' }}>
-        {[
-          { bg: '#f8fafc', border: '#cbd5e1', color: '#475569', label: t('Ghế thường', 'Standard', lang) },
-          { bg: '#fef3c7', border: '#f59e0b', color: '#92400e', label: `Ghế VIP · ${fmtMoney(Number(seatPricing?.VIP || 0))}` },
-          { bg: '#fce7f3', border: '#f472b6', color: '#9d174d', label: t('Ghế đôi (Couple - x2)', 'Couple seat (x2)', lang) },
-          { bg: '#0d1b2e', border: '#f4c04a', color: '#f4c04a', label: t('Đang chọn', 'Selected', lang) },
-          { bg: '#e2e8f0', border: '#cbd5e1', color: '#94a3b8', label: t('Đã bán', 'Taken', lang) },
-        ].map(item => (
-          <div key={item.label} style={{ display: 'flex', alignItems: 'center', gap: 7, fontSize: 11.5, color: '#475569', fontWeight: 600 }}>
-            <div style={{ width: 22, height: 16, background: item.bg, border: `1.5px solid ${item.border}`, borderRadius: '4px 4px 6px 6px', flexShrink: 0, boxShadow: '0 1px 2px rgba(0,0,0,0.05)' }} />
-            <span>{item.label}</span>
-          </div>
-        ))}
-      </div>
-
-      {/* Screen */}
-      <div style={{ textAlign: 'center', marginBottom: 28 }}>
-        <div style={{
-          width: '78%', maxWidth: 580, height: 16,
-          background: 'linear-gradient(90deg, #94a3b8 0%, #cbd5e1 50%, #94a3b8 100%)',
-          borderRadius: '50% 50% 0 0 / 100% 100% 0 0',
-          margin: '0 auto 10px',
-          boxShadow: '0 8px 24px rgba(13,27,46,0.12)',
-        }} />
-        <span style={{ fontSize: 11, letterSpacing: 4, color: '#94a3b8', fontWeight: 800 }}>
-          {t('MÀN HÌNH CHIẾU', 'SCREEN', lang)}
-        </span>
-      </div>
-
-      {/* Seat grid */}
-      {seatsLoading ? (
-        <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', padding: '56px 0' }}>
-          <div style={{ width: 44, height: 44, border: '3px solid #e2e8f0', borderTop: '3px solid #0d1b2e', borderRadius: '50%', animation: 'spin 0.8s linear infinite' }} />
-          <p style={{ color: '#64748b', marginTop: 14, fontSize: 13, fontWeight: 600 }}>{t('Đang tải sơ đồ ghế...', 'Loading seats...', lang)}</p>
-        </div>
-      ) : (
-        <div style={{ overflowX: 'auto', paddingBottom: 12 }}>
-          <div style={{ display: 'flex', flexDirection: 'column', gap: 7, minWidth: 480, margin: '0 auto', width: 'fit-content' }}>
-            {sortedRows.map((row: string) => (
-              <div key={row} style={{ display: 'flex', alignItems: 'center', gap: 8, justifyContent: 'center' }}>
-                <span style={{ width: 22, fontSize: 11.5, fontWeight: 800, color: '#64748b', textAlign: 'center', flexShrink: 0 }}>{row}</span>
-                <div style={{ display: 'flex', gap: 5, alignItems: 'center', flexWrap: 'nowrap' }}>
-                  {(seatRows[row] as Seat[]).sort((a, b) => a.seat_number - b.seat_number).map(seat => {
-                    const isSelected = selectedSeatIds.includes(seat.id);
-                    const c = seatColor(seat, isSelected);
-                    const isDouble = seat.seat_type === 'COUPLE' || seat.seat_type === 'DOUBLE';
-                    const price = getSeatPrice(seat, Number(showtime.ticket_price));
-                    const typeName = seat.seat_type === 'VIP' ? 'VIP' : isDouble ? t('Ghế đôi', 'Couple', lang) : t('Ghế thường', 'Standard', lang);
-                    return (
-                      <button
-                        key={seat.id}
-                        disabled={!seat.is_available}
-                        onClick={() => onToggleSeat(seat)}
-                        title={`${seat.seat_row}${seat.seat_number} · ${typeName} · ${fmtMoney(price)}`}
-                        style={{
-                          width: isDouble ? 72 : 34, height: 28,
-                          background: c.bg, border: `1.5px solid ${c.border}`, color: c.color,
-                          borderRadius: '5px 5px 8px 8px', fontSize: isDouble ? 10 : 10, fontWeight: 800,
-                          cursor: seat.is_available ? 'pointer' : 'not-allowed',
-                          padding: 0, flexShrink: 0,
-                          transform: isSelected ? 'scale(1.12)' : 'scale(1)',
-                          boxShadow: isSelected
-                            ? '0 3px 10px rgba(13,27,46,0.4), 0 0 0 2px #f4c04a'
-                            : seat.is_available
-                            ? '0 1px 2px rgba(0,0,0,0.05)'
-                            : 'none',
-                          transition: 'all 0.15s cubic-bezier(0.16, 1, 0.3, 1)',
-                        }}
-                      >
-                        {isDouble ? `ĐÔI ${seat.seat_number}` : seat.seat_number}
-                      </button>
-                    );
-                  })}
-                </div>
-                <span style={{ width: 22, fontSize: 11.5, fontWeight: 800, color: '#64748b', textAlign: 'center', flexShrink: 0 }}>{row}</span>
-              </div>
-            ))}
-          </div>
-        </div>
-      )}
+      <section className="aurora-seat-map" aria-label={t('Sơ đồ ghế phòng chiếu','Cinema seating map',lang)}>
+        <div className="aurora-cinema-screen"><span>{t('MÀN HÌNH CHIẾU','SCREEN',lang)}</span><small>{t('Tất cả ghế đều hướng về màn hình','All seats face the screen',lang)}</small></div>
+        {seatsLoading?<div className="aurora-seat-loading"><div/><p>{t('Đang tải sơ đồ ghế...','Loading seats...',lang)}</p></div>:<div className="aurora-seat-rows">{sortedRows.map((row:string)=>{const rowSeats=(seatRows[row] as Seat[]).sort((a,b)=>a.seat_number-b.seat_number);const isCoupleRow=rowSeats.every(seat=>seat.seat_type==='COUPLE'||seat.seat_type==='DOUBLE');const columns=Math.max(1,Number(seatLayout?.columns||12));const coupleOffset=isCoupleRow?Math.floor((columns-rowSeats.length*2)/2)+1:1;const template=`repeat(${columns},minmax(34px,1fr))`;return <div className={`aurora-seat-row ${isCoupleRow?'couple-row':''}`} key={row}><b className="aurora-row-label">{row}</b><div className="aurora-seat-row-grid" style={{gridTemplateColumns:template}}>{rowSeats.map(seat=>{const isCouple=seat.seat_type==='COUPLE'||seat.seat_type==='DOUBLE';const columnStart=isCouple?coupleOffset+(seat.seat_number-1)*2:seat.seat_number;const selected=selectedSeatIds.includes(seat.id);const typeName=seat.seat_type==='VIP'?'VIP':isCouple?t('Ghế đôi','Couple',lang):t('Ghế thường','Standard',lang);return <button key={seat.id} type="button" style={{gridColumn:`${columnStart} / span ${isCouple?2:1}`}} disabled={!seat.is_available} onClick={()=>onToggleSeat(seat)} className={`aurora-seat aurora-seat-${isCouple?'couple':seat.seat_type.toLowerCase()} ${selected?'selected':''}`} title={`${seat.seat_row}${seat.seat_number} · ${typeName} · ${fmtMoney(getSeatPrice(seat,Number(showtime.ticket_price)))}`}><span>{seat.seat_row}{seat.seat_number}</span></button>})}</div><b className="aurora-row-label">{row}</b></div>})}</div>}
+        <div className="aurora-seat-legend"><span><i className="standard"/>{t('Ghế thường','Standard',lang)}</span><span><i className="vip"/>{t('Ghế VIP','VIP',lang)}</span><span><i className="couple"/>{t('Ghế đôi','Couple',lang)}</span><span><i className="selected"/>{t('Đang chọn','Selected',lang)}</span><span><i className="occupied"/>{t('Đã bán','Taken',lang)}</span></div>
+      </section>
 
       {/* Bottom info bar */}
       <div className="aurora-booking-card" style={{ marginTop: 24, padding: '14px 20px', display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: 12 }}>

@@ -86,13 +86,31 @@ class CustomerController extends Controller
         $item = DB::table('showtimes')->where('id', $showtime)->where('status', 'OPEN')->first();
         if (!$item) return response()->json(['message' => 'Suất chiếu không tồn tại hoặc đã đóng.'], 404);
 
+        $availabilityChecks = "EXISTS (SELECT 1 FROM booking_seats bs INNER JOIN bookings b ON b.id = bs.booking_id WHERE bs.seat_id = seats.id AND bs.showtime_id = ? AND b.status NOT IN ('CANCELLED', 'EXPIRED'))";
+        $bindings = [$showtime];
+        if (DB::getSchemaBuilder()->hasTable('seat_holds')) {
+            $availabilityChecks .= " OR EXISTS (SELECT 1 FROM seat_holds h WHERE h.seat_id=seats.id AND h.showtime_id=? AND h.expires_at>NOW())";
+            $bindings[] = $showtime;
+        }
+        if (DB::getSchemaBuilder()->hasTable('tms_showtime_seat_locks')) {
+            $availabilityChecks .= " OR EXISTS (SELECT 1 FROM tms_showtime_seat_locks sl WHERE sl.seat_id=seats.id AND sl.showtime_id=?)";
+            $bindings[] = $showtime;
+        }
         $seats = DB::table('seats')->select('seats.*')->selectRaw(
-            "CASE WHEN EXISTS (SELECT 1 FROM booking_seats bs INNER JOIN bookings b ON b.id = bs.booking_id WHERE bs.seat_id = seats.id AND bs.showtime_id = ? AND b.status NOT IN ('CANCELLED', 'EXPIRED')) THEN 0 ELSE 1 END AS is_available",
-            [$showtime]
+            "CASE WHEN {$availabilityChecks} THEN 0 ELSE 1 END AS is_available",
+            $bindings
         )->where('screen_id', $item->screen_id)
             ->orderBy('seat_row')->orderBy('seat_number')->get();
 
-        return response()->json(['showtime_id' => $showtime, 'seats' => $seats]);
+        $columns = 0; $rows = [];
+        foreach ($seats as $seat) {
+            $seat->seat_type = strtoupper((string)$seat->seat_type) === 'DOUBLE' ? 'COUPLE' : strtoupper((string)$seat->seat_type);
+            $columns = max($columns, (int)$seat->seat_number * ($seat->seat_type === 'COUPLE' ? 2 : 1));
+            if (!isset($rows[$seat->seat_row])) $rows[$seat->seat_row] = ['row'=>$seat->seat_row,'seat_count'=>0,'seat_type'=>$seat->seat_type];
+            $rows[$seat->seat_row]['seat_count']++;
+        }
+        $columns = max(1, $columns);
+        return response()->json(['showtime_id'=>$showtime,'layout'=>['version'=>1,'columns'=>$columns,'aisle_after'=>(int)floor($columns/2),'rows'=>array_values($rows)],'seats'=>$seats]);
     }
 
     public function createBooking(Request $request): JsonResponse

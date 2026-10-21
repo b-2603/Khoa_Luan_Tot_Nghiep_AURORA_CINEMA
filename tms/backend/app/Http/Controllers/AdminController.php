@@ -510,8 +510,8 @@ class AdminController
             updated_at DATETIME NULL
         ) ENGINE=InnoDB DEFAULT CHARSET=utf8 COLLATE=utf8_unicode_ci");
         $this->db->query("INSERT INTO pos_counter_roles (code,name,description,can_sell_tickets,can_sell_concessions,can_redeem_online_booking,can_sell_merchandise,is_active,sort_order,updated_at) VALUES
-            ('concession','Concession','Đổi vé online và bán bắp nước trực tiếp',0,1,1,0,1,10,NOW()),
-            ('box_ticket','Box Ticket','Bán vé tại quầy và bán kèm bắp nước',1,1,0,0,1,20,NOW()),
+            ('box_ticket','Box Ticket','Bán vé tại quầy, chọn ghế và đổi vé online',1,0,1,0,1,10,NOW()),
+            ('concession','Concession','Bán bắp nước, thức ăn và combo',0,1,0,0,1,20,NOW()),
             ('merchandise','Merchandise','Bán quà lưu niệm và sản phẩm phim',0,0,0,1,1,30,NOW())
             ON DUPLICATE KEY UPDATE name=VALUES(name),description=VALUES(description),can_sell_tickets=VALUES(can_sell_tickets),can_sell_concessions=VALUES(can_sell_concessions),can_redeem_online_booking=VALUES(can_redeem_online_booking),can_sell_merchandise=VALUES(can_sell_merchandise),is_active=VALUES(is_active),sort_order=VALUES(sort_order),updated_at=NOW()");
         // Counters belong to a theater. This avoids a free-text counter being
@@ -582,7 +582,7 @@ class AdminController
             cash_at_close DECIMAL(12,2) NULL,
             expected_cash DECIMAL(12,2) NULL,
             cash_difference DECIMAL(12,2) NULL,
-            sales_areas VARCHAR(255) NOT NULL DEFAULT 'box_office',
+            sales_areas VARCHAR(255) NOT NULL DEFAULT 'box_ticket',
             status ENUM('active','paused','closed') NOT NULL DEFAULT 'active',
             opened_at DATETIME NOT NULL,
             closed_at DATETIME NULL,
@@ -600,7 +600,7 @@ class AdminController
         $shiftColumns = array(
             'expected_cash' => 'DECIMAL(12,2) NULL',
             'cash_difference' => 'DECIMAL(12,2) NULL',
-            'sales_areas' => "VARCHAR(255) NOT NULL DEFAULT 'box_office'",
+            'sales_areas' => "VARCHAR(255) NOT NULL DEFAULT 'box_ticket'",
             'close_note' => 'TEXT NULL',
             'closed_by' => 'VARCHAR(120) NULL',
             'authorized_by_tms_user_id' => 'BIGINT UNSIGNED NULL',
@@ -611,6 +611,8 @@ class AdminController
             $exists = $this->db->query("SHOW COLUMNS FROM pos_shifts LIKE '{$column}'");
             if (!$exists || $exists->num_rows === 0) $this->db->query("ALTER TABLE pos_shifts ADD COLUMN {$column} {$definition}");
         }
+        $this->db->query("UPDATE pos_shifts SET sales_areas=REPLACE(sales_areas,'box_office','box_ticket') WHERE sales_areas LIKE '%box_office%'");
+        $this->db->query("ALTER TABLE pos_shifts MODIFY sales_areas VARCHAR(255) NOT NULL DEFAULT 'box_ticket'");
         $workScheduleColumn = $this->db->query("SHOW COLUMNS FROM pos_shifts LIKE 'work_schedule_id'");
         if (!$workScheduleColumn || $workScheduleColumn->num_rows === 0) $this->db->query("ALTER TABLE pos_shifts ADD COLUMN work_schedule_id BIGINT UNSIGNED NULL");
 
@@ -637,6 +639,7 @@ class AdminController
             KEY idx_pos_work_date_status (theater_id,work_date,status),
             KEY idx_pos_work_counter (theater_id,counter,work_date)
         ) ENGINE=InnoDB DEFAULT CHARSET=utf8 COLLATE=utf8_unicode_ci");
+        $this->db->query("UPDATE pos_work_schedules SET sales_areas=REPLACE(sales_areas,'box_office','box_ticket') WHERE sales_areas LIKE '%box_office%'");
 
         if ($this->tableExists('orders')) {
             $shiftColumn = $this->db->query("SHOW COLUMNS FROM orders LIKE 'pos_shift_id'");
@@ -957,8 +960,9 @@ class AdminController
             if(!$this->db->query("INSERT INTO pos_shifts (user_id,theater_id,cinema_name,counter,sales_areas,initial_cash,status,opened_at,notes,work_schedule_id,authorized_by_tms_user_id,authorized_by_name,authorized_by_role,created_at,updated_at) VALUES ({$userId},{$theaterId},'{$cinemaEsc}','{$counterEsc}','{$areasEsc}',{$initial},'active',NOW(),'{$notesEsc}',{$scheduleValue},{$actorIdSql},'{$actorNameEsc}','{$roleEsc}',NOW(),NOW())")) jsonResponse(array('success'=>false,'message'=>'Không thể mở phiên bán hàng: '.$this->db->error),500);
             $createdShiftId=(int)$this->db->insert_id;
             if($scheduleId>0)$this->db->query("UPDATE pos_work_schedules SET status='active',linked_shift_id={$createdShiftId},updated_at=NOW() WHERE id={$scheduleId} AND theater_id={$theaterId}");
-            $this->auditPosManagement($theaterId,$userId,'SHIFT_AUTHORIZED',''.$actorName.' ('.($role==='supervisor'?'Supervisor':'Admin Rạp').') đã cấp và mở phiên bán hàng tại '.$counter.'.');
-            jsonResponse(array('success'=>true,'message'=>'Đã cấp quyền đăng nhập và mở phiên bán hàng cho '.$staff['full_name'].'.','data'=>array('id'=>$createdShiftId)),201);
+            $areaNames=array('box_ticket'=>'Box Ticket','concession'=>'Concession','merchandise'=>'Merchandise');$grantedNames=array();foreach($areas as $area)$grantedNames[]=$areaNames[$area];
+            $this->auditPosManagement($theaterId,$userId,'SHIFT_AUTHORIZED',''.$actorName.' ('.($role==='supervisor'?'Supervisor':'Admin Rạp').') đã cấp phiên tại '.$counter.' với quyền: '.implode(', ',$grantedNames).'.');
+            jsonResponse(array('success'=>true,'message'=>'Đã cấp quyền '.implode(', ',$grantedNames).' và mở phiên bán hàng cho '.$staff['full_name'].'.','data'=>array('id'=>$createdShiftId,'sales_areas'=>$areas)),201);
         }
         $shiftId=isset($input['id'])?(int)$input['id']:0;
         $shift=$this->row("SELECT * FROM pos_shifts WHERE id={$shiftId} AND theater_id={$theaterId} LIMIT 1");

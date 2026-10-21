@@ -52,10 +52,14 @@ CREATE TABLE IF NOT EXISTS product_plan_items (
   cost_price DECIMAL(12,2) NOT NULL DEFAULT 0,
   sale_price DECIMAL(12,2) NOT NULL DEFAULT 0,
   planned_quantity INT UNSIGNED NOT NULL DEFAULT 0,
+  monthly_sales_target INT UNSIGNED NOT NULL DEFAULT 0,
   note VARCHAR(500) NULL,
   UNIQUE KEY uq_product_plan_item(plan_id,product_id),
   KEY idx_product_plan_item_product(product_id)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8 COLLATE=utf8_unicode_ci;
+
+SET @ddl = IF((SELECT COUNT(*) FROM information_schema.COLUMNS WHERE TABLE_SCHEMA=DATABASE() AND TABLE_NAME='product_plan_items' AND COLUMN_NAME='monthly_sales_target')=0,'ALTER TABLE product_plan_items ADD monthly_sales_target INT UNSIGNED NOT NULL DEFAULT 0 AFTER planned_quantity','SELECT 1'); PREPARE stmt FROM @ddl; EXECUTE stmt; DEALLOCATE PREPARE stmt;
+UPDATE product_plan_items SET monthly_sales_target=planned_quantity WHERE monthly_sales_target=0 AND planned_quantity>0;
 
 CREATE TABLE IF NOT EXISTS product_plan_theaters (
   id BIGINT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
@@ -69,4 +73,35 @@ CREATE TABLE IF NOT EXISTS product_plan_theaters (
   response_note VARCHAR(500) NULL,
   UNIQUE KEY uq_product_plan_theater(plan_id,theater_id),
   KEY idx_product_plan_theater_scope(theater_id,status)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8 COLLATE=utf8_unicode_ci;
+
+CREATE TABLE IF NOT EXISTS theater_product_inventory (
+  id BIGINT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
+  theater_id BIGINT UNSIGNED NOT NULL,
+  product_id BIGINT UNSIGNED NOT NULL,
+  stock_quantity INT UNSIGNED NOT NULL DEFAULT 0,
+  reorder_level INT UNSIGNED NOT NULL DEFAULT 10,
+  last_plan_id BIGINT UNSIGNED NULL,
+  updated_at DATETIME NOT NULL,
+  UNIQUE KEY uq_theater_product_inventory(theater_id,product_id),
+  KEY idx_theater_inventory_stock(theater_id,stock_quantity)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8 COLLATE=utf8_unicode_ci;
+
+CREATE TABLE IF NOT EXISTS product_inventory_movements (
+  id BIGINT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
+  theater_id BIGINT UNSIGNED NOT NULL,
+  product_id BIGINT UNSIGNED NOT NULL,
+  order_id BIGINT UNSIGNED NULL,
+  plan_id BIGINT UNSIGNED NULL,
+  movement_type VARCHAR(30) NOT NULL,
+  quantity INT NOT NULL,
+  stock_before INT UNSIGNED NOT NULL,
+  stock_after INT UNSIGNED NOT NULL,
+  reference_code VARCHAR(80) NULL,
+  performed_by BIGINT UNSIGNED NULL,
+  performed_by_name VARCHAR(120) NULL,
+  created_at DATETIME NOT NULL,
+  KEY idx_inventory_movement_theater(theater_id,created_at),
+  KEY idx_inventory_movement_product(product_id,created_at),
+  KEY idx_inventory_movement_order(order_id)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8 COLLATE=utf8_unicode_ci;
