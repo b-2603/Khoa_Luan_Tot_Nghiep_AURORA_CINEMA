@@ -51,6 +51,15 @@ Thời gian TMS dùng múi giờ Việt Nam (`Asia/Ho_Chi_Minh`, UTC+07:00); cá
 - `GET|POST|PUT ?action=pos-work-schedules` — lập ca với quầy và các khu vực nghiệp vụ được chọn cho từng ca.
 - `GET|POST|PUT ?action=pos-sessions` — cấp/mở, tạm dừng, tiếp tục hoặc kết phiên. Quầy và quyền thao tác được lưu theo phiên trong `pos_shifts`, không gắn cố định với tài khoản nhân viên.
 
+### Trung tâm thông báo
+
+- `GET ?action=notifications&filter=all|unread|actionable&limit=50` — đồng bộ và đọc hộp thư theo đúng tài khoản, vai trò và `theater_id`. Nguồn hiện có gồm hoàn tiền, yêu cầu hủy giao dịch, kế hoạch phim, phân bố hàng hóa, KPI hàng hóa và phê duyệt Marketing.
+- `POST ?action=notifications` với body `{ "operation": "read", "notification_id": 1 }`, `{ "operation": "dismiss", "notification_id": 1 }` hoặc `{ "operation": "read_all" }` — lưu trạng thái riêng cho từng người dùng trong `tms_notification_receipts`.
+- Phân bố hàng hóa dùng `entity_type=product_distribution_assignment` và chỉ gửi đến Admin Rạp của đúng rạp nhận. Thông báo còn hiệu lực khi phân bố ở trạng thái `published` và tự đóng khi rạp xác nhận.
+- `summary` trả `unread`, `actionable`, `priority`, `total`, thời điểm đồng bộ và xác nhận nguồn `aurora_db`. Frontend tự làm mới mỗi 10 giây và khi tab trình duyệt được kích hoạt lại.
+
+Schema có thể triển khai độc lập bằng `database/tms_notifications.sql`; API cũng tự tạo hai bảng theo cách idempotent trên môi trường hiện hữu.
+
 ### Quy trình kế hoạch phim Marketing
 
 - `GET ?action=marketing-movies` — Danh sách phim dùng chung tương ứng với màn “Danh sách phim” của Admin Tổng. Phim `draft` không được trả trong danh sách; phản hồi `meta.approved_candidates` chỉ chứa phim thuộc kế hoạch của Marketing đã được Admin Tổng duyệt.
@@ -69,6 +78,28 @@ Thời gian TMS dùng múi giờ Việt Nam (`Asia/Ho_Chi_Minh`, UTC+07:00); cá
 Khi được duyệt, kế hoạch chuyển sang `published` và tạo bản ghi `movie_allocations` cho từng rạp đề xuất để Admin Rạp lên lịch chiếu. Các phản hồi được lưu trong `marketing_movie_plan_review_items`; khi Marketing gửi lại, phản hồi đang mở chuyển thành `resolved`. Mọi lần tạo, cập nhật, gửi, thu hồi, duyệt và công bố phim được ghi trong `marketing_movie_plan_history` của `aurora_db`.
 
 Hồ sơ phim do Marketing tạo được lưu trong `movies` với `status = 'draft'` và `marketing_owner_id`. Phim chỉ chuyển sang `coming_soon` khi kế hoạch đã được Admin Tổng duyệt và Marketing thực hiện thao tác `publish-movie`.
+
+## Danh mục hàng hóa dùng chung
+
+- `GET ?action=product-catalog-workflow` — đọc hàng hóa và các nhóm sản phẩm trực tiếp từ `aurora_db`.
+- Hỗ trợ `q={từ khóa}` để tìm theo SKU, tên hoặc nhóm và `category={mã nhóm}` để lọc chính xác theo nhóm đang hoạt động.
+- `meta.categories` trả về cấu hình nhóm cùng `product_count`; `meta.filters` phản ánh bộ lọc đã áp dụng; `summary.filtered` là số hàng hóa khớp bộ lọc.
+- Mã nhóm không tồn tại hoặc đã ngừng sử dụng trả HTTP `422`; Admin Rạp chỉ nhận hàng hóa đang phát hành.
+- `POST ?action=product-catalog-workflow` — Admin Tổng tạo hàng hóa nháp; SKU được sinh tự động theo nhóm.
+- `PUT ?action=product-catalog-workflow` — cập nhật hàng hóa khi còn ở trạng thái `draft`.
+- `DELETE ?action=product-catalog-workflow&id={id}` — xóa hàng hóa nháp chưa nằm trong kế hoạch.
+- `POST ?action=product-product-image` — tải ảnh JPG/PNG/WebP tối đa 5 MB và trả URL ảnh trên máy chủ.
+- `GET ?action=product-plans` — Admin Tổng xem toàn bộ kế hoạch; Admin Rạp chỉ xem kế hoạch đã gửi đúng rạp mình phụ trách.
+- `POST/PUT ?action=product-plans` — tạo hoặc sửa kế hoạch nháp, gồm hàng hóa, chỉ tiêu mỗi rạp trong một tháng và danh sách rạp nhận.
+- `PUT ?action=product-plans` với `operation=send` — phát hành hàng hóa, gửi kế hoạch và cấp tồn kho theo rạp trong cùng một transaction.
+- `PUT ?action=product-plans` với `operation=acknowledge` — Admin Rạp xác nhận đã tiếp nhận kế hoạch.
+- `DELETE ?action=product-plans&id={id}` — xóa kế hoạch khi còn ở trạng thái nháp.
+
+Schema nghiệp vụ nằm tại `database/product_planning.sql`. Có thể áp dụng và kiểm tra idempotent bằng PHP CLI của WAMP:
+
+```powershell
+& '..\..\bin\php\php5.2.6\php.exe' tms\backend\database\apply_product_planning.php
+```
 
 Các resource `movies`, `screens`, `schedules`, `staff`, `ticket-types`, `products`, `vouchers`, `customers`, `theaters`, `promotions`, `movie-plans`, `movie-allocations` hỗ trợ `GET`; resource được cấp quyền hỗ trợ thêm `POST`, `PUT`, `DELETE` theo nghiệp vụ.
 

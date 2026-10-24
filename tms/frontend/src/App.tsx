@@ -4,6 +4,7 @@ import AccountManagementPage from './components/AccountManagementPage';
 import MarketingWorkspace, { MarketingPlanApproval } from './components/MarketingWorkspace';
 import NotificationCenter from './components/NotificationCenter';
 import ProductCatalogManagement from './components/ProductCatalogManagement';
+import AuditLogManagement from './components/AuditLogManagement';
 import './components/MarketingWorkspace.css';
 import './components/MarketingReviewHierarchy.css';
 import './components/MarketingWorkspace.layout.css';
@@ -1149,6 +1150,20 @@ export default function App() {
   };
 
   const isTicketAvailableForSchedule = (ticket: TicketType, showDate: string, startTime: string) => getEffectiveTicketPrice(ticket, showDate, startTime) >= 0;
+  const allAvailableScheduleTicketsSelected = ticketTypesList.some(ticket => isTicketAvailableForSchedule(ticket, scheduleForm.show_date, scheduleForm.start_time))
+    && ticketTypesList
+      .filter(ticket => isTicketAvailableForSchedule(ticket, scheduleForm.show_date, scheduleForm.start_time))
+      .every(ticket => scheduleForm.ticket_type_ids.includes(Number(ticket.id)));
+  const toggleAllScheduleTicketTypes = () => {
+    setScheduleForm(current => {
+      const availableTickets = ticketTypesList.filter(ticket => isTicketAvailableForSchedule(ticket, current.show_date, current.start_time));
+      const availableIds = availableTickets.map(ticket => Number(ticket.id));
+      const allSelected = availableIds.length > 0 && availableIds.every(id => current.ticket_type_ids.includes(id));
+      const nextIds = allSelected ? [] : availableIds;
+      const selectedPrices = allSelected ? [] : availableTickets.map(ticket => getEffectiveTicketPrice(ticket, current.show_date, current.start_time));
+      return { ...current, ticket_type_ids: nextIds, ticket_price: selectedPrices.length ? Math.min(...selectedPrices) : 0 };
+    });
+  };
   const isStaffTicket = (ticket: TicketType | null) => ticket?.code === 'TICKET_STAFF_A' || ticket?.code === 'TICKET_STAFF_B';
   const isPricingCellUnavailable = (ticket: TicketType | null, day: string) => ticket?.code === 'TICKET_STAFF_A' ? day === 'holiday' : ticket?.code === 'TICKET_STAFF_B' ? day !== 'weekday' : false;
 
@@ -4460,31 +4475,7 @@ export default function App() {
     );
 
     // AUDIT LOG
-    if (a === 'audit_log' || a === 'Audit Log') return (
-      <div className="tms-card-table">
-        <div className="tms-table-toolbar"><div style={{fontWeight:700}}>Audit Log — Lịch sử hoạt động hệ thống</div></div>
-        <table className="tms-data-table">
-          <thead><tr><th>Thời gian</th><th>Người dùng</th><th>Vai trò</th><th>Hành động</th><th>Đối tượng</th><th>IP</th></tr></thead>
-          <tbody>{[
-            {time:'27/09 00:15',user:'admin_tong',role:'super_admin',action:'LOGIN',target:'TMS System',ip:'192.168.1.1'},
-            {time:'27/09 00:10',user:'admin_rap',role:'cinema_admin',action:'UPDATE_SCHEDULE',target:'Lịch chiếu #SC048',ip:'192.168.1.2'},
-            {time:'27/09 00:08',user:'accounting',role:'accounting',action:'APPROVE_REFUND',target:'TXN-260892',ip:'192.168.1.3'},
-            {time:'27/09 00:05',user:'supervisor',role:'supervisor',action:'CREATE_REFUND_REQUEST',target:'TXN-260901',ip:'192.168.1.4'},
-            {time:'26/09 23:50',user:'admin_tong',role:'super_admin',action:'ALLOCATE_MOVIE',target:'Avatar → Rạp 1,2,3',ip:'192.168.1.1'},
-            {time:'26/09 23:45',user:'admin_tong',role:'super_admin',action:'CREATE_USER',target:'@admin_rap2',ip:'192.168.1.1'},
-          ].map((log,i)=>(
-            <tr key={i}>
-              <td style={{fontSize:'0.8rem',color:'#64748b'}}>{log.time}</td>
-              <td><code>@{log.user}</code></td>
-              <td><span className={`role-badge-pill ${log.role}`} style={{fontSize:'0.7rem'}}>{ROLE_CONFIGS[log.role as TMSRole]?.badge||log.role}</span></td>
-              <td style={{fontWeight:700,fontSize:'0.82rem',fontFamily:'monospace',color:'#2563eb'}}>{log.action}</td>
-              <td style={{fontSize:'0.82rem'}}>{log.target}</td>
-              <td style={{fontSize:'0.78rem',color:'#94a3b8'}}>{log.ip}</td>
-            </tr>
-          ))}</tbody>
-        </table>
-      </div>
-    );
+    if (a === 'audit_log' || a === 'Audit Log') return <AuditLogManagement apiBase={API_BASE} notify={showSystemNotice}/>;
 
     // SETTINGS
     if (a === 'settings' || a === 'Cấu hình hệ thống') return (
@@ -5066,7 +5057,7 @@ export default function App() {
                     <div className="schedule-time-slot-list">{scheduleForm.time_slots.map((slot, index) => { const availability=scheduleSlotAvailability[slot.key]; const scheduleRooms=getScheduleScreens(); const selectedTimeChecked=availability?.requested?.start===slot.start_time&&Number(availability.screen?.id||0)===Number(slot.screen_id); return <div className={`schedule-time-slot-row ${selectedTimeChecked&&!availability?.requested?.available?'conflict':''}`} key={slot.key}><span className="schedule-time-slot-number">{index + 1}</span><div><label className="tms-form-label">Phòng chiếu <em>*</em></label><select required className="tms-form-select" value={slot.screen_id || 0} onChange={e => { const screenId=Number(e.target.value); delete scheduleSlotManuallyEdited.current[slot.key]; setScheduleSlotAvailability(current=>{const next={...current};delete next[slot.key];return next;}); const slots=scheduleForm.time_slots.map(item=>item.key===slot.key?{...item,screen_id:screenId}:item); setScheduleForm({...scheduleForm,time_slots:slots,screen_ids:Array.from(new Set(slots.map(item=>item.screen_id).filter(Boolean)))}); }}><option value={0} disabled>Chọn phòng</option>{scheduleRooms.map(s=><option key={s.id} value={s.id}>{screenDisplayName(s.name,s.id)} · {s.total_seats} ghế</option>)}</select><small>{scheduleRooms.find(s=>Number(s.id)===Number(slot.screen_id))?.screen_type || 'Phòng đang hoạt động'}</small></div><div><label className="tms-form-label">Giờ bắt đầu <em>*</em></label><div className="schedule-clock-control"><select aria-label="Giờ bắt đầu" value={String(slot.start_time).slice(0,2)} onChange={event=>updateScheduleSlotStart(slot.key,`${event.target.value}:${String(slot.start_time).slice(3,5)}`)}>{Array.from({length:24},(_,hour)=>String(hour).padStart(2,'0')).map(hour=><option key={hour}>{hour}</option>)}</select><i>:</i><select aria-label="Phút bắt đầu" value={String(slot.start_time).slice(3,5)} onChange={event=>updateScheduleSlotStart(slot.key,`${String(slot.start_time).slice(0,2)}:${event.target.value}`)}>{Array.from(new Set([...Array.from({length:12},(_,minute)=>String(minute*5).padStart(2,'0')),String(slot.start_time).slice(3,5)])).sort().map(minute=><option key={minute}>{minute}</option>)}</select><b>24H</b></div><small>Định dạng 24 giờ</small>{selectedTimeChecked&&!availability?.requested?.available?<span className="schedule-slot-conflict"><AlertTriangle size={12}/> Giờ này bị trùng{availability?.suggested&&<button type="button" onClick={()=>acceptScheduleSuggestion(slot.key,availability.suggested!)}>Dùng {availability.suggested.start}–{availability.suggested.end}</button>}</span>:availability?.occupied?.length?<span className="schedule-busy-slots">Đã bận: {availability.occupied.filter(item=>item.source==='saved').map(item=>`${item.start}–${item.end}`).join(', ') || 'suất đang thêm'}</span>:<span className="schedule-busy-slots free">Phòng còn trống trong ngày</span>}</div><div><label className="tms-form-label">Giờ kết thúc tự động</label><output>{slot.end_time}</output><small>{(scheduleMoviesList.find(movie => Number(movie.id) === Number(scheduleForm.movie_id)) || moviesList.find(movie => Number(movie.id) === Number(scheduleForm.movie_id)))?.duration_minutes || 0} phút</small></div>{!scheduleForm.id && <button type="button" className="schedule-time-slot-remove" disabled={scheduleForm.time_slots.length === 1} aria-label="Xóa suất chiếu" onClick={() => { const slots = scheduleForm.time_slots.filter(item => item.key !== slot.key); setScheduleForm({...scheduleForm, time_slots:slots, screen_ids:Array.from(new Set(slots.map(item=>item.screen_id).filter(Boolean))), start_time:slots[0].start_time, end_time:slots[0].end_time}); }}><Trash2 size={15}/></button>}</div>; })}</div>
                     {!scheduleForm.id && <button type="button" className="schedule-time-slot-add" onClick={addAutomaticScheduleSlot}><Plus size={15}/> Thêm suất chiếu</button>}
                     <div className="schedule-section-heading pricing"><DollarSign size={16}/><div><b>Loại vé và ghi chú vận hành</b><small>Chọn loại vé áp dụng cho suất chiếu và thêm ghi chú khi cần.</small></div></div>
-                    <div className="schedule-editor-grid"><div className="tms-form-group ticket-type-picker"><label className="tms-form-label">Loại vé áp dụng <em>*</em></label><div className="ticket-type-select-list">{ticketTypesList.length ? ticketTypesList.map(ticketType => { const available = isTicketAvailableForSchedule(ticketType, scheduleForm.show_date, scheduleForm.start_time); const effectivePrice = getEffectiveTicketPrice(ticketType, scheduleForm.show_date, scheduleForm.start_time); return <label key={ticketType.id} className={`${scheduleForm.ticket_type_ids.includes(Number(ticketType.id)) ? 'selected' : ''} ${available ? '' : 'disabled'}`}><input type="checkbox" disabled={!available} checked={scheduleForm.ticket_type_ids.includes(Number(ticketType.id))} onChange={() => { const checked = scheduleForm.ticket_type_ids.includes(Number(ticketType.id)); const nextIds = checked ? scheduleForm.ticket_type_ids.filter(id => id !== Number(ticketType.id)) : [...scheduleForm.ticket_type_ids, Number(ticketType.id)]; const selectedPrices = ticketTypesList.filter(item => nextIds.includes(Number(item.id))).map(item => getEffectiveTicketPrice(item, scheduleForm.show_date, scheduleForm.start_time)); setScheduleForm({...scheduleForm, ticket_type_ids:nextIds, ticket_price:selectedPrices.length ? Math.min(...selectedPrices) : 0}); }}/><span><b>{ticketType.name}</b><small>{available ? ticketType.code : `${ticketType.code} · Không áp dụng`}</small></span><strong>{available ? effectivePrice === 0 ? 'Miễn phí' : `${effectivePrice.toLocaleString('vi-VN')} ₫` : '—'}</strong><Check size={15}/></label>; }) : <span className="ticket-type-loading">Chưa có loại vé hoạt động trong Aurora DB.</span>}</div></div><div className="tms-form-group"><label className="tms-form-label">Ghi chú vận hành</label><input maxLength={500} className="tms-form-input" value={scheduleForm.operational_note} onChange={e => setScheduleForm({...scheduleForm,operational_note:e.target.value})} placeholder="Ví dụ: Ưu tiên quầy vé 1, kiểm tra kính 3D"/></div></div>
+                    <div className="schedule-editor-grid"><div className="tms-form-group ticket-type-picker"><div className="ticket-type-picker-heading"><label className="tms-form-label">Loại vé áp dụng <em>*</em></label><button type="button" className={allAvailableScheduleTicketsSelected ? 'all-selected' : ''} disabled={!ticketTypesList.some(ticket => isTicketAvailableForSchedule(ticket, scheduleForm.show_date, scheduleForm.start_time))} onClick={toggleAllScheduleTicketTypes}><Check size={13}/>{allAvailableScheduleTicketsSelected ? 'Bỏ chọn tất cả' : 'Chọn tất cả'}</button></div><div className="ticket-type-select-list">{ticketTypesList.length ? ticketTypesList.map(ticketType => { const available = isTicketAvailableForSchedule(ticketType, scheduleForm.show_date, scheduleForm.start_time); const effectivePrice = getEffectiveTicketPrice(ticketType, scheduleForm.show_date, scheduleForm.start_time); return <label key={ticketType.id} className={`${scheduleForm.ticket_type_ids.includes(Number(ticketType.id)) ? 'selected' : ''} ${available ? '' : 'disabled'}`}><input type="checkbox" disabled={!available} checked={scheduleForm.ticket_type_ids.includes(Number(ticketType.id))} onChange={() => { const checked = scheduleForm.ticket_type_ids.includes(Number(ticketType.id)); const nextIds = checked ? scheduleForm.ticket_type_ids.filter(id => id !== Number(ticketType.id)) : [...scheduleForm.ticket_type_ids, Number(ticketType.id)]; const selectedPrices = ticketTypesList.filter(item => nextIds.includes(Number(item.id))).map(item => getEffectiveTicketPrice(item, scheduleForm.show_date, scheduleForm.start_time)); setScheduleForm({...scheduleForm, ticket_type_ids:nextIds, ticket_price:selectedPrices.length ? Math.min(...selectedPrices) : 0}); }}/><span><b>{ticketType.name}</b><small>{available ? ticketType.code : `${ticketType.code} · Không áp dụng`}</small></span><strong>{available ? effectivePrice === 0 ? 'Miễn phí' : `${effectivePrice.toLocaleString('vi-VN')} ₫` : '—'}</strong><Check size={15}/></label>; }) : <span className="ticket-type-loading">Chưa có loại vé hoạt động trong Aurora DB.</span>}</div></div><div className="tms-form-group"><label className="tms-form-label">Ghi chú vận hành</label><input maxLength={500} className="tms-form-input" value={scheduleForm.operational_note} onChange={e => setScheduleForm({...scheduleForm,operational_note:e.target.value})} placeholder="Ví dụ: Ưu tiên quầy vé 1, kiểm tra kính 3D"/></div></div>
                   </section>
                   <aside className="schedule-summary-panel" aria-label="Tóm tắt suất chiếu">
                     <header className="schedule-summary-header">

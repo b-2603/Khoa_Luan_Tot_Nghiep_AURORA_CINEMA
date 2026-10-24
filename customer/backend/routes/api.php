@@ -18,4 +18,10 @@ Route::middleware('web')->group(function (): void {
     Route::post('/login', [CustomerController::class, 'login']);
     Route::post('/logout', [CustomerController::class, 'logout']);
     Route::options('/{any}', fn () => response('', 204))->where('any', '.*');
+
+    // ── Mascot 3D System ────────────────────────────────────────────────────
+    Route::get('/mascot/config',  [CustomerController::class, 'mascotConfig']);
+    Route::post('/mascot/config', [CustomerController::class, 'mascotConfigSave']);
+    Route::get('/mascot/stats',   [CustomerController::class, 'mascotStats']);
+    Route::post('/mascot/event',  [CustomerController::class, 'mascotEvent']);
 });

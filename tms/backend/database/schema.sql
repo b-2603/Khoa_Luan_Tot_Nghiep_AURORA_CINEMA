@@ -23,7 +23,7 @@ CREATE TABLE IF NOT EXISTS `users` (
   `last_login` DATETIME NULL,
   `created_at` TIMESTAMP NULL DEFAULT CURRENT_TIMESTAMP,
   `updated_at` DATETIME NULL DEFAULT NULL
-) ENGINE=InnoDB DEFAULT CHARSET=utf8 COLLATE=utf8_unicode_ci;
+) ENGINE=InnoDB DEFAULT CHARSET=utf8 COLLATE=utf8_general_ci;
 
 -- 2. Rạp
 CREATE TABLE IF NOT EXISTS `theaters` (
@@ -225,12 +225,28 @@ CREATE TABLE IF NOT EXISTS `revenue_logs` (
 -- 14. Log hệ thống / audit
 CREATE TABLE IF NOT EXISTS `audit_logs` (
   `id` BIGINT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
+  `user_id` BIGINT UNSIGNED NULL,
   `username` VARCHAR(80) NOT NULL,
+  `role` VARCHAR(40) NULL,
   `action` VARCHAR(80) NOT NULL,
+  `module` VARCHAR(60) NULL,
+  `entity_type` VARCHAR(80) NULL,
+  `entity_id` VARCHAR(120) NULL,
   `details` TEXT NULL,
+  `severity` VARCHAR(20) NOT NULL DEFAULT 'info',
+  `status_code` SMALLINT UNSIGNED NULL,
+  `http_method` VARCHAR(10) NULL,
+  `request_path` VARCHAR(255) NULL,
   `ip_address` VARCHAR(45) NULL,
-  `created_at` TIMESTAMP NULL DEFAULT CURRENT_TIMESTAMP
-) ENGINE=InnoDB DEFAULT CHARSET=utf8 COLLATE=utf8_unicode_ci;
+  `user_agent` VARCHAR(500) NULL,
+  `metadata_json` TEXT NULL,
+  `event_hash` CHAR(64) NULL,
+  `created_at` TIMESTAMP NULL DEFAULT CURRENT_TIMESTAMP,
+  KEY `idx_audit_created` (`created_at`),
+  KEY `idx_audit_action` (`action`),
+  KEY `idx_audit_user` (`username`),
+  KEY `idx_audit_module` (`module`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8 COLLATE=utf8_general_ci;
 
 -- 15. Cấu hình hệ thống
 CREATE TABLE IF NOT EXISTS `system_configs` (

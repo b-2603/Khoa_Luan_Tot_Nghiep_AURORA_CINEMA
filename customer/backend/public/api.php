@@ -754,6 +754,8 @@ function aurora_promotion_payload($row) {
     );
 }
 
+require_once dirname(__FILE__).'/../src/ai_assistant.php';
+
 function aurora_route() {
     $path = isset($_SERVER['PATH_INFO']) ? $_SERVER['PATH_INFO'] : '';
     if (!$path && isset($_SERVER['REQUEST_URI'])) {
@@ -767,6 +769,8 @@ function aurora_route() {
 $db = aurora_db();
 $parts = explode('/', aurora_route());
 $resource = isset($parts[0]) && $parts[0] !== '' ? $parts[0] : (isset($_GET['action']) ? $_GET['action'] : '');
+
+aurora_ai_handle($db, $resource);
 
 if ($resource === 'health') {
     $db->query('SELECT 1');

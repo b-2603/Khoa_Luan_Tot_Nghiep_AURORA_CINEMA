@@ -17,7 +17,6 @@ CREATE TABLE IF NOT EXISTS product_units (id INT UNSIGNED AUTO_INCREMENT PRIMARY
 INSERT INTO product_units(code,name,status,sort_order) VALUES
 ('portion','Phần','active',10),('cup','Ly','active',20),('bottle','Chai','active',30),('box','Hộp','active',40),('pack','Gói','active',50),('combo','Combo','active',60),('item','Sản phẩm','active',70)
 ON DUPLICATE KEY UPDATE name=VALUES(name),status='active',sort_order=VALUES(sort_order);
-DELETE FROM product_categories WHERE code NOT IN ('Popcorn','Beverages','Snacks','Hot Food','Ice Cream & Desserts','Combo','Special / Limited Edition','Upgrade','Promotion');
 INSERT INTO product_categories(code,name,sku_prefix,default_unit,status,sort_order) VALUES
 ('Popcorn','Popcorn','POP','Hộp','active',10),('Beverages','Beverages','BEV','Ly','active',20),('Snacks','Snacks','SNK','Gói','active',30),('Hot Food','Hot Food','HOT','Phần','active',40),('Ice Cream & Desserts','Ice Cream & Desserts','ICE','Phần','active',50),('Combo','Combo','CMB','Combo','active',60),('Special / Limited Edition','Special / Limited Edition','SPL','Sản phẩm','active',70),('Upgrade','Upgrade','UPG','Phần','active',80),('Promotion','Promotion','PRO','Sản phẩm','active',90)
 ON DUPLICATE KEY UPDATE name=VALUES(name),sku_prefix=VALUES(sku_prefix),default_unit=VALUES(default_unit),status='active',sort_order=VALUES(sort_order);
@@ -65,8 +64,8 @@ CREATE TABLE IF NOT EXISTS product_plan_theaters (
   id BIGINT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
   plan_id BIGINT UNSIGNED NOT NULL,
   theater_id BIGINT UNSIGNED NOT NULL,
-  status VARCHAR(20) NOT NULL DEFAULT 'sent',
-  sent_at DATETIME NOT NULL,
+  status VARCHAR(20) NOT NULL DEFAULT 'draft',
+  sent_at DATETIME NULL,
   acknowledged_by BIGINT UNSIGNED NULL,
   acknowledged_by_name VARCHAR(120) NULL,
   acknowledged_at DATETIME NULL,
@@ -74,6 +73,34 @@ CREATE TABLE IF NOT EXISTS product_plan_theaters (
   UNIQUE KEY uq_product_plan_theater(plan_id,theater_id),
   KEY idx_product_plan_theater_scope(theater_id,status)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8 COLLATE=utf8_unicode_ci;
+
+-- Phân bố rạp là luồng độc lập: cấp quyền bán và tồn đầu kỳ cho POS.
+CREATE TABLE IF NOT EXISTS product_distributions (
+  id BIGINT UNSIGNED AUTO_INCREMENT PRIMARY KEY, distribution_code VARCHAR(40) NOT NULL UNIQUE,
+  title VARCHAR(180) NOT NULL, effective_date DATE NOT NULL, status VARCHAR(20) NOT NULL DEFAULT 'draft', note TEXT NULL,
+  created_by BIGINT UNSIGNED NOT NULL, created_by_name VARCHAR(120) NOT NULL,
+  published_by BIGINT UNSIGNED NULL, published_by_name VARCHAR(120) NULL,
+  created_at DATETIME NOT NULL, updated_at DATETIME NOT NULL, published_at DATETIME NULL,
+  KEY idx_product_distribution_status(status,effective_date)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8 COLLATE=utf8_unicode_ci;
+
+CREATE TABLE IF NOT EXISTS product_distribution_items (
+  id BIGINT UNSIGNED AUTO_INCREMENT PRIMARY KEY, distribution_id BIGINT UNSIGNED NOT NULL,
+  product_id BIGINT UNSIGNED NOT NULL, sku VARCHAR(50) NOT NULL, product_name VARCHAR(150) NOT NULL,
+  category VARCHAR(80) NOT NULL, unit VARCHAR(40) NOT NULL, sale_price DECIMAL(12,2) NOT NULL DEFAULT 0,
+  opening_stock INT UNSIGNED NOT NULL DEFAULT 0,
+  UNIQUE KEY uq_product_distribution_item(distribution_id,product_id), KEY idx_distribution_item_product(product_id)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8 COLLATE=utf8_unicode_ci;
+
+CREATE TABLE IF NOT EXISTS product_distribution_theaters (
+  id BIGINT UNSIGNED AUTO_INCREMENT PRIMARY KEY, distribution_id BIGINT UNSIGNED NOT NULL, theater_id BIGINT UNSIGNED NOT NULL,
+  status VARCHAR(20) NOT NULL DEFAULT 'draft', published_at DATETIME NULL,
+  acknowledged_by BIGINT UNSIGNED NULL, acknowledged_by_name VARCHAR(120) NULL, acknowledged_at DATETIME NULL, response_note VARCHAR(500) NULL,
+  UNIQUE KEY uq_product_distribution_theater(distribution_id,theater_id), KEY idx_distribution_theater_scope(theater_id,status)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8 COLLATE=utf8_unicode_ci;
+
+ALTER TABLE product_plan_theaters MODIFY status VARCHAR(20) NOT NULL DEFAULT 'draft';
+ALTER TABLE product_plan_theaters MODIFY sent_at DATETIME NULL;
 
 CREATE TABLE IF NOT EXISTS theater_product_inventory (
   id BIGINT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
@@ -105,3 +132,6 @@ CREATE TABLE IF NOT EXISTS product_inventory_movements (
   KEY idx_inventory_movement_product(product_id,created_at),
   KEY idx_inventory_movement_order(order_id)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8 COLLATE=utf8_unicode_ci;
+
+SET @ddl = IF((SELECT COUNT(*) FROM information_schema.COLUMNS WHERE TABLE_SCHEMA=DATABASE() AND TABLE_NAME='theater_product_inventory' AND COLUMN_NAME='last_distribution_id')=0,'ALTER TABLE theater_product_inventory ADD last_distribution_id BIGINT UNSIGNED NULL AFTER last_plan_id','SELECT 1'); PREPARE stmt FROM @ddl; EXECUTE stmt; DEALLOCATE PREPARE stmt;
+SET @ddl = IF((SELECT COUNT(*) FROM information_schema.COLUMNS WHERE TABLE_SCHEMA=DATABASE() AND TABLE_NAME='product_inventory_movements' AND COLUMN_NAME='distribution_id')=0,'ALTER TABLE product_inventory_movements ADD distribution_id BIGINT UNSIGNED NULL AFTER plan_id','SELECT 1'); PREPARE stmt FROM @ddl; EXECUTE stmt; DEALLOCATE PREPARE stmt;

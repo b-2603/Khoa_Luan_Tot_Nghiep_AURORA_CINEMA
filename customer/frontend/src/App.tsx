@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from 'react';
 import {
   MapPin, Search, Bell, Trophy, ChevronDown,
-  PlayCircle, Gift, Ticket, Film, Send, ExternalLink, Smartphone, ChevronLeft, ChevronRight,
+  PlayCircle, Gift, Ticket, Film, Smartphone, ChevronLeft, ChevronRight,
   CreditCard, Percent, Phone, Check
 } from 'lucide-react';
 import AuthModal from './components/customer/AuthModal';
@@ -20,8 +20,11 @@ import SafeAvatar from './components/customer/SafeAvatar';
 import MembershipPage from './components/customer/MembershipPage';
 import SupportPage from './components/customer/SupportPage';
 import VnpayResultPage from './components/customer/VnpayResultPage';
+import AuroraAssistant from './components/customer/AuroraAssistant';
 
-const API_URL = 'http://localhost/AURORA%20CINEMA/customer/backend/public/api.php';
+const VITE_ENV = (import.meta as ImportMeta & { env?: Record<string, string | undefined> }).env;
+const API_URL = VITE_ENV?.VITE_CUSTOMER_API_URL?.trim()
+  || `${window.location.protocol}//${window.location.hostname}/AURORA%20CINEMA/customer/backend/public/api.php`;
 
 /* ─── DATA ──────────────────────────────────────────────────── */
 
@@ -52,11 +55,6 @@ function LanguageSwitcher({ language, onChange }: { language: Language; onChange
     </div>}
   </div>;
 }
-
-const CHATBOT_ITEMS = {
-  vi: ['Tư vấn phim phù hợp', 'Tìm suất chiếu', 'Tư vấn giá vé', 'Sơ đồ ghế & vị trí đẹp', 'Hỗ trợ đặt vé', 'Ưu đãi thành viên'],
-  en: ['Find a suitable movie', 'Find showtimes', 'Ticket price advice', 'Seat map & best seats', 'Booking support', 'Member offers'],
-};
 
 const BOTTOM_FEATURES = {
   vi: [
@@ -120,9 +118,9 @@ export default function App() {
   const [movieTab, setMovieTab] = useState<'NOW_SHOWING' | 'COMING_SOON' | 'SPECIAL_SHOWING'>('NOW_SHOWING');
   const [heroSlide, setHeroSlide] = useState(0);
   const [heroPaused, setHeroPaused] = useState(false);
-  const [chatMsg, setChatMsg] = useState('');
+  const [assistantOpen, setAssistantOpen] = useState(false);
   const [authMode, setAuthMode] = useState<'login' | 'register' | null>(null);
-  const [authUser, setAuthUser] = useState<{ fullName: string; email: string; membershipLevel?: string; points?: number; avatarUrl?: string | null } | null>(null);
+  const [authUser, setAuthUser] = useState<{ id?: number; fullName: string; email: string; membershipLevel?: string; points?: number; avatarUrl?: string | null } | null>(null);
   const [authChecked, setAuthChecked] = useState(false);
   const [oauthError, setOauthError] = useState('');
   const [oauthNotice, setOauthNotice] = useState('');
@@ -482,6 +480,26 @@ export default function App() {
     setCurrentPage('support'); setFooterPage(null); scrollContentToTop();
   }
 
+  function handleAssistantNavigate(destination: string) {
+    setBooking(null);
+    if (destination === 'schedule') handleGoSchedule();
+    else if (destination === 'ticket-prices') handleGoTicketPrices();
+    else if (destination === 'offers') handleGoOffers();
+    else if (destination === 'membership') handleGoMembership();
+    else if (destination === 'support') handleGoSupport();
+    else handleGoMovies();
+  }
+
+  function handleAssistantMovie(movie: any) {
+    setBooking(null);
+    setAuthMode(null);
+    setShowAccount(false);
+    setFooterPage(null);
+    setCurrentPage('movies');
+    setDetailMovie(moviesList.find((item: any) => Number(item.id) === Number(movie.id)) || movie);
+    scrollContentToTop();
+  }
+
   function openFooterPage(page: 'faq' | 'booking-guide' | 'privacy' | 'terms') {
     setAuthMode(null);
     setShowAccount(false);
@@ -507,22 +525,25 @@ export default function App() {
 
   if (booking) {
     return (
-      <BookingPage
-        movie={booking.movie}
-        showtime={booking.showtime}
-        theater={selectedTheater}
-        user={authUser}
-        language={language}
-        onClose={() => {
-          setBooking(null);
-          scrollContentToTop();
-        }}
-        onRequireLogin={() => {
-          setPendingBooking({ movie: booking.movie, showtime: booking.showtime, theater: selectedTheater });
-          setBooking(null);
-          setAuthMode('login');
-        }}
-      />
+      <>
+        <BookingPage
+          movie={booking.movie}
+          showtime={booking.showtime}
+          theater={selectedTheater}
+          user={authUser}
+          language={language}
+          onClose={() => {
+            setBooking(null);
+            scrollContentToTop();
+          }}
+          onRequireLogin={() => {
+            setPendingBooking({ movie: booking.movie, showtime: booking.showtime, theater: selectedTheater });
+            setBooking(null);
+            setAuthMode('login');
+          }}
+        />
+        <AuroraAssistant apiUrl={API_URL} language={language} user={authUser} page="booking" open={assistantOpen} onOpenChange={setAssistantOpen} onNavigate={handleAssistantNavigate} onMovieSelect={handleAssistantMovie} />
+      </>
     );
   }
 
@@ -717,6 +738,7 @@ export default function App() {
               return (
                 <button
                   key={item}
+                  data-aurora-tour={i === 1 ? 'schedule' : i === 2 ? 'movies' : i === 5 ? 'offers' : undefined}
                   onClick={handleClick}
                   style={{
                     fontSize: 11.5,
@@ -739,6 +761,7 @@ export default function App() {
           <div style={{ display: 'flex', alignItems: 'center', gap: 10, flexShrink: 0 }}>
             <button
               type="button"
+              data-aurora-tour="search"
               aria-label={t('Tìm kiếm phim', 'Search movies')}
               title={t('Tìm kiếm phim', 'Search movies')}
               onClick={() => { setShowUserMenu(false); setIsSearchOpen(true); }}
@@ -749,6 +772,7 @@ export default function App() {
               <div style={{ position: 'relative' }}>
                 {/* Trigger button */}
                 <button
+                  data-aurora-tour="account"
                   onClick={() => setShowUserMenu(v => !v)}
                   style={{
                     minHeight: 44, display: 'flex', alignItems: 'center', gap: 9,
@@ -1532,36 +1556,14 @@ export default function App() {
                   </button>
                 </div>
 
-                <div style={{ background: '#0d1b2e', borderRadius: 14, padding: '14px 16px', color: '#f0f4f9', flex: 1, display: 'flex', flexDirection: 'column' }}>
-                  <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 12 }}>
-                    <div style={{ width: 34, height: 34, borderRadius: '50%', background: '#0d1b2e', border: '2px solid #f4c04a', display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 }}>
-                      <Film size={15} color="#f4c04a" />
-                    </div>
-                    <div>
-                      <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
-                        <span style={{ fontSize: 12.5, fontWeight: 800 }}>AURORA AI Chatbot</span>
-                        <span style={{ fontSize: 9, fontWeight: 700, background: '#2563eb', color: '#fff', borderRadius: 4, padding: '1px 5px' }}>BETA</span>
-                      </div>
-                      <div style={{ fontSize: 11, color: '#9ab5cc' }}>Xin chào! Tôi có thể hỗ trợ bạn:</div>
-                    </div>
+                <div style={{ position: 'relative', overflow: 'hidden', background: 'linear-gradient(145deg,#0d1b2e,#173a5d)', borderRadius: 14, padding: '15px 16px', color: '#f0f4f9', flex: 1, display: 'flex', flexDirection: 'column', justifyContent: 'space-between', minHeight: 170 }}>
+                  <div style={{ position: 'relative', zIndex: 1, maxWidth: '67%' }}>
+                    <div style={{ display: 'inline-flex', alignItems: 'center', gap: 5, color: '#f4c04a', fontSize: 9, fontWeight: 900, letterSpacing: '.08em' }}>✦ AURORA AI</div>
+                    <div style={{ marginTop: 7, fontSize: 15, fontWeight: 900, lineHeight: 1.3 }}>{t('Chọn phim hợp gu, nhanh hơn.', 'Find your perfect movie, faster.')}</div>
+                    <div style={{ marginTop: 6, color: '#a9bfd3', fontSize: 9.5, lineHeight: 1.5 }}>{t('Gợi ý từ phim và lịch chiếu đang mở bán.', 'Suggestions from live movies and showtimes.')}</div>
                   </div>
-                  <div style={{ display: 'flex', flexDirection: 'column', gap: 5, marginBottom: 12 }}>
-                    {CHATBOT_ITEMS[language].map((item, i) => (
-                      <div key={item} onClick={() => setChatMsg(item)} style={{ display: 'flex', alignItems: 'center', gap: 7, padding: '7px 9px', background: 'rgba(255,255,255,.05)', border: '1px solid rgba(255,255,255,.08)', borderRadius: 8, cursor: 'pointer', fontSize: 11.5, color: '#c8d8e8' }}>
-                        <div style={{ width: 15, height: 15, borderRadius: 4, border: '1px solid rgba(255,255,255,.15)', background: 'rgba(255,255,255,.05)', display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 }}>
-                          {i < 4 && <Check size={9} color="#f4c04a" strokeWidth={3} />}
-                        </div>
-                        {item}
-                      </div>
-                    ))}
-                  </div>
-                  <div style={{ display: 'flex', alignItems: 'center', gap: 7, background: '#0d1b2e', border: '1px solid rgba(255,255,255,.12)', borderRadius: 9, padding: '8px 11px', marginBottom: 7 }}>
-                    <input value={chatMsg} onChange={e => setChatMsg(e.target.value)} placeholder={t('Nhập câu hỏi của bạn...', 'Type your question...')} style={{ flex: 1, background: 'none', border: 'none', outline: 'none', color: '#c8d8e8', fontSize: 12, fontFamily: 'inherit' }} />
-                    <button style={{ background: 'none', border: 'none', cursor: 'pointer', display: 'flex', alignItems: 'center' }}><Send size={14} color="#f4c04a" /></button>
-                  </div>
-                  <button style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 4, background: 'none', border: 'none', color: '#7a8fa6', fontSize: 11.5, cursor: 'pointer', padding: '2px 0' }}>
-                    <ExternalLink size={12} />Mở chat đầy đủ
-                  </button>
+                  <img src="/assets/aurora-assistant/aurora-advisor.png" alt="Aurora" style={{ position: 'absolute', right: -17, bottom: -21, width: 142, height: 142, objectFit: 'contain', filter: 'drop-shadow(0 9px 14px rgba(0,0,0,.24))' }} />
+                  <button type="button" onClick={() => setAssistantOpen(true)} style={{ position: 'relative', zIndex: 2, alignSelf: 'flex-start', padding: '8px 11px', border: 0, borderRadius: 8, background: '#f4c04a', color: '#0d1b2e', fontSize: 9.5, fontWeight: 900, cursor: 'pointer' }}>{t('HỎI AURORA NGAY', 'ASK AURORA')}</button>
                 </div>
               </div>
             </div>
@@ -1584,6 +1586,7 @@ export default function App() {
       )}
       <SiteFooter language={language} onNavigate={openFooterPage} />
       </div>
+      <AuroraAssistant apiUrl={API_URL} language={language} user={authUser} page={authMode ? `auth-${authMode}` : footerPage ? `footer-${footerPage}` : showAccount ? 'account' : detailMovie ? 'movie-detail' : currentPage} open={assistantOpen} onOpenChange={setAssistantOpen} onNavigate={handleAssistantNavigate} onMovieSelect={handleAssistantMovie} />
       {pendingBooking && !authMode && <BookingConfirmationModal
         movie={pendingBooking.movie}
         showtime={pendingBooking.showtime}

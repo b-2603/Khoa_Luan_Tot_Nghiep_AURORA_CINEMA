@@ -494,4 +494,170 @@ class CustomerController extends Controller
             ])
             ->where('showtimes.status', 'OPEN');
     }
+
+    // ═══════════════════════════════════════════════════════════════════════
+    // Mascot 3D System – Kết nối aurora_db
+    // ═══════════════════════════════════════════════════════════════════════
+
+    /**
+     * GET /api/mascot/config
+     * Trả về cấu hình hiện tại của linh vật 3D từ bảng mascot_3d_config.
+     */
+    public function mascotConfig(): JsonResponse
+    {
+        if (!Schema::hasTable('mascot_3d_config')) {
+            return response()->json($this->defaultMascotConfig());
+        }
+        $rows = DB::table('mascot_3d_config')->get();
+        $config = [];
+        foreach ($rows as $row) {
+            $config[$row->config_key] = $row->config_value;
+        }
+        // Merge với default để đảm bảo đủ key
+        return response()->json(array_merge($this->defaultMascotConfig(), $config));
+    }
+
+    /**
+     * POST /api/mascot/config
+     * Lưu cấu hình linh vật 3D (chỉ admin).
+     */
+    public function mascotConfigSave(Request $request): JsonResponse
+    {
+        // Kiểm tra quyền admin
+        $userId = (int) $request->session()->get('user_id', 0);
+        if ($userId <= 0) {
+            return response()->json(['message' => 'Chưa đăng nhập.'], 401);
+        }
+        $user = DB::table('users')->where('id', $userId)->first();
+        if (!$user || !in_array($user->role, ['admin', 'superadmin', 'manager'], true)) {
+            return response()->json(['message' => 'Không có quyền thực hiện.'], 403);
+        }
+
+        if (!Schema::hasTable('mascot_3d_config')) {
+            return response()->json(['message' => 'Bảng mascot_3d_config chưa tồn tại. Hãy chạy mascot_3d_system.sql.'], 503);
+        }
+
+        $allowed = [
+            'body_color', 'accent_color', 'cheek_color', 'eye_color', 'scarf_color',
+            'film_color', 'mascot_name', 'mascot_slogan', 'idle_animation',
+            'enable_shadow', 'enable_particles', 'scale_factor', 'ambient_light',
+            'point_light_x', 'point_light_y', 'point_light_z',
+        ];
+
+        $data = $request->only($allowed);
+        $now  = now();
+
+        foreach ($data as $key => $value) {
+            DB::table('mascot_3d_config')->updateOrInsert(
+                ['config_key' => $key],
+                ['config_value' => (string) $value, 'updated_by' => $userId, 'updated_at' => $now]
+            );
+        }
+
+        return response()->json(['success' => true, 'updated' => count($data), 'updatedAt' => $now]);
+    }
+
+    /**
+     * GET /api/mascot/stats
+     * Trả về thống kê tổng hợp từ bảng mascot_3d_events (view: mascot_3d_stats_summary).
+     */
+    public function mascotStats(): JsonResponse
+    {
+        if (!Schema::hasTable('mascot_3d_events')) {
+            return response()->json([
+                'total_events_all_time' => 0, 'unique_users_all_time' => 0,
+                'total_chat_opens' => 0, 'events_last_7d' => 0, 'events_today' => 0,
+                'note' => 'Bảng mascot_3d_events chưa tồn tại.',
+            ]);
+        }
+
+        $stats = DB::table('mascot_3d_events')->selectRaw("
+            COUNT(*)                                                                      AS total_events_all_time,
+            COUNT(DISTINCT user_id)                                                       AS unique_users_all_time,
+            SUM(CASE WHEN event_type = 'OPEN_CHAT' THEN 1 ELSE 0 END)                   AS total_chat_opens,
+            SUM(CASE WHEN created_at >= DATE_SUB(NOW(), INTERVAL 7 DAY) THEN 1 ELSE 0 END) AS events_last_7d,
+            SUM(CASE WHEN DATE(created_at) = CURDATE() THEN 1 ELSE 0 END)               AS events_today
+        ")->first();
+
+        // Most popular expression/pose
+        $popularExpression = DB::table('mascot_3d_events')
+            ->selectRaw('expression, COUNT(*) as cnt')
+            ->whereNotNull('expression')
+            ->groupBy('expression')
+            ->orderByDesc('cnt')
+            ->value('expression');
+
+        $popularPose = DB::table('mascot_3d_events')
+            ->selectRaw('pose, COUNT(*) as cnt')
+            ->whereNotNull('pose')
+            ->groupBy('pose')
+            ->orderByDesc('cnt')
+            ->value('pose');
+
+        return response()->json([
+            'total_events_all_time' => (int) ($stats->total_events_all_time ?? 0),
+            'unique_users_all_time' => (int) ($stats->unique_users_all_time ?? 0),
+            'total_chat_opens'      => (int) ($stats->total_chat_opens ?? 0),
+            'events_last_7d'        => (int) ($stats->events_last_7d ?? 0),
+            'events_today'          => (int) ($stats->events_today ?? 0),
+            'popular_expression'    => $popularExpression,
+            'popular_pose'          => $popularPose,
+        ]);
+    }
+
+    /**
+     * POST /api/mascot/event
+     * Log sự kiện tương tác với linh vật 3D (click, hover, expression_change…).
+     */
+    public function mascotEvent(Request $request): JsonResponse
+    {
+        if (!Schema::hasTable('mascot_3d_events')) {
+            return response()->json(['accepted' => false, 'note' => 'Table not found']);
+        }
+
+        $userId     = (int) $request->session()->get('user_id', 0) ?: null;
+        $sessionKey = $request->session()->getId();
+        $eventType  = strtoupper((string) $request->input('event_type', 'UNKNOWN'));
+        $expression = $request->input('expression');
+        $pose       = $request->input('pose');
+        $page       = $request->input('page_context');
+        $metadata   = $request->input('metadata') ? json_encode($request->input('metadata')) : null;
+        $ipHash     = $request->ip() ? hash('sha256', $request->ip()) : null;
+
+        DB::table('mascot_3d_events')->insert([
+            'session_key'   => $sessionKey,
+            'user_id'       => $userId,
+            'event_type'    => $eventType,
+            'expression'    => $expression,
+            'pose'          => $pose,
+            'page_context'  => $page,
+            'metadata_json' => $metadata,
+            'ip_hash'       => $ipHash,
+            'created_at'    => now(),
+        ]);
+
+        return response()->json(['accepted' => true]);
+    }
+
+    /**
+     * Giá trị mặc định cấu hình linh vật (fallback khi DB chưa có dữ liệu).
+     */
+    private function defaultMascotConfig(): array
+    {
+        return [
+            'body_color'       => '#F7D25E',
+            'accent_color'     => '#0F1B3D',
+            'cheek_color'      => '#FFB8C6',
+            'eye_color'        => '#1A1A3A',
+            'scarf_color'      => '#162850',
+            'film_color'       => '#2C3E6A',
+            'mascot_name'      => 'Aurora',
+            'mascot_slogan'    => 'Cùng bạn tận hưởng mọi khoảnh khắc điện ảnh!',
+            'idle_animation'   => 'float',
+            'enable_shadow'    => '1',
+            'enable_particles' => '1',
+            'scale_factor'     => '1.0',
+            'ambient_light'    => '0.6',
+        ];
+    }
 }

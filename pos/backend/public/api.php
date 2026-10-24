@@ -153,6 +153,10 @@ function ensurePosSalesTables($db) {
         "CREATE TABLE IF NOT EXISTS product_inventory_movements (id BIGINT UNSIGNED AUTO_INCREMENT PRIMARY KEY,theater_id BIGINT UNSIGNED NOT NULL,product_id BIGINT UNSIGNED NOT NULL,order_id BIGINT UNSIGNED NULL,plan_id BIGINT UNSIGNED NULL,movement_type VARCHAR(30) NOT NULL,quantity INT NOT NULL,stock_before INT UNSIGNED NOT NULL,stock_after INT UNSIGNED NOT NULL,reference_code VARCHAR(80) NULL,performed_by BIGINT UNSIGNED NULL,performed_by_name VARCHAR(120) NULL,created_at DATETIME NOT NULL,KEY idx_inventory_movement_theater(theater_id,created_at),KEY idx_inventory_movement_product(product_id,created_at),KEY idx_inventory_movement_order(order_id)) ENGINE=InnoDB DEFAULT CHARSET=utf8 COLLATE=utf8_unicode_ci"
     );
     foreach($inventoryQueries as $query)if(!$db->query($query))return false;
+    $distributionColumn=$db->query("SHOW COLUMNS FROM theater_product_inventory LIKE 'last_distribution_id'");
+    if((!$distributionColumn||$distributionColumn->num_rows===0)&&!$db->query("ALTER TABLE theater_product_inventory ADD COLUMN last_distribution_id BIGINT UNSIGNED NULL AFTER last_plan_id"))return false;
+    $movementDistribution=$db->query("SHOW COLUMNS FROM product_inventory_movements LIKE 'distribution_id'");
+    if((!$movementDistribution||$movementDistribution->num_rows===0)&&!$db->query("ALTER TABLE product_inventory_movements ADD COLUMN distribution_id BIGINT UNSIGNED NULL AFTER plan_id"))return false;
     // A single POS cart can contain tickets, concessions and merchandise.
     $itemTypeColumn=$db->query("SHOW COLUMNS FROM order_items LIKE 'item_type'");
     $itemTypeDefinition=$itemTypeColumn?$itemTypeColumn->fetch_assoc():null;

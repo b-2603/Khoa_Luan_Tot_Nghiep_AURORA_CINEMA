@@ -53,6 +53,9 @@ Public:
 - GET action=showtime_seats&showtime_id=1
 - GET action=promotions
 - GET action=promotion_detail&id=1
+- GET action=ai_assistant&language=vi|en (lịch sử hội thoại, gợi ý nhanh, trạng thái tour)
+- POST action=ai_assistant (`message`, `language`) – tư vấn phim/lịch chiếu/giá vé từ dữ liệu thật
+- POST action=ai_mascot_event (`eventType`, `pose`, `trigger`) – ghi tương tác và hành vi linh vật
 
 Authentication:
 
@@ -115,6 +118,26 @@ Customer:
 - POST action=bookings (showtimeId, seatIds[])
 - GET action=booking_history
 - POST action=apply_voucher (code, total)
+- POST action=ai_onboarding (`operation=STEP|COMPLETE|SKIP`, `step`, `stepKey`)
+
+Trợ lý Aurora lưu hồ sơ hướng dẫn, hội thoại, tin nhắn và sự kiện vào các bảng
+`customer_ai_profiles`, `customer_ai_conversations`, `customer_ai_messages` và
+`customer_ai_events`. API tự tạo bảng theo cách idempotent; với môi trường triển
+khai mới có thể import `database/customer_ai_assistant.sql` trước.
+
+Runtime tự phát hiện khả năng hỗ trợ charset của MySQL: dùng `utf8mb4` trên máy
+chủ mới và tự hạ xuống `utf8_unicode_ci` trên WAMP MySQL 5.0. Việc chỉ mở widget
+không tạo hội thoại rỗng; bản ghi hội thoại và hai tin nhắn USER/ASSISTANT chỉ được
+ghi transactionally khi khách thực sự gửi câu hỏi.
+
+Mỗi phản hồi chatbot trả thêm `pose` và `motion` để frontend điều khiển đúng tư
+thế linh vật: `wave`, `advisor`, `thinking`, `intro`, `notify` hoặc `thanks`.
+Frontend dùng renderer 2.5D với các silhouette PNG toàn thân liền khối, chuyển
+tư thế bằng crossfade và spring parallax. Cách dựng này giữ nguyên chất liệu 3D
+từ ảnh master nhưng không làm hở khớp tay, chân hoặc khăn; renderer còn hỗ trợ
+chớp mắt, chuyển động thở, nhìn theo con trỏ, trạng thái nói và reduced motion.
+Mỗi trang Customer chọn một biểu cảm riêng và ghi `pose`, `expression` cùng tên
+trang vào `customer_ai_events` trong `aurora_db`.
 
 Đặt vé được xử lý trong transaction và khóa suất chiếu/ghế khi kiểm tra,
 tránh hai khách đặt trùng ghế. API không trả về password hash.
@@ -137,6 +160,7 @@ Chạy theo thứ tự:
 12. migrate_membership_card_numbers.sql (chuyển mã thành viên cũ sang mã số 19 chữ số và đổi cột sang BIGINT UNSIGNED)
 13. fix_customer_profile_utf8.sql (bắt buộc với database WAMP cũ dùng latin1; sửa charset và phục hồi địa chỉ tiếng Việt)
 14. create_customer_password_reset_requests.sql (mã xác minh, giới hạn thử và nhật ký khôi phục mật khẩu)
+15. customer_ai_assistant.sql (lịch sử chatbot và tour hướng dẫn Aurora AI)
 
 ## Khôi phục mật khẩu
 

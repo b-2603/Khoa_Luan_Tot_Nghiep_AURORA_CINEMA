@@ -1,7 +1,10 @@
+-- Aurora TMS notification inbox.
+-- Source workflows remain authoritative; api.php synchronises outstanding work
+-- into this durable, per-user inbox without creating demo data.
 USE aurora_db;
 
 CREATE TABLE IF NOT EXISTS tms_notifications (
-  id BIGINT UNSIGNED NOT NULL AUTO_INCREMENT PRIMARY KEY,
+  id BIGINT UNSIGNED NOT NULL AUTO_INCREMENT,
   notification_key VARCHAR(160) NOT NULL,
   category VARCHAR(40) NOT NULL DEFAULT 'system',
   severity VARCHAR(20) NOT NULL DEFAULT 'info',
@@ -17,11 +20,13 @@ CREATE TABLE IF NOT EXISTS tms_notifications (
   created_by VARCHAR(120) NOT NULL DEFAULT 'Aurora System',
   created_at DATETIME NOT NULL,
   expires_at DATETIME NULL,
+  PRIMARY KEY (id),
   UNIQUE KEY uq_tms_notification_key (notification_key),
   KEY idx_tms_notification_scope (target_user_id, theater_id, created_at),
   KEY idx_tms_notification_roles (target_roles),
+  KEY idx_tms_notification_entity (entity_type, entity_id),
   KEY idx_tms_notification_expiry (expires_at)
-) ENGINE=InnoDB DEFAULT CHARSET=utf8;
+) ENGINE=InnoDB DEFAULT CHARSET=utf8 COLLATE=utf8_unicode_ci;
 
 CREATE TABLE IF NOT EXISTS tms_notification_receipts (
   notification_id BIGINT UNSIGNED NOT NULL,
@@ -32,4 +37,4 @@ CREATE TABLE IF NOT EXISTS tms_notification_receipts (
   updated_at DATETIME NOT NULL,
   PRIMARY KEY (notification_id, user_id),
   KEY idx_tms_notification_receipt_user (user_id, read_at, dismissed_at)
-) ENGINE=InnoDB DEFAULT CHARSET=utf8;
+) ENGINE=InnoDB DEFAULT CHARSET=utf8 COLLATE=utf8_unicode_ci;

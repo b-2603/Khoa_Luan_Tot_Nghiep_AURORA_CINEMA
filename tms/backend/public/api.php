@@ -135,6 +135,69 @@ if (!$db->query("SET time_zone = '+07:00'")) {
     jsonResponse(array('success' => false, 'message' => 'Không thể đặt múi giờ Việt Nam cho kết nối aurora_db: ' . $db->error), 500);
 }
 
+/** Upgrade audit_logs in place without deleting legacy history. */
+function ensureTmsAuditLogSchema($db) {
+    if (!$db->query("CREATE TABLE IF NOT EXISTS audit_logs (
+        id BIGINT UNSIGNED NOT NULL AUTO_INCREMENT PRIMARY KEY,
+        user_id BIGINT UNSIGNED NULL, username VARCHAR(80) NOT NULL, role VARCHAR(40) NULL,
+        action VARCHAR(80) NOT NULL, module VARCHAR(60) NULL, entity_type VARCHAR(80) NULL,
+        entity_id VARCHAR(120) NULL, details TEXT NULL, severity VARCHAR(20) NOT NULL DEFAULT 'info',
+        status_code SMALLINT UNSIGNED NULL, http_method VARCHAR(10) NULL, request_path VARCHAR(255) NULL,
+        ip_address VARCHAR(45) NULL, user_agent VARCHAR(500) NULL, metadata_json TEXT NULL,
+        event_hash CHAR(64) NULL, created_at TIMESTAMP NULL DEFAULT CURRENT_TIMESTAMP
+    ) ENGINE=InnoDB DEFAULT CHARSET=utf8 COLLATE=utf8_general_ci")) return false;
+    $tableCollation = $db->query("SELECT TABLE_COLLATION FROM information_schema.TABLES WHERE TABLE_SCHEMA=DATABASE() AND TABLE_NAME='audit_logs' LIMIT 1");
+    $tableCollationRow = $tableCollation ? $tableCollation->fetch_assoc() : null;
+    if ($tableCollationRow && strtolower($tableCollationRow['TABLE_COLLATION']) !== 'utf8_general_ci') {
+        if (!$db->query("ALTER TABLE audit_logs CONVERT TO CHARACTER SET utf8 COLLATE utf8_general_ci")) return false;
+    }
+    $columns = array(
+        'user_id'=>"BIGINT UNSIGNED NULL AFTER id", 'role'=>"VARCHAR(40) NULL AFTER username",
+        'module'=>"VARCHAR(60) NULL AFTER action", 'entity_type'=>"VARCHAR(80) NULL AFTER module",
+        'entity_id'=>"VARCHAR(120) NULL AFTER entity_type", 'severity'=>"VARCHAR(20) NOT NULL DEFAULT 'info' AFTER details",
+        'status_code'=>"SMALLINT UNSIGNED NULL AFTER severity", 'http_method'=>"VARCHAR(10) NULL AFTER status_code",
+        'request_path'=>"VARCHAR(255) NULL AFTER http_method", 'user_agent'=>"VARCHAR(500) NULL AFTER ip_address",
+        'metadata_json'=>"TEXT NULL AFTER user_agent", 'event_hash'=>"CHAR(64) NULL AFTER metadata_json"
+    );
+    foreach ($columns as $name => $definition) {
+        $found = $db->query("SHOW COLUMNS FROM audit_logs LIKE '".$db->real_escape_string($name)."'");
+        if ((!$found || $found->num_rows === 0) && !$db->query("ALTER TABLE audit_logs ADD COLUMN `{$name}` {$definition}")) return false;
+    }
+    $indexes = array('idx_audit_created'=>'created_at','idx_audit_action'=>'action','idx_audit_user'=>'username','idx_audit_module'=>'module');
+    foreach ($indexes as $index => $column) {
+        $found = $db->query("SHOW INDEX FROM audit_logs WHERE Key_name='".$db->real_escape_string($index)."'");
+        if ((!$found || $found->num_rows === 0) && !$db->query("CREATE INDEX `{$index}` ON audit_logs (`{$column}`)")) return false;
+    }
+    return true;
+}
+
+/** Append one sanitized event to aurora_db. Passwords and session tokens are never accepted. */
+function writeTmsAuditLog($db, $action, $details, $options = array()) {
+    if (!ensureTmsAuditLogSchema($db)) return false;
+    $sessionUser = !empty($_SESSION['tms_user']) ? $_SESSION['tms_user'] : array();
+    $userId = isset($options['user_id']) ? (int)$options['user_id'] : (!empty($sessionUser['id']) ? (int)$sessionUser['id'] : 0);
+    $username = isset($options['username']) ? trim((string)$options['username']) : (!empty($sessionUser['username']) ? $sessionUser['username'] : 'anonymous');
+    $role = isset($options['role']) ? trim((string)$options['role']) : (!empty($sessionUser['role']) ? AdminController::normalizeRole($sessionUser['role']) : 'guest');
+    $module = isset($options['module']) ? trim((string)$options['module']) : 'system';
+    $entityType = isset($options['entity_type']) ? trim((string)$options['entity_type']) : '';
+    $entityId = isset($options['entity_id']) ? trim((string)$options['entity_id']) : '';
+    $severity = isset($options['severity']) && in_array($options['severity'], array('info','success','warning','error'), true) ? $options['severity'] : 'info';
+    $statusCode = isset($options['status_code']) ? max(0, min(999, (int)$options['status_code'])) : 200;
+    $method = isset($_SERVER['REQUEST_METHOD']) ? strtoupper(substr($_SERVER['REQUEST_METHOD'], 0, 10)) : '';
+    $path = isset($_SERVER['REQUEST_URI']) ? substr($_SERVER['REQUEST_URI'], 0, 255) : '';
+    $ip = isset($_SERVER['REMOTE_ADDR']) ? substr($_SERVER['REMOTE_ADDR'], 0, 45) : '';
+    $agent = isset($_SERVER['HTTP_USER_AGENT']) ? substr($_SERVER['HTTP_USER_AGENT'], 0, 500) : '';
+    $metadata = isset($options['metadata']) && is_array($options['metadata']) ? json_encode($options['metadata']) : '';
+    $occurredAt = date('Y-m-d H:i:s');
+    $hash = hash('sha256', $occurredAt.'|'.$userId.'|'.$username.'|'.$action.'|'.$details.'|'.$ip);
+    $values = array($username,$role,$action,$module,$entityType,$entityId,$details,$severity,$method,$path,$ip,$agent,$metadata,$hash);
+    foreach ($values as $key => $value) $values[$key] = $db->real_escape_string((string)$value);
+    $userSql = $userId > 0 ? $userId : 'NULL'; $statusSql = $statusCode > 0 ? $statusCode : 'NULL';
+    return (bool)$db->query("INSERT INTO audit_logs
+      (user_id,username,role,action,module,entity_type,entity_id,details,severity,status_code,http_method,request_path,ip_address,user_agent,metadata_json,event_hash,created_at)
+      VALUES ({$userSql},'{$values[0]}','{$values[1]}','{$values[2]}','{$values[3]}','{$values[4]}','{$values[5]}','{$values[6]}','{$values[7]}',{$statusSql},'{$values[8]}','{$values[9]}','{$values[10]}','{$values[11]}','{$values[12]}','{$values[13]}','{$occurredAt}')");
+}
+
 function ensureTmsNotificationSchema($db) {
     $notifications = $db->query("CREATE TABLE IF NOT EXISTS tms_notifications (
         id BIGINT UNSIGNED NOT NULL AUTO_INCREMENT PRIMARY KEY,
@@ -245,6 +308,35 @@ function syncTmsOperationalNotifications($db) {
             ON DUPLICATE KEY UPDATE title=VALUES(title),message=VALUES(message),theater_id=VALUES(theater_id),action_view=VALUES(action_view),action_label=VALUES(action_label),expires_at=NULL");
     }
 
+    // A product distribution grants a cinema the right to sell the selected
+    // catalogue items. It is deliberately separate from the KPI plan above:
+    // the assignment remains actionable until the cinema administrator has
+    // acknowledged and synchronised it to the local POS inventory.
+    if (tmsNotificationTableExists($db, 'product_distribution_theaters')
+        && tmsNotificationTableExists($db, 'product_distributions')) {
+        $db->query("UPDATE tms_notifications n SET n.expires_at=NOW()
+            WHERE n.entity_type='product_distribution_assignment' AND NOT EXISTS
+            (SELECT 1 FROM product_distribution_theaters dt
+             INNER JOIN product_distributions d ON d.id=dt.distribution_id
+             WHERE dt.id=n.entity_id AND dt.status='published' AND d.status='published')");
+        $db->query("INSERT INTO tms_notifications
+            (notification_key,category,severity,title,message,target_roles,theater_id,action_view,action_label,entity_type,entity_id,created_by,created_at)
+            SELECT CONCAT('product-distribution-assignment:',dt.id),'product_distribution','warning',
+                   'Phân bố hàng hóa mới cần xác nhận',
+                   CONCAT(d.distribution_code,' · ',d.title,' · ',
+                          (SELECT COUNT(*) FROM product_distribution_items di WHERE di.distribution_id=d.id),' mặt hàng',
+                          IF(COALESCE((SELECT SUM(di2.opening_stock) FROM product_distribution_items di2 WHERE di2.distribution_id=d.id),0)>0,
+                             CONCAT(' · tồn đầu kỳ ',FORMAT((SELECT SUM(di3.opening_stock) FROM product_distribution_items di3 WHERE di3.distribution_id=d.id),0)),'')),
+                   'cinema_admin',dt.theater_id,'products','Xem và xác nhận','product_distribution_assignment',dt.id,
+                   COALESCE(NULLIF(d.published_by_name,''),'Admin Tổng'),COALESCE(dt.published_at,d.published_at,NOW())
+            FROM product_distribution_theaters dt
+            INNER JOIN product_distributions d ON d.id=dt.distribution_id
+            WHERE dt.status='published' AND d.status='published'
+            ON DUPLICATE KEY UPDATE title=VALUES(title),message=VALUES(message),severity=VALUES(severity),
+                theater_id=VALUES(theater_id),action_view=VALUES(action_view),action_label=VALUES(action_label),
+                created_by=VALUES(created_by),expires_at=NULL");
+    }
+
     // Marketing movie-plan approvals are submitted in another TMS workspace,
     // but Admin Tổng must receive them in the same durable inbox.  The
     // submission timestamp is part of the key so a revised and re-submitted
@@ -336,10 +428,12 @@ function restoreTmsIdentity() {
 restoreTmsIdentity();
 
 require_once dirname(__FILE__) . '/../app/Http/Controllers/AdminController.php';
+require_once dirname(__FILE__) . '/../app/Http/Controllers/AuditLogController.php';
 require_once dirname(__FILE__) . '/../app/Http/Controllers/RevenueController.php';
 require_once dirname(__FILE__) . '/../app/Http/Controllers/MarketingController.php';
 require_once dirname(__FILE__) . '/../app/Http/Controllers/ProductPlanningController.php';
 $controller = new AdminController($db);
+$auditLogController = new AuditLogController($db);
 $revenueController = new RevenueController($db);
 $marketingController = new MarketingController($db);
 $productPlanningController = new ProductPlanningController($db);
@@ -359,6 +453,9 @@ if ($action === 'product-catalog-workflow') {
 }
 if ($action === 'product-product-image') {
     $productPlanningController->handle('media', $requestMethod);
+}
+if ($action === 'product-distributions') {
+    $productPlanningController->handle('distributions', $requestMethod);
 }
 if ($action === 'product-plans') {
     $productPlanningController->handle('plans', $requestMethod);
@@ -586,6 +683,7 @@ if ($action === 'login' && $requestMethod === 'POST') {
     $password = isset($input['password']) ? (string)$input['password'] : '';
 
     if ($username === '' || $password === '') {
+        writeTmsAuditLog($db, 'LOGIN_FAILED', 'Yêu cầu đăng nhập thiếu thông tin bắt buộc.', array('username'=>$username === '' ? 'anonymous' : $username,'role'=>'guest','module'=>'security','severity'=>'warning','status_code'=>400));
         jsonResponse(array('success' => false, 'message' => 'Vui lòng nhập đầy đủ tên đăng nhập và mật khẩu.'), 400);
     }
 
@@ -657,10 +755,12 @@ if ($action === 'login' && $requestMethod === 'POST') {
 
     if ($user) {
         if (!passwordMatches($password, $user['password_hash'])) {
+            writeTmsAuditLog($db, 'LOGIN_FAILED', 'Đăng nhập thất bại do thông tin xác thực không đúng.', array('username'=>$user['username'],'user_id'=>$user['id'],'role'=>$user['role'],'module'=>'security','entity_type'=>'user','entity_id'=>$user['id'],'severity'=>'warning','status_code'=>401));
             jsonResponse(array('success' => false, 'message' => 'Tên đăng nhập hoặc mật khẩu không chính xác.'), 401);
         }
 
         if ($user['status'] !== 'active') {
+            writeTmsAuditLog($db, 'LOGIN_BLOCKED', 'Tài khoản bị khóa hoặc ngưng hoạt động đã thử đăng nhập.', array('username'=>$user['username'],'user_id'=>$user['id'],'role'=>$user['role'],'module'=>'security','entity_type'=>'user','entity_id'=>$user['id'],'severity'=>'error','status_code'=>403));
             jsonResponse(array('success' => false, 'message' => 'Tài khoản nhân sự TMS đang bị khóa hoặc ngưng hoạt động.'), 403);
         }
 
@@ -693,6 +793,7 @@ if ($action === 'login' && $requestMethod === 'POST') {
         regenerateTmsSession();
         $_SESSION['tms_user'] = $user;
         setTmsIdentity($user);
+        writeTmsAuditLog($db, 'LOGIN_SUCCESS', 'Đăng nhập TMS thành công.', array('user_id'=>$user['id'],'username'=>$user['username'],'role'=>$user['role'],'module'=>'security','entity_type'=>'session','severity'=>'success','status_code'=>200,'metadata'=>array('theater_id'=>(int)$user['theater_id'])));
         jsonResponse(array(
             'success' => true,
             'message' => 'Đăng nhập thành công với vai trò ' . $user['role_info']['name'],
@@ -703,10 +804,13 @@ if ($action === 'login' && $requestMethod === 'POST') {
     // Every authenticated TMS account must exist in aurora_db. Creating a
     // temporary fallback user here used to leave the browser with no durable
     // server identity, allowing an old account session to reappear on F5.
+    writeTmsAuditLog($db, 'LOGIN_FAILED', 'Đăng nhập thất bại do không tìm thấy tài khoản phù hợp.', array('username'=>$username,'role'=>'guest','module'=>'security','entity_type'=>'user','severity'=>'warning','status_code'=>401));
     jsonResponse(array('success' => false, 'message' => 'Tên đăng nhập hoặc mật khẩu không chính xác.'), 401);
 }
 
 if ($action === 'logout') {
+    $logoutUser = !empty($_SESSION['tms_user']) ? $_SESSION['tms_user'] : array();
+    if (!empty($logoutUser)) writeTmsAuditLog($db, 'LOGOUT', 'Đăng xuất TMS an toàn.', array('user_id'=>$logoutUser['id'],'username'=>$logoutUser['username'],'role'=>$logoutUser['role'],'module'=>'security','entity_type'=>'session','severity'=>'info','status_code'=>200));
     unset($_SESSION['tms_user']);
     if (session_id()) {
         session_destroy();
@@ -755,16 +859,19 @@ if ($action === 'notifications') {
     $scope .= " AND (n.expires_at IS NULL OR n.expires_at>NOW())";
 
     if ($requestMethod === 'GET') {
-        $filter = isset($_GET['filter']) && $_GET['filter'] === 'unread' ? 'unread' : 'all';
+        $filter = isset($_GET['filter']) ? (string)$_GET['filter'] : 'all';
+        if (!in_array($filter, array('all','unread','actionable'), true)) $filter = 'all';
         $limit = isset($_GET['limit']) ? (int)$_GET['limit'] : 40;
         if ($limit < 1) $limit = 1;
         if ($limit > 100) $limit = 100;
-        $unreadOnly = $filter === 'unread' ? ' AND r.read_at IS NULL' : '';
+        $filterCondition = '';
+        if ($filter === 'unread') $filterCondition = ' AND r.read_at IS NULL';
+        if ($filter === 'actionable') $filterCondition = " AND n.action_view IS NOT NULL AND n.entity_type IS NOT NULL";
         $result = $db->query("SELECT n.id,n.category,n.severity,n.title,n.message,n.theater_id,n.action_view,n.action_label,
                 n.entity_type,n.entity_id,n.created_by,n.created_at,r.read_at
             FROM tms_notifications n
             LEFT JOIN tms_notification_receipts r ON r.notification_id=n.id AND r.user_id={$userId}
-            WHERE {$scope} AND r.dismissed_at IS NULL{$unreadOnly}
+            WHERE {$scope} AND r.dismissed_at IS NULL{$filterCondition}
             ORDER BY (r.read_at IS NULL) DESC,n.created_at DESC,n.id DESC LIMIT {$limit}");
         if (!$result) jsonResponse(array('success' => false, 'message' => 'Không thể tải thông báo từ aurora_db: '.$db->error), 500);
         $items = array();
@@ -775,12 +882,21 @@ if ($action === 'notifications') {
             $row['is_read'] = $row['read_at'] !== null;
             $items[] = $row;
         }
-        $countResult = $db->query("SELECT COUNT(*) FROM tms_notifications n
+        $countResult = $db->query("SELECT
+                SUM(IF(r.read_at IS NULL,1,0)) AS unread_count,
+                SUM(IF(n.action_view IS NOT NULL AND n.entity_type IS NOT NULL,1,0)) AS actionable_count,
+                SUM(IF(n.severity IN ('warning','critical') AND r.read_at IS NULL,1,0)) AS priority_count,
+                COUNT(*) AS total_count
+            FROM tms_notifications n
             LEFT JOIN tms_notification_receipts r ON r.notification_id=n.id AND r.user_id={$userId}
-            WHERE {$scope} AND r.dismissed_at IS NULL AND r.read_at IS NULL");
-        $countRow = $countResult ? $countResult->fetch_row() : array(0);
+            WHERE {$scope} AND r.dismissed_at IS NULL");
+        $countRow = $countResult ? $countResult->fetch_assoc() : array();
         jsonResponse(array('success' => true, 'data' => $items, 'summary' => array(
-            'unread' => (int)$countRow[0], 'returned' => count($items), 'filter' => $filter,
+            'unread' => isset($countRow['unread_count']) ? (int)$countRow['unread_count'] : 0,
+            'actionable' => isset($countRow['actionable_count']) ? (int)$countRow['actionable_count'] : 0,
+            'priority' => isset($countRow['priority_count']) ? (int)$countRow['priority_count'] : 0,
+            'total' => isset($countRow['total_count']) ? (int)$countRow['total_count'] : 0,
+            'returned' => count($items), 'filter' => $filter,
             'source' => 'aurora_db', 'refreshed_at' => date('Y-m-d H:i:s')
         )));
     }
@@ -932,6 +1048,11 @@ if ($action === 'report' || $action === 'reports') {
     $controller->report();
 }
 
+if ($action === 'audit-log-workspace') {
+    if ($requestMethod === 'GET') $auditLogController->index();
+    jsonResponse(array('success'=>false,'message'=>'Audit Log là nhật ký bất biến và chỉ hỗ trợ tra cứu.'), 405);
+}
+
 if ($action === 'movies-import' && $requestMethod === 'POST') {
     $user = requireAdmin();
     if (AdminController::normalizeRole($user['role']) !== 'super_admin') jsonResponse(array('success' => false, 'message' => 'Chỉ Admin Tổng được nhập danh sách phim.'), 403);
@@ -977,13 +1098,13 @@ if ($action === 'movies-import' && $requestMethod === 'POST') {
     jsonResponse(array('success' => true, 'message' => 'Đã tạo thành công '.$added.' phim vào kho hệ thống.', 'data' => array('added' => $added)));
 }
 
-$resources = array('movies', 'screens', 'schedules', 'staff', 'ticket-types', 'products', 'vouchers', 'customers', 'theaters', 'promotions', 'audit-logs', 'system-configs', 'transactions', 'refunds', 'movie-plans', 'movie-allocations');
+$resources = array('movies', 'screens', 'schedules', 'staff', 'ticket-types', 'products', 'vouchers', 'customers', 'theaters', 'promotions', 'system-configs', 'transactions', 'refunds', 'movie-plans', 'movie-allocations');
 if (in_array($action, $resources, true)) {
     $rbacResourceKeys = array(
         'movies'=>'movies', 'screens'=>'screens', 'schedules'=>'schedules', 'staff'=>'staff',
         'ticket-types'=>'ticket_types', 'products'=>'products', 'vouchers'=>'vouchers',
         'promotions'=>'vouchers', 'customers'=>'customers', 'transactions'=>'transactions_refunds',
-        'refunds'=>'transactions_refunds', 'system-configs'=>'settings', 'audit-logs'=>'settings'
+        'refunds'=>'transactions_refunds', 'system-configs'=>'settings'
     );
     if (isset($rbacResourceKeys[$action])) {
         requireAdmin();

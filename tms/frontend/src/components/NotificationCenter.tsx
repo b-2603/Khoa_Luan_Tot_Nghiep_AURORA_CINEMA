@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from 'react';
 import {
   AlertTriangle, Bell, CheckCheck, CheckCircle2, ChevronRight,
-  CircleDollarSign, Film, Inbox, Megaphone, Package, Receipt, RefreshCw, ShieldAlert, X,
+  CircleDollarSign, Film, Inbox, Megaphone, Package, Receipt, RefreshCw, ShieldAlert, Truck, X,
 } from 'lucide-react';
 
 export type TmsNotification = {
@@ -50,18 +50,32 @@ function NotificationIcon({ item }: { item: TmsNotification }) {
   if (item.category === 'movie_plan') return <Film size={18} />;
   if (item.category === 'marketing_approval' || item.category === 'marketing_result') return <Megaphone size={18} />;
   if (item.category === 'product_plan') return <Package size={18} />;
+  if (item.category === 'product_distribution') return <Truck size={18} />;
   if (item.severity === 'critical') return <ShieldAlert size={18} />;
   if (item.severity === 'warning') return <AlertTriangle size={18} />;
   if (item.severity === 'success') return <CheckCircle2 size={18} />;
   return <Bell size={18} />;
 }
 
+function categoryLabel(category: string) {
+  const labels: Record<string, string> = {
+    refund: 'Hoàn tiền', transaction: 'Giao dịch', movie_plan: 'Kế hoạch phim',
+    marketing_approval: 'Marketing', marketing_result: 'Marketing',
+    product_plan: 'KPI hàng hóa', product_distribution: 'Phân bố hàng hóa', system: 'Hệ thống',
+  };
+  return labels[category] || 'Vận hành';
+}
+
+type NotificationFilter = 'all' | 'unread' | 'actionable';
+
 export default function NotificationCenter({ apiBase, enabled, userKey, onOpen, onNavigate, onError }: Props) {
   const rootRef = useRef<HTMLDivElement>(null);
   const [open, setOpen] = useState(false);
-  const [filter, setFilter] = useState<'all' | 'unread'>('all');
+  const [filter, setFilter] = useState<NotificationFilter>('all');
   const [items, setItems] = useState<TmsNotification[]>([]);
   const [unread, setUnread] = useState(0);
+  const [actionable, setActionable] = useState(0);
+  const [priority, setPriority] = useState(0);
   const [loading, setLoading] = useState(false);
   const [refreshing, setRefreshing] = useState(false);
   const [lastUpdated, setLastUpdated] = useState('');
@@ -77,6 +91,8 @@ export default function NotificationCenter({ apiBase, enabled, userKey, onOpen, 
       if (!response.ok || !result.success) throw new Error(result.message || 'Không thể tải thông báo.');
       setItems(Array.isArray(result.data) ? result.data : []);
       setUnread(Number(result.summary?.unread || 0));
+      setActionable(Number(result.summary?.actionable || 0));
+      setPriority(Number(result.summary?.priority || 0));
       setLastUpdated(result.summary?.refreshed_at || '');
     } catch (error) {
       if (!background) onError(error instanceof Error ? error.message : 'Không thể tải trung tâm thông báo.');
@@ -98,7 +114,7 @@ export default function NotificationCenter({ apiBase, enabled, userKey, onOpen, 
   useEffect(() => {
     if (!enabled) return;
     loadNotifications(false, 'all');
-    const interval = window.setInterval(() => loadNotifications(true, filter), 15000);
+    const interval = window.setInterval(() => loadNotifications(true, filter), 10000);
     const onVisibility = () => { if (document.visibilityState === 'visible') loadNotifications(true, filter); };
     document.addEventListener('visibilitychange', onVisibility);
     return () => {
@@ -122,7 +138,7 @@ export default function NotificationCenter({ apiBase, enabled, userKey, onOpen, 
     };
   }, [open]);
 
-  const selectFilter = (next: 'all' | 'unread') => {
+  const selectFilter = (next: NotificationFilter) => {
     setFilter(next);
   };
 
@@ -130,8 +146,11 @@ export default function NotificationCenter({ apiBase, enabled, userKey, onOpen, 
     try {
       if (!item.is_read) {
         await updateNotification('read', item.id);
-        setItems(current => current.map(entry => entry.id === item.id ? { ...entry, is_read: true, read_at: new Date().toISOString() } : entry));
+        setItems(current => filter === 'unread'
+          ? current.filter(entry => entry.id !== item.id)
+          : current.map(entry => entry.id === item.id ? { ...entry, is_read: true, read_at: new Date().toISOString() } : entry));
         setUnread(value => Math.max(0, value - 1));
+        if (item.severity === 'warning' || item.severity === 'critical') setPriority(value => Math.max(0, value - 1));
       }
       if (item.action_view) onNavigate(item.action_view);
       setOpen(false);
@@ -146,6 +165,8 @@ export default function NotificationCenter({ apiBase, enabled, userKey, onOpen, 
       await updateNotification('dismiss', item.id);
       setItems(current => current.filter(entry => entry.id !== item.id));
       if (!item.is_read) setUnread(value => Math.max(0, value - 1));
+      if (item.entity_type && item.action_view) setActionable(value => Math.max(0, value - 1));
+      if (!item.is_read && (item.severity === 'warning' || item.severity === 'critical')) setPriority(value => Math.max(0, value - 1));
     } catch (error) {
       onError(error instanceof Error ? error.message : 'Không thể ẩn thông báo.');
     }
@@ -157,6 +178,7 @@ export default function NotificationCenter({ apiBase, enabled, userKey, onOpen, 
       await updateNotification('read_all');
       setItems(current => filter === 'unread' ? [] : current.map(item => ({ ...item, is_read: true, read_at: item.read_at || new Date().toISOString() })));
       setUnread(0);
+      setPriority(0);
     } catch (error) {
       onError(error instanceof Error ? error.message : 'Không thể đánh dấu tất cả đã đọc.');
     }
@@ -184,7 +206,7 @@ export default function NotificationCenter({ apiBase, enabled, userKey, onOpen, 
           <header className="notification-panel-head">
             <div className="notification-panel-title">
               <span className="notification-panel-symbol"><Bell size={19} /></span>
-              <div><b>Trung tâm thông báo</b><small>{unread ? `${unread} thông báo chưa đọc` : 'Bạn đã xem tất cả thông báo'}</small></div>
+              <div><b>Trung tâm thông báo</b><small>{unread ? `${unread} chưa đọc${priority ? ` · ${priority} ưu tiên` : ''}` : 'Bạn đã xem tất cả thông báo'}</small></div>
             </div>
             <button type="button" className="notification-icon-button" onClick={() => setOpen(false)} aria-label="Đóng"><X size={17} /></button>
           </header>
@@ -193,6 +215,7 @@ export default function NotificationCenter({ apiBase, enabled, userKey, onOpen, 
             <div className="notification-tabs" role="tablist">
               <button type="button" className={filter === 'all' ? 'active' : ''} onClick={() => selectFilter('all')}>Tất cả</button>
               <button type="button" className={filter === 'unread' ? 'active' : ''} onClick={() => selectFilter('unread')}>Chưa đọc {unread > 0 && <span>{unread}</span>}</button>
+              <button type="button" className={filter === 'actionable' ? 'active' : ''} onClick={() => selectFilter('actionable')}>Cần xử lý {actionable > 0 && <span className="actionable">{actionable}</span>}</button>
             </div>
             <button type="button" className="notification-read-all" disabled={!unread} onClick={markAllRead}><CheckCheck size={15} /> Đọc tất cả</button>
           </div>
@@ -201,14 +224,15 @@ export default function NotificationCenter({ apiBase, enabled, userKey, onOpen, 
             {loading ? (
               <div className="notification-state"><RefreshCw className="spin" size={24} /><b>Đang đồng bộ thông báo</b><span>Dữ liệu được đọc từ aurora_db</span></div>
             ) : items.length === 0 ? (
-              <div className="notification-state success"><Inbox size={29} /><b>{filter === 'unread' ? 'Không còn thông báo chưa đọc' : 'Hộp thư đang trống'}</b><span>Công việc mới sẽ xuất hiện tại đây.</span></div>
+              <div className="notification-state success"><Inbox size={29} /><b>{filter === 'unread' ? 'Không còn thông báo chưa đọc' : filter === 'actionable' ? 'Không có công việc cần xử lý' : 'Hộp thư đang trống'}</b><span>Công việc mới sẽ xuất hiện tại đây.</span></div>
             ) : items.map(item => (
               <article key={item.id} className={`notification-item ${item.is_read ? 'read' : 'unread'} severity-${item.severity}`} onClick={() => openItem(item)}>
                 <span className="notification-item-icon"><NotificationIcon item={item} /></span>
                 <div className="notification-item-content">
-                  <div className="notification-item-meta"><span>{item.created_by}</span><time>{relativeTime(item.created_at)}</time></div>
+                  <div className="notification-item-meta"><span className="notification-category">{categoryLabel(item.category)}</span><time>{relativeTime(item.created_at)}</time></div>
                   <b>{item.title}</b>
                   <p>{item.message}</p>
+                  <small className="notification-origin">Gửi bởi {item.created_by}</small>
                   {item.action_view && <small className="notification-item-action">{item.action_label || 'Xem chi tiết'} <ChevronRight size={13} /></small>}
                 </div>
                 {!item.is_read && <i className="notification-unread-dot" aria-label="Chưa đọc" />}

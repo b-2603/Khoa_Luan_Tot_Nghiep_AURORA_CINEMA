@@ -372,3 +372,126 @@ CREATE TABLE IF NOT EXISTS customer_support_tickets (
   KEY idx_support_ticket_user (user_id,created_at),
   KEY idx_support_ticket_status (status,created_at)
 ) ENGINE=InnoDB;
+
+-- Aurora AI assistant: chat history and guided onboarding are persisted in aurora_db.
+CREATE TABLE IF NOT EXISTS customer_ai_profiles (
+  user_id BIGINT UNSIGNED NOT NULL PRIMARY KEY,
+  onboarding_status VARCHAR(20) NOT NULL DEFAULT 'PENDING',
+  onboarding_step TINYINT UNSIGNED NOT NULL DEFAULT 0,
+  preferred_genres VARCHAR(255) NULL,
+  first_seen_at DATETIME NOT NULL,
+  last_seen_at DATETIME NOT NULL,
+  onboarding_completed_at DATETIME NULL,
+  updated_at DATETIME NOT NULL,
+  KEY idx_ai_profile_onboarding (onboarding_status, updated_at)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8 COLLATE=utf8_unicode_ci;
+
+CREATE TABLE IF NOT EXISTS customer_ai_conversations (
+  id BIGINT UNSIGNED NOT NULL AUTO_INCREMENT PRIMARY KEY,
+  conversation_key VARCHAR(64) NOT NULL,
+  session_key VARCHAR(128) NOT NULL,
+  user_id BIGINT UNSIGNED NULL,
+  language VARCHAR(5) NOT NULL DEFAULT 'vi',
+  status VARCHAR(20) NOT NULL DEFAULT 'ACTIVE',
+  created_at DATETIME NOT NULL,
+  updated_at DATETIME NOT NULL,
+  last_message_at DATETIME NULL,
+  UNIQUE KEY uq_ai_conversation_key (conversation_key),
+  KEY idx_ai_conversation_user (user_id, updated_at),
+  KEY idx_ai_conversation_session (session_key, updated_at)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8 COLLATE=utf8_unicode_ci;
+
+CREATE TABLE IF NOT EXISTS customer_ai_messages (
+  id BIGINT UNSIGNED NOT NULL AUTO_INCREMENT PRIMARY KEY,
+  conversation_id BIGINT UNSIGNED NOT NULL,
+  client_message_id VARCHAR(80) NULL,
+  sender VARCHAR(20) NOT NULL,
+  message_text TEXT NOT NULL,
+  intent VARCHAR(50) NULL,
+  metadata_json TEXT NULL,
+  created_at DATETIME NOT NULL,
+  UNIQUE KEY uq_ai_message_client (conversation_id, sender, client_message_id),
+  KEY idx_ai_message_conversation (conversation_id, id),
+  KEY idx_ai_message_intent (intent, created_at)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8 COLLATE=utf8_unicode_ci;
+
+CREATE TABLE IF NOT EXISTS customer_ai_events (
+  id BIGINT UNSIGNED NOT NULL AUTO_INCREMENT PRIMARY KEY,
+  session_key VARCHAR(128) NOT NULL,
+  user_id BIGINT UNSIGNED NULL,
+  event_type VARCHAR(40) NOT NULL,
+  step_key VARCHAR(60) NULL,
+  metadata_json TEXT NULL,
+  created_at DATETIME NOT NULL,
+  KEY idx_ai_event_user (user_id, created_at),
+  KEY idx_ai_event_type (event_type, created_at)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8 COLLATE=utf8_unicode_ci;
+
+-- Aurora cinematic mascot configuration and privacy-safe interaction telemetry.
+CREATE TABLE IF NOT EXISTS mascot_3d_config (
+  id BIGINT UNSIGNED NOT NULL AUTO_INCREMENT PRIMARY KEY,
+  config_key VARCHAR(60) NOT NULL UNIQUE,
+  config_value TEXT NOT NULL,
+  label VARCHAR(120) NOT NULL,
+  updated_by BIGINT UNSIGNED NULL,
+  updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+  KEY idx_mascot_config_key (config_key)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8 COLLATE=utf8_unicode_ci;
+
+INSERT IGNORE INTO mascot_3d_config (config_key, config_value, label) VALUES
+('body_color','#F7D25E','Màu hiệu ứng vàng Aurora'),
+('accent_color','#0F1B3D','Màu hiệu ứng xanh navy'),
+('cheek_color','#FFB8C6','Màu hiệu ứng má hồng'),
+('eye_color','#1A1A3A','Màu hiệu ứng mắt'),
+('scarf_color','#0F1B3D','Màu hiệu ứng khăn'),
+('film_color','#2C3E6A','Màu hiệu ứng dải phim'),
+('mascot_name','Aurora','Tên linh vật'),
+('mascot_slogan','Cùng bạn tận hưởng mọi khoảnh khắc điện ảnh!','Slogan linh vật'),
+('idle_animation','float','Chuyển động nghỉ'),
+('enable_shadow','1','Hiển thị bóng đổ'),
+('enable_particles','1','Hiển thị hạt sáng'),
+('scale_factor','1.0','Tỷ lệ kích thước'),
+('ambient_light','0.6','Độ sáng hiển thị'),
+('engine','AURORA_CINEMATIC_RIG_V3','Bộ máy chuyển động'),
+('engine_version','3.0.0','Phiên bản bộ máy'),
+('asset_root','/assets/aurora-assistant','Thư mục tài nguyên'),
+('asset_version','3','Phiên bản tài nguyên'),
+('config_schema_version','2','Phiên bản cấu hình');
+
+CREATE TABLE IF NOT EXISTS mascot_3d_events (
+  id BIGINT UNSIGNED NOT NULL AUTO_INCREMENT PRIMARY KEY,
+  session_key VARCHAR(128) NOT NULL,
+  user_id BIGINT UNSIGNED NULL,
+  event_type VARCHAR(50) NOT NULL,
+  expression VARCHAR(30) NULL,
+  pose VARCHAR(30) NULL,
+  page_context VARCHAR(80) NULL,
+  metadata_json TEXT NULL,
+  ip_hash CHAR(64) NULL,
+  created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  KEY idx_mascot_event_user (user_id, created_at),
+  KEY idx_mascot_event_type (event_type, created_at),
+  KEY idx_mascot_event_session (session_key, created_at)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8 COLLATE=utf8_unicode_ci;
+
+CREATE TABLE IF NOT EXISTS mascot_3d_daily_stats (
+  id BIGINT UNSIGNED NOT NULL AUTO_INCREMENT PRIMARY KEY,
+  stat_date DATE NOT NULL,
+  total_interactions INT UNSIGNED NOT NULL DEFAULT 0,
+  unique_users INT UNSIGNED NOT NULL DEFAULT 0,
+  chat_opens INT UNSIGNED NOT NULL DEFAULT 0,
+  most_popular_expression VARCHAR(30) NULL,
+  most_popular_pose VARCHAR(30) NULL,
+  avg_session_duration_sec DECIMAL(8,2) NULL,
+  computed_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  UNIQUE KEY uq_mascot_stat_date (stat_date)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8 COLLATE=utf8_unicode_ci;
+
+CREATE OR REPLACE VIEW mascot_3d_stats_summary AS
+SELECT
+  COUNT(*) AS total_events_all_time,
+  COUNT(DISTINCT COALESCE(CAST(user_id AS CHAR), CONCAT('guest:', session_key))) AS unique_users_all_time,
+  SUM(CASE WHEN event_type = 'OPEN_CHAT' THEN 1 ELSE 0 END) AS total_chat_opens,
+  SUM(CASE WHEN created_at >= DATE_SUB(NOW(), INTERVAL 7 DAY) THEN 1 ELSE 0 END) AS events_last_7d,
+  SUM(CASE WHEN created_at >= DATE_SUB(NOW(), INTERVAL 1 DAY) THEN 1 ELSE 0 END) AS events_today
+FROM mascot_3d_events;

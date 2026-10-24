@@ -1,0 +1,578 @@
+/* ================================================================
+   MascotAdminPage – Trang Quản Trị Linh Vật 3D Aurora Cinema
+   Thiết kế premium dark theme, glassmorphism, aurora gradient
+   ================================================================ */
+
+@import url('https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800&display=swap');
+
+/* ── Root & reset ───────────────────────────────────────────────── */
+.mascot-admin-page {
+  --c-bg:        #06101f;
+  --c-surface:   #0c1a30;
+  --c-surface2:  #112040;
+  --c-border:    rgba(100, 160, 255, 0.12);
+  --c-border2:   rgba(247, 210, 94, 0.18);
+  --c-gold:      #F7D25E;
+  --c-gold-glow: rgba(247, 210, 94, 0.25);
+  --c-navy:      #0F1B3D;
+  --c-text:      #e8edf5;
+  --c-text2:     #7a9cc4;
+  --c-accent:    #4d8cf5;
+  --c-success:   #34d399;
+  --c-error:     #f87171;
+  --radius:      14px;
+  --radius-sm:   8px;
+  --shadow-card: 0 4px 24px rgba(0,0,0,0.35), 0 1px 4px rgba(0,0,0,0.2);
+
+  font-family: 'Inter', system-ui, sans-serif;
+  min-height: 100vh;
+  background: var(--c-bg);
+  color: var(--c-text);
+  padding: 28px 24px 60px;
+  background-image:
+    radial-gradient(ellipse 900px 500px at 20% 0%, rgba(15, 27, 61, 0.6) 0%, transparent 70%),
+    radial-gradient(ellipse 700px 400px at 80% 100%, rgba(247, 210, 94, 0.05) 0%, transparent 60%);
+}
+
+/* ── Header ─────────────────────────────────────────────────────── */
+.mascot-admin-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  flex-wrap: wrap;
+  gap: 16px;
+  margin-bottom: 32px;
+  padding-bottom: 24px;
+  border-bottom: 1px solid var(--c-border);
+}
+
+.mascot-admin-header-left {
+  display: flex;
+  align-items: center;
+  gap: 16px;
+}
+
+.mascot-admin-header-icon {
+  width: 52px; height: 52px;
+  border-radius: 14px;
+  background: linear-gradient(135deg, #F7D25E 0%, #e8a800 100%);
+  display: flex; align-items: center; justify-content: center;
+  font-size: 24px;
+  color: #0F1B3D;
+  box-shadow: 0 0 0 1px rgba(247,210,94,0.3), 0 6px 20px rgba(247,210,94,0.2);
+  flex-shrink: 0;
+}
+
+.mascot-admin-title {
+  font-size: 22px;
+  font-weight: 800;
+  color: var(--c-text);
+  margin: 0 0 3px;
+  letter-spacing: -0.01em;
+}
+
+.mascot-admin-subtitle {
+  font-size: 13px;
+  color: var(--c-text2);
+  margin: 0;
+}
+
+.mascot-admin-header-actions {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.mascot-save-ok {
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--c-success);
+  animation: mascotFadeIn 0.3s ease;
+}
+
+/* ── Buttons ─────────────────────────────────────────────────────── */
+.mascot-btn {
+  display: inline-flex; align-items: center; gap: 6px;
+  padding: 9px 18px;
+  border: none; border-radius: var(--radius-sm);
+  font-size: 13px; font-weight: 600;
+  cursor: pointer; transition: all 0.18s ease;
+}
+
+.mascot-btn-primary {
+  background: linear-gradient(135deg, #F7D25E 0%, #e8a800 100%);
+  color: #0F1B3D;
+  box-shadow: 0 2px 12px rgba(247,210,94,0.30);
+}
+.mascot-btn-primary:hover:not(:disabled) {
+  transform: translateY(-1px);
+  box-shadow: 0 4px 20px rgba(247,210,94,0.40);
+}
+.mascot-btn-primary:disabled { opacity: 0.65; cursor: not-allowed; }
+
+.mascot-btn-ghost {
+  background: rgba(255,255,255,0.06);
+  color: var(--c-text2);
+  border: 1px solid var(--c-border);
+}
+.mascot-btn-ghost:hover { background: rgba(255,255,255,0.10); color: var(--c-text); }
+
+.mascot-btn-spinner {
+  display: inline-block; width: 13px; height: 13px;
+  border: 2px solid rgba(15,27,61,0.35);
+  border-top-color: #0F1B3D;
+  border-radius: 50%;
+  animation: mascotSpin 0.7s linear infinite;
+}
+
+/* ── Error banner ────────────────────────────────────────────────── */
+.mascot-admin-error {
+  display: flex; align-items: center; gap: 10px;
+  padding: 12px 16px;
+  background: rgba(248,113,113,0.12);
+  border: 1px solid rgba(248,113,113,0.3);
+  border-radius: var(--radius-sm);
+  color: #fca5a5;
+  font-size: 13px;
+  margin-bottom: 24px;
+}
+.mascot-admin-error button {
+  margin-left: auto; background: none; border: none;
+  color: #fca5a5; cursor: pointer; font-size: 16px;
+}
+
+/* ── Main layout ─────────────────────────────────────────────────── */
+.mascot-admin-layout {
+  display: grid;
+  grid-template-columns: 360px 1fr;
+  gap: 24px;
+  align-items: start;
+}
+
+@media (max-width: 1024px) {
+  .mascot-admin-layout { grid-template-columns: 1fr; }
+}
+
+/* ── Preview Pane ────────────────────────────────────────────────── */
+.mascot-preview-pane {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+}
+
+.mascot-preview-stage {
+  position: relative;
+  background: linear-gradient(160deg, var(--c-surface) 0%, var(--c-navy) 100%);
+  border: 1px solid var(--c-border2);
+  border-radius: var(--radius);
+  padding: 32px 24px 24px;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 8px;
+  overflow: hidden;
+  box-shadow: var(--shadow-card);
+  min-height: 420px;
+}
+
+.mascot-preview-glow {
+  position: absolute;
+  inset: -30%; border-radius: 50%;
+  background: radial-gradient(ellipse at 50% 40%, rgba(247,210,94,0.10) 0%, transparent 60%);
+  pointer-events: none;
+}
+
+.mascot-preview-badge {
+  display: flex; align-items: center; gap: 6px;
+  padding: 5px 14px;
+  background: linear-gradient(135deg, var(--c-navy), #1a2e60);
+  border: 1.5px solid var(--c-border2);
+  border-radius: 20px;
+  color: var(--c-gold);
+  font-size: 13px; font-weight: 700;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  margin-top: 8px;
+}
+
+.mascot-preview-slogan {
+  font-size: 12px;
+  color: var(--c-text2);
+  text-align: center;
+  font-style: italic;
+  margin: 0;
+  max-width: 240px;
+  line-height: 1.5;
+}
+
+/* ── Quick controls ──────────────────────────────────────────────── */
+.mascot-quick-controls {
+  background: var(--c-surface);
+  border: 1px solid var(--c-border);
+  border-radius: var(--radius);
+  padding: 14px 16px;
+  display: flex; flex-direction: column; gap: 10px;
+}
+
+.mascot-quick-row {
+  display: flex; align-items: center; justify-content: space-between;
+}
+
+.mascot-quick-label {
+  font-size: 13px; font-weight: 500; color: var(--c-text2);
+}
+
+/* ── Toggle switch ───────────────────────────────────────────────── */
+.mascot-toggle {
+  position: relative;
+  width: 40px; height: 22px;
+  background: rgba(255,255,255,0.1);
+  border: 1px solid var(--c-border);
+  border-radius: 11px;
+  cursor: pointer;
+  transition: background 0.22s ease, border-color 0.22s ease;
+  flex-shrink: 0;
+}
+.mascot-toggle span {
+  position: absolute;
+  top: 2px; left: 2px;
+  width: 16px; height: 16px;
+  border-radius: 50%;
+  background: var(--c-text2);
+  transition: transform 0.22s cubic-bezier(0.4,0,0.2,1), background 0.22s ease;
+}
+.mascot-toggle.on { background: var(--c-gold); border-color: var(--c-gold); }
+.mascot-toggle.on span { transform: translateX(18px); background: #0F1B3D; }
+
+.mascot-toggle-label {
+  display: flex; align-items: center; justify-content: space-between;
+  padding: 8px 0;
+  cursor: pointer;
+}
+.mascot-toggle-label span { font-size: 13px; color: var(--c-text2); }
+
+/* ── Pose / expression grid ──────────────────────────────────────── */
+.mascot-pose-grid {
+  background: var(--c-surface);
+  border: 1px solid var(--c-border);
+  border-radius: var(--radius);
+  padding: 14px 16px;
+}
+
+.mascot-section-title {
+  font-size: 12px; font-weight: 700; color: var(--c-text2);
+  text-transform: uppercase; letter-spacing: 0.07em;
+  margin-bottom: 10px;
+}
+
+.mascot-pose-buttons {
+  display: flex; flex-wrap: wrap; gap: 6px;
+}
+
+.mascot-pose-btn {
+  padding: 5px 10px;
+  font-size: 12px; font-weight: 500;
+  border-radius: 6px;
+  border: 1px solid var(--c-border);
+  background: rgba(255,255,255,0.04);
+  color: var(--c-text2);
+  cursor: pointer;
+  transition: all 0.15s ease;
+}
+.mascot-pose-btn:hover { background: rgba(255,255,255,0.08); color: var(--c-text); }
+.mascot-pose-btn.active {
+  background: linear-gradient(135deg, rgba(247,210,94,0.18), rgba(247,210,94,0.08));
+  border-color: rgba(247,210,94,0.4);
+  color: var(--c-gold);
+}
+
+/* ── Config Pane ─────────────────────────────────────────────────── */
+.mascot-config-pane {
+  background: var(--c-surface);
+  border: 1px solid var(--c-border);
+  border-radius: var(--radius);
+  overflow: hidden;
+  box-shadow: var(--shadow-card);
+  display: flex;
+  flex-direction: column;
+}
+
+/* ── Tabs ────────────────────────────────────────────────────────── */
+.mascot-tabs {
+  display: flex;
+  border-bottom: 1px solid var(--c-border);
+  background: var(--c-surface2);
+}
+
+.mascot-tab {
+  flex: 1;
+  padding: 14px 8px;
+  background: none; border: none;
+  font-size: 12px; font-weight: 600;
+  color: var(--c-text2);
+  cursor: pointer;
+  transition: all 0.16s ease;
+  border-bottom: 2px solid transparent;
+  text-align: center;
+}
+.mascot-tab:hover { color: var(--c-text); }
+.mascot-tab.active {
+  color: var(--c-gold);
+  border-bottom-color: var(--c-gold);
+  background: rgba(247,210,94,0.05);
+}
+
+/* ── Tab content ─────────────────────────────────────────────────── */
+.mascot-tab-content {
+  padding: 20px;
+  display: flex;
+  flex-direction: column;
+  gap: 20px;
+  overflow-y: auto;
+  max-height: 70vh;
+}
+
+.mascot-form-section {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.mascot-form-title {
+  font-size: 13px; font-weight: 700; color: var(--c-text);
+  margin: 0;
+  padding-bottom: 8px;
+  border-bottom: 1px solid var(--c-border);
+}
+
+.mascot-form-desc {
+  font-size: 12px; color: var(--c-text2); margin: 0;
+}
+
+.mascot-form-label {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  font-size: 12px;
+  font-weight: 500;
+  color: var(--c-text2);
+}
+
+.mascot-form-input,
+.mascot-form-select {
+  padding: 9px 12px;
+  background: rgba(255,255,255,0.05);
+  border: 1px solid var(--c-border);
+  border-radius: var(--radius-sm);
+  color: var(--c-text);
+  font-size: 13px;
+  font-family: inherit;
+  transition: border-color 0.15s ease;
+  width: 100%;
+}
+.mascot-form-input:focus,
+.mascot-form-select:focus {
+  outline: none;
+  border-color: rgba(247,210,94,0.4);
+}
+.mascot-form-select option { background: var(--c-surface); }
+
+/* ── Slider ──────────────────────────────────────────────────────── */
+.mascot-slider {
+  width: 100%;
+  accent-color: var(--c-gold);
+  cursor: pointer;
+}
+
+/* ── Color rows ──────────────────────────────────────────────────── */
+.mascot-color-row {
+  display: flex; align-items: center; justify-content: space-between;
+  padding: 8px 0;
+  border-bottom: 1px solid var(--c-border);
+  cursor: pointer;
+}
+.mascot-color-row:last-child { border-bottom: none; }
+
+.mascot-color-label {
+  font-size: 13px; color: var(--c-text); font-weight: 500;
+}
+
+.mascot-color-input-wrap {
+  display: flex; align-items: center; gap: 8px;
+}
+
+.mascot-color-input-wrap input[type="color"] {
+  width: 36px; height: 28px;
+  border: none; border-radius: 6px;
+  cursor: pointer; padding: 0;
+  background: none;
+}
+
+.mascot-color-hex {
+  font-size: 12px; font-family: monospace;
+  color: var(--c-text2); letter-spacing: 0.05em;
+}
+
+/* ── Presets ─────────────────────────────────────────────────────── */
+.mascot-color-presets {
+  display: flex; flex-direction: column; gap: 12px;
+}
+
+.mascot-preset-btn {
+  display: flex; align-items: center; gap: 10px;
+  padding: 10px 14px;
+  background: rgba(255,255,255,0.04);
+  border: 1px solid var(--c-border);
+  border-radius: var(--radius-sm);
+  cursor: pointer;
+  font-size: 13px; font-weight: 500;
+  color: var(--c-text);
+  text-align: left;
+  transition: all 0.15s ease;
+}
+.mascot-preset-btn:hover { background: rgba(255,255,255,0.08); border-color: var(--c-border2); }
+
+.mascot-preset-swatch {
+  display: flex; gap: 3px; flex-shrink: 0;
+}
+.mascot-preset-swatch span {
+  width: 14px; height: 14px; border-radius: 50%;
+  box-shadow: 0 0 0 1px rgba(255,255,255,0.1);
+}
+
+/* ── Behavior matrix ─────────────────────────────────────────────── */
+.mascot-matrix {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 16px;
+}
+@media (max-width: 600px) { .mascot-matrix { grid-template-columns: 1fr; } }
+
+.mascot-matrix-section { display: flex; flex-direction: column; gap: 6px; }
+.mascot-matrix-title {
+  font-size: 11px; font-weight: 700; color: var(--c-gold);
+  text-transform: uppercase; letter-spacing: 0.07em;
+  padding-bottom: 6px; border-bottom: 1px solid var(--c-border);
+  margin-bottom: 2px;
+}
+.mascot-matrix-item {
+  display: flex; align-items: center; gap: 6px;
+  padding: 5px 0;
+  border-bottom: 1px solid rgba(255,255,255,0.04);
+}
+.mascot-matrix-key {
+  font-family: monospace; font-size: 11px;
+  color: var(--c-accent); min-width: 70px;
+}
+.mascot-matrix-val { font-size: 12px; color: var(--c-text2); flex: 1; }
+.mascot-matrix-btn {
+  background: rgba(247,210,94,0.12); border: none;
+  border-radius: 4px; padding: 2px 7px;
+  color: var(--c-gold); cursor: pointer; font-size: 12px;
+  transition: background 0.15s;
+}
+.mascot-matrix-btn:hover { background: rgba(247,210,94,0.22); }
+
+/* ── Stats ───────────────────────────────────────────────────────── */
+.mascot-stats-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(160px, 1fr));
+  gap: 12px;
+}
+
+.mascot-stat-card {
+  background: var(--c-surface2);
+  border: 1px solid var(--c-border);
+  border-radius: var(--radius-sm);
+  padding: 14px;
+  display: flex; align-items: flex-start; gap: 10px;
+  transition: border-color 0.15s ease;
+}
+.mascot-stat-card:hover { border-color: var(--c-border2); }
+
+.mascot-stat-icon { font-size: 22px; flex-shrink: 0; line-height: 1; }
+
+.mascot-stat-value {
+  font-size: 22px; font-weight: 800; color: var(--c-gold); line-height: 1;
+}
+.mascot-stat-label { font-size: 12px; color: var(--c-text); font-weight: 500; margin-top: 3px; }
+.mascot-stat-sub { font-size: 11px; color: var(--c-text2); margin-top: 2px; }
+
+.mascot-stats-empty {
+  text-align: center; padding: 32px;
+  color: var(--c-text2); font-size: 13px;
+}
+.mascot-stats-spinner {
+  width: 28px; height: 28px;
+  border: 3px solid rgba(100,160,255,0.15);
+  border-top-color: var(--c-accent);
+  border-radius: 50%;
+  margin: 0 auto 12px;
+  animation: mascotSpin 0.9s linear infinite;
+}
+.mascot-stats-note { font-size: 12px; margin-top: 8px; color: var(--c-text2); }
+.mascot-stats-note code {
+  background: rgba(255,255,255,0.07);
+  padding: 1px 5px; border-radius: 4px;
+  font-size: 11px; color: var(--c-gold);
+}
+
+/* ── DB table list ───────────────────────────────────────────────── */
+.mascot-db-table-list { display: flex; flex-direction: column; gap: 8px; }
+
+.mascot-db-row {
+  display: flex; align-items: center; gap: 10px; flex-wrap: wrap;
+  padding: 8px 12px;
+  background: rgba(255,255,255,0.03);
+  border: 1px solid var(--c-border);
+  border-radius: 6px;
+}
+.mascot-db-name {
+  font-size: 12px; color: var(--c-accent);
+  background: rgba(77,140,245,0.1);
+  padding: 2px 7px; border-radius: 4px;
+  white-space: nowrap;
+}
+.mascot-db-desc { font-size: 12px; color: var(--c-text2); flex: 1; }
+.mascot-db-rows { font-size: 11px; color: var(--c-text2); white-space: nowrap; }
+
+/* ── Info box ────────────────────────────────────────────────────── */
+.mascot-info-box {
+  background: rgba(77,140,245,0.07);
+  border: 1px solid rgba(77,140,245,0.18);
+  border-radius: var(--radius-sm);
+  padding: 14px;
+  display: flex; flex-direction: column; gap: 6px;
+}
+.mascot-info-box p { font-size: 12px; color: var(--c-text2); margin: 0; line-height: 1.5; }
+.mascot-info-box strong { color: var(--c-text); }
+.mascot-info-box code {
+  background: rgba(255,255,255,0.07);
+  padding: 1px 5px; border-radius: 4px;
+  font-size: 11px; color: var(--c-gold);
+}
+
+/* ── Keyframes ───────────────────────────────────────────────────── */
+@keyframes mascotSpin {
+  from { transform: rotate(0deg); }
+  to   { transform: rotate(360deg); }
+}
+
+@keyframes mascotFadeIn {
+  from { opacity: 0; transform: translateY(-4px); }
+  to   { opacity: 1; transform: translateY(0); }
+}
+
+/* ── Scrollbar styling ───────────────────────────────────────────── */
+.mascot-tab-content::-webkit-scrollbar { width: 4px; }
+.mascot-tab-content::-webkit-scrollbar-track { background: transparent; }
+.mascot-tab-content::-webkit-scrollbar-thumb {
+  background: rgba(100,160,255,0.2); border-radius: 2px;
+}
+
+/* ── Responsive ──────────────────────────────────────────────────── */
+@media (max-width: 768px) {
+  .mascot-admin-page { padding: 16px 12px 48px; }
+  .mascot-admin-header { flex-direction: column; align-items: flex-start; }
+  .mascot-tabs .mascot-tab { padding: 10px 4px; font-size: 11px; }
+}
