@@ -212,6 +212,26 @@ CREATE TABLE IF NOT EXISTS promotions (
   created_at TIMESTAMP NULL DEFAULT CURRENT_TIMESTAMP
 ) ENGINE=InnoDB;
 
+-- Vé điện tử được phát hành riêng cho từng ghế sau khi booking thanh toán.
+-- QR chỉ chứa token đối soát, không chứa thông tin cá nhân của khách hàng.
+CREATE TABLE IF NOT EXISTS customer_booking_tickets (
+  id BIGINT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
+  booking_id BIGINT UNSIGNED NOT NULL,
+  booking_seat_id BIGINT UNSIGNED NOT NULL,
+  ticket_code VARCHAR(32) NOT NULL,
+  qr_token VARCHAR(64) NOT NULL,
+  status ENUM('VALID','USED','CANCELLED') NOT NULL DEFAULT 'VALID',
+  issued_at DATETIME NOT NULL,
+  checked_in_at DATETIME NULL,
+  created_at TIMESTAMP NULL DEFAULT CURRENT_TIMESTAMP,
+  UNIQUE KEY uq_customer_ticket_code (ticket_code),
+  UNIQUE KEY uq_customer_ticket_token (qr_token),
+  UNIQUE KEY uq_customer_ticket_seat (booking_seat_id),
+  KEY idx_customer_ticket_booking (booking_id),
+  CONSTRAINT fk_customer_ticket_booking FOREIGN KEY (booking_id) REFERENCES bookings(id) ON DELETE CASCADE,
+  CONSTRAINT fk_customer_ticket_booking_seat FOREIGN KEY (booking_seat_id) REFERENCES booking_seats(id) ON DELETE CASCADE
+) ENGINE=InnoDB;
+
 CREATE TABLE IF NOT EXISTS orders (
   id BIGINT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
   order_code VARCHAR(30) NOT NULL UNIQUE,

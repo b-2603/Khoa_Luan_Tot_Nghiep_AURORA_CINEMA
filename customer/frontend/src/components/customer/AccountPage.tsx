@@ -3,8 +3,10 @@ import {
   User, Mail, Phone, CreditCard, Calendar, MapPin,
   Lock, Eye, EyeOff, Check, AlertCircle, ChevronRight,
   Star, Ticket, Gift, Shield, Edit3, Save, X, Clock3, ReceiptText,
-  CheckCircle, Tag, Sparkles, Camera, Upload, Loader2, Trash2
+  CheckCircle, Tag, Sparkles, Camera, Upload, Loader2, Trash2,
+  QrCode, Download, Copy, Armchair, Popcorn, Banknote, Film
 } from 'lucide-react';
+import QRCode from 'qrcode';
 import SafeAvatar from './SafeAvatar';
 import './AccountPage.css';
 
@@ -43,6 +45,19 @@ type MembershipCard = {
   pointsToNextLevel: number;
   expiryNote: string;
 };
+
+type BookingHistoryItem={id:number;code:string;totalAmount:number;status:string;startsAt:string;movieTitle:string;theaterName:string;screenName:string;seats:string};
+type ElectronicTicket={code:string;seat:string;seatType:string;price:number;status:string;issuedAt:string;checkedInAt:string|null;qrPayload:string};
+type BookingDetail={id:number;code:string;status:string;total_amount:number;created_at:string;ticket_price:number;movie_title:string;poster_url:string|null;age_rating:string;format:string;duration_minutes:number;starts_at:string;ends_at:string;screen_name:string;theater_name:string;theater_address:string;city:string;seats:Array<{label:string;row:string;number:number;type:string;price:number}>;seats_display:string;tickets:ElectronicTicket[];order:null|{id:number;code:string;channel:string;subtotal:number;discountAmount:number;voucherCode:string|null;totalAmount:number;paymentMethod:string;amountReceived:number;status:string;createdAt:string};payments:Array<{method:string;amount:number;referenceCode:string;createdAt:string}>;concessions:Array<{type?:string;code:string;name:string;quantity:number;unitPrice:number;total:number}>};
+
+const salesChannelLabel=(channel?:string)=>channel==='POS'?'Mua trực tiếp tại quầy':channel==='ONLINE'?'Website Aurora':channel||'—';
+const paymentMethodLabel=(method?:string)=>method==='CASH'?'Tiền mặt':method==='CARD'?'Thẻ ngân hàng':method==='TRANSFER'?'Chuyển khoản':method==='QR_VNPAY'?'VNPAY QR':method||'—';
+
+function TicketQr({ticket}:{ticket:ElectronicTicket}){
+  const [src,setSrc]=useState('');
+  useEffect(()=>{let active=true;QRCode.toDataURL(ticket.qrPayload,{width:260,margin:2,errorCorrectionLevel:'M',color:{dark:'#0d1b2e',light:'#ffffff'}}).then(url=>{if(active)setSrc(url);}).catch(()=>setSrc(''));return()=>{active=false;};},[ticket.qrPayload]);
+  return <div className="booking-ticket-qr">{src?<img src={src} alt={`Mã QR vé ${ticket.code}`}/>:<span><Loader2 size={24}/></span>}<a href={src||undefined} download={`${ticket.code}.png`} aria-disabled={!src}><Download size={14}/>Lưu QR</a></div>;
+}
 
 type AccountPageProps = {
   authUser: { fullName: string; email: string; avatarUrl?: string | null } | null;
@@ -228,8 +243,11 @@ export default function AccountPage({ authUser, onUserUpdate, initialTab = 'info
   const [errorMsg, setErrorMsg] = useState('');
   const [pwdSuccess, setPwdSuccess] = useState('');
   const [pwdError, setPwdError] = useState('');
-  const [bookings, setBookings] = useState<any[]>([]);
+  const [bookings, setBookings] = useState<BookingHistoryItem[]>([]);
   const [bookingsLoading, setBookingsLoading] = useState(false);
+  const [bookingDetail,setBookingDetail]=useState<BookingDetail|null>(null);
+  const [bookingDetailLoading,setBookingDetailLoading]=useState(false);
+  const [bookingDetailError,setBookingDetailError]=useState('');
   const [membershipCard, setMembershipCard] = useState<MembershipCard | null>(null);
   const [membershipLoading, setMembershipLoading] = useState(false);
   const [voucherCode, setVoucherCode] = useState('');
@@ -348,6 +366,13 @@ export default function AccountPage({ authUser, onUserUpdate, initialTab = 'info
       .catch(() => setBookings([]))
       .finally(() => setBookingsLoading(false));
   }, [activeTab]);
+
+  useEffect(()=>{if(!bookingDetail&&!bookingDetailLoading)return;const previous=document.body.style.overflow;const onKey=(event:KeyboardEvent)=>{if(event.key==='Escape'&&!bookingDetailLoading)setBookingDetail(null);};document.body.style.overflow='hidden';document.addEventListener('keydown',onKey);return()=>{document.body.style.overflow=previous;document.removeEventListener('keydown',onKey);};},[bookingDetail,bookingDetailLoading]);
+
+  async function openBookingDetail(bookingId:number){
+    setBookingDetailError('');setBookingDetailLoading(true);
+    try{const response=await fetch(`${API_URL}?action=booking_detail&id=${bookingId}`,{credentials:'include',cache:'no-store'});const data=await response.json();if(!response.ok||!data.booking)throw new Error(data.message||'Không thể tải chi tiết đơn hàng.');setBookingDetail(data.booking as BookingDetail);}catch(error){setBookingDetailError(error instanceof Error?error.message:'Không thể tải chi tiết đơn hàng.');setBookingDetail(null);}finally{setBookingDetailLoading(false);}
+  }
 
   useEffect(() => {
     if (activeTab !== 'member') return;
@@ -771,12 +796,13 @@ export default function AccountPage({ authUser, onUserUpdate, initialTab = 'info
           {activeTab === 'history' && (
             <div style={{ padding: 32 }}>
               <PageHeading icon={ReceiptText} title="Lịch sử đặt vé" subtitle="Theo dõi tất cả giao dịch đặt vé của bạn." />
+              {bookingDetailError&&<div className="booking-detail-error" role="alert"><AlertCircle size={16}/>{bookingDetailError}<button type="button" onClick={()=>setBookingDetailError('')}><X size={14}/></button></div>}
               {bookingsLoading ? <LoadingState text="Đang tải lịch sử đặt vé..." /> : bookings.length === 0 ? (
                 <EmptyState icon="🎟️" title="Bạn chưa có vé nào" text="Các vé đã đặt sẽ xuất hiện tại đây để bạn tiện theo dõi." />
               ) : <div style={{ display: 'grid', gap: 14 }}>
                 {bookings.map(booking => {
                   const isPaid = booking.status === 'PAID';
-                  return <div key={booking.id} style={{ border: '1px solid #e2e8f0', borderRadius: 14, padding: 18, background: '#fff', display: 'flex', gap: 16, alignItems: 'center', flexWrap: 'wrap' }}>
+                  return <article key={booking.id} className="booking-history-card">
                     <div style={{ width: 48, height: 48, borderRadius: 12, background: '#fff7dd', display: 'grid', placeItems: 'center', flexShrink: 0 }}><Ticket size={23} color="#f4c04a" /></div>
                     <div style={{ flex: 1, minWidth: 210 }}>
                       <div style={{ fontSize: 15, fontWeight: 800, color: '#0d1b2e' }}>{booking.movieTitle}</div>
@@ -786,7 +812,8 @@ export default function AccountPage({ authUser, onUserUpdate, initialTab = 'info
                     <div style={{ minWidth: 120 }}><div style={{ fontSize: 11, color: '#94a3b8', fontWeight: 700 }}>MÃ ĐẶT VÉ</div><div style={{ fontWeight: 800, color: '#0d1b2e', fontSize: 13 }}>{booking.code}</div></div>
                     <div style={{ minWidth: 115 }}><div style={{ fontSize: 11, color: '#94a3b8', fontWeight: 700 }}>TỔNG TIỀN</div><div style={{ fontWeight: 800, color: '#f4c04a', fontSize: 14 }}>{formatMoney(booking.totalAmount)}</div></div>
                     <span style={{ fontSize: 11, fontWeight: 800, padding: '5px 10px', borderRadius: 20, color: isPaid ? '#166534' : '#f4c04a', background: isPaid ? '#dcfce7' : '#fef3c7' }}>{isPaid ? 'ĐÃ THANH TOÁN' : booking.status}</span>
-                  </div>;
+                    <button type="button" className="booking-detail-open" onClick={()=>void openBookingDetail(booking.id)}><QrCode size={16}/>{isPaid?'Xem vé điện tử':'Xem chi tiết'}<ChevronRight size={15}/></button>
+                  </article>;
                 })}
               </div>}
             </div>
@@ -820,6 +847,33 @@ export default function AccountPage({ authUser, onUserUpdate, initialTab = 'info
           )}
         </div>
       </div>
+      {bookingDetailLoading&&<div className="booking-detail-backdrop"><div className="booking-detail-loading"><Loader2 size={28}/><b>Đang chuẩn bị vé điện tử</b><span>Đối chiếu đơn hàng trực tiếp từ Aurora Cinema…</span></div></div>}
+      {bookingDetail&&(
+        <div className="booking-detail-backdrop" onMouseDown={event=>{if(event.target===event.currentTarget)setBookingDetail(null);}}>
+          <section className="booking-detail-modal" role="dialog" aria-modal="true" aria-labelledby="booking-detail-title">
+            <header className="booking-detail-head"><div><span><QrCode size={14}/> VÉ ĐIỆN TỬ AURORA</span><h2 id="booking-detail-title">Chi tiết đơn hàng</h2><p>Mỗi ghế có một mã vé và QR riêng để soát vé tại rạp.</p></div><button type="button" onClick={()=>setBookingDetail(null)} aria-label="Đóng chi tiết đơn hàng"><X size={20}/></button></header>
+            <div className="booking-detail-scroll">
+              <section className="booking-movie-summary">
+                <div className="booking-poster">{bookingDetail.poster_url?<img src={bookingDetail.poster_url} alt={bookingDetail.movie_title}/>:<Film size={34}/>}</div>
+                <div><span>{bookingDetail.age_rating||'P'} · {bookingDetail.format||'2D'} · {bookingDetail.duration_minutes} phút</span><h3>{bookingDetail.movie_title}</h3><p><Calendar size={15}/>{formatDateTime(bookingDetail.starts_at)}</p><p><MapPin size={15}/>{bookingDetail.theater_name} · {bookingDetail.screen_name}</p><small>{bookingDetail.theater_address}{bookingDetail.city?` · ${bookingDetail.city}`:''}</small></div>
+                <aside><small>TRẠNG THÁI</small><b className={bookingDetail.status==='PAID'?'paid':''}>{bookingDetail.status==='PAID'?'Đã thanh toán':bookingDetail.status}</b><small>MÃ ĐẶT VÉ</small><strong>{bookingDetail.code}</strong></aside>
+              </section>
+
+              <div className="booking-detail-section-title"><div><Ticket size={17}/><span><b>Vé của bạn</b><small>{bookingDetail.tickets.length} vé điện tử</small></span></div><p>Đưa từng QR cho nhân viên soát vé</p></div>
+              {bookingDetail.tickets.length?<div className="booking-ticket-list">{bookingDetail.tickets.map(ticket=><article className="booking-electronic-ticket" key={ticket.code}>
+                <div className="booking-ticket-info"><span className="booking-ticket-brand">AURORA CINEMA</span><div className="booking-ticket-seat"><Armchair size={21}/><span><small>GHẾ</small><b>{ticket.seat}</b></span></div><dl><div><dt>Mã vé</dt><dd>{ticket.code}<button type="button" title="Sao chép mã vé" onClick={()=>void navigator.clipboard?.writeText(ticket.code)}><Copy size={13}/></button></dd></div><div><dt>Loại ghế</dt><dd>{ticket.seatType}</dd></div><div><dt>Giá vé</dt><dd>{formatMoney(ticket.price)}</dd></div></dl><span className={`booking-ticket-status ${ticket.status.toLowerCase()}`}>{ticket.status==='VALID'?'Sẵn sàng sử dụng':ticket.status==='USED'?'Đã soát vé':'Không còn hiệu lực'}</span></div>
+                <TicketQr ticket={ticket}/>
+              </article>)}</div>:<div className="booking-no-ticket"><QrCode size={28}/><b>Vé QR chưa được phát hành</b><span>Vé điện tử được tạo sau khi đơn hàng thanh toán thành công.</span></div>}
+
+              <div className="booking-detail-columns">
+                <section><h4><ReceiptText size={16}/>Thông tin đơn hàng</h4><dl><div><dt>Mã đơn hàng</dt><dd>{bookingDetail.order?.code||bookingDetail.code}</dd></div><div><dt>Kênh bán</dt><dd>{salesChannelLabel(bookingDetail.order?.channel)}</dd></div><div><dt>Phương thức</dt><dd>{paymentMethodLabel(bookingDetail.order?.paymentMethod||bookingDetail.payments[0]?.method)}</dd></div>{bookingDetail.order?.voucherCode&&<div><dt>Voucher</dt><dd>{bookingDetail.order.voucherCode}</dd></div>}<div><dt>Tạm tính</dt><dd>{formatMoney(bookingDetail.order?.subtotal??bookingDetail.total_amount)}</dd></div><div><dt>Giảm giá</dt><dd>- {formatMoney(bookingDetail.order?.discountAmount||0)}</dd></div><div className="total"><dt>Tổng thanh toán</dt><dd>{formatMoney(bookingDetail.total_amount)}</dd></div></dl></section>
+                <section><h4><Popcorn size={16}/>Bắp nước & hàng hóa</h4>{bookingDetail.concessions.length?<div className="booking-concession-list">{bookingDetail.concessions.map(item=><div key={`${item.code}-${item.unitPrice}`}><span><b>{item.name}</b><small><em>{item.type==='MERCHANDISE'?'Hàng hóa':'Combo'}</em>{item.quantity} × {formatMoney(item.unitPrice)}</small></span><strong>{formatMoney(item.total)}</strong></div>)}</div>:<div className="booking-empty-concession">Đơn hàng không có bắp nước hoặc hàng hóa.</div>}<div className="booking-payment-proof"><Banknote size={17}/><span><small>Ghi nhận thanh toán</small><b>{bookingDetail.payments[0]?.referenceCode||bookingDetail.order?.code||'Chưa có mã đối soát'}</b></span></div></section>
+              </div>
+            </div>
+            <footer className="booking-detail-foot"><p><Shield size={15}/>QR không chứa thông tin cá nhân. Không chia sẻ ảnh vé với người khác.</p><button type="button" onClick={()=>window.print()}><Download size={15}/>In / lưu đơn hàng</button><button type="button" className="primary" onClick={()=>setBookingDetail(null)}>Hoàn tất</button></footer>
+          </section>
+        </div>
+      )}
       {avatarPreviewOpen && avatarUrl && (
         <div className="profile-avatar-lightbox" role="presentation">
           <div className="profile-avatar-lightbox-dialog" role="dialog" aria-modal="true" aria-label="Xem ảnh đại diện">

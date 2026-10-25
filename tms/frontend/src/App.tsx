@@ -1,10 +1,14 @@
 import { useState, useEffect, FormEvent, useRef } from 'react';
 import * as XLSX from 'xlsx';
-import AccountManagementPage from './components/AccountManagementPage';
+import AccountManagementPage, { type IdentityAccount, type IdentitySystem, type IdentitySystemSummary, type IdentitySummary } from './components/AccountManagementPage';
 import MarketingWorkspace, { MarketingPlanApproval } from './components/MarketingWorkspace';
 import NotificationCenter from './components/NotificationCenter';
 import ProductCatalogManagement from './components/ProductCatalogManagement';
 import AuditLogManagement from './components/AuditLogManagement';
+import ReportsWorkspace from './components/ReportsWorkspace';
+import PosDeviceManagement from './components/PosDeviceManagement';
+import UserAccountModal from './components/UserAccountModal';
+import RbacManagement, { type PermissionAction, type PermissionActions, type RbacGrant, type RbacModule } from './components/RbacManagement';
 import './components/MarketingWorkspace.css';
 import './components/MarketingReviewHierarchy.css';
 import './components/MarketingWorkspace.layout.css';
@@ -19,7 +23,7 @@ import {
   ShieldAlert, UserCheck, Monitor, ScrollText, CreditCard, Search, RefreshCw,
   Tv, Clapperboard as ShowtimeIcon, MapPin, Clock, Target,
   Layers, Send, CalendarCheck, Sparkles, Filter, Globe, CirclePause,
-  Play, WalletCards, KeyRound, CircleDollarSign, Phone, Activity, History, Printer, Megaphone
+  Play, WalletCards, KeyRound, LockKeyhole, CircleDollarSign, Phone, Activity, History, Printer, Megaphone
 } from 'lucide-react';
 
 // ============================================================
@@ -190,13 +194,41 @@ function getRoleNavItems(role: TMSRole): NavItem[] {
   }
 }
 
+// Route labels and implementation keys are deliberately kept separate from
+// the RBAC module keys stored in aurora_db. This map is the single bridge used
+// by both the sidebar and direct URL/view protection.
+const VIEW_RBAC_MODULE: Record<string, string> = {
+  dashboard: 'dashboard', 'Tổng quan tài chính': 'dashboard',
+  accounts: 'users', 'Danh sách tài khoản': 'users', 'Ma trận phân quyền': 'users',
+  cinemas: 'screens', 'Hệ thống rạp': 'screens',
+  movies: 'movies', 'Danh sách phim': 'movies', 'Kế hoạch phim': 'movies',
+  'Phân bổ phim cho rạp': 'movies', movie_plan: 'movies', 'Xem kế hoạch phim': 'movies',
+  'Xác nhận kế hoạch': 'movies', 'Triển khai phim tại rạp': 'movies', marketing_approvals: 'marketing',
+  schedules: 'schedules', showtimes: 'schedules',
+  screens: 'screens',
+  pricing: 'ticket_types',
+  catalog: 'products', products: 'products',
+  promotions: 'vouchers', 'Duyệt kế hoạch CTKM': 'vouchers', 'Quản lý CTKM hệ thống': 'vouchers',
+  'Voucher tại rạp': 'vouchers', 'Tiếp nhận CTKM': 'vouchers', 'Triển khai CTKM': 'vouchers', 'Đề xuất điều chỉnh': 'vouchers',
+  staff: 'staff', shifts: 'staff', 'NV bán hàng': 'staff', 'Nhân viên rạp': 'staff', 'Phiên bán hàng': 'staff', 'Phiên làm việc': 'staff',
+  reports: 'reports',
+  pos_devices: 'pos_devices', 'Quản lý POS': 'pos_devices', 'Phê duyệt POS': 'pos_devices',
+  transactions: 'transactions_refunds', pos_txns: 'transactions_refunds', refunds: 'transactions_refunds',
+  approvals: 'transactions_refunds', 'Xem giao dịch': 'transactions_refunds', 'Lịch sử thanh toán': 'transactions_refunds',
+  'Hủy giao dịch': 'transactions_refunds', 'Hoàn tiền': 'transactions_refunds', 'Nghiệp vụ ngoại lệ': 'transactions_refunds',
+  invoices: 'transactions_refunds', reconciliation: 'transactions_refunds', 'Đối soát giao dịch': 'transactions_refunds', 'Đối soát thanh toán': 'transactions_refunds',
+  audit_log: 'audit_logs', settings: 'settings',
+  'mkt-dashboard': 'marketing', 'mkt-movies': 'marketing', 'mkt-plans': 'marketing', 'mkt-campaigns': 'marketing',
+  'mkt-promotions': 'marketing', 'mkt-vouchers': 'marketing', 'mkt-contents': 'marketing',
+  'mkt-notifications': 'marketing', 'mkt-segments': 'marketing', 'mkt-reports': 'marketing', 'mkt-account': 'marketing',
+};
+
 // ============================================================
 // DATA TYPES
 // ============================================================
 interface TMSUser { id?: number; username: string; full_name: string; role: TMSRole; phone?: string; email?: string; theater_id?: number; theater_name?: string; status?: string; last_login?: string | null; membership_level?: string; points?: number; booking_count?: number; total_spent?: number; oauth_providers?: string | null; created_at?: string; account_type?: 'internal' | 'customer'; }
 type PermissionLevel = 'full' | 'manage' | 'view' | 'none';
-interface RbacGrant { level: PermissionLevel; note: string; updated_at?: string; }
-interface RbacModule { key: string; module: string; sort_order: number; permissions: Record<TMSRole, RbacGrant>; }
+type CurrentPermission = { module:string; level:PermissionLevel; actions:PermissionActions; updated_at?:string };
 function formatLastLogin(value?: string | null) {
   if (!value) return '—';
   const match = value.match(/^(\d{4})-(\d{2})-(\d{2})[ T](\d{2}):(\d{2}):(\d{2})$/);
@@ -275,7 +307,12 @@ interface PosSessionItem {
   closed_at?: string|null; notes?: string; close_note?: string; closed_by?: string; order_count: number;
   total_revenue: number; cash_revenue: number; non_cash_revenue: number;
   authorized_by_tms_user_id?:number|null; authorized_by_name?:string|null; authorized_by_role?:string|null;
+  business_date?:string|null; auto_closed?:number; close_reason?:string|null;
   sales_areas?: string[];
+}
+interface PosSessionPolicy {
+  timezone:string; server_now:string; business_date:string; force_close_time:string; reopen_time:string;
+  can_open:boolean; message:string;
 }
 interface PosWorkScheduleItem {
   id: number; theater_id: number; theater_name: string; user_id: number; employee_code: string; full_name: string; username: string;
@@ -596,6 +633,10 @@ export default function App() {
   const [customerUsers, setCustomerUsers] = useState<TMSUser[]>([]);
   const [accountsLoading, setAccountsLoading] = useState(false);
   const [accountSummary, setAccountSummary] = useState({ total:0, active:0, locked:0, internal_total:0, internal_active:0, customer_total:0, customer_active:0, customer_points:0, admins:0 });
+  const emptyIdentitySystem: IdentitySystemSummary = { label:'', total:0, active:0, restricted:0, role_count:0 };
+  const [identityAccounts, setIdentityAccounts] = useState<IdentityAccount[]>([]);
+  const [identitySystems, setIdentitySystems] = useState<Record<IdentitySystem, IdentitySystemSummary>>({ tms:{...emptyIdentitySystem,label:'TMS'}, pos:{...emptyIdentitySystem,label:'POS'}, ems:{...emptyIdentitySystem,label:'EMS'}, customer:{...emptyIdentitySystem,label:'Customer'} });
+  const [identitySummary, setIdentitySummary] = useState<IdentitySummary>({ total:0, active:0, restricted:0, system_count:4, role_count:0, open_pos_shifts:0 });
   const [dashboardData, setDashboardData] = useState<DashboardData | null>(null);
   const [dashboardLoading, setDashboardLoading] = useState(false);
   const [dashboardError, setDashboardError] = useState('');
@@ -667,6 +708,7 @@ export default function App() {
   const [posSessionDate, setPosSessionDate] = useState(localIsoDate());
   const [posSessionStatus, setPosSessionStatus] = useState('all');
   const [posSessionView, setPosSessionView] = useState<'today'|'history'>('today');
+  const [posSessionPolicy, setPosSessionPolicy] = useState<PosSessionPolicy>({ timezone:'Asia/Ho_Chi_Minh', server_now:'', business_date:localIsoDate(), force_close_time:'00:00', reopen_time:'00:01', can_open:true, message:'Có thể cấp và mở phiên cho ngày nghiệp vụ hiện tại.' });
   const [posWorkSchedules, setPosWorkSchedules] = useState<PosWorkScheduleItem[]>([]);
   const [posWorkScheduleSummary, setPosWorkScheduleSummary] = useState({ total:0, scheduled:0, confirmed:0, active:0, completed:0, cancelled:0 });
   const [posWorkScheduleLoading, setPosWorkScheduleLoading] = useState(false);
@@ -702,6 +744,8 @@ export default function App() {
   const [showUserModal, setShowUserModal] = useState(false);
   const [userForm, setUserForm] = useState({ id: 0, username: '', full_name: '', phone: '', email: '', theater_id: 0, role: 'cinema_admin' as TMSRole, password: '', status: 'active' });
   const [showUserPassword, setShowUserPassword] = useState(false);
+  const [userSaving, setUserSaving] = useState(false);
+  const [userModalError, setUserModalError] = useState('');
   const [accountSearch, setAccountSearch] = useState('');
   const [accountRoleFilter, setAccountRoleFilter] = useState<'all' | TMSRole>('all');
   const [accountStatusFilter, setAccountStatusFilter] = useState<'all' | 'active' | 'locked'>('all');
@@ -709,6 +753,8 @@ export default function App() {
   const [rbacLoading, setRbacLoading] = useState(false);
   const [rbacSaving, setRbacSaving] = useState(false);
   const [rbacEditing, setRbacEditing] = useState(false);
+  const [currentPermissions, setCurrentPermissions] = useState<Record<string, CurrentPermission>>({});
+  const [permissionsLoaded, setPermissionsLoaded] = useState(false);
   const [showRefundModal, setShowRefundModal] = useState(false);
   const [refundForm, setRefundForm] = useState({ transaction_code: '', customer_name: '', amount: 190000, reason: '', payment_method: 'cash' });
 
@@ -904,22 +950,25 @@ export default function App() {
     if (currentUser?.role !== 'super_admin') {
       setTmsUsers([]);
       setCustomerUsers([]);
+      setIdentityAccounts([]);
       setAccountsLoading(false);
       return;
     }
 
     setAccountsLoading(true);
     try {
-      const [internalResponse, customerResponse] = await Promise.all([
-        fetch(`${API_BASE}?action=users&account_type=internal`, { credentials: 'include', cache: 'no-store' }),
-        fetch(`${API_BASE}?action=users&account_type=customer`, { credentials: 'include', cache: 'no-store' })
-      ]);
-      const [internalData, customerData] = await Promise.all([internalResponse.json(), customerResponse.json()]);
-      if (!internalResponse.ok || !internalData.success || !Array.isArray(internalData.data)) throw new Error(internalData.message || 'Không thể tải tài khoản nội bộ.');
-      if (!customerResponse.ok || !customerData.success || !Array.isArray(customerData.data)) throw new Error(customerData.message || 'Không thể tải tài khoản customer.');
-      setTmsUsers(internalData.data);
-      setCustomerUsers(customerData.data);
-      setAccountSummary(internalData.summary || customerData.summary || accountSummary);
+      const response = await fetch(`${API_BASE}?action=identity-directory`, { credentials:'include', cache:'no-store' });
+      const result = await response.json();
+      if (!response.ok || !result.success || !Array.isArray(result.data?.accounts)) throw new Error(result.message || 'Không thể tải danh bạ tài khoản toàn hệ thống.');
+      const allAccounts = result.data.accounts as IdentityAccount[];
+      setIdentityAccounts(allAccounts);
+      setIdentitySystems(result.data.systems);
+      setIdentitySummary(result.data.summary);
+      const internal = allAccounts.filter(item => item.system === 'tms').map(item => ({ ...item, theater_name:item.scope_name, account_type:'internal' })) as unknown as TMSUser[];
+      const customers = allAccounts.filter(item => item.system === 'customer').map(item => ({ ...item, theater_name:item.scope_name, account_type:'customer' })) as unknown as TMSUser[];
+      setTmsUsers(internal);
+      setCustomerUsers(customers);
+      setAccountSummary({ total:result.data.summary.total, active:result.data.summary.active, locked:result.data.summary.restricted, internal_total:internal.length, internal_active:internal.filter(item=>item.status==='active').length, customer_total:customers.length, customer_active:customers.filter(item=>item.status==='active').length, customer_points:customers.reduce((sum,item)=>sum+Number((item as any).points||0),0), admins:internal.filter(item=>item.status==='active'&&(item.role==='super_admin'||item.role==='cinema_admin')).length });
     } catch (error) { setSystemNotice({ message: error instanceof Error ? error.message : 'Không thể kết nối Aurora DB để tải tài khoản.', type: 'error' }); }
     finally { setAccountsLoading(false); }
   };
@@ -937,10 +986,31 @@ export default function App() {
     } finally { setRbacLoading(false); }
   };
 
+  const loadCurrentPermissions = async () => {
+    if (!currentUser) return;
+    setPermissionsLoaded(false);
+    try {
+      const response = await fetch(`${API_BASE}?action=my-permissions`, { credentials:'include', cache:'no-store' });
+      const result = await response.json();
+      if (!response.ok || !result.success || !result.data?.permissions) throw new Error(result.message || 'Không thể tải quyền hiện tại.');
+      setCurrentPermissions(result.data.permissions as Record<string, CurrentPermission>);
+      setPermissionsLoaded(true);
+    } catch (error) {
+      setCurrentPermissions({});
+      setPermissionsLoaded(true);
+      setSystemNotice({ message:error instanceof Error ? error.message : 'Không thể đồng bộ quyền từ Aurora DB.', type:'error' });
+    }
+  };
+
   const updateRbacGrant = (moduleKey: string, roleCode: TMSRole, patch: Partial<RbacGrant>) => {
     setRbacMatrix(previous => previous.map(item => item.key !== moduleKey ? item : {
       ...item, permissions: { ...item.permissions, [roleCode]: { ...(item.permissions[roleCode] || { level:'none', note:'' }), ...patch } }
     }));
+  };
+
+  const updateRbacActions = (moduleKey: string, roleCode: TMSRole, actions: PermissionActions) => {
+    const level:PermissionLevel = !actions.view ? 'none' : Object.values(actions).every(Boolean) ? 'full' : (actions.create || actions.update || actions.delete || actions.approve) ? 'manage' : 'view';
+    updateRbacGrant(moduleKey, roleCode, { actions, level });
   };
 
   const saveRbacMatrix = async () => {
@@ -953,6 +1023,7 @@ export default function App() {
       setRbacEditing(false);
       showSystemNotice(data.message || 'Đã lưu chính sách RBAC vào Aurora DB.');
       await loadRbacMatrix();
+      await loadCurrentPermissions();
     } catch (error) { setSystemNotice({ message:error instanceof Error ? error.message : 'Không thể lưu ma trận phân quyền.', type:'error' }); }
     finally { setRbacSaving(false); }
   };
@@ -1302,6 +1373,8 @@ export default function App() {
       // already scoped to the selected cinema and excludes nothing incorrectly.
       if(Array.isArray(result.available_staff)) setPosStaff(result.available_staff);
       setPosSessionSummary(result.summary || { total:0,active:0,paused:0,closed:0,order_count:0,total_revenue:0,cash_difference:0 });
+      if(result.session_policy) setPosSessionPolicy(result.session_policy);
+      if(Number(result.auto_closed_count||0)>0) showSystemNotice(`Hệ thống đã cưỡng chế đóng ${Number(result.auto_closed_count)} phiên cũ tại mốc 00:00.`);
     } catch (error) { setSystemNotice({ message:error instanceof Error?error.message:'Không thể tải phiên bán hàng từ Aurora DB.', type:'error' }); }
     finally { setPosSessionsLoading(false); }
   };
@@ -1396,6 +1469,7 @@ export default function App() {
   },'Hủy ca','Xác nhận hủy ca làm việc');
 
   const openSessionFromSchedule=(schedule:PosWorkScheduleItem)=>{
+    if(!posSessionPolicy.can_open){setSystemNotice({message:posSessionPolicy.message,type:'error'});return;}
     setPosSessionForm({work_schedule_id:schedule.id,user_id:schedule.user_id,theater_id:schedule.theater_id,initial_cash:Number(schedule.initial_cash),counter:schedule.counter,sales_areas:schedule.sales_areas,notes:schedule.notes||''});
     setShowPosSessionModal(true);
   };
@@ -1403,7 +1477,7 @@ export default function App() {
   const savePosSession = async (event: FormEvent) => {
     event.preventDefault(); setPosSessionSaving(true);
     try {
-      const response = await fetch(`${API_BASE}?action=pos-sessions`, { method:'POST', credentials:'include', headers:{'Content-Type':'application/json'}, body:JSON.stringify({ operation:'open', ...posSessionForm }) });
+      const response = await fetch(`${API_BASE}?action=pos-sessions`, { method:'POST', credentials:'include', headers:{'Content-Type':'application/json'}, body:JSON.stringify({ operation:'open', confirm_open:true, ...posSessionForm }) });
       const result = await response.json();
       if (!response.ok || !result.success) throw new Error(result.message || 'Không thể mở phiên bán hàng.');
       setShowPosSessionModal(false); showSystemNotice(result.message); await Promise.all([loadPosSessions(),loadPosStaff(),loadPosWorkSchedules()]);
@@ -1605,6 +1679,7 @@ export default function App() {
 
   useEffect(() => {
     if (isLoggedIn && currentUser) {
+      void loadCurrentPermissions();
       if (currentUser.role === 'marketing_manager') return;
       if (currentUser.role === 'super_admin') { void loadUsers(); void loadRbacMatrix(); }
       loadMoviePlans();
@@ -1631,6 +1706,14 @@ export default function App() {
     if(currentUser?.role!=='supervisor')void loadPosWorkSchedules(posSessionDate,posWorkScheduleStatus);
     if (currentUser?.role!=='supervisor'&&!posStaff.length) void loadPosStaff('','active');
   },[isLoggedIn,currentUser?.id,currentUser?.role,active,posSessionDate,posSessionStatus,posSessionView,posWorkScheduleStatus]);
+
+  // Keep an open management screen synchronized across the midnight boundary.
+  // The server/database remains authoritative; this timer only refreshes UI.
+  useEffect(() => {
+    if (!isLoggedIn || !['cinema_admin','super_admin','supervisor'].includes(currentUser?.role || '') || !['Phiên bán hàng','Phiên làm việc','shifts'].includes(active)) return;
+    const timer=window.setInterval(()=>void loadPosSessions(posSessionDate,posSessionStatus,posSessionView),15000);
+    return()=>window.clearInterval(timer);
+  },[isLoggedIn,currentUser?.id,currentUser?.role,active,posSessionDate,posSessionStatus,posSessionView]);
 
   useEffect(() => {
     if (isLoggedIn && currentUser?.role === 'super_admin' && (active === 'cinemas' || active === 'Hệ thống rạp')) {
@@ -2453,17 +2536,22 @@ export default function App() {
   // -------- PERMISSIONS HANDLERS --------
   const handleSaveUser = async (e: FormEvent) => {
     e.preventDefault();
-    if (currentUser?.role !== 'super_admin') { alert('Chỉ Admin Tổng mới có quyền quản lý tài khoản!'); return; }
-    if (!userForm.username.trim() || !userForm.full_name.trim() || !userForm.email.trim()) { setSystemNotice({ message: 'Vui lòng nhập đầy đủ tên đăng nhập, họ tên và email công việc.', type: 'warning' }); return; }
-    if (!/^\S+@\S+\.\S+$/.test(userForm.email.trim())) { setSystemNotice({ message: 'Email công việc không đúng định dạng.', type: 'warning' }); return; }
-    if (!userForm.id && userForm.password.length < 6) { setSystemNotice({ message: 'Mật khẩu khởi tạo cần có tối thiểu 6 ký tự.', type: 'warning' }); return; }
-    if ((userForm.role === 'cinema_admin' || userForm.role === 'supervisor') && !Number(userForm.theater_id)) { setSystemNotice({ message: 'Vui lòng chọn rạp phụ trách cho tài khoản vận hành.', type: 'warning' }); return; }
+    setUserModalError('');
+    if (currentUser?.role !== 'super_admin') { setUserModalError('Chỉ Admin Tổng mới có quyền quản lý tài khoản.'); return; }
+    if (!/^[A-Za-z0-9._-]{3,60}$/.test(userForm.username.trim())) { setUserModalError('Tên đăng nhập phải có 3–60 ký tự và chỉ gồm chữ, số, dấu chấm, gạch ngang hoặc gạch dưới.'); return; }
+    if (!userForm.full_name.trim() || !userForm.email.trim()) { setUserModalError('Vui lòng nhập đầy đủ họ tên và email công việc.'); return; }
+    if (!/^\S+@\S+\.\S+$/.test(userForm.email.trim())) { setUserModalError('Email công việc không đúng định dạng.'); return; }
+    if (userForm.phone && !/^(?:\+84|0)[0-9]{9,10}$/.test(userForm.phone.replace(/[\s.-]/g,''))) { setUserModalError('Số điện thoại phải bắt đầu bằng 0 hoặc +84 và có độ dài hợp lệ.'); return; }
+    if (!userForm.id && userForm.password.length < 6) { setUserModalError('Mật khẩu khởi tạo cần có tối thiểu 6 ký tự.'); return; }
+    if ((userForm.role === 'cinema_admin' || userForm.role === 'supervisor') && !Number(userForm.theater_id)) { setUserModalError('Vui lòng chọn rạp phụ trách cho tài khoản vận hành.'); return; }
+    setUserSaving(true);
     try {
       const res = await fetch(`${API_BASE}?action=users`, { method: 'POST', credentials: 'include', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(userForm) });
       const data = await res.json();
       if (!res.ok || !data.success) throw new Error(data.message || 'Không thể lưu tài khoản.');
       setShowUserModal(false); showSystemNotice(data.message || 'Đã lưu tài khoản vào Aurora DB.'); loadUsers();
-    } catch (error) { setSystemNotice({ message: error instanceof Error ? error.message : 'Không thể lưu tài khoản vào Aurora DB.', type: 'error' }); }
+    } catch (error) { setUserModalError(error instanceof Error ? error.message : 'Không thể lưu tài khoản vào Aurora DB.'); }
+    finally { setUserSaving(false); }
   };
 
   const toggleUserStatus = async (u: TMSUser) => {
@@ -2487,6 +2575,27 @@ export default function App() {
       if (!response.ok || !result.success) throw new Error(result.message || 'Không thể cập nhật trạng thái customer.');
       showSystemNotice(result.message); await loadUsers();
     } catch (error) { setSystemNotice({ message:error instanceof Error ? error.message : 'Không thể cập nhật trạng thái customer.', type:'error' }); }
+  };
+
+  const toggleIdentityStatus = (account: IdentityAccount) => {
+    if (currentUser?.role !== 'super_admin') { setSystemNotice({ message:'Chỉ Admin Tổng mới có quyền thay đổi trạng thái tài khoản.', type:'warning' }); return; }
+    if (account.system === 'tms' && Number(currentUser.id) === Number(account.id) && account.status === 'active') { setSystemNotice({ message:'Bạn không thể tự khóa tài khoản đang đăng nhập.', type:'warning' }); return; }
+    const nextStatus = account.status === 'active' ? (account.system === 'ems' ? 'inactive' : 'locked') : 'active';
+    const actionName = nextStatus === 'active' ? 'Khôi phục truy cập' : 'Hạn chế truy cập';
+    requestSystemConfirmation(
+      `${actionName} cho “${account.full_name}” trong phân hệ ${account.system_label}? Thay đổi sẽ được lưu vào aurora_db và ghi nhận trong Audit Log.`,
+      async () => {
+        try {
+          const response = await fetch(`${API_BASE}?action=identity-status`, { method:'POST', credentials:'include', headers:{'Content-Type':'application/json'}, body:JSON.stringify({ system:account.system, id:account.id, status:nextStatus }) });
+          const result = await response.json();
+          if (!response.ok || !result.success) throw new Error(result.message || 'Không thể cập nhật trạng thái tài khoản.');
+          showSystemNotice(result.message || 'Đã cập nhật trạng thái tài khoản.');
+          await loadUsers();
+        } catch (error) { setSystemNotice({ message:error instanceof Error ? error.message : 'Không thể cập nhật trạng thái tài khoản.', type:'error' }); }
+      },
+      actionName,
+      `${actionName} tài khoản?`
+    );
   };
 
   const deleteUserAccount = (u: TMSUser) => {
@@ -2580,7 +2689,12 @@ export default function App() {
   // ============================================================
   const role = currentUser?.role;
   const rc = role ? ROLE_CONFIGS[role] : ROLE_CONFIGS.super_admin;
-  const navItems = role ? getRoleNavItems(role) : [];
+  const canPerform = (moduleKey:string, action:PermissionAction='view') => role === 'super_admin' || Boolean(currentPermissions[moduleKey]?.actions?.[action]);
+  const navItems = role ? getRoleNavItems(role).filter(item => {
+    if (role === 'super_admin' || !permissionsLoaded) return true;
+    const moduleKey = VIEW_RBAC_MODULE[item.id];
+    return !moduleKey || canPerform(moduleKey, 'view');
+  }) : [];
   const pendingRefunds = refundsList.filter(r => r.status === 'pending').length;
   const cancelRequests = txnsList.filter(t => t.cancel_requested).length;
   const totalNotif = pendingRefunds + cancelRequests;
@@ -2989,6 +3103,15 @@ export default function App() {
   const renderContent = () => {
     const a = active;
 
+    const requiredModule = VIEW_RBAC_MODULE[a];
+    if (role !== 'super_admin' && permissionsLoaded && requiredModule && !canPerform(requiredModule, 'view')) return (
+      <section className="rbac-access-denied" role="alert">
+        <span><LockKeyhole size={24}/></span>
+        <div><small>QUYỀN TRUY CẬP</small><h2>Chức năng chưa được cấp cho vai trò này</h2><p>Tài khoản không có quyền <b>Xem</b> đối với phân hệ <code>{requiredModule}</code>. Hãy liên hệ Admin Tổng nếu nhiệm vụ công việc cần chức năng này.</p></div>
+        <button type="button" onClick={()=>setActive('dashboard')}>Về tổng quan</button>
+      </section>
+    );
+
     if (role === 'super_admin' && (a === 'Kế hoạch phim' || a === 'marketing_approvals')) return <MarketingPlanApproval apiBase={API_BASE} notify={showSystemNotice} requestConfirm={requestSystemConfirmation}/>;
     if (role === 'marketing_manager') return <MarketingWorkspace active={a} user={currentUser!} apiBase={API_BASE} notify={showSystemNotice} requestConfirm={requestSystemConfirmation}/>;
 
@@ -3010,17 +3133,36 @@ export default function App() {
             <button className="tms-tab-btn" onClick={() => setActive('Ma trận phân quyền')}><ShieldCheck size={16}/><span>Phân quyền</span></button>
           </div>
           <AccountManagementPage
-            internalUsers={tmsUsers as any}
-            customerUsers={customerUsers as any}
-            summary={accountSummary}
+            accounts={identityAccounts}
+            systems={identitySystems}
+            summary={identitySummary}
             loading={accountsLoading}
             formatLastLogin={formatLastLogin}
             onRefresh={loadUsers}
-            onCreateInternal={() => { setUserForm({id:0,username:'',full_name:'',phone:'',email:'',theater_id:0,role:'cinema_admin',password:'',status:'active'}); setShowUserPassword(false); setShowUserModal(true); }}
-            onEditInternal={(u:any) => { setUserForm({id:u.id||0,username:u.username,full_name:u.full_name,phone:u.phone||'',email:u.email||'',theater_id:Number(u.theater_id||0),role:u.role as TMSRole,password:'',status:u.status||'active'}); setShowUserPassword(false); setShowUserModal(true); }}
-            onToggleInternal={(u:any) => toggleUserStatus(u as TMSUser)}
+            onCreateInternal={() => { setUserForm({id:0,username:'',full_name:'',phone:'',email:'',theater_id:0,role:'cinema_admin',password:'',status:'active'}); setShowUserPassword(false); setUserModalError(''); setShowUserModal(true); }}
+            onEditInternal={(u:any) => { setUserForm({id:u.id||0,username:u.username,full_name:u.full_name,phone:u.phone||'',email:u.email||'',theater_id:Number(u.theater_id||0),role:u.role as TMSRole,password:'',status:u.status||'active'}); setShowUserPassword(false); setUserModalError(''); setShowUserModal(true); }}
             onDeleteInternal={(u:any) => deleteUserAccount(u as TMSUser)}
-            onToggleCustomer={(u:any) => toggleCustomerStatus(u as TMSUser)}
+            onToggleStatus={toggleIdentityStatus}
+          />
+        </div>
+      );
+      if (isMatrix) return (
+        <div>
+          <div className="tms-tabs-bar account-root-tabs">
+            <button className="tms-tab-btn" onClick={() => setActive('Danh sách tài khoản')}><Users size={16}/><span>Danh sách tài khoản ({tmsUsers.length})</span></button>
+            <button className="tms-tab-btn active" onClick={() => setActive('Ma trận phân quyền')}><ShieldCheck size={16}/><span>Phân quyền chức năng</span></button>
+          </div>
+          <RbacManagement
+            matrix={rbacMatrix}
+            loading={rbacLoading}
+            saving={rbacSaving}
+            editing={rbacEditing}
+            onEdit={() => setRbacEditing(true)}
+            onCancel={() => { setRbacEditing(false); void loadRbacMatrix(); }}
+            onRefresh={() => void loadRbacMatrix()}
+            onSave={() => void saveRbacMatrix()}
+            onActions={(moduleKey, roleCode, actions) => updateRbacActions(moduleKey, roleCode as TMSRole, actions)}
+            onNote={(moduleKey, roleCode, note) => updateRbacGrant(moduleKey, roleCode as TMSRole, { note })}
           />
         </div>
       );
@@ -3039,7 +3181,7 @@ export default function App() {
                 <article><span className="account-overview-icon violet"><ShieldCheck size={20}/></span><div><small>Vai trò đang dùng</small><b>{new Set(tmsUsers.map(user => user.role)).size}/4</b><em>Phân quyền RBAC tập trung</em></div></article>
               </section>
               <div className="tms-card-table account-management-table">
-              <div className="account-table-heading"><div><span>QUẢN TRỊ NGƯỜI DÙNG</span><h2>Tài khoản vận hành TMS</h2><p>Thêm, phân quyền và kiểm soát truy cập trực tiếp trên Aurora DB.</p></div><button type="button" className="account-create-button" onClick={() => { setUserForm({id:0,username:'',full_name:'',phone:'',email:'',theater_id:0,role:'cinema_admin',password:'',status:'active'}); setShowUserPassword(false); setShowUserModal(true); }}><Plus size={17}/><span>Thêm tài khoản</span></button></div>
+              <div className="account-table-heading"><div><span>QUẢN TRỊ NGƯỜI DÙNG</span><h2>Tài khoản vận hành TMS</h2><p>Thêm, phân quyền và kiểm soát truy cập trực tiếp trên Aurora DB.</p></div><button type="button" className="account-create-button" onClick={() => { setUserForm({id:0,username:'',full_name:'',phone:'',email:'',theater_id:0,role:'cinema_admin',password:'',status:'active'}); setShowUserPassword(false); setUserModalError(''); setShowUserModal(true); }}><Plus size={17}/><span>Thêm tài khoản</span></button></div>
               <div className="tms-table-toolbar account-toolbar">
                 <div className="tms-search-input"><Search size={16} color="#94a3b8"/><input value={accountSearch} onChange={e => setAccountSearch(e.target.value)} placeholder="Tìm tên, rạp phụ trách, username hoặc SĐT..." /></div>
                 <select value={accountRoleFilter} onChange={e => setAccountRoleFilter(e.target.value as 'all' | TMSRole)}><option value="all">Tất cả vai trò</option><option value="super_admin">Admin Tổng</option><option value="cinema_admin">Admin Rạp</option><option value="supervisor">Supervisor</option><option value="accounting">Kế toán</option></select>
@@ -3098,7 +3240,7 @@ export default function App() {
                       <td><span className={`role-badge-pill ${u.role}`}>{ucfg.name}</span></td>
                       <td><span style={{display:'inline-flex',alignItems:'center',gap:4,padding:'3px 8px',borderRadius:6,fontSize:'0.74rem',fontWeight:700,background:u.status==='active'?'#ecfdf5':'#fee2e2',color:u.status==='active'?'#065f46':'#991b1b'}}>{u.status==='active'?<CheckCircle2 size={12}/>:<XCircle size={12}/>}{u.status==='active'?'Hoạt động':'Tạm khóa'}</span></td>
                       <td style={{fontSize:'0.8rem',color:'#64748b'}}>{formatLastLogin(u.last_login)}</td>
-                      <td><div style={{display:'inline-flex',gap:6}}><button className="tms-btn tms-btn-outline" style={{padding:'5px 8px'}} onClick={()=>{setUserForm({id:u.id||0,username:u.username,full_name:u.full_name,phone:u.phone||'',email:u.email||'',theater_id:Number(u.theater_id||0),role:u.role,password:'',status:u.status||'active'});setShowUserPassword(false);setShowUserModal(true);}} title="Chỉnh sửa"><Edit size={14}/></button><button className="tms-btn tms-btn-outline" style={{padding:'5px 8px',color:u.status==='active'?'#dc2626':'#059669'}} onClick={()=>toggleUserStatus(u)} title={u.status==='active'?'Tạm khóa tài khoản':'Mở khóa tài khoản'}>{u.status==='active'?<Lock size={14}/>:<Check size={14}/>}</button><button className="tms-btn tms-btn-outline" style={{padding:'5px 8px',color:'#dc2626',borderColor:'#fecaca',background:'#fff5f5'}} onClick={()=>deleteUserAccount(u)} title="Xóa vĩnh viễn tài khoản"><Trash2 size={14}/></button></div></td>
+                      <td><div style={{display:'inline-flex',gap:6}}><button className="tms-btn tms-btn-outline" style={{padding:'5px 8px'}} onClick={()=>{setUserForm({id:u.id||0,username:u.username,full_name:u.full_name,phone:u.phone||'',email:u.email||'',theater_id:Number(u.theater_id||0),role:u.role,password:'',status:u.status||'active'});setShowUserPassword(false);setUserModalError('');setShowUserModal(true);}} title="Chỉnh sửa"><Edit size={14}/></button><button className="tms-btn tms-btn-outline" style={{padding:'5px 8px',color:u.status==='active'?'#dc2626':'#059669'}} onClick={()=>toggleUserStatus(u)} title={u.status==='active'?'Tạm khóa tài khoản':'Mở khóa tài khoản'}>{u.status==='active'?<Lock size={14}/>:<Check size={14}/>}</button><button className="tms-btn tms-btn-outline" style={{padding:'5px 8px',color:'#dc2626',borderColor:'#fecaca',background:'#fff5f5'}} onClick={()=>deleteUserAccount(u)} title="Xóa vĩnh viễn tài khoản"><Trash2 size={14}/></button></div></td>
                     </tr>
                   );
                 })}{accountRows.length === 0 && <tr><td colSpan={8}><div className="account-empty-state"><Users size={25}/><b>Không tìm thấy tài khoản phù hợp</b><span>Thay đổi bộ lọc hoặc tạo tài khoản mới trong Aurora DB.</span></div></td></tr>}</tbody>
@@ -4183,7 +4325,8 @@ export default function App() {
             </aside>
           </div>
         </> : <>
-          <section className="pos-management-heading"><div><span>CẤP QUYỀN PHIÊN · AURORA DB</span><h2>Phiên bán hàng</h2><p>Quầy và vai trò nghiệp vụ được chọn cho từng phiên; nhân viên chỉ đăng nhập khi có phiên được cấp.</p></div><button type="button" onClick={()=>{ const first=staffReadyForNewSession[0]; const theaterId=first?.theater_id||Number(currentUser?.theater_id||0); setPosSessionForm({work_schedule_id:0,user_id:first?.id||0,theater_id:theaterId,initial_cash:500000,counter:'',sales_areas:['box_ticket'],notes:''}); setShowPosSessionModal(true); void loadPosCounters(theaterId); }}><Plus size={17}/> Cấp & mở phiên</button></section>
+          <section className="pos-management-heading"><div><span>CẤP QUYỀN PHIÊN · AURORA DB</span><h2>Phiên bán hàng</h2><p>Quầy và vai trò nghiệp vụ được chọn cho từng phiên; nhân viên chỉ đăng nhập khi có phiên được cấp.</p></div><button type="button" disabled={!posSessionPolicy.can_open} title={posSessionPolicy.message} onClick={()=>{ if(!posSessionPolicy.can_open)return; const theaterId=Number(currentUser?.theater_id||0); setPosSessionForm({work_schedule_id:0,user_id:0,theater_id:theaterId,initial_cash:500000,counter:'',sales_areas:['box_ticket'],notes:''}); setShowPosSessionModal(true); void loadPosCounters(theaterId); }}><Plus size={17}/> {posSessionPolicy.can_open?'Cấp & mở phiên':'Mở lại từ 00:01'}</button></section>
+          <section className={`pos-session-policy ${posSessionPolicy.can_open?'ready':'rollover'}`}><span><Clock size={18}/></span><div><b>Quy tắc ngày nghiệp vụ</b><p>Mọi phiên đang bán hoặc tạm nghỉ được cưỡng chế đóng lúc <strong>00:00</strong>; phiên ngày mới được mở từ <strong>00:01</strong>.</p></div><aside><small>GIỜ MÁY CHỦ · {posSessionPolicy.timezone}</small><b>{posSessionPolicy.server_now?formatPosDateTime(posSessionPolicy.server_now):'Đang đồng bộ…'}</b><em>{posSessionPolicy.message}</em></aside></section>
           <section className="pos-management-kpis session">
             <article><span className="green">{posSessionView==='history'?<History size={19}/>:<Play size={19}/>}</span><div><small>{posSessionView==='history'?'Phiên lưu trữ':'Đang bán'}</small><b>{posSessionView==='history'?posSessionSummary.total:posSessionSummary.active}</b><em>{posSessionView==='history'?`Trước ${formatVietnameseDate(posSessionDate)}`:`${posSessionSummary.paused} phiên tạm nghỉ`}</em></div></article>
             <article><span className="blue"><Receipt size={19}/></span><div><small>{posSessionView==='history'?'Đã đóng':'Đơn trong phiên'}</small><b>{posSessionView==='history'?posSessionSummary.closed:posSessionSummary.order_count}</b><em>{posSessionView==='history'?'Phiên hoàn tất lưu trong Aurora DB':`Ngày ${formatVietnameseDate(posSessionDate)}`}</em></div></article>
@@ -4203,9 +4346,9 @@ export default function App() {
                 <td><b className="pos-session-code">PS-{String(session.id).padStart(5,'0')}</b><span className="pos-session-person">{session.full_name}</span><small>{session.employee_code||session.username}</small></td>
                 <td><b>{session.counter}</b><small>{session.theater_name}</small></td>
                 <td><div className="pos-session-permissions">{(session.sales_areas||[]).map((value:string)=>{const area=POS_SALES_AREAS.find(item=>item.value===value);return <span key={value} className={value}>{area?.label||value}</span>})}</div></td>
-                <td><b>{formatPosDateTime(session.opened_at)}</b></td>
+                <td><b>{formatPosDateTime(session.opened_at)}</b><small>{session.closed_at?`Đóng ${formatPosDateTime(session.closed_at)}`:'Kết thúc tự động 00:00'}</small></td>
                 <td><b>{formatMoney(session.expected_cash)}</b><small>{session.cash_at_close===null?'—':formatMoney(session.cash_at_close)}</small></td>
-                <td><span className={`pos-status ${session.status}`}><i/>{session.status==='active'?'Đang bán':session.status==='paused'?'Tạm nghỉ':'Đã đóng'}</span></td>
+                <td><span className={`pos-status ${session.status}`}><i/>{session.status==='active'?'Đang bán':session.status==='paused'?'Tạm nghỉ':session.auto_closed?'Đóng tự động':'Đã đóng'}</span>{session.auto_closed?<small className="pos-auto-close-note">Chốt ngày lúc 00:00</small>:null}</td>
                 <td><div className="pos-session-actions"><button type="button" className="view" onClick={()=>void openPosSessionReport(session)}><Eye size={14}/> Xem chi tiết</button>{session.status!=='closed'&&(session.status==='active'?<button type="button" onClick={()=>void updatePosSession(session,'pause')}><CirclePause size={14}/> Tạm nghỉ</button>:<button type="button" onClick={()=>void updatePosSession(session,'resume')}><Play size={14}/> Tiếp tục</button>)}{session.status!=='closed'&&<button type="button" className="close" onClick={()=>openClosePosSession(session)}><Check size={14}/> Kết phiên</button>}</div></td>
               </tr>):<tr><td colSpan={7} className="pos-empty"><WalletCards size={24}/><b>{posSessionView==='history'?'Chưa có lịch sử phiên':'Chưa có phiên bán hàng trong ngày'}</b><span>{posSessionView==='history'?'Các phiên đã đóng ở những ngày trước sẽ được lưu tại đây.':'Mở phiên khi bàn giao nhân viên, quầy và tiền đầu ca.'}</span></td></tr>}
             </tbody></table></div>
@@ -4251,7 +4394,7 @@ export default function App() {
           </div></section>
           <section className="pos-session-section"><header><span><ShieldCheck size={17}/></span><div><b>Quyền truy cập menu POS <em>*</em></b><small>Chỉ các mục được chọn mới có thể mở và thực hiện nghiệp vụ trong phiên này.</small></div></header><div className="pos-session-role-grid">{POS_SALES_AREAS.map(area=>{const Icon=area.icon;const selected=posSessionForm.sales_areas.includes(area.value);return <label key={area.value} className={selected?'selected':''}><input type="checkbox" checked={selected} onChange={event=>setPosSessionForm(form=>({...form,sales_areas:event.target.checked?Array.from(new Set([...form.sales_areas,area.value])):form.sales_areas.filter(value=>value!==area.value)}))}/><span className="pos-session-role-icon"><Icon size={20}/></span><span><b>{area.label}</b><small>{area.description}</small></span><Check size={16}/></label>;})}</div></section>
           <label className="pos-session-notes"><span>Ghi chú bàn giao <small>Không bắt buộc</small></span><textarea rows={3} maxLength={1000} value={posSessionForm.notes} onChange={e=>setPosSessionForm(f=>({...f,notes:e.target.value}))} placeholder="Ví dụ: Nhận két tiền, máy in vé và máy quét mã hoạt động bình thường."/></label>
-        </div><footer className="pos-session-modal-footer"><span><ShieldCheck size={15}/> Người cấp phiên, quầy bán và vai trò được lưu trong Aurora DB.</span><div><button type="button" className="tms-btn tms-btn-outline" onClick={()=>setShowPosSessionModal(false)}>Hủy</button><button type="submit" className="tms-btn tms-btn-primary" disabled={posSessionSaving||!posSessionForm.user_id||!posSessionForm.counter||!posSessionForm.sales_areas.length}><Play size={16}/>{posSessionSaving?'Đang cấp phiên…':'Cấp quyền & mở phiên'}</button></div></footer></form></div>}
+        </div><footer className="pos-session-modal-footer"><span><ShieldCheck size={15}/> {posSessionPolicy.can_open?'Người cấp phiên, quầy bán và vai trò được lưu trong Aurora DB.':posSessionPolicy.message}</span><div><button type="button" className="tms-btn tms-btn-outline" onClick={()=>setShowPosSessionModal(false)}>Hủy</button><button type="submit" className="tms-btn tms-btn-primary" disabled={posSessionSaving||!posSessionPolicy.can_open||!posSessionForm.user_id||!posSessionForm.counter||!posSessionForm.sales_areas.length}><Play size={16}/>{posSessionSaving?'Đang cấp phiên…':posSessionPolicy.can_open?'Cấp quyền & mở phiên':'Mở lại từ 00:01'}</button></div></footer></form></div>}
 
         {posReportSession&&posSessionReport&&<button type="button" onClick={exportPosSessionReportPdf} style={{position:'fixed',top:'calc(50% - 284px)',right:'calc(50% - 505px)',zIndex:1005,display:'inline-flex',alignItems:'center',gap:7,minHeight:36,padding:'0 12px',border:'1px solid rgba(255,255,255,.34)',borderRadius:9,color:'#0d1b2e',background:'#fff',fontSize:12,fontWeight:900,boxShadow:'0 8px 22px rgba(13,27,46,.2)',cursor:'pointer'}}><Printer size={16}/> Xuất PDF</button>}
 
@@ -4389,29 +4532,7 @@ export default function App() {
     if (a === 'products' || a === 'Hàng hóa' || a === 'catalog' || a === 'Danh mục dùng chung') return <ProductCatalogManagement apiBase={API_BASE} role={role!} theaterName={currentUser?.theater_name} notify={showSystemNotice} requestConfirm={requestSystemConfirmation}/>;
 
     // REPORTS
-    if (a === 'reports' || a === 'Báo cáo tổng hợp' || a === 'Báo cáo rạp' || a === 'Báo cáo vận hành' || a === 'Báo cáo' || a === 'Báo cáo doanh thu' || a === 'Báo cáo bán vé' || a === 'Báo cáo bán hàng' || a === 'Báo cáo phương thức TT') return (
-      <div>
-        <div style={{display:'grid',gridTemplateColumns:'repeat(2,1fr)',gap:16,marginBottom:20}}>
-          {[{label:'Doanh thu tháng 9/2026',val:'1.235.640.000 đ',color:'#2563eb'},{label:'Số vé bán tháng 9',val:'45.820 vé',color:'#059669'},{label:'Doanh thu F&B',val:'185.320.000 đ',color:'#d97706'},{label:'Tỷ lệ lấp đầy',val:'78.3%',color:'#7c3aed'}].map((s,i)=>(
-            <div key={i} style={{background:'#fff',border:'1px solid #e2e8f0',borderRadius:12,padding:16,display:'flex',gap:14,alignItems:'center'}}>
-              <div style={{background:s.color+'1a',color:s.color,padding:10,borderRadius:8,fontWeight:800,fontSize:'1.2rem'}}>📊</div>
-              <div><div style={{fontSize:'0.82rem',color:'#64748b'}}>{s.label}</div><div style={{fontSize:'1.15rem',fontWeight:800,color:'#0d1b2e'}}>{s.val}</div></div>
-            </div>
-          ))}
-        </div>
-        <div className="card revenue-card">
-          <div className="card-title"><div><h2>{role==='accounting'?'Báo cáo tài chính chuyên sâu':role==='supervisor'?'Báo cáo vận hành ca':'Báo cáo tổng hợp hệ thống'}</h2><span>Tháng 9/2026</span></div><button className="tms-btn tms-btn-outline" style={{fontSize:'0.78rem'}}>Xuất Excel</button></div>
-          <div className="line-chart">
-            <div className="y-axis"><span>60M</span><span>45M</span><span>30M</span><span>15M</span><span>0</span></div>
-            <div className="chart-body">
-              <div className="grid-lines">{[1,2,3,4,5].map(l=><i key={l}/>)}</div>
-              <svg viewBox="0 0 700 180" preserveAspectRatio="none"><path d="M20 130 L130 108 L230 117 L330 73 L430 88 L530 78 L650 64 L650 180 L20 180Z" fill="#2774e926"/><path d="M20 130 L130 108 L230 117 L330 73 L430 88 L530 78 L650 64" fill="none" stroke="#1d6beb" strokeWidth="2.5"/></svg>
-              <div className="chart-points">{[28.5,32.7,30.1,42.8,38.6,40.2,45.2].map((v,i)=><div className="point" style={{left:`${3+i*16.5}%`,top:`${66-(v-28)*3.1}%`}} key={v}><b>{v}M</b><i/><span>{['21','22','23','24','25','26','27'][i]}/09</span></div>)}</div>
-            </div>
-          </div>
-        </div>
-      </div>
-    );
+    if (a === 'reports' || a === 'Báo cáo tổng hợp' || a === 'Báo cáo rạp' || a === 'Báo cáo vận hành' || a === 'Báo cáo' || a === 'Báo cáo doanh thu' || a === 'Báo cáo bán vé' || a === 'Báo cáo bán hàng' || a === 'Báo cáo phương thức TT') return <ReportsWorkspace apiBase={API_BASE} role={role!} notify={showSystemNotice}/>;
 
     // INVOICES (accounting)
     if (a === 'invoices' || a === 'Hóa đơn') return (
@@ -4455,24 +4576,7 @@ export default function App() {
     );
 
     // POS DEVICES
-    if (a === 'pos_devices' || a === 'Thiết bị POS' || a === 'Quản lý POS' || a === 'Phê duyệt POS') return (
-      <div className="tms-card-table">
-        <div className="tms-table-toolbar"><div style={{fontWeight:700}}>Quản lý thiết bị POS toàn hệ thống</div><button className="tms-btn tms-btn-primary" onClick={()=>alert('Thêm thiết bị POS')}><Plus size={16}/><span>Thêm POS</span></button></div>
-        <table className="tms-data-table">
-          <thead><tr><th>Mã thiết bị</th><th>Tên</th><th>Rạp</th><th>IP</th><th>Phiên bản</th><th>Trạng thái</th><th>Phê duyệt</th></tr></thead>
-          <tbody>{[
-            {code:'POS-TB-001',name:'Quầy POS 1 - Tân Bình',cinema:'Aurora - Tân Bình',ip:'192.168.1.10',ver:'v4.2.1',ok:true,online:true},
-            {code:'POS-TB-002',name:'Quầy POS 2 - Tân Bình',cinema:'Aurora - Tân Bình',ip:'192.168.1.11',ver:'v4.2.1',ok:true,online:true},
-            {code:'POS-Q7-001',name:'Quầy POS 1 - Quận 7',cinema:'Aurora - Quận 7',ip:'10.10.1.10',ver:'v4.1.8',ok:false,online:false},
-          ].map((p,i)=>(
-            <tr key={i}><td><code>{p.code}</code></td><td style={{fontWeight:600}}>{p.name}</td><td>{p.cinema}</td><td style={{fontFamily:'monospace',fontSize:'0.82rem'}}>{p.ip}</td><td>{p.ver}</td>
-            <td><span style={{fontSize:'0.73rem',fontWeight:700,padding:'2px 7px',borderRadius:4,background:p.online?'#ecfdf5':'#fee2e2',color:p.online?'#065f46':'#991b1b'}}>{p.online?'Online':'Offline'}</span></td>
-            <td>{!p.ok?<button className="tms-btn tms-btn-success" style={{padding:'4px 10px',fontSize:'0.73rem'}} onClick={()=>alert(`Đã phê duyệt ${p.code}`)}><Check size={12}/> Phê duyệt</button>:<span style={{fontSize:'0.73rem',fontWeight:700,padding:'2px 7px',borderRadius:4,background:'#ecfdf5',color:'#065f46'}}>✅ Đã duyệt</span>}</td>
-            </tr>
-          ))}</tbody>
-        </table>
-      </div>
-    );
+    if (a === 'pos_devices' || a === 'Thiết bị POS' || a === 'Quản lý POS' || a === 'Phê duyệt POS') return <PosDeviceManagement apiBase={API_BASE} initialView={a === 'Phê duyệt POS' ? 'approvals' : 'devices'} notify={showSystemNotice} requestConfirm={requestSystemConfirmation}/>;
 
     // AUDIT LOG
     if (a === 'audit_log' || a === 'Audit Log') return <AuditLogManagement apiBase={API_BASE} notify={showSystemNotice}/>;
@@ -4638,45 +4742,18 @@ export default function App() {
 
       {/* MODAL: ADD/EDIT USER (super_admin only) */}
       {showUserModal && (
-        <div className="tms-modal-overlay">
-          <div className="tms-modal-box user-account-modal" role="dialog" aria-modal="true" aria-labelledby="user-account-modal-title">
-            <div className="tms-modal-header">
-              <div><span className="user-modal-kicker">AURORA DB · QUẢN TRỊ TRUY CẬP</span><div id="user-account-modal-title" className="tms-modal-title">{userForm.id > 0 ? 'Cập nhật tài khoản vận hành' : 'Tạo tài khoản vận hành mới'}</div><p className="user-modal-subtitle">Hồ sơ, quyền truy cập và phạm vi làm việc được quản lý tập trung.</p></div>
-              <button type="button" className="temp-btn" aria-label="Đóng modal" onClick={() => setShowUserModal(false)}><X size={16} /></button>
-            </div>
-            <form onSubmit={handleSaveUser}>
-              <div className="tms-modal-body user-account-modal-body">
-                <section className="user-form-main">
-                  <div className="user-form-section-title"><span><UserRound size={16}/></span><div><b>Thông tin tài khoản</b><small>Thông tin nhận diện và liên hệ của nhân sự.</small></div></div>
-                  <div className="user-form-grid">
-                    <div className="tms-form-group"><label className="tms-form-label">Tên đăng nhập <em>*</em></label><input className="tms-form-input" value={userForm.username} onChange={e => setUserForm({...userForm, username: e.target.value.replace(/\s/g, '')})} placeholder="vd: nguyen.a" required disabled={userForm.id > 0} /><small className="form-hint">3–60 ký tự, không gồm khoảng trắng.</small></div>
-                    <div className="tms-form-group"><label className="tms-form-label">Họ và tên nhân sự <em>*</em></label><input className="tms-form-input" value={userForm.full_name} onChange={e => setUserForm({...userForm, full_name: e.target.value})} placeholder="vd: Nguyễn Văn An" required /></div>
-                    <div className="tms-form-group"><label className="tms-form-label">Email công việc <em>*</em></label><input type="email" className="tms-form-input" value={userForm.email} onChange={e => setUserForm({...userForm, email: e.target.value})} placeholder="nhan.su@auroracinema.vn" required /></div>
-                    <div className="tms-form-group"><label className="tms-form-label">Số điện thoại</label><input type="tel" className="tms-form-input" value={userForm.phone} onChange={e => setUserForm({...userForm, phone: e.target.value})} placeholder="vd: 0901 234 567" /></div>
-                  </div>
-                  <div className="user-form-section-title access"><span><ShieldCheck size={16}/></span><div><b>Phân quyền & phạm vi làm việc</b><small>Chỉ cấp đúng quyền cần thiết cho từng vị trí.</small></div></div>
-                  <div className="user-form-grid">
-                    <div className="tms-form-group"><label className="tms-form-label">Vai trò hệ thống <em>*</em></label><select className="tms-form-select" value={userForm.role} onChange={e => setUserForm({...userForm, role: e.target.value as TMSRole, theater_id: (e.target.value === 'cinema_admin' || e.target.value === 'supervisor') ? userForm.theater_id : 0})}><option value="super_admin">👑 Admin Tổng — Toàn hệ thống</option><option value="cinema_admin">🏢 Admin Rạp — Quản lý một rạp</option><option value="supervisor">🛡️ Supervisor — Giám sát rạp</option><option value="accounting">📊 Kế Toán — Tài chính & đối soát</option><option value="marketing_manager">📣 Bộ phận Marketing — Toàn hệ thống</option></select></div>
-                    <div className="tms-form-group"><label className="tms-form-label">Rạp phụ trách {(userForm.role === 'cinema_admin' || userForm.role === 'supervisor') && <em>*</em>}</label><select className="tms-form-select" value={userForm.theater_id} onChange={e => setUserForm({...userForm, theater_id:Number(e.target.value)})} disabled={userForm.role === 'super_admin' || userForm.role === 'accounting' || userForm.role === 'marketing_manager'}><option value={0}>{userForm.role === 'super_admin' || userForm.role === 'accounting' || userForm.role === 'marketing_manager' ? 'Phạm vi toàn hệ thống' : '— Chọn rạp phụ trách —'}</option>{theatersList.map(theater => <option key={theater.id} value={theater.id}>{theater.name}{theater.city ? ` · ${theater.city}` : ''}</option>)}</select></div>
-                    <div className="tms-form-group"><label className="tms-form-label">{userForm.id > 0 ? 'Đặt mật khẩu mới' : 'Mật khẩu khởi tạo'} {!userForm.id && <em>*</em>}</label><div className="password-field-wrap"><input type={showUserPassword ? 'text' : 'password'} className="tms-form-input" value={userForm.password} onChange={e => setUserForm({...userForm, password: e.target.value})} placeholder={userForm.id > 0 ? 'Bỏ trống để giữ nguyên' : 'Ít nhất 6 ký tự'} required={!userForm.id} minLength={userForm.id ? undefined : 6}/><button type="button" aria-label={showUserPassword ? 'Ẩn mật khẩu' : 'Hiện mật khẩu'} onClick={() => setShowUserPassword(!showUserPassword)}>{showUserPassword ? <EyeOff size={16}/> : <Eye size={16}/>}</button></div><small className="form-hint">{userForm.id > 0 ? 'Chỉ nhập khi cần đổi mật khẩu.' : 'Không sử dụng mật khẩu mặc định hoặc dễ đoán.'}</small></div>
-                    <div className="tms-form-group"><label className="tms-form-label">Trạng thái truy cập</label><select className="tms-form-select" value={userForm.status} onChange={e => setUserForm({...userForm, status: e.target.value})}><option value="active">Đang hoạt động — cho phép đăng nhập</option><option value="inactive">Ngừng hoạt động tạm thời</option><option value="locked">Tạm khóa truy cập</option></select></div>
-                  </div>
-                </section>
-                <aside className="user-access-preview">
-                  <div className="user-preview-kicker">BẢN XEM TRƯỚC QUYỀN</div>
-                  <div className="user-role-preview" style={{background: ROLE_CONFIGS[userForm.role].bg, borderColor: ROLE_CONFIGS[userForm.role].borderColor}}><span>{ROLE_CONFIGS[userForm.role].emoji}</span><div><b style={{color: ROLE_CONFIGS[userForm.role].color}}>{ROLE_CONFIGS[userForm.role].name}</b><p>{ROLE_CONFIGS[userForm.role].tagline}</p></div></div>
-                  <div className="user-preview-detail"><span>Phạm vi áp dụng</span><b>{userForm.theater_id ? (theatersList.find(theater => Number(theater.id) === Number(userForm.theater_id))?.name || `Rạp #${userForm.theater_id}`) : 'Toàn hệ thống'}</b></div>
-                  <div className="user-preview-detail"><span>Trạng thái sau khi lưu</span><b className={userForm.status === 'active' ? 'is-active' : 'is-locked'}>{userForm.status === 'active' ? 'Sẵn sàng đăng nhập' : userForm.status === 'inactive' ? 'Đang ngừng hoạt động' : 'Đã tạm khóa'}</b></div>
-                  <div className="user-security-note"><ShieldCheck size={17}/><p>Mọi thay đổi về hồ sơ, quyền và trạng thái đều được ghi nhận trong nhật ký quản trị Aurora DB.</p></div>
-                </aside>
-              </div>
-              <div className="tms-modal-footer">
-                <button type="button" className="tms-btn tms-btn-outline" onClick={() => setShowUserModal(false)}>Hủy bỏ</button>
-                <button type="submit" className="tms-btn tms-btn-primary">{userForm.id > 0 ? 'Lưu thay đổi' : 'Tạo & cấp quyền'}<Check size={16}/></button>
-              </div>
-            </form>
-          </div>
-        </div>
+        <UserAccountModal
+          form={userForm}
+          setForm={setUserForm}
+          roles={ROLE_CONFIGS}
+          theaters={theatersList}
+          saving={userSaving}
+          error={userModalError}
+          showPassword={showUserPassword}
+          onTogglePassword={() => setShowUserPassword(value => !value)}
+          onClose={() => { if (!userSaving) { setShowUserModal(false); setUserModalError(''); } }}
+          onSubmit={handleSaveUser}
+        />
       )}
 
       {/* MODAL: CREATE REFUND REQUEST (supervisor) */}

@@ -1,95 +1,57 @@
 import { useMemo, useState } from 'react';
-import {
-  ArrowLeft, ArrowRight, Building2, CheckCircle2, Crown, Edit, ExternalLink,
-  Globe2, KeyRound, Lock, Mail, Phone, Plus, RefreshCw, Search, ShieldCheck,
-  ShoppingBag, Sparkles, Trash2, UserRound, Users, WalletCards, X, XCircle,
-} from 'lucide-react';
+import { Activity, Building2, CheckCircle2, Edit3, ExternalLink, IdCard, KeyRound, LockKeyhole, Monitor, Plus, RefreshCw, Search, Trash2, UserRound, Users, X } from 'lucide-react';
+import './AccountManagementPage.css';
 
-type Account = {
-  id?: number; username: string; full_name: string; role: string; phone?: string; email?: string;
-  theater_id?: number; theater_name?: string; status?: string; last_login?: string | null;
-  membership_level?: string; points?: number; booking_count?: number; total_spent?: number;
-  oauth_providers?: string | null; created_at?: string; account_type?: 'internal' | 'customer';
+export type IdentitySystem = 'tms' | 'pos' | 'ems' | 'customer';
+export type IdentityAccount = {
+  account_key:string; id:number; system:IdentitySystem; system_label:string; full_name:string; username:string;
+  email?:string; phone?:string; role:string; role_label:string; status:string; scope_name:string; scope_type:string;
+  last_login?:string|null; created_at?:string; theater_id?:number; membership_level?:string; points?:number;
+  booking_count?:number; total_spent?:number; oauth_providers?:string; employee_code?:string; open_shift_id?:number;
+  shift_status?:string; department?:string; join_date?:string; performance_score?:number;
 };
+export type IdentitySystemSummary = { label:string; total:number; active:number; restricted:number; role_count:number };
+export type IdentitySummary = { total:number; active:number; restricted:number; system_count:number; role_count:number; open_pos_shifts:number };
+type Props = { accounts:IdentityAccount[]; systems:Record<IdentitySystem,IdentitySystemSummary>; summary:IdentitySummary; loading:boolean;
+  formatLastLogin:(value?:string|null)=>string; onRefresh:()=>void; onCreateInternal:()=>void;
+  onEditInternal:(user:IdentityAccount)=>void; onDeleteInternal:(user:IdentityAccount)=>void; onToggleStatus:(user:IdentityAccount)=>void };
 
-type AccountSummary = {
-  total: number; active: number; locked: number; internal_total: number; internal_active: number;
-  customer_total: number; customer_active: number; customer_points: number; admins: number;
+const SYSTEMS:Record<IdentitySystem,{title:string;subtitle:string;color:string;icon:typeof Building2}> = {
+  tms:{title:'TMS',subtitle:'Quản trị & vận hành rạp',color:'#2563eb',icon:Building2},
+  pos:{title:'POS',subtitle:'Thu ngân & điểm bán',color:'#059669',icon:Monitor},
+  ems:{title:'EMS',subtitle:'Nhân sự & phòng ban',color:'#d97706',icon:IdCard},
+  customer:{title:'Customer',subtitle:'Thành viên & CRM',color:'#7c3aed',icon:UserRound},
 };
+const money=(value?:number)=>`${Number(value||0).toLocaleString('vi-VN')} ₫`;
+const initials=(name:string)=>name.trim().split(/\s+/).slice(-2).map(v=>v[0]).join('').toUpperCase()||'AU';
+const statusLabel=(value:string)=>value==='active'?'Đang hoạt động':value==='leave'?'Đang nghỉ phép':value==='locked'?'Tạm khóa':'Ngừng hoạt động';
 
-type Props = {
-  internalUsers: Account[]; customerUsers: Account[]; summary: AccountSummary; loading: boolean;
-  formatLastLogin: (value?: string | null) => string; onRefresh: () => void; onCreateInternal: () => void;
-  onEditInternal: (user: Account) => void; onToggleInternal: (user: Account) => void;
-  onDeleteInternal: (user: Account) => void; onToggleCustomer: (user: Account) => void;
-};
-
-const ROLE_COPY: Record<string, { name: string; icon: string; color: string; bg: string }> = {
-  super_admin: { name: 'Admin Tổng', icon: '👑', color: '#f4c04a', bg: '#fff5d9' },
-  cinema_admin: { name: 'Admin Rạp', icon: '🏢', color: '#2457c5', bg: '#eaf1ff' },
-  supervisor: { name: 'Supervisor', icon: '🛡️', color: '#08775b', bg: '#e7f8f1' },
-  accounting: { name: 'Kế toán', icon: '📊', color: '#6c3fc3', bg: '#f1ebff' },
-  marketing_manager: { name: 'Bộ phận Marketing', icon: '📣', color: '#be185d', bg: '#fce7f3' },
-};
-
-function money(value: unknown) { return `${Number(value || 0).toLocaleString('vi-VN')} ₫`; }
-function initial(name: string) { return name.trim().split(/\s+/).slice(-2).map(part => part.charAt(0)).join('').toUpperCase() || 'AU'; }
-
-export default function AccountManagementPage({ internalUsers, customerUsers, summary, loading, formatLastLogin, onRefresh, onCreateInternal, onEditInternal, onToggleInternal, onDeleteInternal, onToggleCustomer }: Props) {
-  const [space, setSpace] = useState<'overview' | 'internal' | 'customer'>('overview');
-  const [query, setQuery] = useState('');
-  const [status, setStatus] = useState('all');
-  const [role, setRole] = useState('all');
-  const [membership, setMembership] = useState('all');
-  const [selected, setSelected] = useState<Account | null>(null);
-
-  const rows = useMemo(() => {
-    const source = space === 'customer' ? customerUsers : internalUsers;
-    const keyword = query.trim().toLocaleLowerCase('vi');
-    return source.filter(user => {
-      const text = `${user.full_name} ${user.username} ${user.email || ''} ${user.phone || ''} ${user.theater_name || ''}`.toLocaleLowerCase('vi');
-      return (!keyword || text.includes(keyword)) && (status === 'all' || user.status === status) && (space !== 'internal' || role === 'all' || user.role === role) && (space !== 'customer' || membership === 'all' || user.membership_level === membership);
-    });
-  }, [space, internalUsers, customerUsers, query, status, role, membership]);
-
-  function openSpace(next: 'internal' | 'customer') { setSpace(next); setQuery(''); setStatus('all'); setRole('all'); setMembership('all'); }
-
-  if (space === 'overview') return <div className="account-hub">
-    <section className="account-space-grid">
-      <article className="account-space-card internal"><header><span><Building2 size={23}/></span><em>NỘI BỘ · RBAC</em></header><h3>Nhân sự nội bộ</h3><p>Quản lý tài khoản và quyền truy cập của nhân sự.</p><div className="account-space-metrics"><span><b>{summary.internal_total ?? internalUsers.length}</b><small>Tài khoản</small></span><span><b>{summary.internal_active ?? internalUsers.filter(user => user.status === 'active').length}</b><small>Hoạt động</small></span><span><b>{new Set(internalUsers.map(user => user.role)).size}</b><small>Vai trò</small></span></div><ul><li><KeyRound size={14}/>Quyền theo vai trò</li><li><Building2 size={14}/>Phạm vi theo rạp</li><li><ShieldCheck size={14}/>Nhật ký quản trị</li></ul><button onClick={() => openSpace('internal')}>Quản lý nội bộ<ArrowRight size={16}/></button></article>
-      <article className="account-space-card customer"><header><span><UserRound size={23}/></span><em>KHÁCH HÀNG · CRM</em></header><h3>Khách hàng</h3><p>Quản lý thành viên, điểm thưởng và lịch sử đặt vé.</p><div className="account-space-metrics"><span><b>{summary.customer_total ?? customerUsers.length}</b><small>Tài khoản</small></span><span><b>{summary.customer_active ?? customerUsers.filter(user => user.status === 'active').length}</b><small>Hoạt động</small></span><span><b>{Number(summary.customer_points || 0).toLocaleString('vi-VN')}</b><small>Điểm thưởng</small></span></div><ul><li><Sparkles size={14}/>Hạng & điểm thưởng</li><li><ShoppingBag size={14}/>Đặt vé & chi tiêu</li><li><Globe2 size={14}/>Email hoặc OAuth</li></ul><button onClick={() => openSpace('customer')}>Quản lý khách hàng<ArrowRight size={16}/></button></article>
+export default function AccountManagementPage({accounts,systems,summary,loading,formatLastLogin,onRefresh,onCreateInternal,onEditInternal,onDeleteInternal,onToggleStatus}:Props){
+  const [system,setSystem]=useState<'all'|IdentitySystem>('all');
+  const [query,setQuery]=useState(''); const [role,setRole]=useState('all'); const [access,setAccess]=useState<'all'|'active'|'restricted'>('all');
+  const [selected,setSelected]=useState<IdentityAccount|null>(null);
+  const roles=useMemo(()=>{const map=new Map<string,string>();accounts.filter(a=>system==='all'||a.system===system).forEach(a=>map.set(`${a.system}:${a.role}`,`${a.role_label} · ${a.system_label}`));return [...map.entries()].sort((a,b)=>a[1].localeCompare(b[1],'vi'));},[accounts,system]);
+  const rows=useMemo(()=>{const key=query.trim().toLocaleLowerCase('vi');return accounts.filter(a=>{const text=`${a.full_name} ${a.username} ${a.email||''} ${a.phone||''} ${a.employee_code||''} ${a.scope_name||''}`.toLocaleLowerCase('vi');return(system==='all'||a.system===system)&&(!key||text.includes(key))&&(role==='all'||`${a.system}:${a.role}`===role)&&(access==='all'||(access==='active'?a.status==='active':a.status!=='active'));});},[accounts,system,query,role,access]);
+  const chooseSystem=(value:'all'|IdentitySystem)=>{setSystem(value);setRole('all');};
+  return <div className="identity-center">
+    <section className="identity-kpis">
+      <article><span><Users/></span><div><small>Tổng danh tính</small><b>{summary.total}</b><em>4 phân hệ nghiệp vụ</em></div></article>
+      <article><span className="green"><CheckCircle2/></span><div><small>Được phép truy cập</small><b>{summary.active}</b><em>{summary.total?Math.round(summary.active/summary.total*100):0}% tổng tài khoản</em></div></article>
+      <article><span className="red"><LockKeyhole/></span><div><small>Đang hạn chế</small><b>{summary.restricted}</b><em>Khóa, nghỉ hoặc ngừng</em></div></article>
+      <article><span className="violet"><KeyRound/></span><div><small>Vai trò phân biệt</small><b>{summary.role_count}</b><em>{summary.open_pos_shifts} phiên POS đang mở</em></div></article>
     </section>
-    <section className="account-boundary-note account-boundary-guard">
-      <div className="account-boundary-intro"><span className="account-boundary-icon"><ShieldCheck size={22}/></span><div><span className="account-boundary-state"><i/>ĐANG BẢO VỆ</span><b>Tách biệt quyền truy cập</b><p>Mỗi nhóm chỉ truy cập đúng phạm vi.</p></div></div>
-      <div className="account-boundary-routes" aria-label="Phân tách tài khoản nội bộ và khách hàng">
-        <div className="account-boundary-route internal"><span><Building2 size={16}/></span><div><small>NỘI BỘ</small><b>TMS · RBAC</b></div><em>{internalUsers.length}</em></div>
-        <span className="account-boundary-lock"><ShieldCheck size={17}/><small>Riêng biệt</small></span>
-        <div className="account-boundary-route customer"><span><UserRound size={16}/></span><div><small>KHÁCH HÀNG</small><b>CRM · Thành viên</b></div><em>{customerUsers.length}</em></div>
-      </div>
-      <div className="account-boundary-actions"><span><i/>Dữ liệu <b>aurora_db</b></span><button type="button" className={loading ? 'is-loading' : ''} disabled={loading} onClick={onRefresh}><RefreshCw size={14}/>{loading ? 'Đang đồng bộ…' : 'Đồng bộ'}</button></div>
+    <section className="identity-systems">{(Object.keys(SYSTEMS) as IdentitySystem[]).map(key=>{const cfg=SYSTEMS[key],Icon=cfg.icon,stats=systems[key];return <button key={key} className={system===key?'active':''} style={{'--system-color':cfg.color} as React.CSSProperties} onClick={()=>chooseSystem(system===key?'all':key)}><span><Icon size={20}/></span><div><strong>{cfg.title}</strong><small>{cfg.subtitle}</small></div><aside><b>{stats?.total||0}</b><small>{stats?.active||0} hoạt động · {stats?.role_count||0} vai trò</small></aside></button>;})}</section>
+    <section className="identity-directory">
+      <header><div><span>DANH BẠ HỢP NHẤT</span><h3>{system==='all'?'Tất cả tài khoản':`Tài khoản ${SYSTEMS[system].title}`}</h3><p>{rows.length} hồ sơ phù hợp · dữ liệu trực tiếp từ aurora_db</p></div><aside className="identity-directory-head-actions"><button onClick={onRefresh} disabled={loading}><RefreshCw size={15}/>Làm mới</button><button className="primary" onClick={onCreateInternal}><Plus size={15}/>Tạo tài khoản TMS</button></aside></header>
+      <div className="identity-filters"><label><Search size={16}/><input value={query} onChange={e=>setQuery(e.target.value)} placeholder="Tìm tên, username, email, SĐT, mã nhân viên..."/></label><select value={system} onChange={e=>chooseSystem(e.target.value as 'all'|IdentitySystem)}><option value="all">Tất cả hệ thống</option>{(Object.keys(SYSTEMS) as IdentitySystem[]).map(key=><option key={key} value={key}>{SYSTEMS[key].title}</option>)}</select><select value={role} onChange={e=>setRole(e.target.value)}><option value="all">Tất cả vai trò</option>{roles.map(([value,label])=><option key={value} value={value}>{label}</option>)}</select><select value={access} onChange={e=>setAccess(e.target.value as typeof access)}><option value="all">Mọi trạng thái</option><option value="active">Đang hoạt động</option><option value="restricted">Đang hạn chế</option></select>{(query||system!=='all'||role!=='all'||access!=='all')&&<button className="clear" onClick={()=>{setQuery('');setSystem('all');setRole('all');setAccess('all');}}>Xóa lọc</button>}</div>
+      {loading?<div className="identity-loading"><i/><i/><i/><i/></div>:rows.length?<div className="identity-table-wrap"><table><thead><tr><th>Tài khoản</th><th>Hệ thống</th><th>Vai trò</th><th>Phạm vi</th><th>Hoạt động gần nhất</th><th>Trạng thái</th><th/></tr></thead><tbody>{rows.map(a=>{const cfg=SYSTEMS[a.system],Icon=cfg.icon;return <tr key={a.account_key}><td><div className="identity-person"><span style={{background:`${cfg.color}14`,color:cfg.color}}>{initials(a.full_name)}</span><div><b>{a.full_name}</b><small>{a.employee_code||`@${a.username}`} · {a.email||'Chưa có email'}</small></div></div></td><td><span className={`identity-system-badge ${a.system}`}><Icon size={13}/>{cfg.title}</span></td><td><b className="identity-value">{a.role_label}</b><small className="identity-sub">{a.role}</small></td><td><b className="identity-value">{a.scope_name||'Chưa phân phạm vi'}</b><small className="identity-sub">{a.scope_type}</small></td><td>{a.open_shift_id?<><b className="identity-shift">PS-{String(a.open_shift_id).padStart(5,'0')}</b><small className="identity-sub">{a.shift_status==='paused'?'Đang tạm nghỉ':'Đang bán hàng'}</small></>:<><b className="identity-value">{formatLastLogin(a.last_login)}</b><small className="identity-sub">Đăng nhập gần nhất</small></>}</td><td><span className={`identity-status ${a.status}`}>{statusLabel(a.status)}</span></td><td><div className="identity-actions"><button title="Xem hồ sơ" onClick={()=>setSelected(a)}><ExternalLink size={14}/></button>{a.system==='tms'&&<button title="Chỉnh sửa" onClick={()=>onEditInternal(a)}><Edit3 size={14}/></button>}<button title={a.status==='active'?'Hạn chế truy cập':'Khôi phục truy cập'} onClick={()=>onToggleStatus(a)}>{a.status==='active'?<LockKeyhole size={14}/>:<CheckCircle2 size={14}/>}</button>{a.system==='tms'&&<button className="danger" title="Xóa tài khoản TMS" onClick={()=>onDeleteInternal(a)}><Trash2 size={14}/></button>}</div></td></tr>;})}</tbody></table></div>:<div className="identity-empty"><Search size={28}/><b>Không có tài khoản phù hợp</b><span>Thử đổi từ khóa hoặc bỏ bớt điều kiện lọc.</span></div>}
     </section>
-  </div>;
-
-  const isInternal = space === 'internal';
-  return <div className={`account-workspace ${space}`}>
-    <header className="account-workspace-head"><button className="account-back" onClick={() => setSpace('overview')}><ArrowLeft size={16}/></button><span className="account-workspace-symbol">{isInternal ? <Building2 size={21}/> : <UserRound size={21}/>}</span><div><small>{isInternal ? 'NỘI BỘ · RBAC' : 'KHÁCH HÀNG · CRM'}</small><h2>{isInternal ? 'Quản lý nhân sự' : 'Quản lý khách hàng'}</h2><p>{isInternal ? 'Phân quyền và phạm vi theo rạp.' : 'Theo dõi thành viên và lịch sử đặt vé.'}</p></div><aside><b>{isInternal ? internalUsers.length : customerUsers.length}</b><span>{isInternal ? 'tài khoản' : 'khách hàng'}</span></aside>{isInternal && <button className="account-primary-action" onClick={onCreateInternal}><Plus size={16}/>Thêm tài khoản</button>}</header>
-    <section className="account-workspace-stats"><article><Users size={18}/><span><small>Tổng hồ sơ</small><b>{isInternal ? internalUsers.length : customerUsers.length}</b></span></article><article><CheckCircle2 size={18}/><span><small>Đang hoạt động</small><b>{(isInternal ? internalUsers : customerUsers).filter(user => user.status === 'active').length}</b></span></article><article><Lock size={18}/><span><small>Đã hạn chế</small><b>{(isInternal ? internalUsers : customerUsers).filter(user => user.status !== 'active').length}</b></span></article><article>{isInternal ? <Crown size={18}/> : <WalletCards size={18}/>}<span><small>{isInternal ? 'Vai trò sử dụng' : 'Tổng điểm thưởng'}</small><b>{isInternal ? new Set(internalUsers.map(user => user.role)).size : customerUsers.reduce((sum, user) => sum + Number(user.points || 0), 0).toLocaleString('vi-VN')}</b></span></article></section>
-    <section className="account-card-panel"><div className="account-card-toolbar"><label><Search size={16}/><input value={query} onChange={event => setQuery(event.target.value)} placeholder={isInternal ? 'Tìm tên, email hoặc rạp...' : 'Tìm tên, email hoặc SĐT...'} /></label>{isInternal ? <select value={role} onChange={event => setRole(event.target.value)}><option value="all">Tất cả vai trò</option><option value="super_admin">Admin Tổng</option><option value="cinema_admin">Admin Rạp</option><option value="supervisor">Supervisor</option><option value="accounting">Kế toán</option><option value="marketing_manager">Bộ phận Marketing</option></select> : <select value={membership} onChange={event => setMembership(event.target.value)}><option value="all">Tất cả hạng</option><option>STANDARD</option><option>SILVER</option><option>GOLD</option><option>PLATINUM</option></select>}<select value={status} onChange={event => setStatus(event.target.value)}><option value="all">Tất cả trạng thái</option><option value="active">Hoạt động</option><option value="locked">Tạm khóa</option><option value="inactive">Ngừng hoạt động</option></select><button onClick={onRefresh}><RefreshCw size={15}/>Làm mới</button></div>
-      {loading ? <div className="account-card-loading"><i/><i/><i/></div> : rows.length ? <div className="account-profile-grid">{rows.map(user => isInternal ? <InternalCard key={user.id} user={user} formatLastLogin={formatLastLogin} onOpen={() => setSelected(user)} onEdit={() => onEditInternal(user)} onToggle={() => onToggleInternal(user)} onDelete={() => onDeleteInternal(user)}/> : <CustomerCard key={user.id} user={user} onOpen={() => setSelected(user)} onToggle={() => onToggleCustomer(user)}/>)}</div> : <div className="account-card-empty"><Search size={27}/><b>Không tìm thấy hồ sơ phù hợp</b><span>Thử thay đổi từ khóa hoặc bộ lọc hiện tại.</span></div>}
-    </section>
-    {selected && <AccountDetail user={selected} internal={selected.role !== 'customer'} formatLastLogin={formatLastLogin} onClose={() => setSelected(null)} onToggle={() => selected.role === 'customer' ? onToggleCustomer(selected) : onToggleInternal(selected)} />}
+    {selected&&<IdentityDetail account={selected} formatLastLogin={formatLastLogin} onClose={()=>setSelected(null)} onToggle={()=>onToggleStatus(selected)}/>}
   </div>;
 }
 
-function InternalCard({ user, formatLastLogin, onOpen, onEdit, onToggle, onDelete }: { user: Account; formatLastLogin: Props['formatLastLogin']; onOpen:()=>void; onEdit:()=>void; onToggle:()=>void; onDelete:()=>void }) {
-  const config = ROLE_COPY[user.role] || ROLE_COPY.cinema_admin;
-  return <article className="account-profile-card internal"><div className="account-profile-top"><span style={{ background: config.bg, color: config.color }}>{config.icon}</span><div><em>{config.name}</em><b>{user.full_name}</b><small>@{user.username}</small></div><i className={user.status === 'active' ? 'active' : 'locked'}>{user.status === 'active' ? 'Hoạt động' : 'Tạm khóa'}</i></div><div className="account-profile-contact"><span><Building2 size={13}/>{user.role === 'super_admin' || user.role === 'accounting' ? 'Toàn hệ thống' : user.theater_name || 'Chưa phân rạp'}</span><span><Mail size={13}/>{user.email || 'Chưa có email'}</span><span><Phone size={13}/>{user.phone || 'Chưa có SĐT'}</span></div><div className="account-profile-foot"><span><small>Đăng nhập cuối</small><b>{formatLastLogin(user.last_login)}</b></span><div><button onClick={onOpen} title="Xem hồ sơ"><ExternalLink size={14}/></button><button onClick={onEdit} title="Chỉnh sửa"><Edit size={14}/></button><button onClick={onToggle} title={user.status === 'active' ? 'Tạm khóa' : 'Mở khóa'}>{user.status === 'active' ? <Lock size={14}/> : <CheckCircle2 size={14}/>}</button><button className="danger" onClick={onDelete} title="Xóa"><Trash2 size={14}/></button></div></div></article>;
-}
-
-function CustomerCard({ user, onOpen, onToggle }: { user: Account; onOpen:()=>void; onToggle:()=>void }) {
-  return <article className="account-profile-card customer"><div className="account-profile-top"><span>{initial(user.full_name)}</span><div><em>{user.membership_level || 'STANDARD'}</em><b>{user.full_name}</b><small>{user.email || `@${user.username}`}</small></div><i className={user.status === 'active' ? 'active' : 'locked'}>{user.status === 'active' ? 'Hoạt động' : 'Hạn chế'}</i></div><div className="customer-value-grid"><span><b>{Number(user.points || 0).toLocaleString('vi-VN')}</b><small>Điểm thưởng</small></span><span><b>{user.booking_count || 0}</b><small>Lượt đặt vé</small></span><span><b>{money(user.total_spent)}</b><small>Tổng chi tiêu</small></span></div><div className="account-profile-contact"><span><Phone size={13}/>{user.phone || 'Chưa cập nhật SĐT'}</span><span><Globe2 size={13}/>{user.oauth_providers ? `Đăng nhập ${user.oauth_providers}` : 'Đăng nhập email'}</span></div><div className="account-profile-foot"><span><small>Ngày tham gia</small><b>{String(user.created_at || '').slice(0,10) || '—'}</b></span><div><button onClick={onOpen} title="Xem hồ sơ"><ExternalLink size={14}/></button><button onClick={onToggle} title={user.status === 'active' ? 'Hạn chế truy cập' : 'Mở lại truy cập'}>{user.status === 'active' ? <Lock size={14}/> : <CheckCircle2 size={14}/>}</button></div></div></article>;
-}
-
-function AccountDetail({ user, internal, formatLastLogin, onClose, onToggle }: { user: Account; internal: boolean; formatLastLogin: Props['formatLastLogin']; onClose:()=>void; onToggle:()=>void }) {
-  return <div className="account-detail-backdrop" onMouseDown={event => { if (event.currentTarget === event.target) onClose(); }}><aside className="account-detail-panel"><button className="account-detail-close" onClick={onClose}><X size={18}/></button><header className={internal ? 'internal' : 'customer'}><span>{internal ? (ROLE_COPY[user.role]?.icon || '🏢') : initial(user.full_name)}</span><small>{internal ? 'HỒ SƠ NỘI BỘ' : 'HỒ SƠ CUSTOMER'}</small><h2>{user.full_name}</h2><p>{user.email || `@${user.username}`}</p></header><section><h3>Thông tin định danh</h3><dl><div><dt>Loại tài khoản</dt><dd>{internal ? 'Nội bộ · RBAC' : 'Customer · CRM'}</dd></div><div><dt>Trạng thái</dt><dd className={user.status === 'active' ? 'ok' : 'danger'}>{user.status === 'active' ? 'Đang hoạt động' : 'Đã hạn chế'}</dd></div><div><dt>Số điện thoại</dt><dd>{user.phone || 'Chưa cập nhật'}</dd></div><div><dt>Đăng nhập cuối</dt><dd>{formatLastLogin(user.last_login)}</dd></div></dl></section>{internal ? <section><h3>Quyền & phạm vi</h3><dl><div><dt>Vai trò</dt><dd>{ROLE_COPY[user.role]?.name || user.role}</dd></div><div><dt>Phạm vi</dt><dd>{user.role === 'super_admin' || user.role === 'accounting' ? 'Toàn hệ thống' : user.theater_name || 'Chưa phân rạp'}</dd></div><div><dt>Username</dt><dd>@{user.username}</dd></div></dl></section> : <section><h3>Giá trị thành viên</h3><dl><div><dt>Hạng thành viên</dt><dd>{user.membership_level || 'STANDARD'}</dd></div><div><dt>Điểm thưởng</dt><dd>{Number(user.points || 0).toLocaleString('vi-VN')}</dd></div><div><dt>Lượt đặt vé</dt><dd>{user.booking_count || 0}</dd></div><div><dt>Tổng chi tiêu</dt><dd>{money(user.total_spent)}</dd></div><div><dt>Kênh đăng nhập</dt><dd>{user.oauth_providers || 'Email & mật khẩu'}</dd></div></dl></section>}<footer><button onClick={onToggle}>{user.status === 'active' ? <><Lock size={15}/>Hạn chế truy cập</> : <><CheckCircle2 size={15}/>Mở lại truy cập</>}</button></footer></aside></div>;
+function IdentityDetail({account,formatLastLogin,onClose,onToggle}:{account:IdentityAccount;formatLastLogin:Props['formatLastLogin'];onClose:()=>void;onToggle:()=>void}){
+  const cfg=SYSTEMS[account.system],Icon=cfg.icon;
+  const extra=account.system==='customer'?[['Hạng thành viên',account.membership_level||'STANDARD'],['Điểm thưởng',Number(account.points||0).toLocaleString('vi-VN')],['Lượt đặt vé',String(account.booking_count||0)],['Tổng chi tiêu',money(account.total_spent)],['Kênh đăng nhập',account.oauth_providers||'Email & mật khẩu']]:account.system==='pos'?[['Mã nhân viên',account.employee_code||'—'],['Phiên hiện tại',account.open_shift_id?`PS-${String(account.open_shift_id).padStart(5,'0')} · ${account.shift_status}`:'Không có phiên mở']]:account.system==='ems'?[['Mã nhân sự',account.employee_code||'—'],['Phòng ban',account.department||'Chưa phân phòng'],['Ngày tham gia',account.join_date||'—'],['Điểm hiệu suất',String(account.performance_score||0)]]:[['Username',`@${account.username}`],['Phạm vi RBAC',account.scope_name||'Toàn hệ thống']];
+  return <div className="identity-drawer-backdrop" onMouseDown={e=>{if(e.currentTarget===e.target)onClose();}}><aside className="identity-drawer"><button className="identity-drawer-close" onClick={onClose}><X size={18}/></button><header style={{'--system-color':cfg.color} as React.CSSProperties}><span><Icon size={24}/></span><small>HỒ SƠ {cfg.title.toUpperCase()}</small><h2>{account.full_name}</h2><p>{account.email||`@${account.username}`}</p></header><section><h3>Định danh & quyền truy cập</h3><dl><div><dt>Hệ thống nguồn</dt><dd>{cfg.title} · {account.scope_type}</dd></div><div><dt>Vai trò</dt><dd>{account.role_label}</dd></div><div><dt>Trạng thái</dt><dd className={account.status==='active'?'ok':'warning'}>{statusLabel(account.status)}</dd></div><div><dt>Phạm vi</dt><dd>{account.scope_name||'Chưa phân phạm vi'}</dd></div><div><dt>Điện thoại</dt><dd>{account.phone||'Chưa cập nhật'}</dd></div><div><dt>Đăng nhập cuối</dt><dd>{formatLastLogin(account.last_login)}</dd></div></dl></section><section><h3>Thông tin theo phân hệ</h3><dl>{extra.map(([label,value])=><div key={label}><dt>{label}</dt><dd>{value}</dd></div>)}</dl></section><footer><div><Activity size={15}/><span>Mọi thay đổi được ghi vào Audit Log.</span></div><button onClick={onToggle}>{account.status==='active'?<><LockKeyhole size={15}/>Hạn chế truy cập</>:<><CheckCircle2 size={15}/>Khôi phục truy cập</>}</button></footer></aside></div>;
 }

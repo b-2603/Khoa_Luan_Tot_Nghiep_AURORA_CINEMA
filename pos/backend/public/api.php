@@ -119,8 +119,8 @@ function requirePosUser() {
         jsonResponse(array('success' => false, 'message' => 'Phiên đăng nhập quầy đã hết hạn.'), 401);
     }
     $user = $_SESSION['pos_user'];
-    $shift = $user['role'] !== 'admin' && isset($db) ? posAuthorizedShift($db, (int)$user['id']) : null;
-    if ($user['role'] !== 'admin' && !$shift) {
+    $shift = isset($db) ? posAuthorizedShift($db, (int)$user['id']) : null;
+    if (!$shift) {
         unset($_SESSION['pos_shift_id']);
         unset($_SESSION['pos_user']);
         jsonResponse(array(
@@ -129,17 +129,15 @@ function requirePosUser() {
             'message' => 'Phiên làm việc đã kết thúc hoặc chưa được cấp lại. Vui lòng liên hệ Admin Rạp hoặc Supervisor để mở phiên mới.'
         ), 403);
     }
-    if ($user['role'] !== 'admin') {
-        $user['capabilities'] = posCapabilitiesForAreas($shift['sales_areas']);
-        $user['counter_role_name'] = posAreaLabel($shift['sales_areas']);
-        $_SESSION['pos_user'] = $user;
-    }
+    $user['capabilities'] = posCapabilitiesForAreas($shift['sales_areas']);
+    $user['counter_role_name'] = posAreaLabel($shift['sales_areas']);
+    $_SESSION['pos_user'] = $user;
     return $user;
 }
 
 function requirePosCapability($capability) {
     $user=requirePosUser();
-    if (empty($user['capabilities'][$capability]) && $user['role']!=='admin') jsonResponse(array('success'=>false,'message'=>'Phiên hiện tại không được cấp khu vực nghiệp vụ cần thiết.'),403);
+    if (empty($user['capabilities'][$capability])) jsonResponse(array('success'=>false,'message'=>'Phiên hiện tại không được cấp khu vực nghiệp vụ cần thiết.'),403);
     return $user;
 }
 
@@ -335,6 +333,7 @@ function ensurePosAuthenticationSchema($db) {
             initial_cash DECIMAL(12,2) NOT NULL DEFAULT 0,
             cash_at_close DECIMAL(12,2) NULL, status ENUM('active','paused','closed') NOT NULL DEFAULT 'active',
             opened_at DATETIME NOT NULL, closed_at DATETIME NULL, notes TEXT NULL,
+            business_date DATE NULL, auto_closed TINYINT(1) NOT NULL DEFAULT 0, close_reason VARCHAR(40) NULL,
             created_at TIMESTAMP NULL DEFAULT CURRENT_TIMESTAMP, updated_at DATETIME NULL DEFAULT NULL,
             KEY idx_pos_shifts_user_status (user_id, status), KEY idx_pos_shifts_theater (theater_id)
         ) ENGINE=InnoDB DEFAULT CHARSET=utf8 COLLATE=utf8_unicode_ci",
@@ -376,10 +375,14 @@ function ensurePosAuthenticationSchema($db) {
     if (!posTableColumnExists($db, 'pos_shifts', 'authorized_by_name') && !$db->query('ALTER TABLE pos_shifts ADD authorized_by_name VARCHAR(120) NULL')) return false;
     if (!posTableColumnExists($db, 'pos_shifts', 'authorized_by_role') && !$db->query('ALTER TABLE pos_shifts ADD authorized_by_role VARCHAR(30) NULL')) return false;
     if (!posTableColumnExists($db, 'pos_shifts', 'work_schedule_id') && !$db->query('ALTER TABLE pos_shifts ADD work_schedule_id BIGINT UNSIGNED NULL')) return false;
+    if (!posTableColumnExists($db, 'pos_shifts', 'business_date') && !$db->query('ALTER TABLE pos_shifts ADD business_date DATE NULL')) return false;
+    if (!posTableColumnExists($db, 'pos_shifts', 'auto_closed') && !$db->query('ALTER TABLE pos_shifts ADD auto_closed TINYINT(1) NOT NULL DEFAULT 0')) return false;
+    if (!posTableColumnExists($db, 'pos_shifts', 'close_reason') && !$db->query('ALTER TABLE pos_shifts ADD close_reason VARCHAR(40) NULL')) return false;
     if (posTableColumnExists($db, 'orders', 'id') && !posTableColumnExists($db, 'orders', 'pos_shift_id') && !$db->query('ALTER TABLE orders ADD pos_shift_id BIGINT UNSIGNED NULL')) return false;
     $db->query("UPDATE pos_shifts SET sales_areas=REPLACE(sales_areas,'box_office','box_ticket') WHERE sales_areas LIKE '%box_office%'");
     $db->query("ALTER TABLE pos_shifts MODIFY sales_areas VARCHAR(255) NOT NULL DEFAULT 'box_ticket'");
     $db->query("UPDATE pos_work_schedules SET sales_areas=REPLACE(sales_areas,'box_office','box_ticket') WHERE sales_areas LIKE '%box_office%'");
+    $db->query("UPDATE pos_shifts SET business_date=DATE(opened_at) WHERE business_date IS NULL");
 
     $cashierHash = 'sha256:aurora-pos-local-2026:' . hash('sha256', 'aurora-pos-local-2026:8888');
     $adminHash = 'sha256:aurora-pos-local-2026:' . hash('sha256', 'aurora-pos-local-2026:admin123');
@@ -404,42 +407,36 @@ function posLogAuthEvent($db, $userId, $username, $eventType, $isSuccess) {
     $stmt->bind_param('ississ', $nullableUser, $username, $eventType, $successValue, $ip, $agent); $stmt->execute(); $stmt->close();
 }
 
-/**
- * Bridges sessions created before TMS persisted the approver metadata.
- *
- * TMS already regards these active sessions as open (and therefore marks the
- * cashier as working), but POS used to reject them because no approver was
- * stored.  Reconcile only live legacy records once, preserving their counter,
- * cashier, opening cash and timestamps.  New sessions are always written by
- * TMS with the real approver details.
- */
-function posReconcileLegacyAuthorizedShifts($db) {
-    $sql = "UPDATE pos_shifts
-        SET authorized_by_name = CASE
-                WHEN authorized_by_name IS NULL OR TRIM(authorized_by_name) = ''
-                THEN 'Aurora TMS - đồng bộ phiên cũ'
-                ELSE authorized_by_name END,
-            authorized_by_role = CASE
-                WHEN authorized_by_role IS NULL
-                    OR TRIM(authorized_by_role) = ''
-                    OR authorized_by_role NOT IN ('super_admin','cinema_admin','supervisor')
-                THEN 'cinema_admin'
-                ELSE authorized_by_role END,
-            sales_areas = CASE
-                WHEN sales_areas IS NULL OR TRIM(sales_areas) = '' THEN 'box_ticket'
-                ELSE sales_areas END,
-            updated_at = NOW()
-        WHERE status IN ('active','paused')
-          AND (
-              authorized_by_name IS NULL OR TRIM(authorized_by_name) = ''
-              OR authorized_by_role IS NULL OR TRIM(authorized_by_role) = ''
-              OR authorized_by_role NOT IN ('super_admin','cinema_admin','supervisor')
-          )";
-    return $db->query($sql) !== false;
+/** Close legacy sessions that were created automatically without a real TMS approver. */
+function posQuarantineUnauthorizedShifts($db) {
+    return $db->query("UPDATE pos_shifts SET status='closed',closed_at=COALESCE(closed_at,NOW()),
+        close_note=CASE WHEN close_note IS NULL OR TRIM(close_note)='' THEN 'Hệ thống đóng phiên tự tạo không có người cấp quyền hợp lệ.' ELSE close_note END,
+        closed_by='Hệ thống kiểm soát phiên',updated_at=NOW()
+        WHERE status IN ('active','paused') AND (
+          authorized_by_name IS NULL OR TRIM(authorized_by_name)='' OR authorized_by_name='Aurora TMS - đồng bộ phiên cũ'
+          OR authorized_by_role IS NULL OR authorized_by_role NOT IN ('super_admin','cinema_admin','supervisor')
+        )") !== false;
+}
+
+/** Enforce the shared aurora_db business-day boundary before every POS action. */
+function posEnforceDailyRollover($db) {
+    $result=$db->query("SELECT id,user_id,initial_cash,opened_at,work_schedule_id FROM pos_shifts WHERE status IN ('active','paused') AND DATE(opened_at)<CURDATE() ORDER BY id");
+    if(!$result)return false;
+    while($shift=$result->fetch_assoc()){
+        $shiftId=(int)$shift['id'];$userId=(int)$shift['user_id'];
+        $cutoff=date('Y-m-d 00:00:00',strtotime($shift['opened_at'].' +1 day'));
+        $openedEsc=$db->real_escape_string($shift['opened_at']);$cutoffEsc=$db->real_escape_string($cutoff);
+        $cash=0;$cashResult=$db->query("SELECT COALESCE(SUM(CASE WHEN status='PAID' AND UPPER(payment_method)='CASH' THEN total_amount ELSE 0 END),0) total FROM orders WHERE cashier_id={$userId} AND (pos_shift_id={$shiftId} OR (pos_shift_id IS NULL AND created_at>='{$openedEsc}' AND created_at<'{$cutoffEsc}'))");
+        if($cashResult&&($cashRow=$cashResult->fetch_assoc()))$cash=(float)$cashRow['total'];
+        $expected=(float)$shift['initial_cash']+$cash;
+        $db->query("UPDATE pos_shifts SET status='closed',business_date=DATE(opened_at),auto_closed=1,close_reason='daily_midnight_rollover',expected_cash={$expected},cash_at_close=NULL,cash_difference=NULL,closed_at='{$cutoffEsc}',close_note='Hệ thống cưỡng chế đóng phiên lúc 00:00 khi kết thúc ngày nghiệp vụ. Chưa kiểm đếm tiền mặt thực tế.',closed_by='Hệ thống Aurora',updated_at=NOW() WHERE id={$shiftId} AND status IN ('active','paused')");
+        if(!empty($shift['work_schedule_id']))$db->query("UPDATE pos_work_schedules SET status='completed',updated_at=NOW() WHERE id=".(int)$shift['work_schedule_id']);
+    }
+    return true;
 }
 
 function posCurrentShift($db, $userId) {
-    $stmt = $db->prepare("SELECT id, cinema_name, counter, initial_cash, status, opened_at FROM pos_shifts WHERE user_id = ? AND status IN ('active','paused') ORDER BY id DESC LIMIT 1");
+    $stmt = $db->prepare("SELECT id, cinema_name, counter, initial_cash, status, opened_at FROM pos_shifts WHERE user_id = ? AND status IN ('active','paused') AND DATE(opened_at)=CURDATE() ORDER BY id DESC LIMIT 1");
     if (!$stmt) return null;
     $stmt->bind_param('i', $userId); $stmt->execute();
     $id = null; $cinema = null; $counter = null; $initial = null; $status = null; $opened = null;
@@ -453,34 +450,17 @@ function posAuthorizedShift($db, $userId) {
     // id, so requiring that nullable column made TMS and POS disagree about
     // the same active session. Accept either persisted authorizer identity,
     // but always require a privileged TMS role.
-    $stmt=$db->prepare("SELECT id,cinema_name,counter,initial_cash,status,opened_at,sales_areas FROM pos_shifts WHERE user_id=? AND status IN ('active','paused') AND authorized_by_role IN ('super_admin','cinema_admin','supervisor') AND (authorized_by_tms_user_id IS NOT NULL OR (authorized_by_name IS NOT NULL AND TRIM(authorized_by_name)<>'')) ORDER BY id DESC LIMIT 1");
+    $stmt=$db->prepare("SELECT id,cinema_name,counter,initial_cash,status,opened_at,sales_areas FROM pos_shifts WHERE user_id=? AND status='active' AND DATE(opened_at)=CURDATE() AND authorized_by_role IN ('super_admin','cinema_admin','supervisor') AND (authorized_by_tms_user_id IS NOT NULL OR (authorized_by_name IS NOT NULL AND TRIM(authorized_by_name)<>'')) ORDER BY id DESC LIMIT 1");
     if(!$stmt)return null;$stmt->bind_param('i',$userId);$stmt->execute();
     $id=null;$cinema=null;$counter=null;$initial=null;$status=null;$opened=null;$salesAreas=null;$stmt->bind_result($id,$cinema,$counter,$initial,$status,$opened,$salesAreas);$found=$stmt->fetch();$stmt->close();
     return $found?array('id'=>(int)$id,'cinema_name'=>$cinema,'counter'=>$counter,'initial_cash'=>(float)$initial,'status'=>$status,'opened_at'=>$opened,'sales_areas'=>$salesAreas):null;
 }
 
 function posOpenShift($db, $user, $theater) {
-    $existing = $user['role']==='admin' ? posCurrentShift($db,(int)$user['id']) : posAuthorizedShift($db,(int)$user['id']);
-    if ($existing) {
-        if ($existing['status'] === 'paused') {
-            $now = date('Y-m-d H:i:s'); $resume = $db->prepare("UPDATE pos_shifts SET status='active', updated_at=? WHERE id=?");
-            if (!$resume) return null;
-            $resume->bind_param('si', $now, $existing['id']); $ok = $resume->execute(); $resume->close();
-            if (!$ok) return null;
-            $existing['status'] = 'active';
-        }
-        return $existing;
-    }
-    // Tài khoản bán hàng không được tự tạo phiên khi đăng nhập.
-    // Phiên phải được Admin Rạp/Supervisor cùng rạp cấp trước trong TMS.
-    if ($user['role'] !== 'admin') return null;
-    $now = date('Y-m-d H:i:s'); $initialCash = 500000.00; $counter = $user['counter_code']; $cinema = $theater['name']; $theaterId = (int)$theater['id']; $userId = (int)$user['id'];
-    $stmt = $db->prepare("INSERT INTO pos_shifts (user_id,theater_id,cinema_name,counter,initial_cash,status,opened_at,created_at,updated_at) VALUES (?, ?, ?, ?, ?, 'active', ?, ?, ?)");
-    if (!$stmt) return null;
-    $stmt->bind_param('iissdsss', $userId, $theaterId, $cinema, $counter, $initialCash, $now, $now, $now);
-    if (!$stmt->execute()) { $stmt->close(); return null; }
-    $id = (int)$stmt->insert_id; $stmt->close();
-    return array('id'=>$id, 'cinema_name'=>$cinema, 'counter'=>$counter, 'initial_cash'=>$initialCash, 'status'=>'active', 'opened_at'=>$now);
+    // Đăng nhập POS chỉ tiêu thụ phiên ACTIVE do TMS cấp; tuyệt đối không tạo
+    // hoặc tự tiếp tục phiên PAUSED khi ứng dụng khởi động/đăng nhập.
+    $existing = posAuthorizedShift($db,(int)$user['id']);
+    return $existing && $existing['status']==='active' ? $existing : null;
 }
 
 // POS, TMS và customer dùng chung aurora_db.
@@ -491,7 +471,7 @@ if ($db->connect_error) {
 }
 
 $db->set_charset('utf8');
-if (!ensurePosAuthenticationSchema($db) || !posReconcileLegacyAuthorizedShifts($db)) {
+if (!ensurePosAuthenticationSchema($db) || !posQuarantineUnauthorizedShifts($db) || !posEnforceDailyRollover($db)) {
     jsonResponse(array('success' => false, 'message' => 'Không thể khởi tạo dữ liệu xác thực POS trong aurora_db.'), 500);
 }
 $action = isset($_GET['action']) ? $_GET['action'] : 'health';
@@ -525,6 +505,10 @@ if ($action === 'login' && $requestMethod === 'POST') {
         posLogAuthEvent($db, (int)$user['id'], $username, 'LOGIN_DENIED', false);
         jsonResponse(array('success' => false, 'message' => 'Tài khoản nhân viên đang bị tạm khóa.'), 403);
     }
+    if ($user['role'] === 'admin') {
+        posLogAuthEvent($db, (int)$user['id'], $username, 'LOGIN_DENIED_SYSTEM_ACCOUNT', false);
+        jsonResponse(array('success'=>false,'message'=>'Tài khoản quản trị hệ thống không phải tài khoản nhân viên POS. Hãy dùng tài khoản Thu ngân hoặc Supervisor đã được TMS cấp phiên.'),403);
+    }
 
     $theater = getPosTheater($db, isset($user['theater_id']) ? (int)$user['theater_id'] : 1);
     if (!$theater) jsonResponse(array('success' => false, 'message' => 'Nhân viên chưa được phân rạp hợp lệ.'), 403);
@@ -536,10 +520,8 @@ if ($action === 'login' && $requestMethod === 'POST') {
         posLogAuthEvent($db, (int)$user['id'], $username, 'LOGIN_DENIED_NO_SHIFT', false);
         jsonResponse(array('success'=>false,'message'=>'Tài khoản chưa có phiên bán hàng được cấp. Vui lòng liên hệ Admin Rạp hoặc Supervisor để mở lại phiên.'),403);
     }
-    if ($user['role'] !== 'admin') {
-        $user['capabilities'] = posCapabilitiesForAreas($shift['sales_areas']);
-        $user['counter_role_name'] = posAreaLabel($shift['sales_areas']);
-    }
+    $user['capabilities'] = posCapabilitiesForAreas($shift['sales_areas']);
+    $user['counter_role_name'] = posAreaLabel($shift['sales_areas']);
     unset($user['password_hash']);
     session_regenerate_id(true);
     $_SESSION['pos_user'] = $user;
@@ -629,7 +611,7 @@ if ($action === 'close_shift' && $requestMethod === 'POST') {
     if ($cashAtClose < 0) jsonResponse(array('success' => false, 'message' => 'Tiền mặt kết ca không hợp lệ.'), 422);
     $now = date('Y-m-d H:i:s');
     $closedBy='POS: '.$user['full_name'];
-    $stmt = $db->prepare("UPDATE pos_shifts SET status='closed',cash_at_close=?,closed_at=?,closed_by=?,close_note='Nhân viên chủ động kết phiên tại POS',updated_at=? WHERE id=? AND user_id=? AND status IN ('active','paused')");
+    $stmt = $db->prepare("UPDATE pos_shifts SET status='closed',business_date=DATE(opened_at),auto_closed=0,close_reason='manual',cash_at_close=?,closed_at=?,closed_by=?,close_note='Nhân viên chủ động kết phiên tại POS',updated_at=? WHERE id=? AND user_id=? AND status IN ('active','paused')");
     if (!$stmt) jsonResponse(array('success' => false, 'message' => 'Không thể đóng ca.'), 500);
     $userId = (int)$user['id']; $stmt->bind_param('dsssii', $cashAtClose, $now, $closedBy, $now, $shiftId, $userId); $stmt->execute(); $affected = $stmt->affected_rows; $stmt->close();
     if ($affected < 1) jsonResponse(array('success' => false, 'message' => 'Ca làm việc đã được đóng hoặc không thuộc tài khoản hiện tại.'), 409);

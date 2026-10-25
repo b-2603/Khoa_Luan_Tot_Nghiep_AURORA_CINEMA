@@ -574,6 +574,46 @@ function aurora_ensure_product_channel_prices($db) {
     return true;
 }
 
+/** Persist one independently scannable cinema ticket for every booked seat. */
+function aurora_ensure_booking_tickets($db) {
+    return $db->query("CREATE TABLE IF NOT EXISTS customer_booking_tickets (
+        id BIGINT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
+        booking_id BIGINT UNSIGNED NOT NULL,
+        booking_seat_id BIGINT UNSIGNED NOT NULL,
+        ticket_code VARCHAR(32) NOT NULL,
+        qr_token VARCHAR(64) NOT NULL,
+        status ENUM('VALID','USED','CANCELLED') NOT NULL DEFAULT 'VALID',
+        issued_at DATETIME NOT NULL,
+        checked_in_at DATETIME NULL,
+        created_at TIMESTAMP NULL DEFAULT CURRENT_TIMESTAMP,
+        UNIQUE KEY uq_customer_ticket_code (ticket_code),
+        UNIQUE KEY uq_customer_ticket_token (qr_token),
+        UNIQUE KEY uq_customer_ticket_seat (booking_seat_id),
+        KEY idx_customer_ticket_booking (booking_id),
+        CONSTRAINT fk_customer_ticket_booking FOREIGN KEY (booking_id) REFERENCES bookings(id) ON DELETE CASCADE,
+        CONSTRAINT fk_customer_ticket_booking_seat FOREIGN KEY (booking_seat_id) REFERENCES booking_seats(id) ON DELETE CASCADE
+    ) ENGINE=InnoDB DEFAULT CHARSET=utf8") !== false;
+}
+
+function aurora_issue_booking_tickets($db, $bookingId, $bookingCode, $bookingStatus) {
+    if (!aurora_ensure_booking_tickets($db)) return false;
+    $bookingId = (int)$bookingId;
+    if ($bookingStatus !== 'PAID') {
+        if (in_array($bookingStatus, array('CANCELLED','EXPIRED'), true)) $db->query("UPDATE customer_booking_tickets SET status='CANCELLED' WHERE booking_id={$bookingId} AND status='VALID'");
+        return true;
+    }
+    $rows = $db->query("SELECT bs.id FROM booking_seats bs WHERE bs.booking_id={$bookingId} ORDER BY bs.id");
+    if (!$rows) return false;
+    while ($seat = $rows->fetch_assoc()) {
+        $bookingSeatId = (int)$seat['id'];
+        $ticketCode = 'AUR-' . strtoupper(substr(sha1($bookingCode.'-'.$bookingSeatId), 0, 12));
+        $token = strtoupper(sha1(uniqid((string)mt_rand(), true).'-'.$bookingCode.'-'.$bookingSeatId));
+        $codeEsc = $db->real_escape_string($ticketCode); $tokenEsc = $db->real_escape_string($token);
+        if (!$db->query("INSERT IGNORE INTO customer_booking_tickets (booking_id,booking_seat_id,ticket_code,qr_token,status,issued_at) VALUES ({$bookingId},{$bookingSeatId},'{$codeEsc}','{$tokenEsc}','VALID',NOW())")) return false;
+    }
+    return true;
+}
+
 function aurora_concession_catalog($db) {
     $catalog = array();
     if (!aurora_ensure_product_channel_prices($db)) return $catalog;
@@ -3804,8 +3844,7 @@ if ($resource === 'change_password') {
 
 // ── /booking_history (GET) ───────────────────────────────────────────────────
 if ($resource === 'booking_history') {
-    $userId = isset($_SESSION['aurora_user_id']) ? (int) $_SESSION['aurora_user_id'] : null;
-    if (!$userId) aurora_response(array('message' => 'Vui lòng đăng nhập.'), 401);
+    $userId = aurora_require_customer($db, 'Vui lòng đăng nhập tài khoản khách hàng để xem lịch sử đặt vé.');
 
     $sql = "SELECT b.id, b.booking_code, b.total_amount, b.status, st.starts_at,
                    m.title, t.name, sc.name,
@@ -4093,7 +4132,7 @@ if ($resource === 'apply_voucher') {
 // ── /booking_detail (GET) ─────────────────────────────────────────────────────
 // Chi tiết đầy đủ 1 booking (dùng sau khi đặt thành công)
 if ($resource === 'booking_detail') {
-    $userId    = aurora_require_user();
+    $userId    = aurora_require_customer($db, 'Vui lòng đăng nhập tài khoản khách hàng để xem vé.');
     $bookingId = isset($_GET['id']) ? (int)$_GET['id'] : 0;
     if ($bookingId < 1) aurora_response(array('message' => 'booking id không hợp lệ.'), 422);
 
@@ -4126,15 +4165,35 @@ if ($resource === 'booking_detail') {
     $stmt->close();
     if (!$row) aurora_response(array('message' => 'Không tìm thấy đơn đặt vé.'), 404);
 
-    // Parse seats list
-    $seatsArr = array();
-    if ($row['seats_raw']) {
-        foreach (explode('|', $row['seats_raw']) as $seatStr) {
-            if (preg_match('/^([A-Z]+)(\d+)\((\w+)\)$/', $seatStr, $m)) {
-                $seatsArr[] = array('label' => $m[1].$m[2], 'row' => $m[1], 'number' => (int)$m[2], 'type' => $m[3]);
-            }
-        }
+    if (!aurora_issue_booking_tickets($db, (int)$row['id'], $row['booking_code'], $row['status'])) aurora_response(array('message'=>'Không thể phát hành dữ liệu vé điện tử.'),500);
+
+    $ticketsBySeat=array();$ticketResult=$db->query("SELECT booking_seat_id,ticket_code,qr_token,status,issued_at,checked_in_at FROM customer_booking_tickets WHERE booking_id=".(int)$row['id']." ORDER BY id");
+    while($ticketResult&&($ticket=$ticketResult->fetch_assoc()))$ticketsBySeat[(int)$ticket['booking_seat_id']]=$ticket;
+    $seatsArr=array();$tickets=array();
+    $seatResult=$db->query("SELECT bs.id booking_seat_id,bs.price,se.seat_row,se.seat_number,se.seat_type FROM booking_seats bs INNER JOIN seats se ON se.id=bs.seat_id WHERE bs.booking_id=".(int)$row['id']." ORDER BY se.seat_row,se.seat_number");
+    while($seatResult&&($seat=$seatResult->fetch_assoc())){
+        $seatId=(int)$seat['booking_seat_id'];$label=$seat['seat_row'].$seat['seat_number'];
+        $seatsArr[]=array('label'=>$label,'row'=>$seat['seat_row'],'number'=>(int)$seat['seat_number'],'type'=>$seat['seat_type'],'price'=>(float)$seat['price']);
+        if(isset($ticketsBySeat[$seatId])){$ticket=$ticketsBySeat[$seatId];$tickets[]=array('code'=>$ticket['ticket_code'],'seat'=>$label,'seatType'=>$seat['seat_type'],'price'=>(float)$seat['price'],'status'=>$ticket['status'],'issuedAt'=>$ticket['issued_at'],'checkedInAt'=>$ticket['checked_in_at'],'qrPayload'=>'AURORA|TICKET|'.$ticket['ticket_code'].'|'.$ticket['qr_token']);}
     }
+
+    $order=null;$orderId=0;
+    // Quyền sở hữu đã được xác minh bằng bookings.user_id ở truy vấn phía
+    // trên. Liên kết order bằng booking_id để vẫn đọc đúng các đơn POS cũ có
+    // customer_id chưa được đồng bộ.
+    if(aurora_ensure_sales_orders($db)){
+        aurora_ensure_order_voucher_column($db);
+        $orderResult=$db->query("SELECT id,order_code,channel,subtotal,discount_amount,voucher_code,total_amount,payment_method,amount_received,status,created_at FROM orders WHERE booking_id=".(int)$row['id']." ORDER BY id DESC LIMIT 1");
+        if($orderResult&&($orderRow=$orderResult->fetch_assoc())){$orderId=(int)$orderRow['id'];$order=array('id'=>$orderId,'code'=>$orderRow['order_code'],'channel'=>$orderRow['channel'],'subtotal'=>(float)$orderRow['subtotal'],'discountAmount'=>(float)$orderRow['discount_amount'],'voucherCode'=>$orderRow['voucher_code'],'totalAmount'=>(float)$orderRow['total_amount'],'paymentMethod'=>$orderRow['payment_method'],'amountReceived'=>(float)$orderRow['amount_received'],'status'=>$orderRow['status'],'createdAt'=>$orderRow['created_at']);}
+    }
+    $payments=array();if($orderId>0){$paymentResult=$db->query("SELECT method,amount,reference_code,created_at FROM payments WHERE order_id={$orderId} ORDER BY id DESC");while($paymentResult&&($payment=$paymentResult->fetch_assoc()))$payments[]=array('method'=>$payment['method'],'amount'=>(float)$payment['amount'],'referenceCode'=>$payment['reference_code'],'createdAt'=>$payment['created_at']);}
+    $concessions=array();$concessionKeys=array();
+    // Đơn mua trực tiếp tại quầy POS lưu vé, combo và merchandise trong
+    // order_items. Chỉ lấy các dòng không phải vé để hiển thị khu bắp nước.
+    if($orderId>0){$orderItemsTable=$db->query("SHOW TABLES LIKE 'order_items'");if($orderItemsTable&&$orderItemsTable->num_rows){$concessionResult=$db->query("SELECT item_type,item_code,item_name,quantity,unit_price FROM order_items WHERE order_id={$orderId} AND item_type IN ('COMBO','MERCHANDISE') ORDER BY id");while($concessionResult&&($item=$concessionResult->fetch_assoc())){$key=$item['item_code'].'|'.$item['unit_price'];$concessionKeys[$key]=true;$concessions[]=array('type'=>$item['item_type'],'code'=>$item['item_code'],'name'=>$item['item_name'],'quantity'=>(int)$item['quantity'],'unitPrice'=>(float)$item['unit_price'],'total'=>(int)$item['quantity']*(float)$item['unit_price']);}}}
+    // Đơn online cũ lưu combo trong booking_concessions. Hợp nhất theo mã và
+    // giá để không cộng trùng nếu một đơn đã được đồng bộ sang order_items.
+    $legacyResult=$db->query("SELECT item_code,item_name,quantity,unit_price FROM booking_concessions WHERE booking_id=".(int)$row['id']." ORDER BY id");while($legacyResult&&($item=$legacyResult->fetch_assoc())){$key=$item['item_code'].'|'.$item['unit_price'];if(isset($concessionKeys[$key]))continue;$concessions[]=array('type'=>'COMBO','code'=>$item['item_code'],'name'=>$item['item_name'],'quantity'=>(int)$item['quantity'],'unitPrice'=>(float)$item['unit_price'],'total'=>(int)$item['quantity']*(float)$item['unit_price']);}
 
     aurora_response(array('booking' => array(
         'id'              => (int)$row['id'],
@@ -4156,6 +4215,10 @@ if ($resource === 'booking_detail') {
         'city'            => $row['city'],
         'seats'           => $seatsArr,
         'seats_display'   => $row['seats_display'],
+        'tickets'         => $tickets,
+        'order'           => $order,
+        'payments'        => $payments,
+        'concessions'     => $concessions,
     )), 200);
 }
 

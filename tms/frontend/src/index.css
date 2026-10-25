@@ -1635,8 +1635,6 @@ footer { display: flex; justify-content: space-between; padding: 25px 17px 0; co
 .user-preview-detail span { display: block; color: #8591a5; font-size: .68rem; margin-bottom: 4px; }
 .user-preview-detail b { display: block; color: #0d1b2e; font-size: .77rem; line-height: 1.35; }
 .user-preview-detail b.is-active { color: #059669; }.user-preview-detail b.is-locked { color: #b45309; }
-.user-security-note { display: flex; gap: 8px; margin-top: 14px; padding: 10px; border-radius: 9px; background: #f0f6ff; color: #3563a7; }
-.user-security-note svg { flex: 0 0 auto; margin-top: 1px; }.user-security-note p { margin: 0; font-size: .7rem; line-height: 1.42; }
 .user-account-modal .tms-modal-footer { padding: 14px 26px; background: #fff; }
 @media (max-width: 720px) { .tms-modal-box.user-account-modal { width: calc(100vw - 18px); max-height: calc(100vh - 18px); }.user-account-modal-body { grid-template-columns: 1fr; padding: 18px; }.user-form-grid { grid-template-columns: 1fr; }.user-access-preview { order: -1; }.user-account-modal .tms-modal-header, .user-account-modal .tms-modal-footer { padding-left: 18px; padding-right: 18px; } }
 
@@ -2389,3 +2387,20 @@ footer { display: flex; justify-content: space-between; padding: 25px 17px 0; co
 .notification-read-all{padding-right:6px;padding-left:6px;font-size:.6rem;white-space:nowrap}
 .notification-category{display:inline-flex!important;width:max-content;padding:3px 6px;border-radius:5px;color:#2b639d!important;background:#eaf3fd;font-size:.52rem!important;letter-spacing:.02em}
 .notification-origin{display:block;margin-top:5px;color:#93a0af;font-size:.53rem}
+
+/* Permission-aware route fallback. */
+.rbac-access-denied{max-width:820px;margin:72px auto;padding:30px;display:grid;grid-template-columns:auto 1fr auto;align-items:center;gap:20px;background:#fff;border:1px solid #dbe4f0;border-radius:18px;box-shadow:0 18px 50px rgba(15,35,62,.08)}
+.rbac-access-denied>span{width:54px;height:54px;display:grid;place-items:center;color:#b45309;background:#fff7e6;border-radius:15px}.rbac-access-denied small{color:#2563eb;font-weight:800;letter-spacing:.09em}.rbac-access-denied h2{margin:5px 0 7px;color:#0f2340;font-size:1.2rem}.rbac-access-denied p{margin:0;color:#64748b;line-height:1.55}.rbac-access-denied code{color:#1d4ed8;background:#eff6ff;padding:2px 6px;border-radius:5px}.rbac-access-denied button{border:0;border-radius:10px;background:#0f2340;color:#fff;padding:11px 16px;font-weight:750;cursor:pointer;white-space:nowrap}
+@media(max-width:720px){.rbac-access-denied{grid-template-columns:auto 1fr;margin:30px 12px}.rbac-access-denied button{grid-column:1/-1;width:100%}}
+
+/* Daily POS session rollover: server time is the single source of truth. */
+.pos-management-heading>button:disabled{cursor:not-allowed;background:#8b98aa;box-shadow:none;opacity:.85}
+.pos-session-policy{display:grid;grid-template-columns:40px minmax(0,1fr) auto;align-items:center;gap:12px;padding:13px 16px;border:1px solid #cfe0f4;border-radius:12px;background:linear-gradient(100deg,#f7fbff,#fff);box-shadow:0 5px 16px rgba(13,27,46,.04)}
+.pos-session-policy>span{display:grid;width:38px;height:38px;place-items:center;border-radius:10px;color:#246bd3;background:#e9f2ff}
+.pos-session-policy>div b{display:block;color:#0d1b2e;font-size:.75rem}.pos-session-policy>div p{margin:4px 0 0;color:#667991;font-size:.65rem}.pos-session-policy>div strong{color:#1f62b6}
+.pos-session-policy aside{display:grid;justify-items:end;gap:2px;padding-left:18px;border-left:1px solid #dce6f1}.pos-session-policy aside small{color:#8290a3;font-size:.54rem;font-weight:850;letter-spacing:.05em}.pos-session-policy aside b{color:#173d6e;font-size:.71rem}.pos-session-policy aside em{color:#178060;font-size:.58rem;font-style:normal;font-weight:750}
+.pos-session-policy.rollover{border-color:#f0cf85;background:#fffaf0}.pos-session-policy.rollover>span{color:#9a6200;background:#ffedbd}.pos-session-policy.rollover aside em{color:#a66500}.pos-auto-close-note{display:block;margin-top:5px;color:#6d7d91;font-size:.56rem;font-weight:750}
+@media(max-width:760px){.pos-session-policy{grid-template-columns:36px minmax(0,1fr)}.pos-session-policy aside{grid-column:1/-1;align-items:start;justify-items:start;padding:10px 0 0;border-top:1px solid #dce6f1;border-left:0}}
+
+/* Keep the permission workspace readable on desktop and touch displays. */
+.rbac-center-head>div>span{font-size:11px}.rbac-center-head h2{font-size:22px}.rbac-center-head p{font-size:12px}.rbac-center-head button{font-size:12px}.rbac-role-list b{font-size:12px}.rbac-role-list small{font-size:9px}.rbac-role-list em{font-size:10px}.rbac-role-title small{font-size:9px}.rbac-role-title h3{font-size:16px}.rbac-role-title p{font-size:10px}.rbac-role-metrics small,.rbac-root-lock{font-size:9px}.rbac-module-toolbar input,.rbac-module-toolbar>span{font-size:11px}.rbac-module-card>header b{font-size:12px}.rbac-module-card>header small,.rbac-module-card>header em{font-size:9px}.rbac-presets button{font-size:9px}.rbac-action-grid b{font-size:10px}.rbac-action-grid small{font-size:8px}.rbac-note>span,.rbac-note textarea,.rbac-note p{font-size:10px}

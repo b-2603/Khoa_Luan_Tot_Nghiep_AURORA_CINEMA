@@ -34,7 +34,8 @@ Thời gian TMS dùng múi giờ Việt Nam (`Asia/Ho_Chi_Minh`, UTC+07:00); cá
 - `GET ?action=dashboard&date=YYYY-MM-DD` — KPI vận hành từ `orders`, `bookings`, `booking_seats`, `showtimes`, `screens` và `staff_shifts`; Admin Rạp/Giám sát chỉ nhận dữ liệu thuộc `theater_id` được gán trong `aurora_db`.
 - `GET ?action=cinema-schedule-board&date=YYYY-MM-DD` — sơ đồ phòng và suất chiếu theo thời gian, kèm tổng ghế, công suất, đơn đã thanh toán và doanh thu của rạp đang phụ trách.
 - `GET ?action=revenue` — doanh thu thực tế theo ngày từ booking/order đã thanh toán.
-- `GET ?action=report&from=YYYY-MM-DD&to=YYYY-MM-DD` — tổng hợp doanh thu, kênh và phương thức thanh toán.
+- `GET ?action=reports&report={key}&from=YYYY-MM-DD&to=YYYY-MM-DD&theater_id={id}&channel=all|pos|website|app|ota` — trung tâm 15 báo cáo. Hỗ trợ thêm `group_by=day|week|month|quarter|year`, `movie_id`, `screen_id`, `employee_id`, `payment_method`, `record_status` và `category`. `report` nhận `overview`, `theaters`, `movies`, `trends`, `showtimes`, `channels`, `fnb`, `products`, `modifiers`, `inventory`, `transactions`, `reconciliation`, `promotions`, `employees`, `feedback`. Backend kiểm tra ngày, giá trị danh mục, đối tượng có tồn tại, quyền theo vai trò, phạm vi rạp/phòng/nhân viên, sau đó chỉ trả tập dữ liệu của báo cáo đã được cấp quyền. Response có `export_meta` (mã/tên báo cáo, người lập, vai trò, nguồn `aurora_db`, mức bảo mật, tiền tệ và múi giờ) để frontend tạo biểu mẫu PDF/Excel thống nhất và có thể truy xuất nguồn gốc.
+- `POST ?action=report-export` — ghi nhật ký một lần xuất PDF/Excel vào `audit_logs`; backend kiểm tra quyền xem báo cáo và chỉ lưu metadata an toàn gồm báo cáo, định dạng, kỳ, rạp, kênh và số bản ghi.
 - `GET ?action=transactions`, `GET ?action=refunds`, `POST|PUT ?action=refunds` — giao dịch và hoàn tiền.
 - `GET ?action=seats&screen_id={id}` — sơ đồ ghế.
 - `GET ?action=roles` — ma trận phân quyền.

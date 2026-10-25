@@ -430,11 +430,15 @@ restoreTmsIdentity();
 require_once dirname(__FILE__) . '/../app/Http/Controllers/AdminController.php';
 require_once dirname(__FILE__) . '/../app/Http/Controllers/AuditLogController.php';
 require_once dirname(__FILE__) . '/../app/Http/Controllers/RevenueController.php';
+require_once dirname(__FILE__) . '/../app/Http/Controllers/ReportController.php';
+require_once dirname(__FILE__) . '/../app/Http/Controllers/PosDeviceController.php';
 require_once dirname(__FILE__) . '/../app/Http/Controllers/MarketingController.php';
 require_once dirname(__FILE__) . '/../app/Http/Controllers/ProductPlanningController.php';
 $controller = new AdminController($db);
 $auditLogController = new AuditLogController($db);
 $revenueController = new RevenueController($db);
+$reportController = new ReportController($db);
+$posDeviceController = new PosDeviceController($db);
 $marketingController = new MarketingController($db);
 $productPlanningController = new ProductPlanningController($db);
 $action = isset($_GET['action']) ? $_GET['action'] : 'health';
@@ -929,6 +933,8 @@ if ($action === 'notifications') {
 }
 
 if (strpos($action, 'marketing-') === 0) {
+    requireAdmin();
+    $controller->requireRbacPermission('marketing', $requestMethod === 'GET' ? 'view' : 'update');
     $marketingController->handle(substr($action, strlen('marketing-')));
 }
 
@@ -939,7 +945,15 @@ if ($action === 'permissions') {
     jsonResponse(array('success'=>false, 'message'=>'Phương thức không được hỗ trợ cho ma trận phân quyền.'), 405);
 }
 
+if ($action === 'my-permissions') {
+    if ($requestMethod === 'GET') $controller->myPermissions();
+    jsonResponse(array('success'=>false, 'message'=>'Phương thức không được hỗ trợ cho quyền hiện tại.'), 405);
+}
+
 if ($action === 'users') {
+    requireAdmin();
+    $userPermissionAction = $requestMethod === 'GET' ? 'view' : ($requestMethod === 'DELETE' || isset($_GET['delete']) ? 'delete' : (!empty($_GET['id']) ? 'update' : 'create'));
+    $controller->requireRbacPermission('users', $userPermissionAction);
     if ($requestMethod === 'GET') {
         $controller->listUsers();
     }
@@ -955,7 +969,23 @@ if ($action === 'users') {
     jsonResponse(array('success' => false, 'message' => 'Phương thức không được hỗ trợ cho users.'), 405);
 }
 
+if ($action === 'identity-directory') {
+    requireAdmin();
+    $controller->requireRbacPermission('users', 'view');
+    if ($requestMethod === 'GET') $controller->identityDirectory();
+    jsonResponse(array('success' => false, 'message' => 'Phương thức không được hỗ trợ cho danh bạ tài khoản.'), 405);
+}
+
+if ($action === 'identity-status') {
+    requireAdmin();
+    $controller->requireRbacPermission('users', 'update');
+    if ($requestMethod === 'POST' || $requestMethod === 'PUT') $controller->updateIdentityStatus();
+    jsonResponse(array('success' => false, 'message' => 'Phương thức không được hỗ trợ cho trạng thái tài khoản.'), 405);
+}
+
 if ($action === 'customer-account-status') {
+    requireAdmin();
+    $controller->requireRbacPermission('users', 'update');
     if ($requestMethod === 'POST' || $requestMethod === 'PUT') $controller->updateCustomerStatus();
     jsonResponse(array('success' => false, 'message' => 'Phương thức không được hỗ trợ cho trạng thái customer.'), 405);
 }
@@ -967,16 +997,22 @@ if ($action === 'dashboard') {
 }
 
 if ($action === 'cinema-schedule-board') {
+    requireAdmin();
+    $controller->requireRbacPermission('schedules', 'view');
     if ($requestMethod === 'GET') $controller->cinemaScheduleBoard();
     jsonResponse(array('success' => false, 'message' => 'Phương thức không được hỗ trợ cho bảng điều phối lịch chiếu.'), 405);
 }
 
 if ($action === 'schedule-movies') {
+    requireAdmin();
+    $controller->requireRbacPermission('schedules', 'view');
     if ($requestMethod === 'GET') $controller->scheduleMovies();
     jsonResponse(array('success' => false, 'message' => 'Phương thức không được hỗ trợ cho danh sách phim lập lịch.'), 405);
 }
 
 if ($action === 'schedule-theaters') {
+    requireAdmin();
+    $controller->requireRbacPermission('schedules', 'view');
     if ($requestMethod === 'GET') $controller->scheduleTheaters();
     jsonResponse(array('success' => false, 'message' => 'Phương thức không được hỗ trợ cho danh sách rạp lập lịch.'), 405);
 }
@@ -991,17 +1027,23 @@ if ($action === 'schedule-availability') {
 }
 
 if ($action === 'movie-plan-detail') {
+    requireAdmin();
+    $controller->requireRbacPermission('movies', $requestMethod === 'GET' ? 'view' : 'update');
     if ($requestMethod === 'GET') $controller->moviePlanDetail();
     if ($requestMethod === 'POST' || $requestMethod === 'PUT') $controller->updateMoviePlanTask();
     jsonResponse(array('success' => false, 'message' => 'Phương thức không được hỗ trợ cho chi tiết kế hoạch.'), 405);
 }
 
 if ($action === 'movie-plan-action') {
+    requireAdmin();
+    $controller->requireRbacPermission('movies', 'approve');
     if ($requestMethod === 'POST') $controller->executeMoviePlanAction();
     jsonResponse(array('success' => false, 'message' => 'Phương thức không được hỗ trợ cho thao tác triển khai.'), 405);
 }
 
 if ($action === 'movie-plan-screen-preparation') {
+    requireAdmin();
+    $controller->requireRbacPermission('movies', $requestMethod === 'GET' ? 'view' : 'update');
     if ($requestMethod === 'GET' || $requestMethod === 'POST') $controller->moviePlanScreenPreparation();
     jsonResponse(array('success' => false, 'message' => 'Phương thức không được hỗ trợ cho chuẩn bị phòng chiếu.'), 405);
 }
@@ -1012,7 +1054,7 @@ if ($action === 'revenue') {
 
 if ($action === 'transactions') {
     requireAdmin();
-    $controller->requireRbacPermission('transactions_refunds', $requestMethod !== 'GET');
+    $controller->requireRbacPermission('transactions_refunds', $requestMethod === 'GET' ? 'view' : 'create');
     if ($requestMethod === 'POST') {
         $controller->createTransaction();
     }
@@ -1021,7 +1063,7 @@ if ($action === 'transactions') {
 
 if ($action === 'refunds') {
     requireAdmin();
-    $controller->requireRbacPermission('transactions_refunds', $requestMethod !== 'GET');
+    $controller->requireRbacPermission('transactions_refunds', $requestMethod === 'GET' ? 'view' : ($requestMethod === 'PUT' ? 'approve' : 'create'));
     if ($requestMethod === 'POST' || $requestMethod === 'PUT') {
         $controller->updateRefund();
     }
@@ -1033,28 +1075,51 @@ if ($action === 'seats') {
 }
 
 if ($action === 'screen-seat-map') {
+    requireAdmin();
+    $controller->requireRbacPermission('screens', $requestMethod === 'GET' ? 'view' : 'update');
     if ($requestMethod === 'GET') $controller->screenSeatMap();
     if ($requestMethod === 'POST' || $requestMethod === 'PUT') $controller->updateShowtimeSeatLocks();
     jsonResponse(array('success' => false, 'message' => 'Phương thức không được hỗ trợ cho sơ đồ ghế.'), 405);
 }
 
 if ($action === 'cinema-system-overview' && $requestMethod === 'GET') {
+    requireAdmin();
+    $controller->requireRbacPermission('screens', 'view');
     $controller->cinemaSystemOverview();
 }
 
 if ($action === 'report' || $action === 'reports') {
     requireAdmin();
     $controller->requireRbacPermission('reports', false);
-    $controller->report();
+    $reportController->index();
+}
+
+if ($action === 'report-export' && $requestMethod === 'POST') {
+    requireAdmin();
+    $controller->requireRbacPermission('reports', 'export');
+    $reportController->logExport();
+}
+
+if ($action === 'pos-devices') {
+    requireAdmin();
+    $controller->requireRbacPermission('pos_devices', $requestMethod === 'GET' ? 'view' : (!empty($_GET['id']) ? 'update' : 'create'));
+    $posDeviceController->index();
+}
+
+if ($action === 'pos-device-heartbeat' && $requestMethod === 'POST') {
+    $posDeviceController->heartbeat();
 }
 
 if ($action === 'audit-log-workspace') {
+    requireAdmin();
+    $controller->requireRbacPermission('audit_logs', 'view');
     if ($requestMethod === 'GET') $auditLogController->index();
     jsonResponse(array('success'=>false,'message'=>'Audit Log là nhật ký bất biến và chỉ hỗ trợ tra cứu.'), 405);
 }
 
 if ($action === 'movies-import' && $requestMethod === 'POST') {
     $user = requireAdmin();
+    $controller->requireRbacPermission('movies', 'create');
     if (AdminController::normalizeRole($user['role']) !== 'super_admin') jsonResponse(array('success' => false, 'message' => 'Chỉ Admin Tổng được nhập danh sách phim.'), 403);
     $input = requestJson(); $rows = isset($input['movies']) && is_array($input['movies']) ? $input['movies'] : array();
     if (!$rows || count($rows) > 150) jsonResponse(array('success' => false, 'message' => 'File phải có từ 1 đến 150 dòng phim.'), 400);
@@ -1104,11 +1169,13 @@ if (in_array($action, $resources, true)) {
         'movies'=>'movies', 'screens'=>'screens', 'schedules'=>'schedules', 'staff'=>'staff',
         'ticket-types'=>'ticket_types', 'products'=>'products', 'vouchers'=>'vouchers',
         'promotions'=>'vouchers', 'customers'=>'customers', 'transactions'=>'transactions_refunds',
-        'refunds'=>'transactions_refunds', 'system-configs'=>'settings'
+        'refunds'=>'transactions_refunds', 'system-configs'=>'settings', 'theaters'=>'screens',
+        'movie-plans'=>'movies', 'movie-allocations'=>'movies'
     );
     if (isset($rbacResourceKeys[$action])) {
         requireAdmin();
-        $controller->requireRbacPermission($rbacResourceKeys[$action], $requestMethod !== 'GET');
+        $permissionAction = $requestMethod === 'GET' ? 'view' : ($requestMethod === 'DELETE' ? 'delete' : (!empty($_GET['id']) ? 'update' : 'create'));
+        $controller->requireRbacPermission($rbacResourceKeys[$action], $permissionAction);
     }
     if ($requestMethod === 'GET') {
         $controller->listResource($action);
