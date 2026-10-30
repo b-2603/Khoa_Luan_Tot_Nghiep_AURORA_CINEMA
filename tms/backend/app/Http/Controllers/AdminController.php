@@ -241,6 +241,15 @@ class AdminController
                 'accounting' => 'Xem báo cáo điểm thưởng và tích lũy doanh thu khách'
             ),
             array(
+                'module' => 'Lịch sử đặt vé (Booking History)',
+                'key' => 'booking_history',
+                'super_admin' => 'Toàn quyền tra cứu và xuất lịch sử vé toàn hệ thống',
+                'cinema_admin' => 'Xem và xuất booking trong phạm vi rạp phụ trách',
+                'supervisor' => 'Xem booking và trạng thái soát vé tại rạp',
+                'accounting' => 'Xem và xuất booking phục vụ đối soát doanh thu',
+                'marketing_manager' => 'Không có quyền truy cập'
+            ),
+            array(
                 'module' => 'Nhân sự ca trực (Staff & Shifts)',
                 'key' => 'staff',
                 'super_admin' => 'Toàn quyền phân công nhân sự các rạp',
@@ -358,6 +367,25 @@ class AdminController
         }
         $this->db->query("UPDATE tms_rbac_permissions SET can_view=IF(access_level='none',0,1),can_create=IF(access_level IN ('full','manage'),1,0),can_update=IF(access_level IN ('full','manage'),1,0),can_delete=IF(access_level='full',1,0),can_approve=IF(access_level IN ('full','manage'),1,0),can_export=IF(access_level='none',0,1),actions_initialized=1 WHERE actions_initialized=0");
         $this->db->query("UPDATE tms_rbac_permissions SET access_level='full',can_view=1,can_create=1,can_update=1,can_delete=1,can_approve=1,can_export=1,actions_initialized=1 WHERE role_code='super_admin'");
+        $this->db->query("CREATE TABLE IF NOT EXISTS tms_rbac_user_permissions (
+            id BIGINT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
+            user_id BIGINT UNSIGNED NOT NULL,
+            module_key VARCHAR(80) NOT NULL,
+            permission_note VARCHAR(255) NULL,
+            can_view TINYINT(1) NOT NULL DEFAULT 0,
+            can_create TINYINT(1) NOT NULL DEFAULT 0,
+            can_update TINYINT(1) NOT NULL DEFAULT 0,
+            can_delete TINYINT(1) NOT NULL DEFAULT 0,
+            can_approve TINYINT(1) NOT NULL DEFAULT 0,
+            can_export TINYINT(1) NOT NULL DEFAULT 0,
+            updated_by BIGINT UNSIGNED NULL,
+            updated_at DATETIME NOT NULL,
+            created_at TIMESTAMP NULL DEFAULT CURRENT_TIMESTAMP,
+            UNIQUE KEY uq_tms_rbac_user_module (user_id,module_key),
+            KEY idx_tms_rbac_user (user_id),
+            KEY idx_tms_rbac_user_module (module_key)
+        ) ENGINE=InnoDB DEFAULT CHARSET=utf8 COLLATE=utf8_unicode_ci");
+        if ($this->db->error) jsonResponse(array('success'=>false,'message'=>'Không thể khởi tạo quyền riêng tài khoản trong aurora_db: '.$this->db->error),500);
     }
 
     public function permissionMatrix()
@@ -371,7 +399,9 @@ class AdminController
             if (!isset($matrix[$key])) $matrix[$key] = array('key'=>$key, 'module'=>$row['module_name'], 'sort_order'=>(int)$row['sort_order'], 'permissions'=>array());
             $matrix[$key]['permissions'][$row['role_code']] = array('level'=>$row['access_level'],'note'=>$row['permission_note'],'actions'=>array('view'=>(bool)$row['can_view'],'create'=>(bool)$row['can_create'],'update'=>(bool)$row['can_update'],'delete'=>(bool)$row['can_delete'],'approve'=>(bool)$row['can_approve'],'export'=>(bool)$row['can_export']),'updated_at'=>$row['updated_at']);
         }
-        jsonResponse(array('success'=>true, 'data'=>array_values($matrix), 'roles'=>array_values(self::getRoleDefinitions())));
+        $accounts=$this->rows("SELECT u.id,u.username,u.full_name,u.email,u.phone,u.role,u.status,u.theater_id,t.name theater_name,(SELECT COUNT(*) FROM tms_rbac_user_permissions up WHERE up.user_id=u.id) override_count FROM users u LEFT JOIN theaters t ON t.id=u.theater_id WHERE u.role<>'customer' ORDER BY u.role='super_admin' DESC,u.status='active' DESC,u.full_name");
+        foreach($accounts as &$account){$account['id']=(int)$account['id'];$account['theater_id']=(int)$account['theater_id'];$account['override_count']=(int)$account['override_count'];$account['role']=self::normalizeRole($account['role']);}unset($account);
+        jsonResponse(array('success'=>true, 'data'=>array_values($matrix), 'roles'=>array_values(self::getRoleDefinitions()),'accounts'=>$accounts));
     }
 
     /** Enforce one persisted action permission for a core TMS resource. */
@@ -382,8 +412,8 @@ class AdminController
         $this->ensureRbacPermissionSchema();
         if(is_bool($action))$action=$action?'update':'view';
         if(!in_array($action,array('view','create','update','delete','approve','export'),true))$action='view';
-        $keyEsc=$this->db->real_escape_string($moduleKey);$roleEsc=$this->db->real_escape_string($role);$column='can_'.$action;
-        $row=$this->row("SELECT {$column} allowed FROM tms_rbac_permissions WHERE module_key='{$keyEsc}' AND role_code='{$roleEsc}' LIMIT 1");
+        $keyEsc=$this->db->real_escape_string($moduleKey);$roleEsc=$this->db->real_escape_string($role);$column='can_'.$action;$userId=!empty($_SESSION['tms_user']['id'])?(int)$_SESSION['tms_user']['id']:0;
+        $row=$userId>0?$this->row("SELECT COALESCE(up.{$column},rp.{$column}) allowed FROM tms_rbac_permissions rp LEFT JOIN tms_rbac_user_permissions up ON up.user_id={$userId} AND up.module_key=rp.module_key WHERE rp.module_key='{$keyEsc}' AND rp.role_code='{$roleEsc}' LIMIT 1"):null;
         if(!$row||!(int)$row['allowed']){
             $labels=array('view'=>'xem','create'=>'tạo mới','update'=>'chỉnh sửa','delete'=>'xóa','approve'=>'phê duyệt','export'=>'xuất dữ liệu');
             jsonResponse(array('success'=>false,'message'=>'Vai trò của bạn không có quyền '.$labels[$action].' trong phân hệ này.','required_permission'=>$moduleKey.'.'.$action),403);
@@ -392,10 +422,29 @@ class AdminController
 
     public function myPermissions()
     {
-        requireAdmin();$this->ensureRbacPermissionSchema();$role=$this->getCurrentRole();$roleEsc=$this->db->real_escape_string($role);$permissions=array();
-        $rows=$this->rows("SELECT module_key,module_name,access_level,can_view,can_create,can_update,can_delete,can_approve,can_export,updated_at FROM tms_rbac_permissions WHERE role_code='{$roleEsc}' ORDER BY sort_order,module_name");
-        foreach($rows as $row)$permissions[$row['module_key']]=array('module'=>$row['module_name'],'level'=>$row['access_level'],'actions'=>array('view'=>(bool)$row['can_view'],'create'=>(bool)$row['can_create'],'update'=>(bool)$row['can_update'],'delete'=>(bool)$row['can_delete'],'approve'=>(bool)$row['can_approve'],'export'=>(bool)$row['can_export']),'updated_at'=>$row['updated_at']);
-        jsonResponse(array('success'=>true,'data'=>array('role'=>$role,'permissions'=>$permissions,'source'=>'aurora_db')));
+        requireAdmin();$this->ensureRbacPermissionSchema();$role=$this->getCurrentRole();$roleEsc=$this->db->real_escape_string($role);$permissions=array();$userId=!empty($_SESSION['tms_user']['id'])?(int)$_SESSION['tms_user']['id']:0;
+        $rows=$this->rows("SELECT rp.module_key,rp.module_name,COALESCE(up.can_view,rp.can_view) can_view,COALESCE(up.can_create,rp.can_create) can_create,COALESCE(up.can_update,rp.can_update) can_update,COALESCE(up.can_delete,rp.can_delete) can_delete,COALESCE(up.can_approve,rp.can_approve) can_approve,COALESCE(up.can_export,rp.can_export) can_export,IF(up.id IS NULL,'role','account') permission_source,COALESCE(up.updated_at,rp.updated_at) updated_at FROM tms_rbac_permissions rp LEFT JOIN tms_rbac_user_permissions up ON up.user_id={$userId} AND up.module_key=rp.module_key WHERE rp.role_code='{$roleEsc}' ORDER BY rp.sort_order,rp.module_name");
+        foreach($rows as $row){$actions=array('view'=>(bool)$row['can_view'],'create'=>(bool)$row['can_create'],'update'=>(bool)$row['can_update'],'delete'=>(bool)$row['can_delete'],'approve'=>(bool)$row['can_approve'],'export'=>(bool)$row['can_export']);$enabled=array_sum(array_map('intval',$actions));$permissions[$row['module_key']]=array('module'=>$row['module_name'],'level'=>!$actions['view']?'none':($enabled===6?'full':($actions['create']||$actions['update']||$actions['delete']||$actions['approve']?'manage':'view')),'actions'=>$actions,'source'=>$row['permission_source'],'updated_at'=>$row['updated_at']);}
+        jsonResponse(array('success'=>true,'data'=>array('role'=>$role,'user_id'=>$userId,'permissions'=>$permissions,'source'=>'aurora_db')));
+    }
+
+    public function accountPermissions()
+    {
+        requireAdmin();if($this->getCurrentRole()!=='super_admin')jsonResponse(array('success'=>false,'message'=>'Chỉ Admin Tổng được xem quyền riêng tài khoản.'),403);$this->ensureRbacPermissionSchema();
+        $userId=isset($_GET['user_id'])?(int)$_GET['user_id']:0;$user=$this->row("SELECT u.id,u.username,u.full_name,u.email,u.phone,u.role,u.status,u.theater_id,t.name theater_name FROM users u LEFT JOIN theaters t ON t.id=u.theater_id WHERE u.id={$userId} AND u.role<>'customer' LIMIT 1");
+        if(!$user)jsonResponse(array('success'=>false,'message'=>'Không tìm thấy tài khoản TMS.'),404);$user['role']=self::normalizeRole($user['role']);if($user['role']==='super_admin')jsonResponse(array('success'=>false,'message'=>'Quyền Admin Tổng được khóa để bảo đảm khả năng khôi phục hệ thống.'),409);
+        $roleEsc=$this->db->real_escape_string($user['role']);$rows=$this->rows("SELECT rp.module_key,rp.module_name,rp.sort_order,rp.can_view inherited_view,rp.can_create inherited_create,rp.can_update inherited_update,rp.can_delete inherited_delete,rp.can_approve inherited_approve,rp.can_export inherited_export,up.id override_id,up.permission_note,up.can_view,up.can_create,up.can_update,up.can_delete,up.can_approve,up.can_export,up.updated_at FROM tms_rbac_permissions rp LEFT JOIN tms_rbac_user_permissions up ON up.user_id={$userId} AND up.module_key=rp.module_key WHERE rp.role_code='{$roleEsc}' ORDER BY rp.sort_order,rp.module_name");
+        $items=array();foreach($rows as $row){$custom=!empty($row['override_id']);$inherited=array('view'=>(bool)$row['inherited_view'],'create'=>(bool)$row['inherited_create'],'update'=>(bool)$row['inherited_update'],'delete'=>(bool)$row['inherited_delete'],'approve'=>(bool)$row['inherited_approve'],'export'=>(bool)$row['inherited_export']);$actions=$custom?array('view'=>(bool)$row['can_view'],'create'=>(bool)$row['can_create'],'update'=>(bool)$row['can_update'],'delete'=>(bool)$row['can_delete'],'approve'=>(bool)$row['can_approve'],'export'=>(bool)$row['can_export']):$inherited;$items[]=array('key'=>$row['module_key'],'module'=>$row['module_name'],'sort_order'=>(int)$row['sort_order'],'customized'=>$custom,'actions'=>$actions,'inherited_actions'=>$inherited,'note'=>$custom?$row['permission_note']:'','updated_at'=>$row['updated_at']);}
+        foreach(array('id','theater_id') as $field)$user[$field]=(int)$user[$field];jsonResponse(array('success'=>true,'data'=>array('account'=>$user,'items'=>$items,'source'=>'aurora_db')));
+    }
+
+    public function saveAccountPermissions()
+    {
+        requireAdmin();if($this->getCurrentRole()!=='super_admin')jsonResponse(array('success'=>false,'message'=>'Chỉ Admin Tổng được cập nhật quyền tài khoản.'),403);$this->ensureRbacPermissionSchema();$input=requestJson();$userId=isset($input['user_id'])?(int)$input['user_id']:0;$items=isset($input['items'])&&is_array($input['items'])?$input['items']:array();
+        $target=$this->row("SELECT id,username,full_name,role FROM users WHERE id={$userId} AND role<>'customer' LIMIT 1");if(!$target)jsonResponse(array('success'=>false,'message'=>'Tài khoản TMS không tồn tại.'),404);$target['role']=self::normalizeRole($target['role']);if($target['role']==='super_admin')jsonResponse(array('success'=>false,'message'=>'Không thể thay đổi quyền khôi phục của Admin Tổng.'),409);if(count($items)>100)jsonResponse(array('success'=>false,'message'=>'Dữ liệu quyền tài khoản không hợp lệ.'),422);
+        $actorId=!empty($_SESSION['tms_user']['id'])?(int)$_SESSION['tms_user']['id']:0;if(!$this->beginDbTransaction())jsonResponse(array('success'=>false,'message'=>'Không thể bắt đầu cập nhật quyền.'),500);
+        try{if(!$this->db->query("DELETE FROM tms_rbac_user_permissions WHERE user_id={$userId}"))throw new Exception($this->db->error);$stmt=$this->db->prepare('INSERT INTO tms_rbac_user_permissions (user_id,module_key,permission_note,can_view,can_create,can_update,can_delete,can_approve,can_export,updated_by,updated_at) VALUES (?,?,?,?,?,?,?,?,?,?,NOW())');if(!$stmt)throw new Exception($this->db->error);foreach($items as $item){if(empty($item['customized']))continue;$key=isset($item['key'])?trim($item['key']):'';if(!preg_match('/^[a-z0-9_]{2,80}$/',$key))throw new Exception('Mã phân hệ không hợp lệ.');$exists=(int)$this->scalar("SELECT COUNT(*) FROM tms_rbac_permissions WHERE module_key='".$this->db->real_escape_string($key)."'");if(!$exists)throw new Exception('Phân hệ không tồn tại.');$note=isset($item['note'])?trim($item['note']):'';if(strlen($note)>255)throw new Exception('Ghi chú quyền quá dài.');$actions=isset($item['actions'])&&is_array($item['actions'])?$item['actions']:array();$view=!empty($actions['view'])?1:0;$create=!empty($actions['create'])?1:0;$update=!empty($actions['update'])?1:0;$delete=!empty($actions['delete'])?1:0;$approve=!empty($actions['approve'])?1:0;$export=!empty($actions['export'])?1:0;if(!$view&&($create||$update||$delete||$approve||$export))$view=1;$stmt->bind_param('issiiiiiii',$userId,$key,$note,$view,$create,$update,$delete,$approve,$export,$actorId);if(!$stmt->execute())throw new Exception($stmt->error);}$stmt->close();if(!$this->commitDbTransaction())throw new Exception($this->db->error);}catch(Exception $error){$this->rollbackDbTransaction();jsonResponse(array('success'=>false,'message'=>'Không thể lưu quyền tài khoản: '.$error->getMessage()),400);}
+        $actor=!empty($_SESSION['tms_user']['username'])?$_SESSION['tms_user']['username']:'system';writeTmsAuditLog($this->db,'rbac.account_permissions_updated','Cập nhật quyền riêng cho '.$target['username'].'.',array('module'=>'accounts','entity_type'=>'user','entity_id'=>(string)$userId,'severity'=>'success','metadata'=>array('target_role'=>$target['role'])));jsonResponse(array('success'=>true,'message'=>'Đã lưu và áp dụng quyền riêng cho '.$target['full_name'].'.'));
     }
 
     public function savePermissionMatrix()
@@ -3336,7 +3385,8 @@ class AdminController
         $tmsRoleLabels=array('super_admin'=>'Admin Tổng','cinema_admin'=>'Admin Rạp','supervisor'=>'Supervisor','accounting'=>'Kế toán','marketing_manager'=>'Marketing','customer'=>'Khách hàng');
         foreach($userRows as $row){
             $system=$row['role']==='customer'?'customer':'tms';
-            $accounts[]=array('account_key'=>$system.':'.(int)$row['id'],'id'=>(int)$row['id'],'system'=>$system,'system_label'=>$system==='customer'?'Customer':'TMS','full_name'=>$row['full_name'],'username'=>$row['username'],'email'=>$row['email'],'phone'=>$row['phone'],'role'=>$row['role'],'role_label'=>isset($tmsRoleLabels[$row['role']])?$tmsRoleLabels[$row['role']]:$row['role'],'status'=>$row['status'],'scope_name'=>$system==='customer'?'Thành viên toàn hệ thống':(!empty($row['theater_name'])?$row['theater_name']:'Toàn hệ thống'),'scope_type'=>$system==='customer'?'CRM':'RBAC','last_login'=>(empty($row['last_login'])||$row['last_login']==='1970-01-01 00:00:00')?null:$row['last_login'],'created_at'=>$row['created_at'],'theater_id'=>(int)$row['theater_id'],'membership_level'=>$row['membership_level'],'points'=>(int)$row['points'],'booking_count'=>(int)$row['booking_count'],'total_spent'=>(float)$row['total_spent'],'oauth_providers'=>$row['oauth_providers'],'open_shift_id'=>0,'department'=>'');
+            $isManagedTms=$system==='tms'&&in_array($row['role'],array('cinema_admin','supervisor','accounting','marketing_manager'),true);
+            $accounts[]=array('account_key'=>$system.':'.(int)$row['id'],'id'=>(int)$row['id'],'system'=>$system,'system_label'=>$system==='customer'?'Customer':'TMS','full_name'=>$row['full_name'],'username'=>$row['username'],'email'=>$row['email'],'phone'=>$row['phone'],'role'=>$row['role'],'role_label'=>isset($tmsRoleLabels[$row['role']])?$tmsRoleLabels[$row['role']]:$row['role'],'status'=>$row['status'],'scope_name'=>$system==='customer'?'Thành viên toàn hệ thống':(!empty($row['theater_name'])?$row['theater_name']:'Toàn hệ thống'),'scope_type'=>$system==='customer'?'CRM':'RBAC','last_login'=>(empty($row['last_login'])||$row['last_login']==='1970-01-01 00:00:00')?null:$row['last_login'],'created_at'=>$row['created_at'],'theater_id'=>(int)$row['theater_id'],'membership_level'=>$row['membership_level'],'points'=>(int)$row['points'],'booking_count'=>(int)$row['booking_count'],'total_spent'=>(float)$row['total_spent'],'oauth_providers'=>$row['oauth_providers'],'open_shift_id'=>0,'department'=>'','manageable'=>$isManagedTms?1:0,'management_policy'=>$isManagedTms?'tms_rbac':'read_only');
         }
 
         $posRows=$this->rows("SELECT pu.id,pu.username,pu.full_name,pu.email,pu.phone,pu.employee_code,pu.role,pu.status,pu.last_login_at,pu.created_at,pu.theater_id,t.name theater_name,
@@ -3344,13 +3394,14 @@ class AdminController
             (SELECT ps.status FROM pos_shifts ps WHERE ps.user_id=pu.id AND ps.status IN ('active','paused') ORDER BY ps.id DESC LIMIT 1) shift_status
             FROM pos_users pu LEFT JOIN theaters t ON t.id=pu.theater_id ORDER BY pu.id DESC");
         $posRoleLabels=array('cashier'=>'Thu ngân','supervisor'=>'Supervisor POS','admin'=>'Tài khoản hệ thống cũ');
-        foreach($posRows as $row)$accounts[]=array('account_key'=>'pos:'.(int)$row['id'],'id'=>(int)$row['id'],'system'=>'pos','system_label'=>'POS','full_name'=>$row['full_name'],'username'=>$row['username'],'email'=>$row['email'],'phone'=>$row['phone'],'role'=>$row['role'],'role_label'=>isset($posRoleLabels[$row['role']])?$posRoleLabels[$row['role']]:$row['role'],'status'=>$row['status'],'scope_name'=>!empty($row['theater_name'])?$row['theater_name']:'Chưa phân rạp','scope_type'=>'Quầy bán','last_login'=>$row['last_login_at'],'created_at'=>$row['created_at'],'theater_id'=>(int)$row['theater_id'],'employee_code'=>$row['employee_code'],'open_shift_id'=>(int)$row['open_shift_id'],'shift_status'=>$row['shift_status'],'department'=>'','membership_level'=>'','points'=>0,'booking_count'=>0,'total_spent'=>0,'oauth_providers'=>'');
+        foreach($posRows as $row)$accounts[]=array('account_key'=>'pos:'.(int)$row['id'],'id'=>(int)$row['id'],'system'=>'pos','system_label'=>'POS','full_name'=>$row['full_name'],'username'=>$row['username'],'email'=>$row['email'],'phone'=>$row['phone'],'role'=>$row['role'],'role_label'=>isset($posRoleLabels[$row['role']])?$posRoleLabels[$row['role']]:$row['role'],'status'=>$row['status'],'scope_name'=>!empty($row['theater_name'])?$row['theater_name']:'Chưa phân rạp','scope_type'=>'Quầy bán','last_login'=>$row['last_login_at'],'created_at'=>$row['created_at'],'theater_id'=>(int)$row['theater_id'],'employee_code'=>$row['employee_code'],'open_shift_id'=>(int)$row['open_shift_id'],'shift_status'=>$row['shift_status'],'department'=>'','membership_level'=>'','points'=>0,'booking_count'=>0,'total_spent'=>0,'oauth_providers'=>'','manageable'=>0,'management_policy'=>'read_only');
 
         if ($this->tableExists('ems_users')) {
             $emsRows=$this->rows("SELECT id,staff_code,name,email,phone,role,department,status,join_date,performance_score,google_id,facebook_id,created_at,updated_at FROM ems_users ORDER BY id DESC");
             foreach($emsRows as $row){
                 $oauth=array();if(!empty($row['google_id']))$oauth[]='google';if(!empty($row['facebook_id']))$oauth[]='facebook';
-                $accounts[]=array('account_key'=>'ems:'.(int)$row['id'],'id'=>(int)$row['id'],'system'=>'ems','system_label'=>'EMS','full_name'=>$row['name'],'username'=>$row['staff_code'],'email'=>$row['email'],'phone'=>$row['phone'],'role'=>$row['role'],'role_label'=>$row['role']==='manager'?'Quản lý nhân sự':'Nhân viên','status'=>$row['status'],'scope_name'=>$row['department'],'scope_type'=>'Phòng ban','last_login'=>null,'created_at'=>$row['created_at'],'theater_id'=>0,'employee_code'=>$row['staff_code'],'open_shift_id'=>0,'department'=>$row['department'],'join_date'=>$row['join_date'],'performance_score'=>(int)$row['performance_score'],'membership_level'=>'','points'=>0,'booking_count'=>0,'total_spent'=>0,'oauth_providers'=>implode(',',$oauth));
+                $isManagedEms=$row['role']==='manager';
+                $accounts[]=array('account_key'=>'ems:'.(int)$row['id'],'id'=>(int)$row['id'],'system'=>'ems','system_label'=>'EMS','full_name'=>$row['name'],'username'=>$row['staff_code'],'email'=>$row['email'],'phone'=>$row['phone'],'role'=>$row['role'],'role_label'=>$row['role']==='manager'?'Quản lý nhân sự':'Nhân viên','status'=>$row['status'],'scope_name'=>$row['department'],'scope_type'=>'Phòng ban','last_login'=>null,'created_at'=>$row['created_at'],'theater_id'=>0,'employee_code'=>$row['staff_code'],'open_shift_id'=>0,'department'=>$row['department'],'join_date'=>$row['join_date'],'performance_score'=>(int)$row['performance_score'],'membership_level'=>'','points'=>0,'booking_count'=>0,'total_spent'=>0,'oauth_providers'=>implode(',',$oauth),'manageable'=>$isManagedEms?1:0,'management_policy'=>$isManagedEms?'ems_manager':'read_only');
             }
         }
 
@@ -3364,30 +3415,229 @@ class AdminController
         jsonResponse(array('success'=>true,'data'=>array('accounts'=>$accounts,'systems'=>$systems,'summary'=>array('total'=>count($accounts),'active'=>$active,'restricted'=>$restricted,'system_count'=>4,'role_count'=>count($roleKeys),'open_pos_shifts'=>(int)$this->scalar("SELECT COUNT(*) FROM pos_shifts WHERE status IN ('active','paused')")),'generated_at'=>date('Y-m-d H:i:s'),'source'=>'aurora_db')));
     }
 
+    /** Read-only CRM projection used by Cinema Admin and the Super Admin account directory. */
+    public function cinemaCustomers()
+    {
+        requireAdmin();
+        $role = $this->getCurrentRole();
+        if (!$role) jsonResponse(array('success'=>false, 'message'=>'Phiên đăng nhập không hợp lệ.'), 401);
+        $theaterId = $role !== 'super_admin' ? $this->getCurrentTheaterId() : (isset($_GET['theater_id']) ? (int)$_GET['theater_id'] : 0);
+        if ($role !== 'super_admin' && $theaterId < 1) {
+            jsonResponse(array('success'=>false, 'message'=>'Tài khoản chưa được gán rạp phụ trách.'), 403);
+        }
+        $theater = $theaterId > 0 ? $this->row("SELECT id,name,address,city FROM theaters WHERE id={$theaterId} LIMIT 1") : null;
+        if ($theaterId > 0 && !$theater) jsonResponse(array('success'=>false, 'message'=>'Không tìm thấy rạp trong aurora_db.'), 404);
+
+        $hasShift = $this->columnExists('orders', 'pos_shift_id') && $this->tableExists('pos_shifts');
+        $bookingScope = $theaterId > 0 ? " AND sc.theater_id={$theaterId}" : '';
+        $orderScope = $theaterId > 0
+            ? " AND (EXISTS (SELECT 1 FROM bookings ob INNER JOIN showtimes ost ON ost.id=ob.showtime_id INNER JOIN screens osc ON osc.id=ost.screen_id WHERE ob.id=o.booking_id AND osc.theater_id={$theaterId})".($hasShift ? " OR EXISTS (SELECT 1 FROM pos_shifts ops WHERE ops.id=o.pos_shift_id AND ops.theater_id={$theaterId})" : '').')'
+            : '';
+        $activityScope = "(EXISTS (SELECT 1 FROM bookings b INNER JOIN showtimes st ON st.id=b.showtime_id INNER JOIN screens sc ON sc.id=st.screen_id WHERE b.user_id=u.id{$bookingScope}) OR EXISTS (SELECT 1 FROM orders o WHERE o.customer_id=u.id{$orderScope}))";
+
+        $where = array("u.role='customer'", $activityScope);
+        if (!empty($_GET['q'])) {
+            $q = $this->db->real_escape_string(trim($_GET['q']));
+            $where[] = "(u.full_name LIKE '%{$q}%' OR u.phone LIKE '%{$q}%' OR u.email LIKE '%{$q}%' OR u.username LIKE '%{$q}%')";
+        }
+        if (!empty($_GET['membership']) && in_array($_GET['membership'], array('STANDARD','SILVER','GOLD','PLATINUM'), true)) {
+            $where[] = "u.membership_level='".$this->db->real_escape_string($_GET['membership'])."'";
+        }
+        if (!empty($_GET['status']) && in_array($_GET['status'], array('active','locked','inactive'), true)) {
+            $where[] = "u.status='".$this->db->real_escape_string($_GET['status'])."'";
+        }
+        $whereSql = implode(' AND ', $where);
+        $limit = isset($_GET['limit']) ? max(10, min(200, (int)$_GET['limit'])) : 100;
+        $customers = $this->rows("SELECT u.id,u.username,u.full_name,u.email,u.phone,u.status,u.membership_level,u.points,u.last_login,u.created_at,
+            (SELECT COUNT(*) FROM bookings b INNER JOIN showtimes st ON st.id=b.showtime_id INNER JOIN screens sc ON sc.id=st.screen_id WHERE b.user_id=u.id{$bookingScope}) booking_count,
+            (SELECT COUNT(*) FROM booking_seats bs INNER JOIN bookings b ON b.id=bs.booking_id INNER JOIN showtimes st ON st.id=b.showtime_id INNER JOIN screens sc ON sc.id=st.screen_id WHERE b.user_id=u.id AND b.status NOT IN ('CANCELLED','EXPIRED'){$bookingScope}) ticket_count,
+            (SELECT COUNT(*) FROM orders o WHERE o.customer_id=u.id{$orderScope}) order_count,
+            (SELECT COALESCE(SUM(o.total_amount),0) FROM orders o WHERE o.customer_id=u.id AND o.status='PAID'{$orderScope}) total_spent,
+            GREATEST(
+                COALESCE((SELECT MAX(b2.created_at) FROM bookings b2 INNER JOIN showtimes st2 ON st2.id=b2.showtime_id INNER JOIN screens sc2 ON sc2.id=st2.screen_id WHERE b2.user_id=u.id".($theaterId > 0 ? " AND sc2.theater_id={$theaterId}" : '')."),'1970-01-01 00:00:00'),
+                COALESCE((SELECT MAX(o.created_at) FROM orders o WHERE o.customer_id=u.id{$orderScope}),'1970-01-01 00:00:00')
+            ) last_activity_at
+            FROM users u WHERE {$whereSql} ORDER BY last_activity_at DESC,u.full_name ASC LIMIT {$limit}");
+        foreach ($customers as &$customer) {
+            foreach (array('id','points','booking_count','ticket_count','order_count') as $field) $customer[$field]=(int)$customer[$field];
+            $customer['total_spent']=(float)$customer['total_spent'];
+        }
+        unset($customer);
+        $summary = array(
+            'total'=>(int)$this->scalar("SELECT COUNT(*) FROM users u WHERE {$whereSql}"),
+            'active'=>(int)$this->scalar("SELECT COUNT(*) FROM users u WHERE {$whereSql} AND u.status='active'"),
+            'tickets'=>(int)$this->scalar("SELECT COUNT(*) FROM booking_seats bs INNER JOIN bookings b ON b.id=bs.booking_id INNER JOIN showtimes st ON st.id=b.showtime_id INNER JOIN screens sc ON sc.id=st.screen_id INNER JOIN users u ON u.id=b.user_id WHERE u.role='customer' AND b.status NOT IN ('CANCELLED','EXPIRED'){$bookingScope}"),
+            'revenue'=>(float)$this->scalar("SELECT COALESCE(SUM(o.total_amount),0) FROM orders o INNER JOIN users u ON u.id=o.customer_id WHERE u.role='customer' AND o.status='PAID'{$orderScope}")
+        );
+        jsonResponse(array('success'=>true,'data'=>array('customers'=>$customers,'summary'=>$summary,'scope'=>array('mode'=>$theaterId>0?'theater':'system','theater_id'=>$theaterId,'theater_name'=>$theater?$theater['name']:'Toàn hệ thống'),'source'=>'aurora_db')));
+    }
+
+    public function customerCommerceProfile()
+    {
+        requireAdmin();
+        $role=$this->getCurrentRole();
+        if(!$role)jsonResponse(array('success'=>false,'message'=>'Phiên đăng nhập không hợp lệ.'),401);
+        $customerId=isset($_GET['id'])?(int)$_GET['id']:0;
+        if($customerId<1) jsonResponse(array('success'=>false,'message'=>'Khách hàng không hợp lệ.'),422);
+        $theaterId=$role!=='super_admin'?$this->getCurrentTheaterId():(isset($_GET['theater_id'])?(int)$_GET['theater_id']:0);
+        if($role!=='super_admin'&&$theaterId<1) jsonResponse(array('success'=>false,'message'=>'Tài khoản chưa được gán rạp.'),403);
+        $hasShift=$this->columnExists('orders','pos_shift_id')&&$this->tableExists('pos_shifts');
+        $bookingScope=$theaterId>0?" AND sc.theater_id={$theaterId}":'';
+        $orderScope=$theaterId>0?" AND (sc.theater_id={$theaterId}".($hasShift?" OR ps.theater_id={$theaterId}":'').')':'';
+        $profile=$this->row("SELECT id,username,full_name,email,phone,birthday,gender,city,district,address,status,membership_level,points,last_login,created_at FROM users WHERE id={$customerId} AND role='customer' LIMIT 1");
+        if(!$profile) jsonResponse(array('success'=>false,'message'=>'Không tìm thấy khách hàng trong aurora_db.'),404);
+        if($theaterId>0){
+            $orderAccess="EXISTS (SELECT 1 FROM orders o LEFT JOIN bookings ob ON ob.id=o.booking_id LEFT JOIN showtimes ost ON ost.id=ob.showtime_id LEFT JOIN screens osc ON osc.id=ost.screen_id".($hasShift?' LEFT JOIN pos_shifts ops ON ops.id=o.pos_shift_id':'')." WHERE o.customer_id={$customerId} AND (osc.theater_id={$theaterId}".($hasShift?" OR ops.theater_id={$theaterId}":'').'))';
+            $bookingAccess="EXISTS (SELECT 1 FROM bookings b INNER JOIN showtimes st ON st.id=b.showtime_id INNER JOIN screens sc ON sc.id=st.screen_id WHERE b.user_id={$customerId} AND sc.theater_id={$theaterId})";
+            if(!(int)$this->scalar("SELECT {$bookingAccess} OR {$orderAccess}")) jsonResponse(array('success'=>false,'message'=>'Khách hàng này chưa phát sinh giao dịch tại rạp bạn phụ trách.'),403);
+        }
+        foreach(array('id','points') as $field)$profile[$field]=(int)$profile[$field];
+        $card=$this->tableExists('customer_membership_cards')?$this->row("SELECT card_number,activated_at,expires_at FROM customer_membership_cards WHERE user_id={$customerId} LIMIT 1"):null;
+        $bookings=$this->rows("SELECT b.id,b.booking_code,b.total_amount,b.status,b.created_at,st.starts_at,st.ends_at,m.title movie_title,sc.name screen_name,t.id theater_id,t.name theater_name,t.address theater_address,GROUP_CONCAT(CONCAT(se.seat_row,se.seat_number) ORDER BY se.seat_row,se.seat_number SEPARATOR ', ') seats,COUNT(bs.id) ticket_count
+            FROM bookings b INNER JOIN showtimes st ON st.id=b.showtime_id INNER JOIN movies m ON m.id=st.movie_id INNER JOIN screens sc ON sc.id=st.screen_id INNER JOIN theaters t ON t.id=sc.theater_id LEFT JOIN booking_seats bs ON bs.booking_id=b.id LEFT JOIN seats se ON se.id=bs.seat_id WHERE b.user_id={$customerId}{$bookingScope} GROUP BY b.id ORDER BY st.starts_at DESC LIMIT 100");
+        foreach($bookings as &$booking){$booking['id']=(int)$booking['id'];$booking['ticket_count']=(int)$booking['ticket_count'];$booking['total_amount']=(float)$booking['total_amount'];}unset($booking);
+        $shiftJoin=$hasShift?' LEFT JOIN pos_shifts ps ON ps.id=o.pos_shift_id':'';
+        $orders=$this->rows("SELECT o.id,o.order_code,o.booking_id,o.channel,o.subtotal,o.discount_amount,o.total_amount,o.payment_method,o.amount_received,o.change_amount,o.status,o.created_at,b.booking_code,m.title movie_title,st.starts_at,sc.name screen_name,t.name theater_name FROM orders o LEFT JOIN bookings b ON b.id=o.booking_id LEFT JOIN showtimes st ON st.id=b.showtime_id LEFT JOIN movies m ON m.id=st.movie_id LEFT JOIN screens sc ON sc.id=st.screen_id LEFT JOIN theaters t ON t.id=sc.theater_id{$shiftJoin} WHERE o.customer_id={$customerId}{$orderScope} ORDER BY o.created_at DESC LIMIT 100");
+        $orderIds=array();foreach($orders as &$order){$order['id']=(int)$order['id'];$order['booking_id']=(int)$order['booking_id'];foreach(array('subtotal','discount_amount','total_amount','amount_received','change_amount') as $field)$order[$field]=(float)$order[$field];$order['items']=array();$order['payments']=array();$orderIds[]=$order['id'];}unset($order);
+        if(count($orderIds)){
+            $orderMap=array();foreach($orders as $index=>$order)$orderMap[$order['id']]=$index;
+            foreach($this->rows("SELECT order_id,item_type,item_code,item_name,quantity,unit_price FROM order_items WHERE order_id IN (".implode(',',$orderIds).") ORDER BY id") as $item){$item['quantity']=(int)$item['quantity'];$item['unit_price']=(float)$item['unit_price'];$orders[$orderMap[(int)$item['order_id']]]['items'][]=$item;}
+            if($this->tableExists('payments'))foreach($this->rows("SELECT order_id,method,amount,reference_code,created_at FROM payments WHERE order_id IN (".implode(',',$orderIds).") ORDER BY id") as $payment){$payment['amount']=(float)$payment['amount'];$orders[$orderMap[(int)$payment['order_id']]]['payments'][]=$payment;}
+        }
+        $points=$this->tableExists('loyalty_point_transactions')?$this->rows("SELECT id,booking_id,points_change,balance_after,transaction_type,description,created_at FROM loyalty_point_transactions WHERE user_id={$customerId} ORDER BY created_at DESC LIMIT 50"):array();
+        foreach($points as &$point){foreach(array('id','booking_id','points_change','balance_after') as $field)$point[$field]=(int)$point[$field];}unset($point);
+        $theater=$theaterId>0?$this->row("SELECT id,name FROM theaters WHERE id={$theaterId} LIMIT 1"):null;
+        $statistics=array('booking_count'=>count($bookings),'ticket_count'=>0,'order_count'=>count($orders),'total_spent'=>0.0);
+        foreach($bookings as $booking)$statistics['ticket_count']+=(int)$booking['ticket_count'];
+        foreach($orders as $order)if($order['status']==='PAID')$statistics['total_spent']+=(float)$order['total_amount'];
+        jsonResponse(array('success'=>true,'data'=>array('profile'=>$profile,'membership_card'=>$card,'statistics'=>$statistics,'orders'=>$orders,'bookings'=>$bookings,'points_history'=>$points,'scope'=>array('mode'=>$theaterId>0?'theater':'system','theater_id'=>$theaterId,'theater_name'=>$theater?$theater['name']:'Toàn hệ thống'),'source'=>'aurora_db')));
+    }
+
+    /** Complete read-only booking ledger for a cinema. */
+    public function cinemaBookingHistory()
+    {
+        requireAdmin();
+        $role=$this->getCurrentRole();
+        if(!$role)jsonResponse(array('success'=>false,'message'=>'Phiên đăng nhập không hợp lệ.'),401);
+        $theaterId=$role!=='super_admin'?$this->getCurrentTheaterId():(isset($_GET['theater_id'])?(int)$_GET['theater_id']:0);
+        if($role!=='super_admin'&&$theaterId<1) jsonResponse(array('success'=>false,'message'=>'Tài khoản chưa được gán rạp phụ trách.'),403);
+        $timeline=isset($_GET['timeline'])?strtolower(trim((string)$_GET['timeline'])):'today';
+        if(!in_array($timeline,array('today','upcoming','past','all'),true))$timeline='today';
+        $where=array();
+        if($theaterId>0)$where[]='sc.theater_id='.$theaterId;
+        if($timeline==='today')$where[]='DATE(st.starts_at)=CURDATE()';
+        if($timeline==='upcoming')$where[]='DATE(st.starts_at)>CURDATE()';
+        if($timeline==='past')$where[]='DATE(st.starts_at)<CURDATE()';
+        if(!empty($_GET['from'])&&preg_match('/^\d{4}-\d{2}-\d{2}$/',$_GET['from']))$where[]="DATE(st.starts_at)>='".$this->db->real_escape_string($_GET['from'])."'";
+        if(!empty($_GET['to'])&&preg_match('/^\d{4}-\d{2}-\d{2}$/',$_GET['to']))$where[]="DATE(st.starts_at)<='".$this->db->real_escape_string($_GET['to'])."'";
+        if(!empty($_GET['status'])&&in_array(strtoupper($_GET['status']),array('PENDING','PAID','CANCELLED','EXPIRED'),true))$where[]="b.status='".$this->db->real_escape_string(strtoupper($_GET['status']))."'";
+        if(!empty($_GET['movie_id']))$where[]='m.id='.(int)$_GET['movie_id'];
+        if(!empty($_GET['screen_id']))$where[]='sc.id='.(int)$_GET['screen_id'];
+        if(!empty($_GET['q'])){$q=$this->db->real_escape_string(trim($_GET['q']));$where[]="(b.booking_code LIKE '%{$q}%' OR u.full_name LIKE '%{$q}%' OR u.phone LIKE '%{$q}%' OR u.email LIKE '%{$q}%' OR m.title LIKE '%{$q}%')";}
+        $whereSql=count($where)?implode(' AND ',$where):'1=1';
+        $limit=isset($_GET['limit'])?max(20,min(200,(int)$_GET['limit'])):100;
+        $page=isset($_GET['page'])?max(1,(int)$_GET['page']):1;
+        $offset=($page-1)*$limit;
+        $hasTickets=$this->tableExists('customer_booking_tickets');
+        $hasRedemptions=$this->tableExists('pos_booking_redemptions');
+        $ticketSelect=$hasTickets?",COUNT(DISTINCT cbt.id) issued_ticket_count,SUM(CASE WHEN cbt.status='USED' THEN 1 ELSE 0 END) used_ticket_count":',0 issued_ticket_count,0 used_ticket_count';
+        $ticketJoin=$hasTickets?' LEFT JOIN customer_booking_tickets cbt ON cbt.booking_id=b.id':'';
+        $redemptionSelect=$hasRedemptions?",(SELECT pr.redeemed_at FROM pos_booking_redemptions pr WHERE pr.booking_id=b.id LIMIT 1) redeemed_at":',NULL redeemed_at';
+        $rows=$this->rows("SELECT b.id,b.booking_code,b.total_amount,b.status,b.created_at,b.updated_at,u.id customer_id,u.full_name customer_name,u.email customer_email,u.phone customer_phone,st.id showtime_id,st.starts_at,st.ends_at,m.id movie_id,m.title movie_title,m.format movie_format,m.age_rating,sc.id screen_id,sc.name screen_name,t.id theater_id,t.name theater_name,GROUP_CONCAT(DISTINCT CONCAT(se.seat_row,se.seat_number) ORDER BY se.seat_row,se.seat_number SEPARATOR ', ') seats,COUNT(DISTINCT bs.id) ticket_count,
+            (SELECT o.order_code FROM orders o WHERE o.booking_id=b.id ORDER BY o.id DESC LIMIT 1) order_code,
+            (SELECT o.channel FROM orders o WHERE o.booking_id=b.id ORDER BY o.id DESC LIMIT 1) channel,
+            (SELECT o.payment_method FROM orders o WHERE o.booking_id=b.id ORDER BY o.id DESC LIMIT 1) payment_method{$ticketSelect}{$redemptionSelect}
+            FROM bookings b INNER JOIN users u ON u.id=b.user_id INNER JOIN showtimes st ON st.id=b.showtime_id INNER JOIN movies m ON m.id=st.movie_id INNER JOIN screens sc ON sc.id=st.screen_id INNER JOIN theaters t ON t.id=sc.theater_id LEFT JOIN booking_seats bs ON bs.booking_id=b.id LEFT JOIN seats se ON se.id=bs.seat_id{$ticketJoin} WHERE {$whereSql} GROUP BY b.id ORDER BY st.starts_at ".($timeline==='past'?'DESC':'ASC').",b.created_at DESC LIMIT {$offset},{$limit}");
+        foreach($rows as &$row){foreach(array('id','customer_id','showtime_id','movie_id','screen_id','theater_id','ticket_count','issued_ticket_count','used_ticket_count') as $field)$row[$field]=(int)$row[$field];$row['total_amount']=(float)$row['total_amount'];}unset($row);
+        $summary=$this->row("SELECT COUNT(*) booking_count,COALESCE(SUM((SELECT COUNT(*) FROM booking_seats sbs WHERE sbs.booking_id=b.id)),0) ticket_count,COALESCE(SUM(CASE WHEN b.status='PAID' THEN b.total_amount ELSE 0 END),0) revenue,SUM(CASE WHEN b.status='PAID' THEN 1 ELSE 0 END) paid_count,SUM(CASE WHEN b.status='PENDING' THEN 1 ELSE 0 END) pending_count,SUM(CASE WHEN b.status IN ('CANCELLED','EXPIRED') THEN 1 ELSE 0 END) cancelled_count FROM bookings b INNER JOIN users u ON u.id=b.user_id INNER JOIN showtimes st ON st.id=b.showtime_id INNER JOIN movies m ON m.id=st.movie_id INNER JOIN screens sc ON sc.id=st.screen_id WHERE {$whereSql}");
+        foreach(array('booking_count','ticket_count','paid_count','pending_count','cancelled_count') as $field)$summary[$field]=(int)$summary[$field];$summary['revenue']=(float)$summary['revenue'];
+        $scopeWhere=$theaterId>0?' WHERE sc.theater_id='.$theaterId:'';
+        $movies=$this->rows("SELECT DISTINCT m.id,m.title FROM movies m INNER JOIN showtimes st ON st.movie_id=m.id INNER JOIN screens sc ON sc.id=st.screen_id{$scopeWhere} ORDER BY m.title");
+        $screens=$this->rows("SELECT sc.id,sc.name FROM screens sc".($theaterId>0?' WHERE sc.theater_id='.$theaterId:'')." ORDER BY sc.name");
+        $theater=$theaterId>0?$this->row("SELECT id,name FROM theaters WHERE id={$theaterId} LIMIT 1"):null;
+        jsonResponse(array('success'=>true,'data'=>array('bookings'=>$rows,'summary'=>$summary,'pagination'=>array('page'=>$page,'limit'=>$limit,'total'=>$summary['booking_count'],'pages'=>max(1,(int)ceil($summary['booking_count']/$limit))),'filters'=>array('movies'=>$movies,'screens'=>$screens),'timeline'=>$timeline,'scope'=>array('mode'=>$theaterId>0?'theater':'system','theater_id'=>$theaterId,'theater_name'=>$theater?$theater['name']:'Toàn hệ thống'),'generated_at'=>date('Y-m-d H:i:s'),'source'=>'aurora_db')));
+    }
+
+    public function cinemaBookingDetail()
+    {
+        requireAdmin();
+        $role=$this->getCurrentRole();
+        if(!$role)jsonResponse(array('success'=>false,'message'=>'Phiên đăng nhập không hợp lệ.'),401);
+        $bookingId=isset($_GET['id'])?(int)$_GET['id']:0;if($bookingId<1)jsonResponse(array('success'=>false,'message'=>'Mã booking không hợp lệ.'),422);
+        $theaterId=$role!=='super_admin'?$this->getCurrentTheaterId():(isset($_GET['theater_id'])?(int)$_GET['theater_id']:0);
+        if($role!=='super_admin'&&$theaterId<1)jsonResponse(array('success'=>false,'message'=>'Tài khoản chưa được gán rạp.'),403);
+        $scope=$theaterId>0?' AND sc.theater_id='.$theaterId:'';
+        $booking=$this->row("SELECT b.id,b.booking_code,b.total_amount,b.status,b.created_at,b.updated_at,u.id customer_id,u.full_name customer_name,u.username customer_username,u.email customer_email,u.phone customer_phone,u.membership_level,u.points,st.id showtime_id,st.starts_at,st.ends_at,m.id movie_id,m.title movie_title,m.format movie_format,m.age_rating,m.duration_minutes,sc.id screen_id,sc.name screen_name,t.id theater_id,t.name theater_name,t.address theater_address,t.city theater_city FROM bookings b INNER JOIN users u ON u.id=b.user_id INNER JOIN showtimes st ON st.id=b.showtime_id INNER JOIN movies m ON m.id=st.movie_id INNER JOIN screens sc ON sc.id=st.screen_id INNER JOIN theaters t ON t.id=sc.theater_id WHERE b.id={$bookingId}{$scope} LIMIT 1");
+        if(!$booking)jsonResponse(array('success'=>false,'message'=>'Không tìm thấy booking trong phạm vi rạp của bạn.'),404);
+        foreach(array('id','customer_id','points','showtime_id','movie_id','screen_id','theater_id','duration_minutes') as $field)$booking[$field]=(int)$booking[$field];$booking['total_amount']=(float)$booking['total_amount'];
+        $ticketJoin=$this->tableExists('customer_booking_tickets')?' LEFT JOIN customer_booking_tickets cbt ON cbt.booking_seat_id=bs.id':'';
+        $ticketFields=$this->tableExists('customer_booking_tickets')?',cbt.ticket_code,cbt.status ticket_status,cbt.issued_at,cbt.checked_in_at':",NULL ticket_code,CASE WHEN b.status='PAID' THEN 'VALID' ELSE 'CANCELLED' END ticket_status,NULL issued_at,NULL checked_in_at";
+        $tickets=$this->rows("SELECT bs.id booking_seat_id,bs.price,se.id seat_id,se.seat_row,se.seat_number,se.seat_type{$ticketFields} FROM booking_seats bs INNER JOIN bookings b ON b.id=bs.booking_id INNER JOIN seats se ON se.id=bs.seat_id{$ticketJoin} WHERE bs.booking_id={$bookingId} ORDER BY se.seat_row,se.seat_number");
+        foreach($tickets as &$ticket){foreach(array('booking_seat_id','seat_id') as $field)$ticket[$field]=(int)$ticket[$field];$ticket['price']=(float)$ticket['price'];}unset($ticket);
+        $voucherField=$this->columnExists('orders','voucher_code')?'voucher_code':'NULL voucher_code';
+        $order=$this->row("SELECT id,order_code,channel,subtotal,discount_amount,{$voucherField},total_amount,payment_method,amount_received,change_amount,status,created_at FROM orders WHERE booking_id={$bookingId} ORDER BY id DESC LIMIT 1");
+        $items=array();$payments=array();if($order){$orderId=(int)$order['id'];foreach(array('id') as $field)$order[$field]=(int)$order[$field];foreach(array('subtotal','discount_amount','total_amount','amount_received','change_amount') as $field)$order[$field]=(float)$order[$field];$items=$this->rows("SELECT item_type,item_code,item_name,quantity,unit_price FROM order_items WHERE order_id={$orderId} ORDER BY id");foreach($items as &$item){$item['quantity']=(int)$item['quantity'];$item['unit_price']=(float)$item['unit_price'];}unset($item);if($this->tableExists('payments')){$payments=$this->rows("SELECT method,amount,reference_code,created_at FROM payments WHERE order_id={$orderId} ORDER BY id");foreach($payments as &$payment)$payment['amount']=(float)$payment['amount'];unset($payment);}}
+        $concessions=$this->tableExists('booking_concessions')?$this->rows("SELECT item_code,item_name,quantity,unit_price FROM booking_concessions WHERE booking_id={$bookingId} ORDER BY id"):array();foreach($concessions as &$item){$item['quantity']=(int)$item['quantity'];$item['unit_price']=(float)$item['unit_price'];}unset($item);
+        $redemption=$this->tableExists('pos_booking_redemptions')?$this->row("SELECT redeemed_at,note FROM pos_booking_redemptions WHERE booking_id={$bookingId} LIMIT 1"):null;
+        jsonResponse(array('success'=>true,'data'=>array('booking'=>$booking,'tickets'=>$tickets,'order'=>$order,'items'=>$items,'payments'=>$payments,'concessions'=>$concessions,'redemption'=>$redemption,'source'=>'aurora_db')));
+    }
+
     public function updateIdentityStatus()
     {
         requireAdmin();
         if ($this->getCurrentRole() !== 'super_admin') jsonResponse(array('success'=>false,'message'=>'Chỉ Admin Tổng được cập nhật trạng thái tài khoản toàn hệ thống.'),403);
         $input=requestJson();$system=isset($input['system'])?strtolower(trim((string)$input['system'])):'';$id=isset($input['id'])?(int)$input['id']:0;$status=isset($input['status'])?strtolower(trim((string)$input['status'])):'';
-        if($id<1||!in_array($system,array('tms','customer','pos','ems'),true))jsonResponse(array('success'=>false,'message'=>'Tài khoản hoặc hệ thống nguồn không hợp lệ.'),422);
-        if($system==='tms'||$system==='customer'){
-            if(!in_array($status,array('active','locked','inactive'),true))jsonResponse(array('success'=>false,'message'=>'Trạng thái TMS/Customer không hợp lệ.'),422);
-            $roleScope=$system==='customer'?"role='customer'":"role<>'customer'";
-            if(!(int)$this->scalar("SELECT COUNT(*) FROM users WHERE id={$id} AND {$roleScope}"))jsonResponse(array('success'=>false,'message'=>'Không tìm thấy tài khoản trong đúng hệ thống nguồn.'),404);
-            if($system==='tms'&&!empty($_SESSION['tms_user']['id'])&&(int)$_SESSION['tms_user']['id']===$id&&$status!=='active')jsonResponse(array('success'=>false,'message'=>'Không thể khóa tài khoản TMS đang đăng nhập.'),409);
-            $statusEsc=$this->db->real_escape_string($status);if(!$this->db->query("UPDATE users SET status='{$statusEsc}',updated_at=NOW() WHERE id={$id} AND {$roleScope}"))jsonResponse(array('success'=>false,'message'=>'Không thể cập nhật tài khoản: '.$this->db->error),500);
-        }elseif($system==='pos'){
-            if(!in_array($status,array('active','locked','inactive'),true))jsonResponse(array('success'=>false,'message'=>'Trạng thái POS không hợp lệ.'),422);
-            if(!(int)$this->scalar("SELECT COUNT(*) FROM pos_users WHERE id={$id}"))jsonResponse(array('success'=>false,'message'=>'Không tìm thấy tài khoản POS.'),404);
-            if($status!=='active'&&(int)$this->scalar("SELECT COUNT(*) FROM pos_shifts WHERE user_id={$id} AND status IN ('active','paused')"))jsonResponse(array('success'=>false,'message'=>'Hãy kết phiên bán hàng trước khi hạn chế tài khoản POS.'),409);
-            $statusEsc=$this->db->real_escape_string($status);if(!$this->db->query("UPDATE pos_users SET status='{$statusEsc}',updated_at=NOW() WHERE id={$id}"))jsonResponse(array('success'=>false,'message'=>'Không thể cập nhật tài khoản POS: '.$this->db->error),500);
+        if($id<1||!in_array($system,array('tms','ems'),true))jsonResponse(array('success'=>false,'message'=>'POS và Customer là tài khoản cố định; Admin Tổng chỉ được xem, không được thay đổi.'),403);
+        if($system==='tms'){
+            if(!in_array($status,array('active','locked','inactive'),true))jsonResponse(array('success'=>false,'message'=>'Trạng thái TMS không hợp lệ.'),422);
+            $account=$this->row("SELECT role FROM users WHERE id={$id} AND role<>'customer' LIMIT 1");
+            if(!$account)jsonResponse(array('success'=>false,'message'=>'Không tìm thấy tài khoản TMS.'),404);
+            if(!in_array($account['role'],array('cinema_admin','supervisor','accounting','marketing_manager'),true))jsonResponse(array('success'=>false,'message'=>'Tài khoản Admin Tổng là tài khoản cố định và không thể thay đổi tại danh bạ.'),403);
+            $statusEsc=$this->db->real_escape_string($status);if(!$this->db->query("UPDATE users SET status='{$statusEsc}',updated_at=NOW() WHERE id={$id}"))jsonResponse(array('success'=>false,'message'=>'Không thể cập nhật tài khoản TMS: '.$this->db->error),500);
         }else{
             if(!in_array($status,array('active','leave','inactive'),true))jsonResponse(array('success'=>false,'message'=>'Trạng thái EMS không hợp lệ.'),422);
-            if(!(int)$this->scalar("SELECT COUNT(*) FROM ems_users WHERE id={$id}"))jsonResponse(array('success'=>false,'message'=>'Không tìm thấy tài khoản EMS.'),404);
+            if(!(int)$this->scalar("SELECT COUNT(*) FROM ems_users WHERE id={$id} AND role='manager'"))jsonResponse(array('success'=>false,'message'=>'Chỉ tài khoản Quản lý nhân sự EMS do Admin Tổng cấp mới có thể thay đổi.'),403);
             $statusEsc=$this->db->real_escape_string($status);if(!$this->db->query("UPDATE ems_users SET status='{$statusEsc}',updated_at=NOW() WHERE id={$id}"))jsonResponse(array('success'=>false,'message'=>'Không thể cập nhật tài khoản EMS: '.$this->db->error),500);
         }
         writeTmsAuditLog($this->db,'identity.status_updated','Cập nhật trạng thái tài khoản '.$system.' #'.$id.' thành '.$status.'.',array('module'=>'accounts','entity_type'=>$system.'_account','entity_id'=>(string)$id,'severity'=>'success','metadata'=>array('system'=>$system,'status'=>$status)));
         jsonResponse(array('success'=>true,'message'=>'Đã cập nhật trạng thái tài khoản trong aurora_db.','data'=>array('system'=>$system,'id'=>$id,'status'=>$status)));
+    }
+
+    private function saveEmsManagerAccount($input, $id)
+    {
+        if (!$this->tableExists('ems_users')) jsonResponse(array('success'=>false,'message'=>'Bảng ems_users chưa tồn tại trong aurora_db.'),500);
+        $staffCode=isset($input['username'])?strtoupper(trim((string)$input['username'])):'';
+        $fullName=isset($input['full_name'])?trim((string)$input['full_name']):'';
+        $email=isset($input['email'])?strtolower(trim((string)$input['email'])):'';
+        $phone=isset($input['phone'])?preg_replace('/[\s.\-]+/','',trim((string)$input['phone'])):'';
+        $department=isset($input['department'])?trim((string)$input['department']):'Quản lý Đào tạo & Nhân sự';
+        $password=isset($input['password'])?trim((string)$input['password']):'';
+        $status=isset($input['status'])?strtolower(trim((string)$input['status'])):'active';
+        if(!preg_match('/^[A-Z0-9._-]{3,50}$/',$staffCode))jsonResponse(array('success'=>false,'message'=>'Mã nhân sự EMS gồm 3–50 ký tự: chữ, số, dấu chấm, gạch dưới hoặc gạch ngang.'),400);
+        if(strlen($fullName)<2||strlen($fullName)>120)jsonResponse(array('success'=>false,'message'=>'Họ tên Quản lý nhân sự phải có từ 2 đến 120 ký tự.'),400);
+        if(!filter_var($email,FILTER_VALIDATE_EMAIL))jsonResponse(array('success'=>false,'message'=>'Email công việc EMS không đúng định dạng.'),400);
+        if($phone!==''&&!preg_match('/^(?:\+84|0)[0-9]{9,10}$/',$phone))jsonResponse(array('success'=>false,'message'=>'Số điện thoại EMS không hợp lệ.'),400);
+        if($department===''||strlen($department)>255)jsonResponse(array('success'=>false,'message'=>'Vui lòng nhập phòng ban EMS hợp lệ.'),400);
+        if(!in_array($status,array('active','leave','inactive'),true))jsonResponse(array('success'=>false,'message'=>'Trạng thái EMS không hợp lệ.'),400);
+        if(!$id&&strlen($password)<6)jsonResponse(array('success'=>false,'message'=>'Mật khẩu khởi tạo EMS cần có ít nhất 6 ký tự.'),400);
+        if($password!==''&&strlen($password)<6)jsonResponse(array('success'=>false,'message'=>'Mật khẩu EMS mới cần có ít nhất 6 ký tự.'),400);
+        $codeEsc=$this->db->real_escape_string($staffCode);$nameEsc=$this->db->real_escape_string($fullName);$emailEsc=$this->db->real_escape_string($email);$phoneEsc=$this->db->real_escape_string($phone);$departmentEsc=$this->db->real_escape_string($department);$statusEsc=$this->db->real_escape_string($status);
+        if((int)$this->scalar("SELECT COUNT(*) FROM ems_users WHERE LOWER(email)=LOWER('{$emailEsc}')".($id?' AND id<>'.$id:'').""))jsonResponse(array('success'=>false,'message'=>'Email đã được sử dụng trong EMS.'),409);
+        if((int)$this->scalar("SELECT COUNT(*) FROM ems_users WHERE UPPER(staff_code)=UPPER('{$codeEsc}')".($id?' AND id<>'.$id:'').""))jsonResponse(array('success'=>false,'message'=>'Mã nhân sự EMS đã tồn tại.'),409);
+        if($id){
+            $existing=$this->row("SELECT id,role FROM ems_users WHERE id={$id} LIMIT 1");
+            if(!$existing)jsonResponse(array('success'=>false,'message'=>'Không tìm thấy tài khoản EMS.'),404);
+            if($existing['role']!=='manager')jsonResponse(array('success'=>false,'message'=>'Nhân viên EMS là tài khoản cố định; Admin Tổng không được thay đổi.'),403);
+            $passwordSql='';if($password!==''){$hash=function_exists('password_hash')?password_hash($password,PASSWORD_BCRYPT):crypt($password);$passwordSql=",password='".$this->db->real_escape_string($hash)."'";}
+            if(!$this->db->query("UPDATE ems_users SET name='{$nameEsc}',email='{$emailEsc}',phone='{$phoneEsc}',department='{$departmentEsc}',status='{$statusEsc}'{$passwordSql},updated_at=NOW() WHERE id={$id} AND role='manager'"))jsonResponse(array('success'=>false,'message'=>'Không thể cập nhật Quản lý nhân sự EMS: '.$this->db->error),500);
+            writeTmsAuditLog($this->db,'identity.ems_manager_updated','Cập nhật tài khoản Quản lý nhân sự EMS '.$staffCode.'.',array('module'=>'accounts','entity_type'=>'ems_account','entity_id'=>(string)$id,'severity'=>'success'));
+            jsonResponse(array('success'=>true,'message'=>'Đã cập nhật tài khoản Quản lý nhân sự trong aurora_db.','data'=>$this->row("SELECT id,staff_code username,name full_name,email,phone,role,department,status,updated_at FROM ems_users WHERE id={$id}")));
+        }
+        $hash=function_exists('password_hash')?password_hash($password,PASSWORD_BCRYPT):crypt($password);$hashEsc=$this->db->real_escape_string($hash);
+        if(!$this->db->query("INSERT INTO ems_users (staff_code,name,email,password,role,department,phone,join_date,status,performance_score,created_at,updated_at) VALUES ('{$codeEsc}','{$nameEsc}','{$emailEsc}','{$hashEsc}','manager','{$departmentEsc}','{$phoneEsc}',CURDATE(),'{$statusEsc}',90,NOW(),NOW())"))jsonResponse(array('success'=>false,'message'=>'Không thể tạo Quản lý nhân sự EMS: '.$this->db->error),500);
+        $newId=(int)$this->db->insert_id;
+        writeTmsAuditLog($this->db,'identity.ems_manager_created','Tạo tài khoản Quản lý nhân sự EMS '.$staffCode.'.',array('module'=>'accounts','entity_type'=>'ems_account','entity_id'=>(string)$newId,'severity'=>'success'));
+        jsonResponse(array('success'=>true,'message'=>'Đã tạo tài khoản Quản lý nhân sự EMS trong aurora_db.','data'=>$this->row("SELECT id,staff_code username,name full_name,email,phone,role,department,status,created_at FROM ems_users WHERE id={$newId}")),201);
     }
 
     public function saveUser()
@@ -3400,14 +3650,17 @@ class AdminController
 
         $input = requestJson();
         $id = isset($_GET['id']) ? (int)$_GET['id'] : (isset($input['id']) ? (int)$input['id'] : 0);
+        $system=isset($input['system'])?strtolower(trim((string)$input['system'])):'tms';
+        if($system==='ems')$this->saveEmsManagerAccount($input,$id);
+        if($system!=='tms')jsonResponse(array('success'=>false,'message'=>'Admin Tổng chỉ được tạo tài khoản quản trị TMS hoặc Quản lý nhân sự EMS.'),400);
         $username = isset($input['username']) ? trim((string)$input['username']) : '';
         $fullName = isset($input['full_name']) ? trim((string)$input['full_name']) : '';
         $phone = isset($input['phone']) ? trim((string)$input['phone']) : '';
         $email = isset($input['email']) ? trim((string)$input['email']) : '';
         $theaterId = isset($input['theater_id']) ? (int)$input['theater_id'] : 0;
         $userRole = isset($input['role']) ? self::normalizeRole($input['role']) : 'cinema_admin';
-        if (!in_array($userRole, array('super_admin', 'cinema_admin', 'supervisor', 'accounting', 'marketing_manager'), true)) {
-            jsonResponse(array('success' => false, 'message' => 'Form phân quyền nội bộ không được phép tạo hoặc chuyển đổi tài khoản customer.'), 400);
+        if (!in_array($userRole, array('cinema_admin', 'supervisor', 'accounting', 'marketing_manager'), true)) {
+            jsonResponse(array('success' => false, 'message' => 'Admin Tổng chỉ được cấp các vai trò Admin Rạp, Supervisor, Kế toán hoặc Marketing.'), 400);
         }
         $allowedStatuses = array('active', 'inactive', 'locked');
         $statusProvided = array_key_exists('status', $input);
@@ -3442,7 +3695,7 @@ class AdminController
         if ($id > 0) {
             $existingUser = $this->row("SELECT status, role FROM users WHERE id = " . $id);
             if (!$existingUser) jsonResponse(array('success' => false, 'message' => 'Tài khoản không tồn tại trong Aurora DB.'), 404);
-            if ($existingUser['role'] === 'customer') jsonResponse(array('success' => false, 'message' => 'Tài khoản customer phải được quản lý trong không gian Khách hàng, không thể cấp quyền nội bộ.'), 400);
+            if (!in_array($existingUser['role'],array('cinema_admin','supervisor','accounting','marketing_manager'),true)) jsonResponse(array('success' => false, 'message' => 'Tài khoản này là tài khoản cố định và không thể thay đổi tại chức năng phân quyền.'), 403);
             if ($status === null) {
                 $status = $existingUser['status'];
             }
@@ -3516,8 +3769,8 @@ class AdminController
         if (!$userRow) {
             jsonResponse(array('success' => false, 'message' => 'Tài khoản không tồn tại trong Aurora DB.'), 404);
         }
-        if ($userRow['role'] === 'customer') {
-            jsonResponse(array('success' => false, 'message' => 'Không thể xóa customer từ nghiệp vụ quản trị tài khoản nội bộ.'), 400);
+        if (!in_array($userRow['role'],array('cinema_admin','supervisor','accounting','marketing_manager'),true)) {
+            jsonResponse(array('success' => false, 'message' => 'Tài khoản này là tài khoản cố định và không được phép xóa tại danh bạ.'), 403);
         }
 
         // Dọn dẹp an toàn các bảng liên quan để tránh lỗi Foreign Key
@@ -3889,6 +4142,12 @@ class AdminController
         $tableEsc = $this->db->real_escape_string($table);
         $result = $this->db->query("SELECT 1 FROM information_schema.TABLES WHERE TABLE_SCHEMA=DATABASE() AND TABLE_NAME='{$tableEsc}' LIMIT 1");
         return $result && $result->num_rows > 0;
+    }
+
+    private function columnExists($table, $column)
+    {
+        $tableEsc=$this->db->real_escape_string($table);$columnEsc=$this->db->real_escape_string($column);
+        return (int)$this->scalar("SELECT COUNT(*) FROM information_schema.COLUMNS WHERE TABLE_SCHEMA=DATABASE() AND TABLE_NAME='{$tableEsc}' AND COLUMN_NAME='{$columnEsc}'")>0;
     }
 
     private function ensureScheduleDeleteIntegrity()

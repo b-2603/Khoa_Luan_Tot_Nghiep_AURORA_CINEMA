@@ -1,14 +1,16 @@
 import { useState, useEffect, FormEvent, useRef } from 'react';
 import * as XLSX from 'xlsx';
 import AccountManagementPage, { type IdentityAccount, type IdentitySystem, type IdentitySystemSummary, type IdentitySummary } from './components/AccountManagementPage';
+import CustomerWorkspace, { CustomerProfileDrawer } from './components/CustomerWorkspace';
+import BookingHistoryWorkspace from './components/BookingHistoryWorkspace';
 import MarketingWorkspace, { MarketingPlanApproval } from './components/MarketingWorkspace';
 import NotificationCenter from './components/NotificationCenter';
 import ProductCatalogManagement from './components/ProductCatalogManagement';
 import AuditLogManagement from './components/AuditLogManagement';
 import ReportsWorkspace from './components/ReportsWorkspace';
 import PosDeviceManagement from './components/PosDeviceManagement';
-import UserAccountModal from './components/UserAccountModal';
-import RbacManagement, { type PermissionAction, type PermissionActions, type RbacGrant, type RbacModule } from './components/RbacManagement';
+import UserAccountModal, { type UserAccountForm } from './components/UserAccountModal';
+import RbacManagement, { type PermissionAction, type PermissionActions, type RbacAccount, type RbacGrant, type RbacModule } from './components/RbacManagement';
 import './components/MarketingWorkspace.css';
 import './components/MarketingReviewHierarchy.css';
 import './components/MarketingWorkspace.layout.css';
@@ -110,7 +112,7 @@ const PAGE_TITLES: Record<string, string> = {
   movie_plan: 'Kế hoạch phim', schedules: 'Lịch chiếu', screens: 'Quản lý phòng chiếu', pricing: 'Chính sách giá',
   catalog: 'Danh mục dùng chung', promotions: 'Khuyến mãi & Ưu đãi', products: 'Quản lý hàng hóa', staff: 'Nhân viên & Ca làm việc',
   reports: 'Báo cáo vận hành', pos_devices: 'Thiết bị POS', audit_log: 'Nhật ký hệ thống', settings: 'Cấu hình hệ thống',
-  transactions: 'Giao dịch', refunds: 'Hoàn tiền', showtimes: 'Lịch chiếu', shifts: 'Phiên làm việc'
+  transactions: 'Giao dịch', refunds: 'Hoàn tiền', showtimes: 'Lịch chiếu', shifts: 'Phiên làm việc', cinema_customers: 'Khách hàng', booking_history: 'Lịch sử đặt vé'
   , 'mkt-dashboard':'Tổng quan', 'mkt-movies':'Danh sách phim', 'mkt-plans':'Kế hoạch phim', 'mkt-campaigns':'Quảng bá phim',
   'mkt-promotions':'Chương trình khuyến mãi', 'mkt-vouchers':'Voucher', 'mkt-contents':'Nội dung Customer Website',
   'mkt-notifications':'Thông báo Marketing', 'mkt-segments':'Phân nhóm khách hàng', 'mkt-reports':'Báo cáo Marketing', 'mkt-account':'Thông tin cá nhân'
@@ -154,6 +156,8 @@ function getRoleNavItems(role: TMSRole): NavItem[] {
         { id: 'pricing', name: 'Áp dụng giá vé', icon: Tag },
         { id: 'promotions', name: 'Voucher / CTKM', icon: Ticket, children: ['Voucher tại rạp', 'Tiếp nhận CTKM', 'Triển khai CTKM', 'Đề xuất điều chỉnh'] },
         { id: 'products', name: 'Hàng hóa', icon: Package },
+        { id: 'cinema_customers', name: 'Khách hàng', icon: UserRound },
+        { id: 'booking_history', name: 'Lịch sử đặt vé', icon: History },
         { id: 'staff', name: 'Nhân viên & Phiên', icon: Users, children: ['NV bán hàng', 'Phiên bán hàng'] },
         { id: 'reports', name: 'Báo cáo rạp', icon: BarChart3 },
       ];
@@ -208,6 +212,8 @@ const VIEW_RBAC_MODULE: Record<string, string> = {
   screens: 'screens',
   pricing: 'ticket_types',
   catalog: 'products', products: 'products',
+  cinema_customers: 'customers',
+  booking_history: 'booking_history',
   promotions: 'vouchers', 'Duyệt kế hoạch CTKM': 'vouchers', 'Quản lý CTKM hệ thống': 'vouchers',
   'Voucher tại rạp': 'vouchers', 'Tiếp nhận CTKM': 'vouchers', 'Triển khai CTKM': 'vouchers', 'Đề xuất điều chỉnh': 'vouchers',
   staff: 'staff', shifts: 'staff', 'NV bán hàng': 'staff', 'Nhân viên rạp': 'staff', 'Phiên bán hàng': 'staff', 'Phiên làm việc': 'staff',
@@ -637,6 +643,7 @@ export default function App() {
   const [identityAccounts, setIdentityAccounts] = useState<IdentityAccount[]>([]);
   const [identitySystems, setIdentitySystems] = useState<Record<IdentitySystem, IdentitySystemSummary>>({ tms:{...emptyIdentitySystem,label:'TMS'}, pos:{...emptyIdentitySystem,label:'POS'}, ems:{...emptyIdentitySystem,label:'EMS'}, customer:{...emptyIdentitySystem,label:'Customer'} });
   const [identitySummary, setIdentitySummary] = useState<IdentitySummary>({ total:0, active:0, restricted:0, system_count:4, role_count:0, open_pos_shifts:0 });
+  const [accountCustomerId, setAccountCustomerId] = useState<number | null>(null);
   const [dashboardData, setDashboardData] = useState<DashboardData | null>(null);
   const [dashboardLoading, setDashboardLoading] = useState(false);
   const [dashboardError, setDashboardError] = useState('');
@@ -742,7 +749,7 @@ export default function App() {
 
   // MODALS
   const [showUserModal, setShowUserModal] = useState(false);
-  const [userForm, setUserForm] = useState({ id: 0, username: '', full_name: '', phone: '', email: '', theater_id: 0, role: 'cinema_admin' as TMSRole, password: '', status: 'active' });
+  const [userForm, setUserForm] = useState<UserAccountForm>({ id:0, system:'tms', username:'', full_name:'', phone:'', email:'', theater_id:0, department:'', role:'cinema_admin', password:'', status:'active' });
   const [showUserPassword, setShowUserPassword] = useState(false);
   const [userSaving, setUserSaving] = useState(false);
   const [userModalError, setUserModalError] = useState('');
@@ -750,6 +757,7 @@ export default function App() {
   const [accountRoleFilter, setAccountRoleFilter] = useState<'all' | TMSRole>('all');
   const [accountStatusFilter, setAccountStatusFilter] = useState<'all' | 'active' | 'locked'>('all');
   const [rbacMatrix, setRbacMatrix] = useState<RbacModule[]>([]);
+  const [rbacAccounts, setRbacAccounts] = useState<RbacAccount[]>([]);
   const [rbacLoading, setRbacLoading] = useState(false);
   const [rbacSaving, setRbacSaving] = useState(false);
   const [rbacEditing, setRbacEditing] = useState(false);
@@ -981,6 +989,7 @@ export default function App() {
       const data = await response.json();
       if (!response.ok || !data.success || !Array.isArray(data.data)) throw new Error(data.message || 'Không thể tải ma trận phân quyền từ Aurora DB.');
       setRbacMatrix(data.data);
+      setRbacAccounts(Array.isArray(data.accounts) ? data.accounts : []);
     } catch (error) {
       setSystemNotice({ message: error instanceof Error ? error.message : 'Không thể tải ma trận phân quyền từ Aurora DB.', type: 'error' });
     } finally { setRbacLoading(false); }
@@ -2543,7 +2552,8 @@ export default function App() {
     if (!/^\S+@\S+\.\S+$/.test(userForm.email.trim())) { setUserModalError('Email công việc không đúng định dạng.'); return; }
     if (userForm.phone && !/^(?:\+84|0)[0-9]{9,10}$/.test(userForm.phone.replace(/[\s.-]/g,''))) { setUserModalError('Số điện thoại phải bắt đầu bằng 0 hoặc +84 và có độ dài hợp lệ.'); return; }
     if (!userForm.id && userForm.password.length < 6) { setUserModalError('Mật khẩu khởi tạo cần có tối thiểu 6 ký tự.'); return; }
-    if ((userForm.role === 'cinema_admin' || userForm.role === 'supervisor') && !Number(userForm.theater_id)) { setUserModalError('Vui lòng chọn rạp phụ trách cho tài khoản vận hành.'); return; }
+    if (userForm.system === 'tms' && (userForm.role === 'cinema_admin' || userForm.role === 'supervisor') && !Number(userForm.theater_id)) { setUserModalError('Vui lòng chọn rạp phụ trách cho tài khoản vận hành.'); return; }
+    if (userForm.system === 'ems' && !userForm.department.trim()) { setUserModalError('Vui lòng nhập phòng ban của Quản lý nhân sự EMS.'); return; }
     setUserSaving(true);
     try {
       const res = await fetch(`${API_BASE}?action=users`, { method: 'POST', credentials: 'include', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(userForm) });
@@ -2579,6 +2589,7 @@ export default function App() {
 
   const toggleIdentityStatus = (account: IdentityAccount) => {
     if (currentUser?.role !== 'super_admin') { setSystemNotice({ message:'Chỉ Admin Tổng mới có quyền thay đổi trạng thái tài khoản.', type:'warning' }); return; }
+    if (Number(account.manageable) !== 1) { setSystemNotice({ message:'Tài khoản này ở chế độ chỉ xem và được cố định tại hệ thống nguồn.', type:'warning' }); return; }
     if (account.system === 'tms' && Number(currentUser.id) === Number(account.id) && account.status === 'active') { setSystemNotice({ message:'Bạn không thể tự khóa tài khoản đang đăng nhập.', type:'warning' }); return; }
     const nextStatus = account.status === 'active' ? (account.system === 'ems' ? 'inactive' : 'locked') : 'active';
     const actionName = nextStatus === 'active' ? 'Khôi phục truy cập' : 'Hạn chế truy cập';
@@ -2690,7 +2701,12 @@ export default function App() {
   const role = currentUser?.role;
   const rc = role ? ROLE_CONFIGS[role] : ROLE_CONFIGS.super_admin;
   const canPerform = (moduleKey:string, action:PermissionAction='view') => role === 'super_admin' || Boolean(currentPermissions[moduleKey]?.actions?.[action]);
-  const navItems = role ? getRoleNavItems(role).filter(item => {
+  const baseNavItems = role ? getRoleNavItems(role) : [];
+  const supplementalNavItems:NavItem[] = [
+    { id:'cinema_customers', name:'Khách hàng', icon:UserRound },
+    { id:'booking_history', name:'Lịch sử đặt vé', icon:History },
+  ];
+  const navItems = role ? [...baseNavItems, ...supplementalNavItems.filter(item => !baseNavItems.some(existing => existing.id===item.id) && (role==='super_admin' || (permissionsLoaded && canPerform(VIEW_RBAC_MODULE[item.id], 'view'))))].filter(item => {
     if (role === 'super_admin' || !permissionsLoaded) return true;
     const moduleKey = VIEW_RBAC_MODULE[item.id];
     return !moduleKey || canPerform(moduleKey, 'view');
@@ -3117,6 +3133,9 @@ export default function App() {
 
     if (a === 'dashboard' || a === 'Tổng quan tài chính') return renderDashboard();
 
+    if (a === 'cinema_customers') return <CustomerWorkspace apiBase={API_BASE}/>;
+    if (a === 'booking_history') return <BookingHistoryWorkspace apiBase={API_BASE}/>;
+
     // ACCOUNTS & PERMISSIONS (super_admin only)
     if (a === 'accounts' || a === 'Danh sách tài khoản' || a === 'Ma trận phân quyền') {
       const isMatrix = a === 'Ma trận phân quyền';
@@ -3139,10 +3158,11 @@ export default function App() {
             loading={accountsLoading}
             formatLastLogin={formatLastLogin}
             onRefresh={loadUsers}
-            onCreateInternal={() => { setUserForm({id:0,username:'',full_name:'',phone:'',email:'',theater_id:0,role:'cinema_admin',password:'',status:'active'}); setShowUserPassword(false); setUserModalError(''); setShowUserModal(true); }}
-            onEditInternal={(u:any) => { setUserForm({id:u.id||0,username:u.username,full_name:u.full_name,phone:u.phone||'',email:u.email||'',theater_id:Number(u.theater_id||0),role:u.role as TMSRole,password:'',status:u.status||'active'}); setShowUserPassword(false); setUserModalError(''); setShowUserModal(true); }}
+            onCreateInternal={() => { setUserForm({id:0,system:'tms',username:'',full_name:'',phone:'',email:'',theater_id:0,department:'',role:'cinema_admin',password:'',status:'active'}); setShowUserPassword(false); setUserModalError(''); setShowUserModal(true); }}
+            onEditInternal={(u:any) => { const system=u.system==='ems'?'ems':'tms'; setUserForm({id:u.id||0,system,username:u.employee_code||u.username,full_name:u.full_name,phone:u.phone||'',email:u.email||'',theater_id:Number(u.theater_id||0),department:u.department||'',role:system==='ems'?'manager':u.role,password:'',status:u.status||'active'}); setShowUserPassword(false); setUserModalError(''); setShowUserModal(true); }}
             onDeleteInternal={(u:any) => deleteUserAccount(u as TMSUser)}
             onToggleStatus={toggleIdentityStatus}
+            onViewCustomer={(customer) => setAccountCustomerId(customer.id)}
           />
         </div>
       );
@@ -3154,6 +3174,8 @@ export default function App() {
           </div>
           <RbacManagement
             matrix={rbacMatrix}
+            accounts={rbacAccounts}
+            apiBase={API_BASE}
             loading={rbacLoading}
             saving={rbacSaving}
             editing={rbacEditing}
@@ -3163,6 +3185,7 @@ export default function App() {
             onSave={() => void saveRbacMatrix()}
             onActions={(moduleKey, roleCode, actions) => updateRbacActions(moduleKey, roleCode as TMSRole, actions)}
             onNote={(moduleKey, roleCode, note) => updateRbacGrant(moduleKey, roleCode as TMSRole, { note })}
+            notify={showSystemNotice}
           />
         </div>
       );
@@ -3181,7 +3204,7 @@ export default function App() {
                 <article><span className="account-overview-icon violet"><ShieldCheck size={20}/></span><div><small>Vai trò đang dùng</small><b>{new Set(tmsUsers.map(user => user.role)).size}/4</b><em>Phân quyền RBAC tập trung</em></div></article>
               </section>
               <div className="tms-card-table account-management-table">
-              <div className="account-table-heading"><div><span>QUẢN TRỊ NGƯỜI DÙNG</span><h2>Tài khoản vận hành TMS</h2><p>Thêm, phân quyền và kiểm soát truy cập trực tiếp trên Aurora DB.</p></div><button type="button" className="account-create-button" onClick={() => { setUserForm({id:0,username:'',full_name:'',phone:'',email:'',theater_id:0,role:'cinema_admin',password:'',status:'active'}); setShowUserPassword(false); setUserModalError(''); setShowUserModal(true); }}><Plus size={17}/><span>Thêm tài khoản</span></button></div>
+              <div className="account-table-heading"><div><span>QUẢN TRỊ NGƯỜI DÙNG</span><h2>Tài khoản vận hành TMS</h2><p>Thêm, phân quyền và kiểm soát truy cập trực tiếp trên Aurora DB.</p></div><button type="button" className="account-create-button" onClick={() => { setUserForm({id:0,system:'tms',username:'',full_name:'',phone:'',email:'',theater_id:0,department:'',role:'cinema_admin',password:'',status:'active'}); setShowUserPassword(false); setUserModalError(''); setShowUserModal(true); }}><Plus size={17}/><span>Thêm tài khoản</span></button></div>
               <div className="tms-table-toolbar account-toolbar">
                 <div className="tms-search-input"><Search size={16} color="#94a3b8"/><input value={accountSearch} onChange={e => setAccountSearch(e.target.value)} placeholder="Tìm tên, rạp phụ trách, username hoặc SĐT..." /></div>
                 <select value={accountRoleFilter} onChange={e => setAccountRoleFilter(e.target.value as 'all' | TMSRole)}><option value="all">Tất cả vai trò</option><option value="super_admin">Admin Tổng</option><option value="cinema_admin">Admin Rạp</option><option value="supervisor">Supervisor</option><option value="accounting">Kế toán</option></select>
@@ -3240,7 +3263,7 @@ export default function App() {
                       <td><span className={`role-badge-pill ${u.role}`}>{ucfg.name}</span></td>
                       <td><span style={{display:'inline-flex',alignItems:'center',gap:4,padding:'3px 8px',borderRadius:6,fontSize:'0.74rem',fontWeight:700,background:u.status==='active'?'#ecfdf5':'#fee2e2',color:u.status==='active'?'#065f46':'#991b1b'}}>{u.status==='active'?<CheckCircle2 size={12}/>:<XCircle size={12}/>}{u.status==='active'?'Hoạt động':'Tạm khóa'}</span></td>
                       <td style={{fontSize:'0.8rem',color:'#64748b'}}>{formatLastLogin(u.last_login)}</td>
-                      <td><div style={{display:'inline-flex',gap:6}}><button className="tms-btn tms-btn-outline" style={{padding:'5px 8px'}} onClick={()=>{setUserForm({id:u.id||0,username:u.username,full_name:u.full_name,phone:u.phone||'',email:u.email||'',theater_id:Number(u.theater_id||0),role:u.role,password:'',status:u.status||'active'});setShowUserPassword(false);setUserModalError('');setShowUserModal(true);}} title="Chỉnh sửa"><Edit size={14}/></button><button className="tms-btn tms-btn-outline" style={{padding:'5px 8px',color:u.status==='active'?'#dc2626':'#059669'}} onClick={()=>toggleUserStatus(u)} title={u.status==='active'?'Tạm khóa tài khoản':'Mở khóa tài khoản'}>{u.status==='active'?<Lock size={14}/>:<Check size={14}/>}</button><button className="tms-btn tms-btn-outline" style={{padding:'5px 8px',color:'#dc2626',borderColor:'#fecaca',background:'#fff5f5'}} onClick={()=>deleteUserAccount(u)} title="Xóa vĩnh viễn tài khoản"><Trash2 size={14}/></button></div></td>
+                      <td><div style={{display:'inline-flex',gap:6}}><button className="tms-btn tms-btn-outline" style={{padding:'5px 8px'}} onClick={()=>{setUserForm({id:u.id||0,system:'tms',username:u.username,full_name:u.full_name,phone:u.phone||'',email:u.email||'',theater_id:Number(u.theater_id||0),department:'',role:u.role==='super_admin'?'cinema_admin':u.role,password:'',status:u.status||'active'});setShowUserPassword(false);setUserModalError('');setShowUserModal(true);}} title="Chỉnh sửa"><Edit size={14}/></button><button className="tms-btn tms-btn-outline" style={{padding:'5px 8px',color:u.status==='active'?'#dc2626':'#059669'}} onClick={()=>toggleUserStatus(u)} title={u.status==='active'?'Tạm khóa tài khoản':'Mở khóa tài khoản'}>{u.status==='active'?<Lock size={14}/>:<Check size={14}/>}</button><button className="tms-btn tms-btn-outline" style={{padding:'5px 8px',color:'#dc2626',borderColor:'#fecaca',background:'#fff5f5'}} onClick={()=>deleteUserAccount(u)} title="Xóa vĩnh viễn tài khoản"><Trash2 size={14}/></button></div></td>
                     </tr>
                   );
                 })}{accountRows.length === 0 && <tr><td colSpan={8}><div className="account-empty-state"><Users size={25}/><b>Không tìm thấy tài khoản phù hợp</b><span>Thay đổi bộ lọc hoặc tạo tài khoản mới trong Aurora DB.</span></div></td></tr>}</tbody>
@@ -4636,6 +4659,7 @@ export default function App() {
           </section>
         </div>
       )}
+      {accountCustomerId && <CustomerProfileDrawer apiBase={API_BASE} customerId={accountCustomerId} onClose={()=>setAccountCustomerId(null)}/>}
       {systemNotice && (
         <div className={`aurora-notice aurora-notice-${systemNotice.type}`} role="alert" aria-live="assertive">
           <div className="aurora-notice-icon">{systemNotice.type === 'success' ? <CheckCircle2 size={23} /> : systemNotice.type === 'error' ? <XCircle size={23} /> : <AlertTriangle size={23} />}</div>

@@ -17,7 +17,13 @@ header('Content-Type: application/json; charset=utf-8');
 // về danh sách cũ sau khi Admin Tổng vừa thêm hoặc sửa phim.
 header('Cache-Control: no-store, no-cache, must-revalidate, max-age=0');
 header('Pragma: no-cache');
-header('Access-Control-Allow-Origin: ' . (isset($_SERVER['HTTP_ORIGIN']) && in_array($_SERVER['HTTP_ORIGIN'], array('http://localhost:3000', 'http://localhost:5173', 'http://127.0.0.1:5173'), true) ? $_SERVER['HTTP_ORIGIN'] : 'http://localhost:3000'));
+$requestOrigin = isset($_SERVER['HTTP_ORIGIN']) ? trim((string)$_SERVER['HTTP_ORIGIN']) : '';
+$allowedOrigins = array('http://localhost:3000', 'http://localhost:5173', 'http://127.0.0.1:5173');
+$serverHost = isset($_SERVER['HTTP_HOST']) ? strtolower(preg_replace('/:\d+$/', '', (string)$_SERVER['HTTP_HOST'])) : '';
+$originHost = $requestOrigin !== '' ? strtolower((string)parse_url($requestOrigin, PHP_URL_HOST)) : '';
+$corsOrigin = in_array($requestOrigin, $allowedOrigins, true) || ($originHost !== '' && $serverHost !== '' && $originHost === $serverHost)
+    ? $requestOrigin : 'http://localhost:3000';
+header('Access-Control-Allow-Origin: ' . $corsOrigin);
 header('Access-Control-Allow-Credentials: true');
 header('Access-Control-Allow-Headers: Content-Type');
 header('Access-Control-Allow-Methods: GET, POST, OPTIONS');
@@ -4141,6 +4147,7 @@ if ($resource === 'booking_detail') {
                    m.title AS movie_title, m.poster_url, m.age_rating, m.format, m.duration_minutes,
                    s.name AS screen_name,
                    t.name AS theater_name, t.address AS theater_address, t.city,
+                   u.full_name AS customer_name, u.email AS customer_email, u.phone AS customer_phone,
                    GROUP_CONCAT(CONCAT(se.seat_row, se.seat_number, '(', se.seat_type, ')') ORDER BY se.seat_row, se.seat_number SEPARATOR '|') AS seats_raw,
                    GROUP_CONCAT(CONCAT(se.seat_row, se.seat_number) ORDER BY se.seat_row, se.seat_number SEPARATOR ', ') AS seats_display
             FROM bookings b
@@ -4148,6 +4155,7 @@ if ($resource === 'booking_detail') {
             INNER JOIN movies m ON m.id = st.movie_id
             INNER JOIN screens s ON s.id = st.screen_id
             INNER JOIN theaters t ON t.id = s.theater_id
+            INNER JOIN users u ON u.id = b.user_id
             LEFT JOIN booking_seats bs ON bs.booking_id = b.id
             LEFT JOIN seats se ON se.id = bs.seat_id
             WHERE b.id = ? AND b.user_id = ?
@@ -4158,10 +4166,10 @@ if ($resource === 'booking_detail') {
     if(!$stmt->execute()){$stmt->close();aurora_response(array('message'=>'Không thể tải chi tiết đơn đặt vé.'),500);}
     $stmt->store_result();
     $bookingDbId=$totalAmount=$ticketPrice=$durationMinutes=null;
-    $bookingCode=$bookingStatus=$bookingCreatedAt=$startsAt=$endsAt=$movieTitle=$posterUrl=$ageRating=$movieFormat=$screenName=$theaterName=$theaterAddress=$theaterCity=$seatsRaw=$seatsDisplay=null;
-    $stmt->bind_result($bookingDbId,$bookingCode,$totalAmount,$bookingStatus,$bookingCreatedAt,$startsAt,$endsAt,$ticketPrice,$movieTitle,$posterUrl,$ageRating,$movieFormat,$durationMinutes,$screenName,$theaterName,$theaterAddress,$theaterCity,$seatsRaw,$seatsDisplay);
+    $bookingCode=$bookingStatus=$bookingCreatedAt=$startsAt=$endsAt=$movieTitle=$posterUrl=$ageRating=$movieFormat=$screenName=$theaterName=$theaterAddress=$theaterCity=$customerName=$customerEmail=$customerPhone=$seatsRaw=$seatsDisplay=null;
+    $stmt->bind_result($bookingDbId,$bookingCode,$totalAmount,$bookingStatus,$bookingCreatedAt,$startsAt,$endsAt,$ticketPrice,$movieTitle,$posterUrl,$ageRating,$movieFormat,$durationMinutes,$screenName,$theaterName,$theaterAddress,$theaterCity,$customerName,$customerEmail,$customerPhone,$seatsRaw,$seatsDisplay);
     $row=null;
-    if($stmt->fetch())$row=array('id'=>$bookingDbId,'booking_code'=>$bookingCode,'total_amount'=>$totalAmount,'status'=>$bookingStatus,'created_at'=>$bookingCreatedAt,'starts_at'=>$startsAt,'ends_at'=>$endsAt,'ticket_price'=>$ticketPrice,'movie_title'=>$movieTitle,'poster_url'=>$posterUrl,'age_rating'=>$ageRating,'format'=>$movieFormat,'duration_minutes'=>$durationMinutes,'screen_name'=>$screenName,'theater_name'=>$theaterName,'theater_address'=>$theaterAddress,'city'=>$theaterCity,'seats_raw'=>$seatsRaw,'seats_display'=>$seatsDisplay);
+    if($stmt->fetch())$row=array('id'=>$bookingDbId,'booking_code'=>$bookingCode,'total_amount'=>$totalAmount,'status'=>$bookingStatus,'created_at'=>$bookingCreatedAt,'starts_at'=>$startsAt,'ends_at'=>$endsAt,'ticket_price'=>$ticketPrice,'movie_title'=>$movieTitle,'poster_url'=>$posterUrl,'age_rating'=>$ageRating,'format'=>$movieFormat,'duration_minutes'=>$durationMinutes,'screen_name'=>$screenName,'theater_name'=>$theaterName,'theater_address'=>$theaterAddress,'city'=>$theaterCity,'customer_name'=>$customerName,'customer_email'=>$customerEmail,'customer_phone'=>$customerPhone,'seats_raw'=>$seatsRaw,'seats_display'=>$seatsDisplay);
     $stmt->close();
     if (!$row) aurora_response(array('message' => 'Không tìm thấy đơn đặt vé.'), 404);
 
@@ -4216,6 +4224,17 @@ if ($resource === 'booking_detail') {
         'seats'           => $seatsArr,
         'seats_display'   => $row['seats_display'],
         'tickets'         => $tickets,
+        'customer'        => array(
+            'fullName' => $row['customer_name'],
+            'email'    => $row['customer_email'],
+            'phone'    => $row['customer_phone'],
+        ),
+        'receipt'         => array(
+            'documentCode' => 'AURORA-RECEIPT-'.$row['booking_code'],
+            'generatedAt'  => aurora_vietnam_now(),
+            'currency'     => 'VND',
+            'dataSource'   => 'aurora_db',
+        ),
         'order'           => $order,
         'payments'        => $payments,
         'concessions'     => $concessions,

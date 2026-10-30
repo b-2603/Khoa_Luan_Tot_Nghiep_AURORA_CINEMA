@@ -950,6 +950,14 @@ if ($action === 'my-permissions') {
     jsonResponse(array('success'=>false, 'message'=>'Phương thức không được hỗ trợ cho quyền hiện tại.'), 405);
 }
 
+if ($action === 'account-permissions') {
+    requireAdmin();
+    $controller->requireRbacPermission('users', $requestMethod === 'GET' ? 'view' : 'update');
+    if ($requestMethod === 'GET') $controller->accountPermissions();
+    if ($requestMethod === 'POST' || $requestMethod === 'PUT') $controller->saveAccountPermissions();
+    jsonResponse(array('success'=>false,'message'=>'Phương thức không được hỗ trợ cho quyền tài khoản.'),405);
+}
+
 if ($action === 'users') {
     requireAdmin();
     $userPermissionAction = $requestMethod === 'GET' ? 'view' : ($requestMethod === 'DELETE' || isset($_GET['delete']) ? 'delete' : (!empty($_GET['id']) ? 'update' : 'create'));
@@ -974,6 +982,34 @@ if ($action === 'identity-directory') {
     $controller->requireRbacPermission('users', 'view');
     if ($requestMethod === 'GET') $controller->identityDirectory();
     jsonResponse(array('success' => false, 'message' => 'Phương thức không được hỗ trợ cho danh bạ tài khoản.'), 405);
+}
+
+if ($action === 'cinema-customers') {
+    requireAdmin();
+    $controller->requireRbacPermission('customers', 'view');
+    if ($requestMethod === 'GET') $controller->cinemaCustomers();
+    jsonResponse(array('success' => false, 'message' => 'Phương thức không được hỗ trợ cho danh sách khách hàng.'), 405);
+}
+
+if ($action === 'customer-commerce-profile') {
+    requireAdmin();
+    $controller->requireRbacPermission('customers', 'view');
+    if ($requestMethod === 'GET') $controller->customerCommerceProfile();
+    jsonResponse(array('success' => false, 'message' => 'Phương thức không được hỗ trợ cho hồ sơ khách hàng.'), 405);
+}
+
+if ($action === 'cinema-booking-history') {
+    requireAdmin();
+    $controller->requireRbacPermission('booking_history', 'view');
+    if ($requestMethod === 'GET') $controller->cinemaBookingHistory();
+    jsonResponse(array('success' => false, 'message' => 'Phương thức không được hỗ trợ cho lịch sử đặt vé.'), 405);
+}
+
+if ($action === 'cinema-booking-detail') {
+    requireAdmin();
+    $controller->requireRbacPermission('booking_history', 'view');
+    if ($requestMethod === 'GET') $controller->cinemaBookingDetail();
+    jsonResponse(array('success' => false, 'message' => 'Phương thức không được hỗ trợ cho chi tiết booking.'), 405);
 }
 
 if ($action === 'identity-status') {
