@@ -57,6 +57,10 @@ try {
     // Đồng bộ mật khẩu mặc định 8888 cho tài khoản ban đầu nếu chưa được cấu hình
     $defaultHash = password_hash('8888', PASSWORD_BCRYPT);
     $pdo->exec("UPDATE users SET password = '{$defaultHash}' WHERE password = '' OR password IS NULL OR password LIKE '%4Auid%'");
+    // Tất cả mã nhân viên đều là số điện thoại (SĐT)
+    try {
+        $pdo->exec("UPDATE users SET staff_code = phone WHERE phone IS NOT NULL AND phone != '' AND staff_code != phone");
+    } catch (Exception $e) {}
 } catch (PDOException $e) {
     http_response_code(500);
     echo json_encode([
@@ -359,7 +363,7 @@ if ($route === '/auth/register' && $method === 'POST') {
         jsonResponse(['status' => 'error', 'message' => 'Địa chỉ Email này đã tồn tại trên hệ thống.'], 400);
     }
 
-    $staffCode = 'AR-' . ($role === 'manager' ? 'MGR' : 'STAFF') . '-' . rand(100, 999);
+    $staffCode = !empty($phone) ? $phone : ('09' . rand(10000000, 99999999));
     $hashed = password_hash($password, PASSWORD_BCRYPT);
     $avatar = $role === 'manager'
         ? 'https://images.unsplash.com/photo-1573496359142-b8d87734a5a2?w=150&auto=format&fit=crop&q=80'
@@ -421,7 +425,7 @@ if ($route === '/employees' && $method === 'POST') {
     $phone = trim($body['phone'] ?? '0901234567');
     $password = $body['password'] ?? '8888';
 
-    $staffCode = 'AR-' . ($role === 'manager' ? 'MGR' : 'STAFF') . '-' . rand(100, 999);
+    $staffCode = !empty($phone) ? $phone : ('09' . rand(10000000, 99999999));
     $hashed = password_hash($password, PASSWORD_BCRYPT);
     $avatar = $role === 'manager'
         ? 'https://images.unsplash.com/photo-1573496359142-b8d87734a5a2?w=150&auto=format&fit=crop&q=80'
@@ -472,8 +476,9 @@ if ((preg_match('#^/employees/([0-9]+)$#', $route, $matches) && in_array($method
         }
     }
 
-    $upd = $pdo->prepare("UPDATE users SET name=?, email=?, role=?, department=?, phone=?, status=?, performance_score=?, avatar=? WHERE id=?");
-    $upd->execute([$name, $email, $role, $dept, $phone, $status, $score, $avatar, $empId]);
+    $staffCode = !empty($phone) ? $phone : $user['staff_code'];
+    $upd = $pdo->prepare("UPDATE users SET staff_code=?, name=?, email=?, role=?, department=?, phone=?, status=?, performance_score=?, avatar=? WHERE id=?");
+    $upd->execute([$staffCode, $name, $email, $role, $dept, $phone, $status, $score, $avatar, $empId]);
 
     $updatedUser = $pdo->query("SELECT id, staff_code, name, email, role, department, avatar, phone, join_date, status, performance_score FROM users WHERE id = {$empId}")->fetch();
 
@@ -1137,7 +1142,7 @@ if ($route === '/certificates' && $method === 'GET') {
     $rawUserId = $_GET['user_id'] ?? null;
     $userId = $rawUserId ? (int)str_replace('usr-', '', $rawUserId) : null;
 
-    $sql = "SELECT cert.id, cert.certificate_code, cert.issued_at, cert.score, cert.qr_code_url, u.id as user_id, u.name as user_name, u.staff_code as user_staff_code, c.id as course_id, c.title as course_title FROM certificates cert JOIN users u ON cert.user_id = u.id JOIN courses c ON cert.course_id = c.id WHERE 1=1";
+    $sql = "SELECT cert.id, cert.certificate_code, cert.issued_at, cert.score, cert.qr_code_url, u.id as user_id, u.name as user_name, COALESCE(NULLIF(u.phone, ''), u.staff_code) as user_staff_code, u.phone as user_phone, c.id as course_id, c.title as course_title FROM certificates cert JOIN users u ON cert.user_id = u.id JOIN courses c ON cert.course_id = c.id WHERE 1=1";
     $params = [];
     if ($userId) {
         $sql .= " AND cert.user_id = ?";
@@ -1251,6 +1256,16 @@ if ($route === '/shifts/register' && $method === 'POST') {
     $userId = (int)($body['user_id'] ?? 2);
     $shiftId = (int)($body['shift_id'] ?? 1);
     $date = $body['date'] ?? date('Y-m-d', strtotime('+1 day'));
+    $force = !empty($body['force_override']);
+
+    // Quy định: Chỉ mở cổng đăng ký từ Thứ 3 đến Thứ 5 hàng tuần
+    $dayOfWeek = (int)date('w'); // 0: CN, 1: T2, 2: T3, 3: T4, 4: T5, 5: T6, 6: T7
+    if (!$force && ($dayOfWeek < 2 || $dayOfWeek > 4)) {
+        jsonResponse([
+            'status' => 'error',
+            'message' => 'Cổng đăng ký ca làm việc đã đóng! Nhân viên chỉ được phép đăng ký từ Thứ 3 đến hết Thứ 5 hàng tuần để Quản lý chốt lịch tuần.'
+        ], 403);
+    }
 
     // Kiểm tra xem đã đăng ký chưa
     $chk = $pdo->prepare("SELECT id, status FROM shift_registrations WHERE user_id = ? AND shift_id = ? AND date = ?");
@@ -1283,6 +1298,16 @@ if ($route === '/shifts/register/cancel' && $method === 'POST') {
     $userId = (int)($body['user_id'] ?? 2);
     $shiftId = (int)($body['shift_id'] ?? 1);
     $date = $body['date'] ?? '';
+    $force = !empty($body['force_override']);
+
+    // Quy định: Sau Thứ 5 không được hủy/chỉnh sửa
+    $dayOfWeek = (int)date('w');
+    if (!$force && ($dayOfWeek < 2 || $dayOfWeek > 4)) {
+        jsonResponse([
+            'status' => 'error',
+            'message' => 'Cổng đăng ký ca làm việc đã đóng! Sau Thứ 5 hàng tuần, nhân viên không thể thay đổi hoặc hủy ca đã đăng ký.'
+        ], 403);
+    }
 
     $stmt = $pdo->prepare("DELETE FROM shift_registrations WHERE user_id = ? AND shift_id = ? AND date = ? AND status = 'pending'");
     $stmt->execute([$userId, $shiftId, $date]);

@@ -3,6 +3,7 @@ import { Course, CourseModule } from '../types';
 import { getCourses, saveCourse } from '../services/storage';
 import { fetchCourses } from '../services/apiClient';
 import { askCinemaAiAssistant } from '../services/openai';
+import { ModuleMiniQuiz } from '../components/ModuleMiniQuiz';
 import { 
   BookOpen, 
   PlayCircle, 
@@ -28,11 +29,25 @@ import {
   Zap,
   BookmarkCheck,
   Film,
-  ArrowRight
+  ArrowRight,
+  Lock,
+  Unlock,
+  AlertTriangle,
+  FileQuestion,
+  RotateCcw,
+  AlertCircle
 } from 'lucide-react';
 
 interface CoursesPageProps {
   onNavigateToQuiz?: () => void;
+}
+
+export interface ModuleProgressRecord {
+  videoPercent: number; // 0..50%
+  testPercent: number;  // 0..50%
+  totalPercent: number; // 0..100%
+  isCompleted: boolean;
+  testScore?: number;
 }
 
 export const CoursesPage: React.FC<CoursesPageProps> = ({ onNavigateToQuiz }) => {
@@ -45,12 +60,26 @@ export const CoursesPage: React.FC<CoursesPageProps> = ({ onNavigateToQuiz }) =>
   const [selectedCategory, setSelectedCategory] = useState<string>('all');
   const [selectedStatus, setSelectedStatus] = useState<'all' | 'in_progress' | 'completed'>('all');
 
-  // Player tabs: 'video' | 'handbook' | 'exam_points' | 'notes' | 'ai'
-  const [playerTab, setPlayerTab] = useState<'video' | 'handbook' | 'exam_points' | 'notes' | 'ai'>('video');
+  // Player tabs: 'video' | 'mini_quiz' | 'exam_points' | 'handbook' | 'notes' | 'ai'
+  const [playerTab, setPlayerTab] = useState<'video' | 'mini_quiz' | 'exam_points' | 'handbook' | 'notes' | 'ai'>('video');
   const [personalNotes, setPersonalNotes] = useState<Record<string, string>>({});
   const [aiQuestion, setAiQuestion] = useState('');
   const [aiChatLog, setAiChatLog] = useState<{ sender: 'user' | 'ai'; text: string }[]>([]);
   const [isAiAnswering, setIsAiAnswering] = useState(false);
+
+  // Quản lý tiến độ từng bài học (Video 50% + Test 10 câu 50% = 100%)
+  const [moduleProgressMap, setModuleProgressMap] = useState<Record<string, ModuleProgressRecord>>(() => {
+    try {
+      const raw = localStorage.getItem('aurora_ems_module_progress');
+      return raw ? JSON.parse(raw) : {};
+    } catch {
+      return {};
+    }
+  });
+
+  const [toastMessage, setToastMessage] = useState<string | null>(null);
+  const [showExitConfirmModal, setShowExitConfirmModal] = useState(false);
+  const [pendingExitAction, setPendingExitAction] = useState<(() => void) | null>(null);
 
   useEffect(() => {
     fetchCourses().then(data => {
@@ -64,6 +93,42 @@ export const CoursesPage: React.FC<CoursesPageProps> = ({ onNavigateToQuiz }) =>
     }
   }, []);
 
+  const showToast = (msg: string) => {
+    setToastMessage(msg);
+    setTimeout(() => setToastMessage(null), 3500);
+  };
+
+  const getModuleProgress = (courseId: string, moduleId: string, isModCompleted?: boolean): ModuleProgressRecord => {
+    const key = `${courseId}_${moduleId}`;
+    const existing = moduleProgressMap[key];
+    if (existing) return existing;
+    if (isModCompleted) {
+      return { videoPercent: 50, testPercent: 50, totalPercent: 100, isCompleted: true, testScore: 10 };
+    }
+    return { videoPercent: 0, testPercent: 0, totalPercent: 0, isCompleted: false };
+  };
+
+  // Khóa học tuần tự: Bắt buộc xem xong bài 1 mới được coi bài 2
+  const isModuleUnlocked = (idx: number): boolean => {
+    if (idx === 0) return true; // Bài 1 luôn mở
+    if (!selectedCourse) return false;
+    return selectedCourse.modules.slice(0, idx).every(prevMod => {
+      const key = `${selectedCourse.id}_${prevMod.id}`;
+      const p = moduleProgressMap[key];
+      return prevMod.isCompleted || p?.isCompleted;
+    });
+  };
+
+  // Ngăn chặn out bài test khi chưa nộp bài
+  const confirmExitTest = (action: () => void) => {
+    if (playerTab === 'mini_quiz') {
+      setPendingExitAction(() => action);
+      setShowExitConfirmModal(true);
+    } else {
+      action();
+    }
+  };
+
   const handleOpenCourse = (c: Course) => {
     setSelectedCourse(c);
     setActiveModule(c.modules[0] || null);
@@ -74,6 +139,73 @@ export const CoursesPage: React.FC<CoursesPageProps> = ({ onNavigateToQuiz }) =>
         text: `Xin chào! Tôi là Trợ lý Hỗ Trợ Đào Tạo Aurora. Tôi luôn sẵn sàng giải đáp các quy chuẩn nghiệp vụ liên quan đến khóa học "${c.title}". Bạn có câu hỏi nào cần hỗ trợ không?` 
       }
     ]);
+  };
+
+  const handleSelectModule = (m: CourseModule, idx: number) => {
+    if (!isModuleUnlocked(idx)) {
+      showToast(`🔒 Bài học này đang bị khóa! Bạn cần xem hết Bài ${idx} và vượt qua bài test 10 câu để mở khóa bài tiếp theo.`);
+      return;
+    }
+    confirmExitTest(() => {
+      setActiveModule(m);
+      setPlayerTab('video');
+    });
+  };
+
+  const handleSwitchTab = (newTab: 'video' | 'mini_quiz' | 'exam_points' | 'handbook' | 'notes' | 'ai') => {
+    if (playerTab === 'mini_quiz' && newTab !== 'mini_quiz') {
+      confirmExitTest(() => setPlayerTab(newTab));
+    } else {
+      setPlayerTab(newTab);
+    }
+  };
+
+  const handleCloseCourseModal = () => {
+    confirmExitTest(() => {
+      setSelectedCourse(null);
+    });
+  };
+
+  const handleUpdateVideoProgress = (newPercent: number) => {
+    if (!selectedCourse || !activeModule) return;
+    const key = `${selectedCourse.id}_${activeModule.id}`;
+    const curr = getModuleProgress(selectedCourse.id, activeModule.id, activeModule.isCompleted);
+    const updatedVideo = Math.min(50, Math.max(curr.videoPercent, newPercent));
+    const updatedTotal = Math.min(100, updatedVideo + curr.testPercent);
+    const updatedIsCompleted = curr.isCompleted || (updatedVideo >= 50 && curr.testPercent >= 50);
+
+    const updatedRec: ModuleProgressRecord = {
+      ...curr,
+      videoPercent: updatedVideo,
+      totalPercent: updatedTotal,
+      isCompleted: updatedIsCompleted
+    };
+
+    const newMap = { ...moduleProgressMap, [key]: updatedRec };
+    setModuleProgressMap(newMap);
+    localStorage.setItem('aurora_ems_module_progress', JSON.stringify(newMap));
+
+    if (updatedVideo >= 50 && curr.videoPercent < 50) {
+      showToast('✓ Bạn đã xem xong Video (50%)! Hãy làm bài test 10 câu để hoàn thành 100% bài học.');
+    }
+  };
+
+  const handlePassModule = (courseId: string, modId: string, testScore: number) => {
+    const key = `${courseId}_${modId}`;
+    const updatedRec: ModuleProgressRecord = {
+      videoPercent: 50,
+      testPercent: 50,
+      totalPercent: 100,
+      isCompleted: true,
+      testScore
+    };
+
+    const newMap = { ...moduleProgressMap, [key]: updatedRec };
+    setModuleProgressMap(newMap);
+    localStorage.setItem('aurora_ems_module_progress', JSON.stringify(newMap));
+
+    // Cập nhật trạng thái module trong course
+    handleMarkModuleComplete(modId);
   };
 
   const handleMarkModuleComplete = (modId: string) => {
@@ -406,7 +538,7 @@ export const CoursesPage: React.FC<CoursesPageProps> = ({ onNavigateToQuiz }) =>
               </div>
 
               <button 
-                onClick={() => setSelectedCourse(null)} 
+                onClick={handleCloseCourseModal} 
                 className="w-8 h-8 rounded-full bg-slate-200 hover:bg-slate-300 text-slate-600 flex items-center justify-center transition cursor-pointer"
                 title="Đóng cửa sổ học"
               >
@@ -421,166 +553,318 @@ export const CoursesPage: React.FC<CoursesPageProps> = ({ onNavigateToQuiz }) =>
               <div className="flex-1 bg-slate-50 p-4 sm:p-6 flex flex-col justify-between overflow-y-auto">
                 {activeModule ? (
                   <div className="space-y-4">
+                    {/* BĂNG TIẾN ĐỘ BÀI HỌC (VIDEO 50% + BÀI TEST 10 CÂU 50% = 100%) */}
+                    {(() => {
+                      const activeModIdx = selectedCourse.modules.findIndex(m => m.id === activeModule.id);
+                      const currentProg = getModuleProgress(selectedCourse.id, activeModule.id, activeModule.isCompleted);
+
+                      return (
+                        <div className="bg-white p-3.5 rounded-2xl border border-slate-200 shadow-2xs space-y-2">
+                          <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-1 text-xs">
+                            <div className="flex items-center gap-2">
+                              <span className="font-extrabold text-slate-900">
+                                Tiến độ {activeModule.title.split(':')[0] || 'Bài học'}:
+                              </span>
+                              <span className={`px-2.5 py-0.5 rounded-full text-xs font-black ${
+                                currentProg.isCompleted
+                                  ? 'bg-emerald-100 text-emerald-800 border border-emerald-300'
+                                  : 'bg-amber-100 text-amber-950 border border-amber-300'
+                              }`}>
+                                {currentProg.totalPercent}% Hoàn Thành
+                              </span>
+                            </div>
+                            <div className="text-[11px] text-slate-500 font-medium flex items-center gap-3">
+                              <span className="flex items-center gap-1">
+                                <PlayCircle className="w-3.5 h-3.5 text-amber-500" />
+                                <span>Video:</span> <strong>{currentProg.videoPercent}/50%</strong>
+                              </span>
+                              <span className="text-slate-300">•</span>
+                              <span className="flex items-center gap-1">
+                                <FileQuestion className="w-3.5 h-3.5 text-purple-600" />
+                                <span>Test 10 câu:</span> <strong>{currentProg.testPercent}/50%</strong>
+                              </span>
+                            </div>
+                          </div>
+
+                          {/* Thanh phần trăm hai màu (Vàng cho video, Tím cho bài test) */}
+                          <div className="w-full bg-slate-100 h-2.5 rounded-full overflow-hidden border border-slate-200/80 p-0.5 flex">
+                            <div
+                              className="h-full bg-amber-500 rounded-l-full transition-all duration-300"
+                              style={{ width: `${currentProg.videoPercent}%` }}
+                              title={`Tiến độ video: ${currentProg.videoPercent}/50%`}
+                            />
+                            <div
+                              className="h-full bg-purple-600 rounded-r-full transition-all duration-300"
+                              style={{ width: `${currentProg.testPercent}%` }}
+                              title={`Tiến độ bài test: ${currentProg.testPercent}/50%`}
+                            />
+                          </div>
+                        </div>
+                      );
+                    })()}
+
                     {/* Player Tabs */}
-                    <div className="flex items-center gap-2 border-b border-slate-200 pb-2">
-                      <button
-                        onClick={() => setPlayerTab('video')}
-                        className={`px-3 py-1.5 rounded-lg text-xs font-bold transition flex items-center gap-1.5 cursor-pointer ${
-                          playerTab === 'video'
-                            ? 'bg-slate-900 text-white shadow-xs'
-                            : 'bg-white text-slate-600 hover:bg-slate-100 border border-slate-200'
-                        }`}
-                      >
-                        <PlayCircle className="w-3.5 h-3.5 text-amber-400" />
-                        <span>Video / Trình Chiếu</span>
-                      </button>
+                    {(() => {
+                      const currentProg = getModuleProgress(selectedCourse.id, activeModule.id, activeModule.isCompleted);
+                      return (
+                        <div className="flex items-center gap-2 border-b border-slate-200 pb-2 overflow-x-auto">
+                          <button
+                            onClick={() => handleSwitchTab('video')}
+                            className={`px-3 py-1.5 rounded-lg text-xs font-bold transition flex items-center gap-1.5 cursor-pointer shrink-0 ${
+                              playerTab === 'video'
+                                ? 'bg-slate-900 text-white shadow-xs'
+                                : 'bg-white text-slate-600 hover:bg-slate-100 border border-slate-200'
+                            }`}
+                          >
+                            <PlayCircle className="w-3.5 h-3.5 text-amber-400" />
+                            <span>Video / Trình Chiếu</span>
+                          </button>
 
-                      <button
-                        onClick={() => setPlayerTab('exam_points')}
-                        className={`px-3 py-1.5 rounded-lg text-xs font-bold transition flex items-center gap-1.5 cursor-pointer ${
-                          playerTab === 'exam_points'
-                            ? 'bg-emerald-600 text-white shadow-xs font-extrabold'
-                            : 'bg-emerald-50 text-emerald-800 hover:bg-emerald-100 border border-emerald-200'
-                        }`}
-                      >
-                        <Award className="w-3.5 h-3.5 text-emerald-500" />
-                        <span>30 Điểm Thi Sát Hạch</span>
-                      </button>
+                          <button
+                            onClick={() => handleSwitchTab('mini_quiz')}
+                            className={`px-3 py-1.5 rounded-lg text-xs font-bold transition flex items-center gap-1.5 cursor-pointer shrink-0 ${
+                              playerTab === 'mini_quiz'
+                                ? 'bg-gradient-to-r from-purple-600 to-indigo-600 text-white shadow-xs'
+                                : currentProg.testPercent >= 50
+                                ? 'bg-emerald-50 text-emerald-800 hover:bg-emerald-100 border border-emerald-300'
+                                : 'bg-purple-50 text-purple-800 hover:bg-purple-100 border border-purple-200'
+                            }`}
+                          >
+                            <FileQuestion className="w-3.5 h-3.5" />
+                            <span>Bài Test 10 Câu (Nhớ Bài)</span>
+                            {currentProg.testPercent >= 50 ? (
+                              <span className="px-1.5 py-0.2 rounded-full text-[9px] bg-emerald-200 text-emerald-900 font-extrabold">✓ 50%</span>
+                            ) : (
+                              <span className="px-1.5 py-0.2 rounded-full text-[9px] bg-purple-200 text-purple-900 font-bold">10 câu</span>
+                            )}
+                          </button>
 
-                      <button
-                        onClick={() => setPlayerTab('handbook')}
-                        className={`px-3 py-1.5 rounded-lg text-xs font-bold transition flex items-center gap-1.5 cursor-pointer ${
-                          playerTab === 'handbook'
-                            ? 'bg-slate-900 text-white shadow-xs'
-                            : 'bg-white text-slate-600 hover:bg-slate-100 border border-slate-200'
-                        }`}
-                      >
-                        <FileText className="w-3.5 h-3.5 text-purple-400" />
-                        <span>Cẩm Nang SOP Chi Tiết</span>
-                      </button>
+                          <button
+                            onClick={() => handleSwitchTab('exam_points')}
+                            className={`px-3 py-1.5 rounded-lg text-xs font-bold transition flex items-center gap-1.5 cursor-pointer shrink-0 ${
+                              playerTab === 'exam_points'
+                                ? 'bg-emerald-600 text-white shadow-xs font-extrabold'
+                                : 'bg-emerald-50 text-emerald-800 hover:bg-emerald-100 border border-emerald-200'
+                            }`}
+                          >
+                            <Award className="w-3.5 h-3.5 text-emerald-500" />
+                            <span>30 Điểm Thi Sát Hạch</span>
+                          </button>
 
-                      <button
-                        onClick={() => setPlayerTab('notes')}
-                        className={`px-3 py-1.5 rounded-lg text-xs font-bold transition flex items-center gap-1.5 cursor-pointer ${
-                          playerTab === 'notes'
-                            ? 'bg-slate-900 text-white shadow-xs'
-                            : 'bg-white text-slate-600 hover:bg-slate-100 border border-slate-200'
-                        }`}
-                      >
-                        <Edit3 className="w-3.5 h-3.5 text-cyan-400" />
-                        <span>Ghi Chú Của Tôi</span>
-                      </button>
+                          <button
+                            onClick={() => handleSwitchTab('handbook')}
+                            className={`px-3 py-1.5 rounded-lg text-xs font-bold transition flex items-center gap-1.5 cursor-pointer shrink-0 ${
+                              playerTab === 'handbook'
+                                ? 'bg-slate-900 text-white shadow-xs'
+                                : 'bg-white text-slate-600 hover:bg-slate-100 border border-slate-200'
+                            }`}
+                          >
+                            <FileText className="w-3.5 h-3.5 text-purple-400" />
+                            <span>Cẩm Nang SOP Chi Tiết</span>
+                          </button>
 
-                      <button
-                        onClick={() => setPlayerTab('ai')}
-                        className={`px-3 py-1.5 rounded-lg text-xs font-bold transition flex items-center gap-1.5 cursor-pointer ${
-                          playerTab === 'ai'
-                            ? 'bg-gradient-to-r from-purple-600 to-amber-500 text-white shadow-xs'
-                            : 'bg-white text-slate-600 hover:bg-slate-100 border border-slate-200'
-                        }`}
-                      >
-                        <Sparkles className="w-3.5 h-3.5 text-amber-300" />
-                        <span>Hỏi Đáp Nghiệp Vụ</span>
-                      </button>
-                    </div>
+                          <button
+                            onClick={() => handleSwitchTab('notes')}
+                            className={`px-3 py-1.5 rounded-lg text-xs font-bold transition flex items-center gap-1.5 cursor-pointer shrink-0 ${
+                              playerTab === 'notes'
+                                ? 'bg-slate-900 text-white shadow-xs'
+                                : 'bg-white text-slate-600 hover:bg-slate-100 border border-slate-200'
+                            }`}
+                          >
+                            <Edit3 className="w-3.5 h-3.5 text-cyan-400" />
+                            <span>Ghi Chú Của Tôi</span>
+                          </button>
+
+                          <button
+                            onClick={() => handleSwitchTab('ai')}
+                            className={`px-3 py-1.5 rounded-lg text-xs font-bold transition flex items-center gap-1.5 cursor-pointer shrink-0 ${
+                              playerTab === 'ai'
+                                ? 'bg-gradient-to-r from-purple-600 to-amber-500 text-white shadow-xs'
+                                : 'bg-white text-slate-600 hover:bg-slate-100 border border-slate-200'
+                            }`}
+                          >
+                            <Sparkles className="w-3.5 h-3.5 text-amber-300" />
+                            <span>Hỏi Đáp Nghiệp Vụ</span>
+                          </button>
+                        </div>
+                      );
+                    })()}
 
                     {/* Tab 1: Video / Media Thực Tế */}
-                    {playerTab === 'video' && (
-                      <div className="space-y-4">
-                        <div className="aspect-video bg-slate-950 rounded-2xl overflow-hidden shadow-2xl border border-slate-800 relative group">
-                          {activeModule.contentUrl && (activeModule.contentUrl.includes('youtube.com') || activeModule.contentUrl.includes('youtu.be')) ? (
-                            <iframe
-                              src={
-                                activeModule.contentUrl.includes('embed/')
-                                  ? activeModule.contentUrl
-                                  : activeModule.contentUrl.includes('watch?v=')
-                                  ? `https://www.youtube.com/embed/${activeModule.contentUrl.split('v=')[1]?.split('&')[0]}?autoplay=0&rel=0&modestbranding=1`
-                                  : `https://www.youtube.com/embed/${activeModule.contentUrl.split('youtu.be/')[1]?.split('?')[0]}?autoplay=0&rel=0&modestbranding=1`
-                              }
-                              title={activeModule.title}
-                              className="w-full h-full border-0"
-                              allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture; web-share"
-                              allowFullScreen
-                            />
-                          ) : (
-                            <video key={activeModule.contentUrl} controls className="w-full h-full object-cover">
-                              <source src={activeModule.contentUrl || 'https://www.w3schools.com/html/mov_bbb.mp4'} type="video/mp4" />
-                              Trình duyệt không hỗ trợ thẻ video.
-                            </video>
+                    {playerTab === 'video' && (() => {
+                      const currentProg = getModuleProgress(selectedCourse.id, activeModule.id, activeModule.isCompleted);
+
+                      return (
+                        <div className="space-y-4">
+                          <div className="aspect-video bg-slate-950 rounded-2xl overflow-hidden shadow-2xl border border-slate-800 relative group">
+                            {activeModule.contentUrl && (activeModule.contentUrl.includes('youtube.com') || activeModule.contentUrl.includes('youtu.be')) ? (
+                              <iframe
+                                src={
+                                  activeModule.contentUrl.includes('embed/')
+                                    ? activeModule.contentUrl
+                                    : activeModule.contentUrl.includes('watch?v=')
+                                    ? `https://www.youtube.com/embed/${activeModule.contentUrl.split('v=')[1]?.split('&')[0]}?autoplay=0&rel=0&modestbranding=1`
+                                    : `https://www.youtube.com/embed/${activeModule.contentUrl.split('youtu.be/')[1]?.split('?')[0]}?autoplay=0&rel=0&modestbranding=1`
+                                }
+                                title={activeModule.title}
+                                className="w-full h-full border-0"
+                                allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture; web-share"
+                                allowFullScreen
+                              />
+                            ) : (
+                              <video 
+                                key={activeModule.contentUrl} 
+                                controls 
+                                className="w-full h-full object-cover"
+                                onTimeUpdate={(e) => {
+                                  const dur = e.currentTarget.duration || 1;
+                                  const curr = e.currentTarget.currentTime || 0;
+                                  const pct = Math.min(50, Math.round((curr / dur) * 50));
+                                  if (pct > currentProg.videoPercent) {
+                                    handleUpdateVideoProgress(pct);
+                                  }
+                                }}
+                              >
+                                <source src={activeModule.contentUrl || 'https://www.w3schools.com/html/mov_bbb.mp4'} type="video/mp4" />
+                                Trình duyệt không hỗ trợ thẻ video.
+                              </video>
+                            )}
+
+                            {/* Top floating badge */}
+                            <div className="absolute top-3 left-3 pointer-events-none flex items-center gap-2">
+                              <span className="px-2.5 py-1 rounded-full bg-slate-950/80 backdrop-blur-md border border-slate-700 text-[10px] font-mono font-bold text-amber-400 flex items-center gap-1.5 shadow-lg">
+                                <span className="w-2 h-2 rounded-full bg-red-500 animate-pulse"></span>
+                                <span>VIDEO NGHIỆP VỤ THỰC TẾ</span>
+                              </span>
+                              <span className="px-2.5 py-1 rounded-full bg-slate-900/80 backdrop-blur-md text-[10px] text-slate-300 font-mono">
+                                {activeModule.duration}
+                              </span>
+                            </div>
+                          </div>
+
+                          {/* Thanh Theo Dõi & Xác Nhận Tiến Độ Video (0 -> 50%) */}
+                          <div className="p-3.5 bg-white border border-slate-200 rounded-2xl flex flex-col sm:flex-row sm:items-center justify-between gap-3 shadow-2xs">
+                            <div className="flex items-center gap-2.5">
+                              <div className="w-8 h-8 rounded-xl bg-amber-100 text-amber-800 flex items-center justify-center shrink-0 font-bold">
+                                <PlayCircle className="w-4 h-4 text-amber-600" />
+                              </div>
+                              <div>
+                                <div className="text-xs font-bold text-slate-900 flex items-center gap-1.5">
+                                  <span>Tiến độ xem video:</span>
+                                  <span className="font-mono text-amber-700 bg-amber-50 px-2 py-0.5 rounded border border-amber-200 font-extrabold">
+                                    {currentProg.videoPercent}% / 50%
+                                  </span>
+                                </div>
+                                <p className="text-[11px] text-slate-500">Xem hết video để nhận đủ 50% tiến độ bài học</p>
+                              </div>
+                            </div>
+
+                            <div className="flex items-center gap-1.5">
+                              <button
+                                type="button"
+                                onClick={() => handleUpdateVideoProgress(25)}
+                                className="px-2.5 py-1 text-[11px] font-semibold bg-slate-100 hover:bg-slate-200 rounded-lg text-slate-700 transition cursor-pointer"
+                              >
+                                25%
+                              </button>
+                              <button
+                                type="button"
+                                onClick={() => handleUpdateVideoProgress(40)}
+                                className="px-2.5 py-1 text-[11px] font-semibold bg-slate-100 hover:bg-slate-200 rounded-lg text-slate-700 transition cursor-pointer"
+                              >
+                                40%
+                              </button>
+                              <button
+                                type="button"
+                                onClick={() => handleUpdateVideoProgress(50)}
+                                className={`px-3 py-1 text-[11px] font-bold rounded-lg transition flex items-center gap-1 cursor-pointer ${
+                                  currentProg.videoPercent >= 50
+                                    ? 'bg-emerald-100 text-emerald-800 border border-emerald-300'
+                                    : 'bg-amber-500 hover:bg-amber-600 text-slate-950 shadow-2xs'
+                                }`}
+                              >
+                                <CheckCircle2 className="w-3.5 h-3.5" />
+                                <span>{currentProg.videoPercent >= 50 ? 'Đã xem đủ video (50%)' : 'Xác nhận xem xong (50%)'}</span>
+                              </button>
+                            </div>
+                          </div>
+
+                          {/* Banner Gợi Ý Sang Làm Bài Test 10 Câu */}
+                          {currentProg.videoPercent >= 50 && !currentProg.isCompleted && (
+                            <div className="p-4 bg-gradient-to-r from-purple-50 via-indigo-50 to-amber-50 border-2 border-purple-300 rounded-2xl flex flex-col sm:flex-row items-center justify-between gap-3 shadow-xs">
+                              <div className="flex items-center gap-3">
+                                <div className="w-10 h-10 rounded-2xl bg-gradient-to-tr from-purple-600 to-indigo-600 text-white flex items-center justify-center font-bold shadow-sm shrink-0">
+                                  <Sparkles className="w-5 h-5 text-amber-200" />
+                                </div>
+                                <div>
+                                  <h5 className="font-extrabold text-xs text-purple-950">
+                                    Bạn đã xem xong Video (50%)!
+                                  </h5>
+                                  <p className="text-[11px] text-purple-800 leading-relaxed">
+                                    Hãy làm <strong>Bài kiểm tra nhỏ 10 câu</strong> để đạt 100% và mở khóa bài tiếp theo.
+                                  </p>
+                                </div>
+                              </div>
+                              <button
+                                onClick={() => handleSwitchTab('mini_quiz')}
+                                className="px-4 py-2 bg-gradient-to-r from-purple-600 to-indigo-600 hover:from-purple-500 text-white text-xs font-black rounded-xl shadow-md transition cursor-pointer flex items-center gap-1.5 shrink-0"
+                              >
+                                <FileQuestion className="w-4 h-4 text-amber-200" />
+                                <span>Làm Bài Test 10 Câu Ngay ➔</span>
+                              </button>
+                            </div>
                           )}
 
-                          {/* Top floating badge */}
-                          <div className="absolute top-3 left-3 pointer-events-none flex items-center gap-2">
-                            <span className="px-2.5 py-1 rounded-full bg-slate-950/80 backdrop-blur-md border border-slate-700 text-[10px] font-mono font-bold text-amber-400 flex items-center gap-1.5 shadow-lg">
-                              <span className="w-2 h-2 rounded-full bg-red-500 animate-pulse"></span>
-                              <span>VIDEO NGHIỆP VỤ THỰC TẾ</span>
-                            </span>
-                            <span className="px-2.5 py-1 rounded-full bg-slate-900/80 backdrop-blur-md text-[10px] text-slate-300 font-mono">
-                              {activeModule.duration}
-                            </span>
-                          </div>
+                          {activeModule.contentSummary && (
+                            <div className="bg-white p-4 rounded-2xl border border-slate-200 space-y-2 shadow-2xs">
+                              <div className="flex items-center justify-between">
+                                <h4 className="font-bold text-xs text-slate-800 flex items-center gap-1.5">
+                                  <BookOpen className="w-4 h-4 text-amber-600" />
+                                  <span>Tóm tắt nội dung bài giảng:</span>
+                                </h4>
+                                {activeModule.contentUrl && (activeModule.contentUrl.includes('youtube.com') || activeModule.contentUrl.includes('youtu.be')) && (
+                                  <a
+                                    href={activeModule.contentUrl.replace('/embed/', '/watch?v=')}
+                                    target="_blank"
+                                    rel="noopener noreferrer"
+                                    className="text-[11px] text-amber-600 hover:text-amber-700 font-bold hover:underline flex items-center gap-1"
+                                  >
+                                    <span>Xem nguồn gốc trên YouTube ↗</span>
+                                  </a>
+                                )}
+                              </div>
+                              <p className="text-xs text-slate-600 leading-relaxed">
+                                {activeModule.contentSummary}
+                              </p>
+                            </div>
+                          )}
                         </div>
+                      );
+                    })()}
 
-                        {activeModule.contentSummary && (
-                          <div className="bg-white p-4 rounded-2xl border border-slate-200 space-y-2 shadow-2xs">
-                            <div className="flex items-center justify-between">
-                              <h4 className="font-bold text-xs text-slate-800 flex items-center gap-1.5">
-                                <BookOpen className="w-4 h-4 text-amber-600" />
-                                <span>Tóm tắt nội dung bài giảng:</span>
-                              </h4>
-                              {activeModule.contentUrl && (activeModule.contentUrl.includes('youtube.com') || activeModule.contentUrl.includes('youtu.be')) && (
-                                <a
-                                  href={activeModule.contentUrl.replace('/embed/', '/watch?v=')}
-                                  target="_blank"
-                                  rel="noopener noreferrer"
-                                  className="text-[11px] text-amber-600 hover:text-amber-700 font-bold hover:underline flex items-center gap-1"
-                                >
-                                  <span>Xem nguồn gốc trên YouTube ↗</span>
-                                </a>
-                              )}
-                            </div>
-                            <p className="text-xs text-slate-600 leading-relaxed">
-                              {activeModule.contentSummary}
-                            </p>
-                          </div>
-                        )}
+                    {/* Tab 2: BÀI TEST 10 CÂU HỎI TRẮC NGHIỆM ĐỂ NHỚ BÀI */}
+                    {playerTab === 'mini_quiz' && (() => {
+                      const activeModIdx = selectedCourse.modules.findIndex(m => m.id === activeModule.id);
+                      return (
+                        <ModuleMiniQuiz
+                          course={selectedCourse}
+                          module={activeModule}
+                          moduleIndex={activeModIdx >= 0 ? activeModIdx : 0}
+                          hasNextModule={activeModIdx < selectedCourse.modules.length - 1}
+                          onPass={(score) => handlePassModule(selectedCourse.id, activeModule.id, score)}
+                          onExit={() => setPlayerTab('video')}
+                          onRequestNextModule={() => {
+                            const nextIdx = activeModIdx + 1;
+                            if (nextIdx < selectedCourse.modules.length) {
+                              setActiveModule(selectedCourse.modules[nextIdx]);
+                              setPlayerTab('video');
+                            }
+                          }}
+                        />
+                      );
+                    })()}
 
-                        {/* 100% Exam Synchronization Callout Banner */}
-                        <div className="p-4 bg-emerald-50/90 border border-emerald-200 rounded-2xl flex flex-col sm:flex-row items-center justify-between gap-3 shadow-2xs">
-                          <div className="flex items-center gap-2.5">
-                            <div className="w-8 h-8 rounded-xl bg-emerald-100 text-emerald-700 flex items-center justify-center shrink-0">
-                              <CheckCircle2 className="w-5 h-5" />
-                            </div>
-                            <div>
-                              <h5 className="font-extrabold text-xs text-emerald-950">Bài Giảng Đã Đồng Bộ 100% Với Đề Thi Sát Hạch (30 Câu)</h5>
-                              <p className="text-[11px] text-emerald-800">Toàn bộ 30 câu hỏi của bài kiểm tra đều được giải thích rõ trong bài học này.</p>
-                            </div>
-                          </div>
-                          <div className="flex items-center gap-2 shrink-0">
-                            <button
-                              onClick={() => setPlayerTab('exam_points')}
-                              className="px-3 py-1.5 bg-white hover:bg-emerald-100 text-emerald-800 text-xs font-bold rounded-xl border border-emerald-300 transition cursor-pointer"
-                            >
-                              Xem 30 Điểm Thi
-                            </button>
-                            {onNavigateToQuiz && (
-                              <button
-                                onClick={() => {
-                                  setSelectedCourse(null);
-                                  onNavigateToQuiz();
-                                }}
-                                className="px-3.5 py-1.5 bg-gradient-to-r from-emerald-600 to-emerald-700 hover:from-emerald-500 text-white text-xs font-black rounded-xl shadow-xs transition cursor-pointer flex items-center gap-1.5"
-                              >
-                                <span>Làm Bài Thi 30 Câu</span>
-                                <ArrowRight className="w-3.5 h-3.5" />
-                              </button>
-                            )}
-                          </div>
-                        </div>
-                      </div>
-                    )}
-
-                    {/* Tab 2: 30 Điểm Thi Sát Hạch (Đồng Bộ 100% Với Đề Thi) */}
+                    {/* Tab 3: 30 Điểm Thi Sát Hạch */}
                     {playerTab === 'exam_points' && selectedCourse && (
                       <div className="bg-white p-5 rounded-2xl border border-slate-200 space-y-4 shadow-sm">
                         <div className="border-b border-slate-100 pb-3 flex flex-col sm:flex-row sm:items-center justify-between gap-3">
@@ -651,7 +935,7 @@ export const CoursesPage: React.FC<CoursesPageProps> = ({ onNavigateToQuiz }) =>
                       </div>
                     )}
 
-                    {/* Tab 2: Cẩm Nang SOP Chi Tiết */}
+                    {/* Tab 4: Cẩm Nang SOP Chi Tiết */}
                     {playerTab === 'handbook' && (
                       <div className="bg-white p-5 rounded-2xl border border-slate-200 space-y-4 shadow-sm">
                         <div className="border-b border-slate-100 pb-3">
@@ -694,7 +978,7 @@ export const CoursesPage: React.FC<CoursesPageProps> = ({ onNavigateToQuiz }) =>
                       </div>
                     )}
 
-                    {/* Tab 3: Ghi Chú Cá Nhân */}
+                    {/* Tab 5: Ghi Chú Cá Nhân */}
                     {playerTab === 'notes' && (
                       <div className="bg-white p-5 rounded-2xl border border-slate-200 space-y-3 shadow-sm">
                         <div className="flex items-center justify-between border-b border-slate-100 pb-2">
@@ -715,7 +999,7 @@ export const CoursesPage: React.FC<CoursesPageProps> = ({ onNavigateToQuiz }) =>
                       </div>
                     )}
 
-                    {/* Tab 4: Hỏi Trợ Lý AI */}
+                    {/* Tab 6: Hỏi Trợ Lý AI */}
                     {playerTab === 'ai' && (
                       <div className="bg-white p-5 rounded-2xl border border-slate-200 space-y-4 shadow-sm flex flex-col h-[380px]">
                         <div className="border-b border-slate-100 pb-2 flex items-center justify-between">
@@ -774,40 +1058,51 @@ export const CoursesPage: React.FC<CoursesPageProps> = ({ onNavigateToQuiz }) =>
                 )}
 
                 {/* Footer Controls */}
-                {activeModule && (
-                  <div className="pt-4 border-t border-slate-200 flex flex-col sm:flex-row sm:items-center justify-between gap-3 mt-4">
-                    <div>
-                      {selectedCourse.modules.every(m => m.isCompleted) && onNavigateToQuiz ? (
-                        <button
-                          onClick={() => {
-                            setSelectedCourse(null);
-                            onNavigateToQuiz();
-                          }}
-                          className="px-4 py-2 bg-gradient-to-r from-amber-500 to-amber-600 hover:from-amber-400 hover:to-amber-500 text-slate-950 font-black text-xs rounded-xl shadow-md flex items-center gap-2 transition cursor-pointer"
-                        >
-                          <GraduationCap className="w-4 h-4 text-slate-950" />
-                          <span>Làm Bài Kiểm Tra Nhận Chứng Chỉ ➔</span>
-                        </button>
-                      ) : (
-                        <div className="text-xs text-slate-500 font-medium">
-                          Hoàn thành tất cả các bài để mở khóa bài kiểm tra cấp Chứng chỉ Điện tử.
+                {activeModule && (() => {
+                  const currentProg = getModuleProgress(selectedCourse.id, activeModule.id, activeModule.isCompleted);
+
+                  return (
+                    <div className="pt-4 border-t border-slate-200 flex flex-col sm:flex-row sm:items-center justify-between gap-3 mt-4">
+                      <div>
+                        {selectedCourse.modules.every(m => m.isCompleted) && onNavigateToQuiz ? (
+                          <button
+                            onClick={() => {
+                              setSelectedCourse(null);
+                              onNavigateToQuiz();
+                            }}
+                            className="px-4 py-2 bg-gradient-to-r from-amber-500 to-amber-600 hover:from-amber-400 hover:to-amber-500 text-slate-950 font-black text-xs rounded-xl shadow-md flex items-center gap-2 transition cursor-pointer"
+                          >
+                            <GraduationCap className="w-4 h-4 text-slate-950" />
+                            <span>Làm Bài Kiểm Tra Nhận Chứng Chỉ ➔</span>
+                          </button>
+                        ) : (
+                          <div className="text-xs text-slate-500 font-medium">
+                            Hoàn thành tất cả các bài để mở khóa bài kiểm tra cấp Chứng chỉ Điện tử.
+                          </div>
+                        )}
+                      </div>
+
+                      {currentProg.isCompleted || activeModule.isCompleted ? (
+                        <div className="px-4 py-2 rounded-xl text-xs font-bold bg-emerald-100 text-emerald-800 border border-emerald-300 flex items-center gap-2">
+                          <CheckCircle2 className="w-4 h-4 text-emerald-600" />
+                          <span>Bài Này Đã Hoàn Thành 100% (Đạt Test 10 Câu)</span>
                         </div>
+                      ) : (
+                        <button
+                          onClick={() => handleSwitchTab('mini_quiz')}
+                          className="px-5 py-2.5 rounded-xl text-xs font-black bg-gradient-to-r from-purple-600 to-amber-500 hover:from-purple-500 hover:to-amber-400 text-white shadow-md flex items-center gap-2 transition cursor-pointer"
+                        >
+                          <FileQuestion className="w-4 h-4 text-amber-200" />
+                          <span>
+                            {currentProg.videoPercent >= 50
+                              ? 'Làm Bài Test 10 Câu Để Hoàn Thành Bài ➔'
+                              : 'Xem Video & Làm Bài Test 10 Câu'}
+                          </span>
+                        </button>
                       )}
                     </div>
-
-                    <button
-                      onClick={() => handleMarkModuleComplete(activeModule.id)}
-                      className={`px-5 py-2.5 rounded-xl text-xs font-bold flex items-center justify-center gap-2 transition cursor-pointer ${
-                        activeModule.isCompleted
-                          ? 'bg-emerald-100 text-emerald-800 border border-emerald-300'
-                          : 'bg-slate-900 hover:bg-slate-800 text-white shadow-md'
-                      }`}
-                    >
-                      <CheckCircle2 className="w-4 h-4 text-emerald-500" />
-                      <span>{activeModule.isCompleted ? 'Bài Này Đã Hoàn Thành' : 'Đánh Dấu Hoàn Thành Bài'}</span>
-                    </button>
-                  </div>
-                )}
+                  );
+                })()}
               </div>
 
               {/* Right Modules Playlist */}
@@ -821,45 +1116,136 @@ export const CoursesPage: React.FC<CoursesPageProps> = ({ onNavigateToQuiz }) =>
                   </div>
                 </div>
 
-                <div className="space-y-2">
+                <div className="space-y-2.5">
                   {selectedCourse.modules.map((m, idx) => {
                     const isSelected = activeModule?.id === m.id;
+                    const unlocked = isModuleUnlocked(idx);
+                    const modProg = getModuleProgress(selectedCourse.id, m.id, m.isCompleted);
+
                     return (
-                      <button
+                      <div
                         key={m.id}
-                        onClick={() => {
-                          setActiveModule(m);
-                          setPlayerTab('video');
-                        }}
-                        className={`w-full text-left p-3 rounded-2xl border text-xs transition flex items-start justify-between cursor-pointer ${
-                          isSelected
-                            ? 'bg-amber-50/80 border-amber-300 text-amber-950 font-bold ring-1 ring-amber-300 shadow-2xs'
-                            : 'bg-slate-50 border-slate-200 hover:bg-slate-100 text-slate-700'
+                        onClick={() => handleSelectModule(m, idx)}
+                        className={`w-full text-left p-3 rounded-2xl border text-xs transition flex flex-col gap-2 ${
+                          !unlocked
+                            ? 'bg-slate-100/70 border-slate-200 text-slate-400 cursor-not-allowed opacity-80'
+                            : isSelected
+                            ? 'bg-amber-50/80 border-amber-300 text-amber-950 font-bold ring-1 ring-amber-300 shadow-2xs cursor-pointer'
+                            : 'bg-slate-50 border-slate-200 hover:bg-slate-100 text-slate-700 cursor-pointer'
                         }`}
+                        title={
+                          !unlocked
+                            ? `Khóa: Cần hoàn thành Bài ${idx} và vượt qua bài test 10 câu để mở khóa bài này`
+                            : undefined
+                        }
                       >
-                        <div className="space-y-1 pr-2">
-                          <div className="text-[10px] text-amber-800 font-mono font-bold flex items-center gap-1.5">
-                            <span>Bài {idx + 1}</span>
-                            <span className="text-slate-300">•</span>
-                            <span className="text-slate-500">{m.duration}</span>
+                        <div className="flex items-start justify-between w-full">
+                          <div className="space-y-0.5 pr-2">
+                            <div className="text-[10px] font-mono font-bold flex items-center gap-1.5">
+                              <span className={unlocked ? 'text-amber-800' : 'text-slate-400'}>
+                                Bài {idx + 1}
+                              </span>
+                              <span className="text-slate-300">•</span>
+                              <span className="text-slate-400">{m.duration}</span>
+                            </div>
+                            <div className={`line-clamp-2 leading-tight ${unlocked ? 'text-slate-900' : 'text-slate-400'}`}>
+                              {m.title}
+                            </div>
                           </div>
-                          <div className="line-clamp-2 text-slate-900 leading-tight">{m.title}</div>
+
+                          {!unlocked ? (
+                            <span className="w-5 h-5 rounded-full bg-slate-200 text-slate-500 flex items-center justify-center shrink-0 mt-0.5" title="Đang khóa">
+                              <Lock className="w-3 h-3" />
+                            </span>
+                          ) : modProg.isCompleted || m.isCompleted ? (
+                            <span className="w-5 h-5 rounded-full bg-emerald-100 text-emerald-700 flex items-center justify-center shrink-0 mt-0.5" title="Đã hoàn thành">
+                              <Check className="w-3 h-3 text-emerald-700 font-bold" />
+                            </span>
+                          ) : (
+                            <PlayCircle className="w-4 h-4 text-amber-500 shrink-0 mt-0.5" />
+                          )}
                         </div>
 
-                        {m.isCompleted ? (
-                          <span className="w-5 h-5 rounded-full bg-emerald-100 text-emerald-700 flex items-center justify-center shrink-0 mt-0.5">
-                            <Check className="w-3 h-3 text-emerald-700" />
-                          </span>
-                        ) : (
-                          <PlayCircle className="w-4 h-4 text-slate-400 shrink-0 mt-0.5" />
-                        )}
-                      </button>
+                        {/* Thanh phần trăm ở mỗi bài */}
+                        <div className="w-full pt-1 space-y-1">
+                          <div className="flex items-center justify-between text-[10px] font-mono">
+                            <span className={modProg.isCompleted || m.isCompleted ? 'text-emerald-700 font-bold' : unlocked ? 'text-amber-800 font-semibold' : 'text-slate-400'}>
+                              {modProg.isCompleted || m.isCompleted ? '✓ Hoàn thành 100%' : `${modProg.totalPercent}%`}
+                            </span>
+                            <span className="text-[9px] text-slate-400">
+                              {unlocked ? `Video: ${modProg.videoPercent}% • Test: ${modProg.testPercent}%` : '🔒 Chưa mở'}
+                            </span>
+                          </div>
+                          <div className="w-full bg-slate-200 h-1.5 rounded-full overflow-hidden flex">
+                            <div
+                              className="h-full bg-amber-500 transition-all duration-300"
+                              style={{ width: `${modProg.videoPercent}%` }}
+                            />
+                            <div
+                              className="h-full bg-purple-600 transition-all duration-300"
+                              style={{ width: `${modProg.testPercent}%` }}
+                            />
+                          </div>
+                        </div>
+                      </div>
                     );
                   })}
                 </div>
               </div>
             </div>
           </div>
+        </div>
+      )}
+
+      {/* MODAL CẢNH BÁO KHI ĐANG TEST MÀ THOÁT RA KHỎI MODAL HOẶC ĐỔI TAB */}
+      {showExitConfirmModal && (
+        <div className="fixed inset-0 z-[70] flex items-center justify-center p-4 bg-slate-950/80 backdrop-blur-sm animate-fadeIn">
+          <div className="bg-white rounded-3xl p-6 max-w-md w-full shadow-2xl border-2 border-rose-300 text-center space-y-4">
+            <div className="w-14 h-14 rounded-2xl bg-rose-100 text-rose-600 flex items-center justify-center mx-auto shadow-inner">
+              <AlertTriangle className="w-8 h-8" />
+            </div>
+            <div>
+              <h4 className="text-base font-black text-slate-900">
+                Cảnh Báo: Hủy Kết Quả Bài Test!
+              </h4>
+              <p className="text-xs text-slate-600 mt-2 leading-relaxed">
+                Bạn đang làm bài kiểm tra 10 câu. Theo quy định của rạp, nếu bạn <strong>thoát ra ngoài (out bài test)</strong>, toàn bộ câu trả lời đang làm sẽ bị <strong>HỦY</strong> và bạn bắt buộc phải làm lại từ đầu từ <strong>Câu 1</strong> khi quay lại!
+              </p>
+            </div>
+            <div className="flex gap-2.5 pt-2">
+              <button
+                type="button"
+                onClick={() => {
+                  setShowExitConfirmModal(false);
+                  setPendingExitAction(null);
+                }}
+                className="flex-1 py-2.5 rounded-xl border border-slate-300 hover:bg-slate-100 text-slate-700 text-xs font-bold transition cursor-pointer"
+              >
+                Ở Lại Làm Bài Tiếp
+              </button>
+              <button
+                type="button"
+                onClick={() => {
+                  setShowExitConfirmModal(false);
+                  if (pendingExitAction) {
+                    pendingExitAction();
+                    setPendingExitAction(null);
+                  }
+                }}
+                className="flex-1 py-2.5 rounded-xl bg-rose-600 hover:bg-rose-700 text-white text-xs font-bold transition shadow-md cursor-pointer"
+              >
+                Xác Nhận Thoát & Làm Lại
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Toast Alert Thông Báo Nổi */}
+      {toastMessage && (
+        <div className="fixed bottom-6 right-6 z-[80] p-4 bg-slate-900 text-white border border-amber-500/50 rounded-2xl shadow-2xl flex items-center gap-3 animate-slideUp text-xs font-bold">
+          <AlertCircle className="w-5 h-5 text-amber-400 shrink-0" />
+          <span>{toastMessage}</span>
         </div>
       )}
     </div>

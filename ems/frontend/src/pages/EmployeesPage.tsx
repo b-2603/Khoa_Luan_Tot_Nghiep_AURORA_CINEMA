@@ -5,26 +5,54 @@ import { fetchEmployees, createEmployee, updateEmployee, deleteEmployee } from '
 import { 
   getEnrolledFace, saveEnrolledFace, removeEnrolledFace, 
   startWebcamStream, extractFaceFromVideo, getAvailableCameras, 
-  extractFaceFromDataUrl, FaceFeatures 
+  FaceFeatures 
 } from '../services/biometrics';
 import { 
   Search, Filter, Eye, X, Star, UserPlus, 
   Edit3, Trash2, CheckCircle2, AlertTriangle, 
   Phone, Mail, Shield, Building, Award, UserCheck, 
-  UserX, RefreshCw, Camera, Sparkles, Upload, Check
+  UserX, RefreshCw, Camera, Sparkles, Check
 } from 'lucide-react';
 
-export const EmployeesPage: React.FC = () => {
+// 4 Nghiệp vụ chuẩn cho nhân viên chi nhánh rạp Aurora Cinema
+export const BRANCH_POSITIONS = [
+  { id: 'Box ticket', title: 'Box ticket', desc: 'Nhân viên bán vé', badge: 'bg-blue-50 text-blue-700 border-blue-200' },
+  { id: 'Concession', title: 'Concession', desc: 'Nhân viên bán bắp nước', badge: 'bg-amber-50 text-amber-800 border-amber-200' },
+  { id: 'Usher', title: 'Usher', desc: 'Nhân viên dọn rạp', badge: 'bg-purple-50 text-purple-700 border-purple-200' },
+  { id: 'Processing', title: 'Processing', desc: 'Nhân viên chế biến', badge: 'bg-emerald-50 text-emerald-800 border-emerald-200' },
+];
+
+export function normalizeBranchDept(dept?: string): string {
+  if (!dept) return 'Box ticket';
+  const d = dept.toLowerCase();
+  if (d.includes('vé') || d.includes('box') || d.includes('ticket')) return 'Box ticket';
+  if (d.includes('bắp') || d.includes('concession') || d.includes('nước')) return 'Concession';
+  if (d.includes('dọn') || d.includes('soát') || d.includes('usher') || d.includes('kỹ thuật')) return 'Usher';
+  if (d.includes('chế biến') || d.includes('processing') || d.includes('bếp')) return 'Processing';
+  return dept;
+}
+
+export function getBranchDeptMeta(dept?: string) {
+  const norm = normalizeBranchDept(dept);
+  const found = BRANCH_POSITIONS.find(b => b.id === norm);
+  if (found) return found;
+  return { id: norm, title: norm, desc: '', badge: 'bg-slate-50 text-slate-700 border-slate-200' };
+}
+
+interface EmployeesPageProps {
+  initialAddModal?: boolean;
+}
+
+export const EmployeesPage: React.FC<EmployeesPageProps> = ({ initialAddModal }) => {
   const [users, setUsers] = useState<User[]>(getUsers());
   const [loading, setLoading] = useState(false);
   const [searchTerm, setSearchTerm] = useState('');
   const [selectedDept, setSelectedDept] = useState<string>('all');
-  const [selectedRole, setSelectedRole] = useState<string>('all');
   const [selectedStatus, setSelectedStatus] = useState<string>('all');
 
   // Modals
   const [viewingUser, setViewingUser] = useState<User | null>(null);
-  const [isAddModalOpen, setIsAddModalOpen] = useState(false);
+  const [isAddModalOpen, setIsAddModalOpen] = useState(Boolean(initialAddModal));
   const [editingUser, setEditingUser] = useState<User | null>(null);
   const [deletingUser, setDeletingUser] = useState<User | null>(null);
 
@@ -38,12 +66,22 @@ export const EmployeesPage: React.FC = () => {
   const [activeFaceCameraName, setActiveFaceCameraName] = useState('');
   const [availableFaceCameras, setAvailableFaceCameras] = useState<MediaDeviceInfo[]>([]);
   const [selectedFaceCameraId, setSelectedFaceCameraId] = useState<string>('');
-  const [isFaceUploading, setIsFaceUploading] = useState(false);
   const [faceVersion, setFaceVersion] = useState(0);
 
   const faceVideoRef = useRef<HTMLVideoElement | null>(null);
   const faceMediaStreamRef = useRef<MediaStream | null>(null);
-  const fileInputFaceRef = useRef<HTMLInputElement | null>(null);
+
+  // Face ID state & refs cho Modal Thêm Nhân Viên Mới
+  const [addFace, setAddFace] = useState<FaceFeatures | null>(null);
+  const [isAddCameraActive, setIsAddCameraActive] = useState(false);
+  const addVideoRef = useRef<HTMLVideoElement | null>(null);
+  const addStreamRef = useRef<MediaStream | null>(null);
+
+  // Face ID state & refs cho Modal Chỉnh Sửa Nhân Viên
+  const [editFace, setEditFace] = useState<FaceFeatures | null>(null);
+  const [isEditCameraActive, setIsEditCameraActive] = useState(false);
+  const editVideoRef = useRef<HTMLVideoElement | null>(null);
+  const editStreamRef = useRef<MediaStream | null>(null);
 
   // Toast feedback
   const [notification, setNotification] = useState<{ type: 'success' | 'error'; message: string } | null>(null);
@@ -52,8 +90,7 @@ export const EmployeesPage: React.FC = () => {
   const [addName, setAddName] = useState('');
   const [addEmail, setAddEmail] = useState('');
   const [addPhone, setAddPhone] = useState('');
-  const [addDept, setAddDept] = useState<Department>('Vé & Chăm sóc Khách hàng');
-  const [addRole, setAddRole] = useState<Role>('staff');
+  const [addDept, setAddDept] = useState<Department>('Box ticket');
   const [addScore, setAddScore] = useState(90);
   const [addPassword, setAddPassword] = useState('123456');
 
@@ -61,8 +98,7 @@ export const EmployeesPage: React.FC = () => {
   const [editName, setEditName] = useState('');
   const [editEmail, setEditEmail] = useState('');
   const [editPhone, setEditPhone] = useState('');
-  const [editDept, setEditDept] = useState<Department>('Vé & Chăm sóc Khách hàng');
-  const [editRole, setEditRole] = useState<Role>('staff');
+  const [editDept, setEditDept] = useState<Department>('Box ticket');
   const [editStatus, setEditStatus] = useState<'active' | 'leave' | 'inactive'>('active');
   const [editScore, setEditScore] = useState(90);
 
@@ -134,41 +170,6 @@ export const EmployeesPage: React.FC = () => {
     }
   };
 
-  const handleUploadFaceImage = async (e: React.ChangeEvent<HTMLInputElement>) => {
-    const file = e.target.files?.[0];
-    if (!file || !faceModalUser) return;
-
-    if (file.size > 8 * 1024 * 1024) {
-      alert('Vui lòng chọn file ảnh chân dung dưới 8MB!');
-      return;
-    }
-
-    setIsFaceUploading(true);
-    const reader = new FileReader();
-    reader.onload = async () => {
-      const dataUrl = reader.result as string;
-      const face = await extractFaceFromDataUrl(dataUrl);
-      setIsFaceUploading(false);
-
-      if (!face) {
-        alert('Không thể nhận diện khuôn mặt từ file ảnh này. Vui lòng chọn ảnh chụp rõ mặt thẳng góc!');
-        return;
-      }
-
-      saveEnrolledFace(faceModalUser.id, face);
-      setEnrolledFaceForUser(face);
-      setFaceVersion(v => v + 1);
-      setCapturedFacePreview(face.capturedImage);
-      showNotification('success', `Đã kích hoạt Face ID cho nhân viên ${faceModalUser.name} từ file ảnh thành công!`);
-    };
-    reader.onerror = () => {
-      setIsFaceUploading(false);
-      alert('Lỗi khi đọc file ảnh từ máy tính.');
-    };
-    reader.readAsDataURL(file);
-    e.target.value = '';
-  };
-
   useEffect(() => {
     if (faceModalUser) {
       initFaceCamera();
@@ -217,31 +218,86 @@ export const EmployeesPage: React.FC = () => {
     }
   };
 
-  // Filtered users
-  const filteredUsers = users.filter(u => {
+  // 1. Chỉ lọc danh sách NHÂN VIÊN CHI NHÁNH CỤM RẠP (không hiện nhân viên văn phòng / Manager / HR)
+  const branchStaffUsers = users.filter(u => {
+    if (u.role === 'manager') return false;
+    if (u.department === 'Quản lý Đào tạo & Nhân sự') return false;
+    if (u.email && (u.email.toLowerCase().includes('manager') || u.email.toLowerCase().includes('huong.pham'))) return false;
+    if (u.name && (u.name.toLowerCase().includes('manager') || u.name.toLowerCase().includes('thu hương') || u.name.toLowerCase().includes('văn phòng'))) return false;
+    return true;
+  });
+
+  // 2. Bộ lọc tìm kiếm, nghiệp vụ chi nhánh và trạng thái làm việc
+  const filteredUsers = branchStaffUsers.filter(u => {
     const matchesSearch = 
       u.name.toLowerCase().includes(searchTerm.toLowerCase()) || 
       u.staffCode.toLowerCase().includes(searchTerm.toLowerCase()) ||
       u.email.toLowerCase().includes(searchTerm.toLowerCase()) ||
       (u.phone && u.phone.includes(searchTerm));
     
-    const matchesDept = selectedDept === 'all' || u.department === selectedDept;
-    const matchesRole = selectedRole === 'all' || u.role === selectedRole;
+    const userDept = normalizeBranchDept(u.department);
+    const matchesDept = selectedDept === 'all' || userDept === selectedDept || u.department === selectedDept;
     const matchesStatus = selectedStatus === 'all' || u.status === selectedStatus;
 
-    return matchesSearch && matchesDept && matchesRole && matchesStatus;
+    return matchesSearch && matchesDept && matchesStatus;
   });
 
-  // Action: Add Employee
+  // ==========================================
+  // Handlers Face ID cho Modal Thêm Nhân Viên Mới
+  // ==========================================
+  const handleStartAddCamera = async () => {
+    setIsAddCameraActive(true);
+    await new Promise(r => setTimeout(r, 120));
+    const video = addVideoRef.current;
+    if (!video) return;
+    const res = await startWebcamStream(video);
+    if (res.stream) {
+      addStreamRef.current = res.stream;
+    } else {
+      setIsAddCameraActive(false);
+      alert(res.error || 'Không thể mở camera trên thiết bị!');
+    }
+  };
+
+  const handleStopAddCamera = () => {
+    if (addStreamRef.current) {
+      addStreamRef.current.getTracks().forEach(t => t.stop());
+      addStreamRef.current = null;
+    }
+    setIsAddCameraActive(false);
+  };
+
+  const handleCaptureAddFace = async () => {
+    const video = addVideoRef.current;
+    if (!video) return;
+    const face = await extractFaceFromVideo(video);
+    if (!face) {
+      alert('Chưa nhận diện được khuôn mặt! Vui lòng nhìn thẳng vào giữa khung và thử lại.');
+      return;
+    }
+    setAddFace(face);
+    handleStopAddCamera();
+    showNotification('success', 'Đã chụp & trích xuất khuôn mặt Face ID thành công!');
+  };
+
   const handleOpenAddModal = () => {
+    handleStopAddCamera();
+    handleStopEditCamera();
     setAddName('');
     setAddEmail('');
     setAddPhone('');
-    setAddDept('Vé & Chăm sóc Khách hàng');
-    setAddRole('staff');
+    setAddDept('Box ticket');
     setAddScore(90);
-    setAddPassword('123456');
+    setAddPassword('8888');
+    setAddFace(null);
+    setIsAddCameraActive(false);
     setIsAddModalOpen(true);
+  };
+
+  const handleCloseAddModal = () => {
+    handleStopAddCamera();
+    setIsAddModalOpen(false);
+    setAddFace(null);
   };
 
   const handleCreateSubmit = async (e: React.FormEvent) => {
@@ -251,17 +307,15 @@ export const EmployeesPage: React.FC = () => {
       return;
     }
 
-    const code = `AR-${addRole === 'manager' ? 'MGR' : 'STAFF'}-${Math.floor(100 + Math.random() * 900)}`;
-    const avatar = addRole === 'manager'
-      ? 'https://images.unsplash.com/photo-1573496359142-b8d87734a5a2?w=150&auto=format&fit=crop&q=80'
-      : 'https://images.unsplash.com/photo-1534528741775-53994a69daeb?w=150&auto=format&fit=crop&q=80';
+    const code = addPhone.trim() || '0901234567';
+    const avatar = addFace?.capturedImage || 'https://images.unsplash.com/photo-1534528741775-53994a69daeb?w=150&auto=format&fit=crop&q=80';
 
     try {
       const created = await createEmployee({
         staffCode: code,
         name: addName.trim(),
         email: addEmail.trim(),
-        role: addRole,
+        role: 'staff',
         department: addDept,
         avatar,
         phone: addPhone.trim() || '0901234567',
@@ -270,24 +324,87 @@ export const EmployeesPage: React.FC = () => {
         performanceScore: addScore
       });
 
+      if (addFace) {
+        saveEnrolledFace(created.id, addFace);
+        setFaceVersion(v => v + 1);
+      }
+
       setUsers(prev => [created, ...prev.filter(u => u.id !== created.id)]);
-      setIsAddModalOpen(false);
-      showNotification('success', `Đã thêm thành công nhân sự ${created.name} (${created.staffCode})!`);
+      handleCloseAddModal();
+      showNotification('success', `Đã thêm thành công nhân sự ${created.name} (${created.staffCode})${addFace ? ' và kích hoạt Face ID' : ''}!`);
     } catch {
       showNotification('error', 'Có lỗi xảy ra khi tạo nhân sự. Vui lòng thử lại.');
     }
   };
 
-  // Action: Open Edit Modal
+  // ==========================================
+  // Handlers Face ID cho Modal Chỉnh Sửa Nhân Viên
+  // ==========================================
+  const handleStartEditCamera = async () => {
+    setIsEditCameraActive(true);
+    await new Promise(r => setTimeout(r, 120));
+    const video = editVideoRef.current;
+    if (!video) return;
+    const res = await startWebcamStream(video);
+    if (res.stream) {
+      editStreamRef.current = res.stream;
+    } else {
+      setIsEditCameraActive(false);
+      alert(res.error || 'Không thể mở camera trên thiết bị!');
+    }
+  };
+
+  const handleStopEditCamera = () => {
+    if (editStreamRef.current) {
+      editStreamRef.current.getTracks().forEach(t => t.stop());
+      editStreamRef.current = null;
+    }
+    setIsEditCameraActive(false);
+  };
+
+  const handleCaptureEditFace = async () => {
+    const video = editVideoRef.current;
+    if (!video || !editingUser) return;
+    const face = await extractFaceFromVideo(video);
+    if (!face) {
+      alert('Chưa nhận diện được khuôn mặt! Vui lòng nhìn thẳng vào giữa khung và thử lại.');
+      return;
+    }
+    setEditFace(face);
+    saveEnrolledFace(editingUser.id, face);
+    setFaceVersion(v => v + 1);
+    handleStopEditCamera();
+    showNotification('success', `Đã cập nhật dữ liệu Face ID mới cho ${editingUser.name}!`);
+  };
+
+  const handleRemoveEditFace = () => {
+    if (!editingUser) return;
+    if (window.confirm(`Xác nhận xóa dữ liệu Face ID của nhân viên ${editingUser.name}?`)) {
+      removeEnrolledFace(editingUser.id);
+      setEditFace(null);
+      setFaceVersion(v => v + 1);
+      showNotification('success', `Đã xóa Face ID của ${editingUser.name}.`);
+    }
+  };
+
   const handleOpenEditModal = (u: User) => {
+    handleStopAddCamera();
+    handleStopEditCamera();
     setEditingUser(u);
     setEditName(u.name);
     setEditEmail(u.email);
     setEditPhone(u.phone || '');
-    setEditDept(u.department);
-    setEditRole(u.role);
+    setEditDept(normalizeBranchDept(u.department) as Department);
     setEditStatus(u.status || 'active');
     setEditScore(u.performanceScore || 90);
+    setEditFace(getEnrolledFace(u.id));
+    setIsEditCameraActive(false);
+  };
+
+  const handleCloseEditModal = () => {
+    handleStopEditCamera();
+    setEditingUser(null);
+    setEditFace(null);
   };
 
   const handleEditSubmit = async (e: React.FormEvent) => {
@@ -304,7 +421,7 @@ export const EmployeesPage: React.FC = () => {
         email: editEmail.trim(),
         phone: editPhone.trim(),
         department: editDept,
-        role: editRole,
+        role: 'staff',
         status: editStatus,
         performanceScore: editScore
       });
@@ -316,7 +433,7 @@ export const EmployeesPage: React.FC = () => {
         showNotification('success', `Đã lưu cập nhật thông tin nhân viên.`);
         loadData();
       }
-      setEditingUser(null);
+      handleCloseEditModal();
     } catch {
       showNotification('error', 'Lỗi khi cập nhật thông tin nhân viên.');
     }
@@ -359,9 +476,9 @@ export const EmployeesPage: React.FC = () => {
       {/* Header & Quick Action */}
       <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 border-b border-slate-200 pb-4">
         <div>
-          <h2 className="text-xl font-bold text-slate-900">Quản Lý & Hồ Sơ Nhân Sự</h2>
+          <h2 className="text-xl font-bold text-slate-900">Quản Lý & Hồ Sơ Nhân Sự Chi Nhánh</h2>
           <p className="text-xs text-slate-500 mt-1">
-            Tra cứu và quản lý hồ sơ nhân viên cụm rạp.
+            Danh sách nhân viên vận hành chi nhánh rạp ({filteredUsers.length} nhân sự)
           </p>
         </div>
 
@@ -376,24 +493,24 @@ export const EmployeesPage: React.FC = () => {
 
           <button
             onClick={handleOpenAddModal}
-            className="flex items-center gap-2 px-4 py-2.5 bg-gradient-to-r from-amber-500 to-amber-600 hover:from-amber-600 hover:to-amber-700 text-slate-950 font-bold text-xs rounded-xl shadow-sm hover:shadow transition transform active:scale-95"
+            className="flex items-center gap-2 px-4 py-2.5 bg-[#f4c04a] hover:bg-[#ffd166] text-[#0d1b2e] font-black text-xs rounded-xl shadow-sm hover:shadow transition transform active:scale-95 cursor-pointer"
           >
-            <UserPlus className="w-4 h-4" />
-            <span>+ Thêm Nhân Viên Mới</span>
+            <UserPlus className="w-4 h-4 text-[#0d1b2e]" />
+            <span>+ Thêm Nhân Viên & Cấp Tài Khoản</span>
           </button>
         </div>
       </div>
 
-      {/* Filter & Search Bar */}
-      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3">
-        <div className="relative lg:col-span-1">
+      {/* Filter & Search Bar - Tối ưu 3 cột: Tìm kiếm, Nghiệp vụ, Trạng thái (đã loại bỏ Chức vụ) */}
+      <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+        <div className="relative">
           <Search className="w-4 h-4 text-slate-400 absolute left-3.5 top-3" />
           <input
             type="text"
-            placeholder="Tìm theo Tên, Mã AR-..., Email, SĐT..."
+            placeholder="Tìm theo Tên, SĐT, Email..."
             value={searchTerm}
             onChange={(e) => setSearchTerm(e.target.value)}
-            className="w-full pl-10 pr-4 py-2.5 bg-white border border-slate-200 rounded-xl text-xs text-slate-900 placeholder-slate-400 focus:outline-none focus:border-amber-500 shadow-xs"
+            className="w-full pl-10 pr-4 py-2.5 bg-white border border-slate-200 rounded-xl text-xs text-slate-900 placeholder-slate-400 focus:outline-none focus:border-[#f4c04a] shadow-xs"
           />
         </div>
 
@@ -401,25 +518,13 @@ export const EmployeesPage: React.FC = () => {
           <select
             value={selectedDept}
             onChange={(e) => setSelectedDept(e.target.value)}
-            className="w-full px-3.5 py-2.5 bg-white border border-slate-200 rounded-xl text-xs text-slate-800 focus:outline-none focus:border-amber-500 shadow-xs"
+            className="w-full px-3.5 py-2.5 bg-white border border-slate-200 rounded-xl text-xs text-slate-800 font-semibold focus:outline-none focus:border-[#f4c04a] shadow-xs"
           >
-            <option value="all">🏢 Tất cả Bộ phận</option>
-            <option value="Vé & Chăm sóc Khách hàng">Vé & CSKH</option>
-            <option value="Bắp nước & Quầy Concession">Bắp nước & Concession</option>
-            <option value="Kỹ thuật Phim & Âm thanh">Kỹ thuật Phim & Sound</option>
-            <option value="Quản lý Đào tạo & Nhân sự">Quản lý Đào tạo & HR</option>
-          </select>
-        </div>
-
-        <div>
-          <select
-            value={selectedRole}
-            onChange={(e) => setSelectedRole(e.target.value)}
-            className="w-full px-3.5 py-2.5 bg-white border border-slate-200 rounded-xl text-xs text-slate-800 focus:outline-none focus:border-amber-500 shadow-xs"
-          >
-            <option value="all">👥 Tất cả Vai trò</option>
-            <option value="staff">Nhân viên (Staff)</option>
-            <option value="manager">Quản lý (Manager)</option>
+            <option value="all">🍿 Tất cả Nghiệp vụ</option>
+            <option value="Box ticket">1. Box ticket: Nhân viên bán vé</option>
+            <option value="Concession">2. Concession: Nhân viên bán bắp nước</option>
+            <option value="Usher">3. Usher: Nhân viên dọn rạp</option>
+            <option value="Processing">4. Processing: Nhân viên chế biến</option>
           </select>
         </div>
 
@@ -427,7 +532,7 @@ export const EmployeesPage: React.FC = () => {
           <select
             value={selectedStatus}
             onChange={(e) => setSelectedStatus(e.target.value)}
-            className="w-full px-3.5 py-2.5 bg-white border border-slate-200 rounded-xl text-xs text-slate-800 focus:outline-none focus:border-amber-500 shadow-xs"
+            className="w-full px-3.5 py-2.5 bg-white border border-slate-200 rounded-xl text-xs text-slate-800 focus:outline-none focus:border-[#f4c04a] shadow-xs"
           >
             <option value="all">🟢 Tất cả Trạng thái</option>
             <option value="active">Đang làm việc (Active)</option>
@@ -437,15 +542,14 @@ export const EmployeesPage: React.FC = () => {
         </div>
       </div>
 
-      {/* Employees Table */}
+      {/* Employees Table - Đã bỏ cột Chức Vụ, Bộ phận -> Nghiệp Vụ */}
       <div className="bg-white border border-slate-200 rounded-2xl overflow-hidden shadow-sm">
         <div className="overflow-x-auto">
           <table className="w-full text-left text-xs text-slate-700">
             <thead className="bg-slate-50 uppercase font-bold text-[10px] text-slate-500 border-b border-slate-200">
               <tr>
                 <th className="px-4 py-3.5">Mã & Họ Tên</th>
-                <th className="px-4 py-3.5">Bộ Phận</th>
-                <th className="px-4 py-3.5">Chức Vụ</th>
+                <th className="px-4 py-3.5">Nghiệp Vụ</th>
                 <th className="px-4 py-3.5">Trạng Thái</th>
                 <th className="px-4 py-3.5">Liên Hệ</th>
                 <th className="px-4 py-3.5 text-center">Đánh Giá (KPI)</th>
@@ -455,117 +559,118 @@ export const EmployeesPage: React.FC = () => {
             <tbody className="divide-y divide-slate-100">
               {filteredUsers.length === 0 ? (
                 <tr>
-                  <td colSpan={7} className="px-4 py-8 text-center text-slate-400">
-                    Không tìm thấy nhân viên nào phù hợp với điều kiện tìm kiếm.
+                  <td colSpan={6} className="px-4 py-8 text-center text-slate-400">
+                    Không tìm thấy nhân viên chi nhánh nào phù hợp với điều kiện tìm kiếm.
                   </td>
                 </tr>
               ) : (
-                filteredUsers.map((u) => (
-                  <tr key={u.id} className="hover:bg-slate-50/80 transition">
-                    <td className="px-4 py-3.5">
-                      <div className="flex items-center gap-3">
-                        <img 
-                          src={u.avatar} 
-                          alt={u.name} 
-                          className="w-9 h-9 rounded-xl object-cover ring-1 ring-slate-200 shrink-0" 
-                        />
-                        <div>
-                          <div className="font-bold text-slate-900 flex items-center gap-1.5">
-                            <span>{u.name}</span>
-                            {getEnrolledFace(u.id) ? (
-                              <span className="text-[9px] px-1.5 py-0.5 rounded font-extrabold bg-emerald-100 text-emerald-800 border border-emerald-300">
-                                ✓ Face ID
-                              </span>
-                            ) : (
-                              <span className="text-[9px] px-1.5 py-0.5 rounded font-bold bg-amber-50 text-amber-700 border border-amber-200">
-                                Chưa Face ID
-                              </span>
-                            )}
+                filteredUsers.map((u) => {
+                  const meta = getBranchDeptMeta(u.department);
+                  return (
+                    <tr key={u.id} className="hover:bg-slate-50/80 transition">
+                      <td className="px-4 py-3.5">
+                        <div className="flex items-center gap-3">
+                          <img 
+                            src={u.avatar} 
+                            alt={u.name} 
+                            className="w-9 h-9 rounded-xl object-cover ring-1 ring-slate-200 shrink-0" 
+                          />
+                          <div>
+                            <div className="font-bold text-slate-900 flex items-center gap-1.5">
+                              <span>{u.name}</span>
+                              {getEnrolledFace(u.id) ? (
+                                <span className="text-[9px] px-1.5 py-0.5 rounded font-extrabold bg-emerald-100 text-emerald-800 border border-emerald-300">
+                                  ✓ Face ID
+                                </span>
+                              ) : (
+                                <span className="text-[9px] px-1.5 py-0.5 rounded font-bold bg-amber-50 text-amber-700 border border-amber-200">
+                                  Chưa Face ID
+                                </span>
+                              )}
+                            </div>
+                            <div className="text-[10px] font-mono text-amber-700 font-semibold">{u.staffCode}</div>
                           </div>
-                          <div className="text-[10px] font-mono text-amber-700 font-semibold">{u.staffCode}</div>
                         </div>
-                      </div>
-                    </td>
-                    <td className="px-4 py-3.5 font-medium">{u.department}</td>
-                    <td className="px-4 py-3.5">
-                      <span className={`text-[10px] px-2.5 py-0.5 rounded font-bold ${
-                        u.role === 'manager' 
-                          ? 'bg-purple-100 text-purple-800 border border-purple-200' 
-                          : 'bg-cyan-100 text-cyan-800 border border-cyan-200'
-                      }`}>
-                        {u.role === 'manager' ? 'Quản Lý' : 'Nhân Viên'}
-                      </span>
-                    </td>
-                    <td className="px-4 py-3.5">
-                      {u.status === 'leave' ? (
-                        <span className="inline-flex items-center gap-1 text-[10px] px-2 py-0.5 rounded-full font-semibold bg-amber-50 text-amber-700 border border-amber-200">
-                          <span className="w-1.5 h-1.5 rounded-full bg-amber-500"></span> Nghỉ phép
-                        </span>
-                      ) : u.status === 'inactive' ? (
-                        <span className="inline-flex items-center gap-1 text-[10px] px-2 py-0.5 rounded-full font-semibold bg-slate-100 text-slate-600 border border-slate-200">
-                          <span className="w-1.5 h-1.5 rounded-full bg-slate-400"></span> Tạm ngưng
-                        </span>
-                      ) : (
-                        <span className="inline-flex items-center gap-1 text-[10px] px-2 py-0.5 rounded-full font-semibold bg-emerald-50 text-emerald-700 border border-emerald-200">
-                          <span className="w-1.5 h-1.5 rounded-full bg-emerald-500"></span> Đang làm việc
-                        </span>
-                      )}
-                    </td>
-                    <td className="px-4 py-3.5">
-                      <div className="text-[11px] font-medium text-slate-800">{u.email}</div>
-                      <div className="text-[10px] text-slate-500">{u.phone}</div>
-                    </td>
-                    <td className="px-4 py-3.5 text-center font-bold text-amber-700">
-                      <div className="inline-flex items-center gap-1 bg-amber-50 px-2 py-0.5 rounded-md border border-amber-200/60">
-                        <Star className="w-3 h-3 fill-amber-500 text-amber-500" />
-                        <span>{u.performanceScore || 90} / 100</span>
-                      </div>
-                    </td>
-                    <td className="px-4 py-3.5 text-right">
-                      <div className="flex items-center justify-end gap-1.5">
-                        {/* Nút Đăng ký / Quản lý Face ID */}
-                        <button
-                          onClick={() => handleOpenFaceModal(u)}
-                          title={getEnrolledFace(u.id) ? 'Quản lý / Cập nhật Face ID' : 'Chụp đăng ký Face ID cho nhân viên này'}
-                          className={`p-1.5 rounded-lg transition border cursor-pointer ${
-                            getEnrolledFace(u.id)
-                              ? 'bg-purple-50 hover:bg-purple-100 text-purple-700 border-purple-200'
-                              : 'bg-amber-100 hover:bg-amber-200 text-amber-900 border-amber-300 shadow-xs'
-                          }`}
-                        >
-                          <Camera className="w-3.5 h-3.5" />
-                        </button>
+                      </td>
+                      <td className="px-4 py-3.5">
+                        <div className="flex flex-col gap-0.5">
+                          <span className={`inline-flex items-center w-fit text-[10px] font-black px-2 py-0.5 rounded border ${meta.badge}`}>
+                            {meta.title}
+                          </span>
+                          <span className="text-[11px] text-slate-500 font-medium">{meta.desc}</span>
+                        </div>
+                      </td>
+                      <td className="px-4 py-3.5">
+                        {u.status === 'leave' ? (
+                          <span className="inline-flex items-center gap-1 text-[10px] px-2 py-0.5 rounded-full font-semibold bg-amber-50 text-amber-700 border border-amber-200">
+                            <span className="w-1.5 h-1.5 rounded-full bg-amber-500"></span> Nghỉ phép
+                          </span>
+                        ) : u.status === 'inactive' ? (
+                          <span className="inline-flex items-center gap-1 text-[10px] px-2 py-0.5 rounded-full font-semibold bg-slate-100 text-slate-600 border border-slate-200">
+                            <span className="w-1.5 h-1.5 rounded-full bg-slate-400"></span> Tạm ngưng
+                          </span>
+                        ) : (
+                          <span className="inline-flex items-center gap-1 text-[10px] px-2 py-0.5 rounded-full font-semibold bg-emerald-50 text-emerald-700 border border-emerald-200">
+                            <span className="w-1.5 h-1.5 rounded-full bg-emerald-500"></span> Đang làm việc
+                          </span>
+                        )}
+                      </td>
+                      <td className="px-4 py-3.5">
+                        <div className="text-[11px] font-medium text-slate-800">{u.email}</div>
+                        <div className="text-[10px] text-slate-500">{u.phone}</div>
+                      </td>
+                      <td className="px-4 py-3.5 text-center font-bold text-amber-700">
+                        <div className="inline-flex items-center gap-1 bg-amber-50 px-2 py-0.5 rounded-md border border-amber-200/60">
+                          <Star className="w-3 h-3 fill-amber-500 text-amber-500" />
+                          <span>{u.performanceScore || 90} / 100</span>
+                        </div>
+                      </td>
+                      <td className="px-4 py-3.5 text-right">
+                        <div className="flex items-center justify-end gap-1.5">
+                          {/* Nút Đăng ký / Quản lý Face ID */}
+                          <button
+                            onClick={() => handleOpenFaceModal(u)}
+                            title={getEnrolledFace(u.id) ? 'Quản lý / Cập nhật Face ID' : 'Chụp đăng ký Face ID cho nhân viên này'}
+                            className={`p-1.5 rounded-lg transition border cursor-pointer ${
+                              getEnrolledFace(u.id)
+                                ? 'bg-purple-50 hover:bg-purple-100 text-purple-700 border-purple-200'
+                                : 'bg-amber-100 hover:bg-amber-200 text-amber-900 border-amber-300 shadow-xs'
+                            }`}
+                          >
+                            <Camera className="w-3.5 h-3.5" />
+                          </button>
 
-                        {/* Nút Xem */}
-                        <button
-                          onClick={() => setViewingUser(u)}
-                          title="Xem chi tiết hồ sơ"
-                          className="p-1.5 bg-slate-100 hover:bg-slate-200 text-slate-700 rounded-lg transition"
-                        >
-                          <Eye className="w-3.5 h-3.5" />
-                        </button>
+                          {/* Nút Xem */}
+                          <button
+                            onClick={() => setViewingUser(u)}
+                            title="Xem chi tiết hồ sơ"
+                            className="p-1.5 bg-slate-100 hover:bg-slate-200 text-slate-700 rounded-lg transition cursor-pointer"
+                          >
+                            <Eye className="w-3.5 h-3.5" />
+                          </button>
 
-                        {/* Nút Sửa */}
-                        <button
-                          onClick={() => handleOpenEditModal(u)}
-                          title="Chỉnh sửa thông tin"
-                          className="p-1.5 bg-amber-50 hover:bg-amber-100 text-amber-800 rounded-lg transition border border-amber-200/60"
-                        >
-                          <Edit3 className="w-3.5 h-3.5" />
-                        </button>
+                          {/* Nút Sửa */}
+                          <button
+                            onClick={() => handleOpenEditModal(u)}
+                            title="Chỉnh sửa thông tin"
+                            className="p-1.5 bg-amber-50 hover:bg-amber-100 text-amber-800 rounded-lg transition border border-amber-200/60 cursor-pointer"
+                          >
+                            <Edit3 className="w-3.5 h-3.5" />
+                          </button>
 
-                        {/* Nút Xóa */}
-                        <button
-                          onClick={() => setDeletingUser(u)}
-                          title="Xóa nhân sự"
-                          className="p-1.5 bg-rose-50 hover:bg-rose-100 text-rose-700 rounded-lg transition border border-rose-200/60"
-                        >
-                          <Trash2 className="w-3.5 h-3.5" />
-                        </button>
-                      </div>
-                    </td>
-                  </tr>
-                ))
+                          {/* Nút Xóa */}
+                          <button
+                            onClick={() => setDeletingUser(u)}
+                            title="Xóa nhân sự"
+                            className="p-1.5 bg-rose-50 hover:bg-rose-100 text-rose-700 rounded-lg transition border border-rose-200/60 cursor-pointer"
+                          >
+                            <Trash2 className="w-3.5 h-3.5" />
+                          </button>
+                        </div>
+                      </td>
+                    </tr>
+                  );
+                })
               )}
             </tbody>
           </table>
@@ -594,14 +699,18 @@ export const EmployeesPage: React.FC = () => {
               <div>
                 <h3 className="font-extrabold text-base text-slate-900">{viewingUser.name}</h3>
                 <span className="text-xs font-mono text-amber-700 font-bold">{viewingUser.staffCode}</span>
-                <div className="text-xs text-slate-500 mt-0.5">{viewingUser.department}</div>
+                <div className="text-xs text-slate-500 mt-0.5">
+                  Nghiệp vụ: <strong className="text-slate-800">{getBranchDeptMeta(viewingUser.department).title}</strong> ({getBranchDeptMeta(viewingUser.department).desc})
+                </div>
               </div>
             </div>
 
             <div className="space-y-3 text-xs">
               <div className="flex justify-between py-1.5 border-b border-slate-100">
-                <span className="text-slate-500">Vai trò hệ thống:</span>
-                <span className="font-bold text-slate-900 capitalize">{viewingUser.role === 'manager' ? 'Quản Lý Rạp' : 'Nhân Viên Rạp'}</span>
+                <span className="text-slate-500">Nghiệp vụ chi nhánh:</span>
+                <span className="font-bold text-slate-900">
+                  {getBranchDeptMeta(viewingUser.department).title} - {getBranchDeptMeta(viewingUser.department).desc}
+                </span>
               </div>
               <div className="flex justify-between py-1.5 border-b border-slate-100">
                 <span className="text-slate-500">Trạng thái làm việc:</span>
@@ -712,31 +821,18 @@ export const EmployeesPage: React.FC = () => {
                 </div>
               </div>
 
-              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-                <div>
-                  <label className="block font-semibold text-slate-700 mb-1">Bộ Phận Làm Việc</label>
-                  <select
-                    value={addDept}
-                    onChange={(e) => setAddDept(e.target.value as Department)}
-                    className="w-full px-3.5 py-2.5 bg-slate-50 border border-slate-200 rounded-xl text-slate-900 focus:outline-none focus:border-amber-500 focus:bg-white transition"
-                  >
-                    <option value="Vé & Chăm sóc Khách hàng">Vé & CSKH</option>
-                    <option value="Bắp nước & Quầy Concession">Bắp nước & Concession</option>
-                    <option value="Kỹ thuật Phim & Âm thanh">Kỹ thuật Phim & Sound</option>
-                    <option value="Quản lý Đào tạo & Nhân sự">Quản lý Đào tạo & HR</option>
-                  </select>
-                </div>
-                <div>
-                  <label className="block font-semibold text-slate-700 mb-1">Chức Vụ / Vai Trò</label>
-                  <select
-                    value={addRole}
-                    onChange={(e) => setAddRole(e.target.value as Role)}
-                    className="w-full px-3.5 py-2.5 bg-slate-50 border border-slate-200 rounded-xl text-slate-900 focus:outline-none focus:border-amber-500 focus:bg-white transition"
-                  >
-                    <option value="staff">Nhân viên (Staff)</option>
-                    <option value="manager">Quản lý (Manager)</option>
-                  </select>
-                </div>
+              <div>
+                <label className="block font-semibold text-slate-700 mb-1">Nghiệp Vụ Chi Nhánh *</label>
+                <select
+                  value={addDept}
+                  onChange={(e) => setAddDept(e.target.value as Department)}
+                  className="w-full px-3.5 py-2.5 bg-slate-50 border border-slate-200 rounded-xl text-slate-900 font-medium focus:outline-none focus:border-amber-500 focus:bg-white transition"
+                >
+                  <option value="Box ticket">1. Box ticket: Nhân viên bán vé</option>
+                  <option value="Concession">2. Concession: Nhân viên bán bắp nước</option>
+                  <option value="Usher">3. Usher: Nhân viên dọn rạp</option>
+                  <option value="Processing">4. Processing: Nhân viên chế biến</option>
+                </select>
               </div>
 
               <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
@@ -762,17 +858,126 @@ export const EmployeesPage: React.FC = () => {
                 </div>
               </div>
 
+              {/* Khu vực Đăng Ký Sinh Trắc Học Face ID Ngay Trong Modal */}
+              <div className="p-3.5 bg-slate-50 border border-slate-200 rounded-2xl space-y-2.5">
+                <div className="flex items-center justify-between">
+                  <div className="flex items-center gap-2">
+                    <div className="w-7 h-7 rounded-lg bg-purple-100 border border-purple-200 flex items-center justify-center text-purple-700">
+                      <Camera className="w-3.5 h-3.5" />
+                    </div>
+                    <div>
+                      <div className="font-bold text-slate-800 text-xs">Đăng Ký Sinh Trắc Học Face ID</div>
+                      <p className="text-[10px] text-slate-500">Kích hoạt nhận diện khuôn mặt điểm danh cho nhân sự này</p>
+                    </div>
+                  </div>
+                  {addFace ? (
+                    <span className="text-[10px] font-extrabold px-2 py-0.5 rounded-full bg-emerald-100 text-emerald-800 border border-emerald-300 flex items-center gap-1">
+                      <CheckCircle2 className="w-3 h-3 text-emerald-600" /> Đã có Face ID
+                    </span>
+                  ) : (
+                    <span className="text-[10px] font-semibold px-2 py-0.5 rounded-full bg-slate-200 text-slate-600">
+                      Chưa thiết lập
+                    </span>
+                  )}
+                </div>
+
+                {/* Khung Camera trực tiếp nếu đang bật */}
+                {isAddCameraActive && (
+                  <div className="relative bg-slate-950 rounded-2xl overflow-hidden h-52 flex items-center justify-center border-2 border-purple-500/80 shadow-lg">
+                    <video
+                      ref={addVideoRef}
+                      autoPlay
+                      playsInline
+                      muted
+                      className="w-full h-full object-cover transform -scale-x-100 block"
+                    />
+                    <div className="absolute inset-0 pointer-events-none flex items-center justify-center">
+                      <div className="w-32 h-40 rounded-[45%] border-2 border-purple-400 shadow-[0_0_20px_rgba(168,85,247,0.7)]" />
+                    </div>
+                    <div className="absolute top-2 left-2 px-2 py-0.5 bg-slate-900/80 backdrop-blur-sm rounded-full text-[10px] font-semibold text-white">
+                      Nhìn thẳng vào giữa khung tròn
+                    </div>
+                    <div className="absolute bottom-2 inset-x-2 flex gap-1.5">
+                      <button
+                        type="button"
+                        onClick={handleCaptureAddFace}
+                        className="flex-1 py-1.5 bg-gradient-to-r from-purple-600 to-indigo-600 hover:from-purple-700 hover:to-indigo-700 text-white font-extrabold text-xs rounded-xl shadow-md flex items-center justify-center gap-1.5 cursor-pointer"
+                      >
+                        <Camera className="w-3.5 h-3.5" /> Chụp & Sử Dụng Khuôn Mặt
+                      </button>
+                      <button
+                        type="button"
+                        onClick={handleStopAddCamera}
+                        className="px-3 py-1.5 bg-slate-800/90 hover:bg-slate-700 text-slate-200 text-xs font-bold rounded-xl cursor-pointer"
+                      >
+                        Đóng
+                      </button>
+                    </div>
+                  </div>
+                )}
+
+                {/* Hiển thị khuôn mặt mẫu đã chụp trực tiếp từ camera */}
+                {!isAddCameraActive && addFace && (
+                  <div className="flex items-center justify-between p-2.5 bg-white border border-emerald-200 rounded-xl shadow-xs">
+                    <div className="flex items-center gap-2.5">
+                      <img
+                        src={addFace.capturedImage}
+                        alt="Ảnh Face ID mẫu"
+                        className="w-10 h-10 rounded-lg object-cover ring-2 ring-emerald-400 shadow-sm"
+                      />
+                      <div>
+                        <div className="text-xs font-bold text-slate-800 flex items-center gap-1">
+                          <Sparkles className="w-3 h-3 text-amber-500" />
+                          Đã quét Face ID thành công
+                        </div>
+                        <div className="text-[10px] text-slate-500">Vector 128 chiều sẵn sàng quét điểm danh</div>
+                      </div>
+                    </div>
+                    <div className="flex items-center gap-1">
+                      <button
+                        type="button"
+                        onClick={handleStartAddCamera}
+                        title="Chụp lại bằng camera"
+                        className="px-2.5 py-1 bg-slate-100 hover:bg-slate-200 text-slate-700 font-bold text-[11px] rounded-lg transition cursor-pointer flex items-center gap-1"
+                      >
+                        <Camera className="w-3 h-3 text-purple-600" /> Quét lại
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => setAddFace(null)}
+                        title="Xóa khuôn mặt này"
+                        className="p-1 text-rose-500 hover:bg-rose-50 rounded-lg transition cursor-pointer"
+                      >
+                        <Trash2 className="w-3.5 h-3.5" />
+                      </button>
+                    </div>
+                  </div>
+                )}
+
+                {/* Nút Đăng ký Face ID trực tiếp bằng Camera */}
+                {!isAddCameraActive && !addFace && (
+                  <button
+                    type="button"
+                    onClick={handleStartAddCamera}
+                    className="w-full py-2.5 px-3 bg-gradient-to-r from-purple-600 to-indigo-600 hover:from-purple-700 hover:to-indigo-700 text-white font-bold text-xs rounded-xl flex items-center justify-center gap-2 shadow-sm transition cursor-pointer"
+                  >
+                    <Camera className="w-4 h-4" />
+                    Bật Camera Quét Face ID
+                  </button>
+                )}
+              </div>
+
               <div className="pt-3 border-t border-slate-100 flex gap-2 justify-end">
                 <button
                   type="button"
-                  onClick={() => setIsAddModalOpen(false)}
-                  className="px-4 py-2.5 bg-slate-100 hover:bg-slate-200 text-slate-700 font-bold rounded-xl transition"
+                  onClick={handleCloseAddModal}
+                  className="px-4 py-2.5 bg-slate-100 hover:bg-slate-200 text-slate-700 font-bold rounded-xl transition cursor-pointer"
                 >
                   Hủy Bỏ
                 </button>
                 <button
                   type="submit"
-                  className="px-5 py-2.5 bg-amber-500 hover:bg-amber-600 text-slate-950 font-bold rounded-xl shadow-sm transition"
+                  className="px-5 py-2.5 bg-amber-500 hover:bg-amber-600 text-slate-950 font-bold rounded-xl shadow-sm transition cursor-pointer"
                 >
                   Tạo Nhân Viên
                 </button>
@@ -839,31 +1044,18 @@ export const EmployeesPage: React.FC = () => {
                 </div>
               </div>
 
-              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-                <div>
-                  <label className="block font-semibold text-slate-700 mb-1">Bộ Phận</label>
-                  <select
-                    value={editDept}
-                    onChange={(e) => setEditDept(e.target.value as Department)}
-                    className="w-full px-3.5 py-2.5 bg-slate-50 border border-slate-200 rounded-xl text-slate-900 focus:outline-none focus:border-amber-500 focus:bg-white transition"
-                  >
-                    <option value="Vé & Chăm sóc Khách hàng">Vé & CSKH</option>
-                    <option value="Bắp nước & Quầy Concession">Bắp nước & Concession</option>
-                    <option value="Kỹ thuật Phim & Âm thanh">Kỹ thuật Phim & Sound</option>
-                    <option value="Quản lý Đào tạo & Nhân sự">Quản lý Đào tạo & HR</option>
-                  </select>
-                </div>
-                <div>
-                  <label className="block font-semibold text-slate-700 mb-1">Chức Vụ</label>
-                  <select
-                    value={editRole}
-                    onChange={(e) => setEditRole(e.target.value as Role)}
-                    className="w-full px-3.5 py-2.5 bg-slate-50 border border-slate-200 rounded-xl text-slate-900 focus:outline-none focus:border-amber-500 focus:bg-white transition"
-                  >
-                    <option value="staff">Nhân viên (Staff)</option>
-                    <option value="manager">Quản lý (Manager)</option>
-                  </select>
-                </div>
+              <div>
+                <label className="block font-semibold text-slate-700 mb-1">Nghiệp Vụ Chi Nhánh *</label>
+                <select
+                  value={editDept}
+                  onChange={(e) => setEditDept(e.target.value as Department)}
+                  className="w-full px-3.5 py-2.5 bg-slate-50 border border-slate-200 rounded-xl text-slate-900 font-medium focus:outline-none focus:border-amber-500 focus:bg-white transition"
+                >
+                  <option value="Box ticket">1. Box ticket: Nhân viên bán vé</option>
+                  <option value="Concession">2. Concession: Nhân viên bán bắp nước</option>
+                  <option value="Usher">3. Usher: Nhân viên dọn rạp</option>
+                  <option value="Processing">4. Processing: Nhân viên chế biến</option>
+                </select>
               </div>
 
               <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
@@ -892,17 +1084,128 @@ export const EmployeesPage: React.FC = () => {
                 </div>
               </div>
 
+              {/* Khu vực Quản lý / Chỉnh sửa Sinh Trắc Học Face ID Ngay Trong Modal */}
+              <div className="p-3.5 bg-slate-50 border border-slate-200 rounded-2xl space-y-2.5">
+                <div className="flex items-center justify-between">
+                  <div className="flex items-center gap-2">
+                    <div className="w-7 h-7 rounded-lg bg-purple-100 border border-purple-200 flex items-center justify-center text-purple-700">
+                      <Camera className="w-3.5 h-3.5" />
+                    </div>
+                    <div>
+                      <div className="font-bold text-slate-800 text-xs">Dữ Liệu Sinh Trắc Học Face ID</div>
+                      <p className="text-[10px] text-slate-500">Chỉnh sửa hoặc cập nhật lại mẫu khuôn mặt quét điểm danh</p>
+                    </div>
+                  </div>
+                  {editFace ? (
+                    <span className="text-[10px] font-extrabold px-2 py-0.5 rounded-full bg-emerald-100 text-emerald-800 border border-emerald-300 flex items-center gap-1">
+                      <CheckCircle2 className="w-3 h-3 text-emerald-600" /> Đã có Face ID
+                    </span>
+                  ) : (
+                    <span className="text-[10px] font-semibold px-2 py-0.5 rounded-full bg-amber-50 text-amber-700 border border-amber-200 flex items-center gap-1">
+                      <AlertTriangle className="w-3 h-3" /> Chưa đăng ký
+                    </span>
+                  )}
+                </div>
+
+                {/* Khung Camera trực tiếp nếu đang bật để quét lại */}
+                {isEditCameraActive && (
+                  <div className="relative bg-slate-950 rounded-2xl overflow-hidden h-52 flex items-center justify-center border-2 border-purple-500/80 shadow-lg">
+                    <video
+                      ref={editVideoRef}
+                      autoPlay
+                      playsInline
+                      muted
+                      className="w-full h-full object-cover transform -scale-x-100 block"
+                    />
+                    <div className="absolute inset-0 pointer-events-none flex items-center justify-center">
+                      <div className="w-32 h-40 rounded-[45%] border-2 border-purple-400 shadow-[0_0_20px_rgba(168,85,247,0.7)]" />
+                    </div>
+                    <div className="absolute top-2 left-2 px-2 py-0.5 bg-slate-900/80 backdrop-blur-sm rounded-full text-[10px] font-semibold text-white">
+                      Nhìn thẳng vào giữa khung tròn
+                    </div>
+                    <div className="absolute bottom-2 inset-x-2 flex gap-1.5">
+                      <button
+                        type="button"
+                        onClick={handleCaptureEditFace}
+                        className="flex-1 py-1.5 bg-gradient-to-r from-purple-600 to-indigo-600 hover:from-purple-700 hover:to-indigo-700 text-white font-extrabold text-xs rounded-xl shadow-md flex items-center justify-center gap-1.5 cursor-pointer"
+                      >
+                        <Camera className="w-3.5 h-3.5" /> Chụp & Cập Nhật Face ID
+                      </button>
+                      <button
+                        type="button"
+                        onClick={handleStopEditCamera}
+                        className="px-3 py-1.5 bg-slate-800/90 hover:bg-slate-700 text-slate-200 text-xs font-bold rounded-xl cursor-pointer"
+                      >
+                        Đóng
+                      </button>
+                    </div>
+                  </div>
+                )}
+
+                {/* Hiển thị khuôn mặt hiện tại đã đăng ký */}
+                {!isEditCameraActive && editFace && (
+                  <div className="flex items-center justify-between p-2.5 bg-white border border-slate-200 rounded-xl shadow-xs">
+                    <div className="flex items-center gap-2.5">
+                      <img
+                        src={editFace.capturedImage}
+                        alt="Ảnh Face ID mẫu"
+                        className="w-10 h-10 rounded-lg object-cover ring-2 ring-emerald-400 shadow-sm"
+                      />
+                      <div>
+                        <div className="text-xs font-bold text-slate-800 flex items-center gap-1">
+                          <CheckCircle2 className="w-3 h-3 text-emerald-600" />
+                          Mẫu khuôn mặt đang hoạt động
+                        </div>
+                        <div className="text-[10px] text-slate-500">
+                          Cập nhật: {new Date(editFace.timestamp).toLocaleDateString('vi-VN')}
+                        </div>
+                      </div>
+                    </div>
+                    <div className="flex items-center gap-1">
+                      <button
+                        type="button"
+                        onClick={handleStartEditCamera}
+                        title="Chụp lại bằng camera"
+                        className="px-2.5 py-1 bg-slate-100 hover:bg-slate-200 text-slate-700 font-bold text-[11px] rounded-lg transition cursor-pointer flex items-center gap-1"
+                      >
+                        <Camera className="w-3 h-3 text-purple-600" /> Quét lại
+                      </button>
+                      <button
+                        type="button"
+                        onClick={handleRemoveEditFace}
+                        title="Xóa Face ID của nhân viên này"
+                        className="p-1 text-rose-500 hover:bg-rose-50 rounded-lg transition cursor-pointer"
+                      >
+                        <Trash2 className="w-3.5 h-3.5" />
+                      </button>
+                    </div>
+                  </div>
+                )}
+
+                {/* Nếu nhân viên chưa có Face ID */}
+                {!isEditCameraActive && !editFace && (
+                  <button
+                    type="button"
+                    onClick={handleStartEditCamera}
+                    className="w-full py-2.5 px-3 bg-gradient-to-r from-purple-600 to-indigo-600 hover:from-purple-700 hover:to-indigo-700 text-white font-bold text-xs rounded-xl flex items-center justify-center gap-2 shadow-sm transition cursor-pointer"
+                  >
+                    <Camera className="w-4 h-4" />
+                    Bật Camera Quét Face ID
+                  </button>
+                )}
+              </div>
+
               <div className="pt-3 border-t border-slate-100 flex gap-2 justify-end">
                 <button
                   type="button"
-                  onClick={() => setEditingUser(null)}
-                  className="px-4 py-2.5 bg-slate-100 hover:bg-slate-200 text-slate-700 font-bold rounded-xl transition"
+                  onClick={handleCloseEditModal}
+                  className="px-4 py-2.5 bg-slate-100 hover:bg-slate-200 text-slate-700 font-bold rounded-xl transition cursor-pointer"
                 >
                   Hủy Bỏ
                 </button>
                 <button
                   type="submit"
-                  className="px-5 py-2.5 bg-amber-500 hover:bg-amber-600 text-slate-950 font-bold rounded-xl shadow-sm transition"
+                  className="px-5 py-2.5 bg-amber-500 hover:bg-amber-600 text-slate-950 font-bold rounded-xl shadow-sm transition cursor-pointer"
                 >
                   Lưu Thay Đổi
                 </button>
@@ -1104,38 +1407,7 @@ export const EmployeesPage: React.FC = () => {
               </div>
             )}
 
-            {/* Option 2: Upload photo directly from computer without camera */}
-            {!capturedFacePreview && (
-              <div className="mt-3 p-3 bg-slate-50 border border-slate-200 rounded-2xl flex flex-col sm:flex-row items-center justify-between gap-2.5">
-                <div className="text-left w-full sm:w-auto">
-                  <div className="text-xs font-bold text-slate-800 flex items-center gap-1.5">
-                    <Upload className="w-3.5 h-3.5 text-amber-600" />
-                    <span>Hoặc Tải Ảnh Chân Dung Từ Máy Tính</span>
-                  </div>
-                  <div className="text-[11px] text-slate-500 mt-0.5">
-                    Tải ảnh chân dung từ thiết bị để trích xuất dữ liệu Face ID
-                  </div>
-                </div>
 
-                <input
-                  type="file"
-                  ref={fileInputFaceRef}
-                  accept="image/*"
-                  onChange={handleUploadFaceImage}
-                  className="hidden"
-                />
-
-                <button
-                  type="button"
-                  onClick={() => fileInputFaceRef.current?.click()}
-                  disabled={isFaceUploading}
-                  className="w-full sm:w-auto px-3.5 py-2 bg-white hover:bg-slate-100 text-slate-700 font-bold text-xs rounded-xl border border-slate-300 shadow-xs flex items-center justify-center gap-1.5 transition cursor-pointer shrink-0"
-                >
-                  <Upload className="w-3.5 h-3.5 text-purple-600" />
-                  {isFaceUploading ? 'Đang Xử Lý...' : 'Chọn File Ảnh'}
-                </button>
-              </div>
-            )}
 
             {/* Existing face thumbnail preview if any */}
             {!capturedFacePreview && enrolledFaceForUser && (

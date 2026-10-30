@@ -1,10 +1,15 @@
 export type Role = 'staff' | 'manager';
 
 export type Department = 
+  | 'Box ticket'
+  | 'Concession'
+  | 'Usher'
+  | 'Processing'
   | 'Vé & Chăm sóc Khách hàng' 
   | 'Bắp nước & Quầy Concession' 
   | 'Kỹ thuật Phim & Âm thanh' 
-  | 'Quản lý Đào tạo & Nhân sự';
+  | 'Quản lý Đào tạo & Nhân sự'
+  | string;
 
 export interface User {
   id: string;
@@ -18,6 +23,7 @@ export interface User {
   joinDate: string;
   status: 'active' | 'leave' | 'inactive';
   performanceScore?: number;
+  branch?: string;
 }
 
 export interface CourseModule {
@@ -146,6 +152,9 @@ export interface Attendance {
   status: 'on_time' | 'late' | 'early_leave' | 'absent';
   hoursWorked: number;
   note?: string;
+  location?: string;
+  shiftId?: string;
+  shiftName?: string;
 }
 
 export interface AttendanceException {

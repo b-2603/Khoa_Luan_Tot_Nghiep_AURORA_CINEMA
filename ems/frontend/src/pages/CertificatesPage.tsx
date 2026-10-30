@@ -3,10 +3,13 @@ import { User, Certificate } from '../types';
 import { getCertificates } from '../services/storage';
 import { fetchCertificates } from '../services/apiClient';
 import { 
-  Award, ShieldCheck, QrCode, Printer, X, CheckCircle2, 
+  Award, ShieldCheck, QrCode, X, CheckCircle2, 
   Sparkles, Medal, Star, Copy, Check, ExternalLink, Calendar,
-  GraduationCap
+  GraduationCap, Download
 } from 'lucide-react';
+// @ts-ignore
+import html2pdf from 'html2pdf.js';
+import { formatDateDMY } from '../utils/dateUtils';
 
 interface CertificatesPageProps {
   currentUser: User;
@@ -15,6 +18,8 @@ interface CertificatesPageProps {
 export const CertificatesPage: React.FC<CertificatesPageProps> = ({ currentUser }) => {
   const [allCerts, setAllCerts] = useState<Certificate[]>(getCertificates());
   const [copiedCode, setCopiedCode] = useState<string | null>(null);
+  const [previewCert, setPreviewCert] = useState<Certificate | null>(null);
+  const [isExporting, setIsExporting] = useState(false);
 
   useEffect(() => {
     fetchCertificates().then(data => {
@@ -32,8 +37,6 @@ export const CertificatesPage: React.FC<CertificatesPageProps> = ({ currentUser 
     ? allCerts 
     : allCerts.filter(c => isMatchUser(c.userId, currentUser.id));
 
-  const [previewCert, setPreviewCert] = useState<Certificate | null>(null);
-
   const handleCopyCode = (code: string) => {
     navigator.clipboard.writeText(code);
     setCopiedCode(code);
@@ -43,6 +46,47 @@ export const CertificatesPage: React.FC<CertificatesPageProps> = ({ currentUser 
   const avgScore = certs.length > 0 
     ? Math.round(certs.reduce((sum, c) => sum + (c.score || 90), 0) / certs.length) 
     : 0;
+
+  // Export PDF directly
+  const handleExportPdf = () => {
+    if (!previewCert) return;
+    setIsExporting(true);
+
+    const element = document.getElementById('certificate-print-area');
+    if (!element) {
+      setIsExporting(false);
+      return;
+    }
+
+    const safeUserName = (previewCert.userName || 'Nhan_Vien').replace(/\s+/g, '_');
+    const filename = `Chung_Chi_${safeUserName}_${previewCert.certificateCode || 'AURORA'}.pdf`;
+
+    const opt = {
+      margin: 6,
+      filename,
+      image: { type: 'jpeg' as const, quality: 0.98 },
+      html2canvas: { scale: 2, useCORS: true, logging: false },
+      jsPDF: { unit: 'mm' as const, format: 'a4' as const, orientation: 'landscape' as const }
+    };
+
+    try {
+      // @ts-ignore
+      html2pdf()
+        .set(opt)
+        .from(element)
+        .save()
+        .then(() => {
+          setIsExporting(false);
+        })
+        .catch(() => {
+          setIsExporting(false);
+          window.print();
+        });
+    } catch (err) {
+      setIsExporting(false);
+      window.print();
+    }
+  };
 
   return (
     <div className="space-y-6">
@@ -137,7 +181,9 @@ export const CertificatesPage: React.FC<CertificatesPageProps> = ({ currentUser 
                       {cert.userName}
                     </span>
                     {cert.userStaffCode && (
-                      <span className="text-[10px] font-mono text-slate-400">({cert.userStaffCode})</span>
+                      <span className="text-[10px] font-mono text-slate-400">
+                        ({cert.userStaffCode.startsWith('AR-') ? (currentUser.phone || cert.userStaffCode) : cert.userStaffCode})
+                      </span>
                     )}
                   </div>
                 </div>
@@ -145,13 +191,13 @@ export const CertificatesPage: React.FC<CertificatesPageProps> = ({ currentUser 
                 <div className="flex items-center justify-between pt-4 border-t border-amber-100 text-xs">
                   <div className="flex items-center gap-1.5 text-slate-500">
                     <Calendar className="w-3.5 h-3.5 text-amber-600" />
-                    <span className="text-[11px] font-medium">Cấp ngày: {cert.issuedAt}</span>
+                    <span className="text-[11px] font-medium">Cấp ngày: {formatDateDMY(cert.issuedAt)}</span>
                   </div>
 
                   <div className="flex items-center gap-2">
                     <button
                       onClick={() => handleCopyCode(cert.certificateCode)}
-                      title="Sao chép mã xác thực"
+                      title="Sao chép mã chứng chỉ"
                       className="p-2 bg-slate-100 hover:bg-slate-200 text-slate-600 rounded-xl transition cursor-pointer"
                     >
                       {copiedCode === cert.certificateCode ? (
@@ -165,8 +211,8 @@ export const CertificatesPage: React.FC<CertificatesPageProps> = ({ currentUser 
                       onClick={() => setPreviewCert(cert)}
                       className="px-4 py-2 bg-gradient-to-r from-amber-500 via-amber-400 to-amber-500 hover:from-amber-400 hover:to-amber-300 text-slate-950 font-black text-xs rounded-xl shadow-md transition-all hover:scale-[1.02] flex items-center gap-1.5 cursor-pointer"
                     >
-                      <QrCode className="w-4 h-4" />
-                      <span>Xem Bản Đẹp & In Bằng</span>
+                      <Download className="w-4 h-4" />
+                      <span>Xem & Xuất File PDF</span>
                     </button>
                   </div>
                 </div>
@@ -177,29 +223,30 @@ export const CertificatesPage: React.FC<CertificatesPageProps> = ({ currentUser 
       )}
 
       {/* ========================================================================= */}
-      {/* LUXURY MASTERPIECE CERTIFICATE PREVIEW MODAL & PRINT FRAME */}
+      {/* CERTIFICATE PREVIEW MODAL & EXPORT PDF */}
       {/* ========================================================================= */}
       {previewCert && (
         <div className="fixed inset-0 z-50 flex items-center justify-center p-2 sm:p-4 bg-slate-950/80 backdrop-blur-md overflow-y-auto">
           <div className="bg-slate-900 border border-amber-500/30 rounded-3xl w-full max-w-4xl p-4 sm:p-6 shadow-2xl relative space-y-4 my-auto print:p-0 print:border-0 print:bg-white print:m-0">
-            {/* Action Bar (Hidden when printing) */}
+            {/* Action Bar (Clean without extra subtitles or 'In' button) */}
             <div className="flex items-center justify-between border-b border-slate-800 pb-3 print:hidden">
               <div className="flex items-center gap-2">
                 <div className="p-1.5 bg-amber-500/20 text-amber-400 rounded-lg">
                   <Award className="w-4 h-4" />
                 </div>
-                <span className="text-xs font-bold text-slate-200 tracking-wide">
-                  Xem Trước Chứng Chỉ Quốc Tế Chuẩn In Ấn (Khổ A4 Ngang)
+                <span className="text-sm font-bold text-slate-100">
+                  Chứng Chỉ Nghiệp Vụ
                 </span>
               </div>
 
               <div className="flex items-center gap-2">
                 <button
-                  onClick={() => window.print()}
-                  className="px-4 py-2 bg-gradient-to-r from-amber-500 to-amber-600 hover:from-amber-400 text-slate-950 font-black text-xs rounded-xl shadow-md flex items-center gap-2 transition cursor-pointer"
+                  onClick={handleExportPdf}
+                  disabled={isExporting}
+                  className="px-5 py-2.5 bg-gradient-to-r from-amber-500 to-amber-600 hover:from-amber-400 text-slate-950 font-black text-xs rounded-xl shadow-md flex items-center gap-2 transition cursor-pointer disabled:opacity-50"
                 >
-                  <Printer className="w-4 h-4 text-slate-950" />
-                  <span>In / Xuất Bản PDF Chuẩn</span>
+                  <Download className={`w-4 h-4 text-slate-950 ${isExporting ? 'animate-bounce' : ''}`} />
+                  <span>{isExporting ? 'Đang Xuất PDF...' : 'Xuất File PDF'}</span>
                 </button>
 
                 <button
@@ -212,11 +259,11 @@ export const CertificatesPage: React.FC<CertificatesPageProps> = ({ currentUser 
             </div>
 
             {/* =================================================================== */}
-            {/* THE ACTUAL PRINTABLE CERTIFICATE TEMPLATE */}
+            {/* THE ACTUAL CERTIFICATE TEMPLATE */}
             {/* =================================================================== */}
             <div 
               id="certificate-print-area"
-              className="bg-[#faf8f2] text-slate-900 rounded-2xl p-6 sm:p-10 border-8 border-double border-amber-600/70 shadow-inner relative overflow-hidden select-none"
+              className="bg-[#faf8f2] text-slate-900 rounded-2xl p-6 sm:p-10 border-8 border-double border-amber-600/70 shadow-inner relative overflow-hidden select-none font-sans"
               style={{
                 backgroundImage: 'radial-gradient(#d97706 0.75px, transparent 0.75px), radial-gradient(#d97706 0.75px, #faf8f2 0.75px)',
                 backgroundSize: '30px 30px',
@@ -224,7 +271,7 @@ export const CertificatesPage: React.FC<CertificatesPageProps> = ({ currentUser 
               }}
             >
               {/* Inner Decorative Golden Border */}
-              <div className="border-2 border-amber-500/50 p-6 sm:p-8 rounded-xl relative bg-white/92 backdrop-blur-xs">
+              <div className="border-2 border-amber-500/50 p-6 sm:p-8 rounded-xl relative bg-white/95 backdrop-blur-xs">
                 
                 {/* 4 Art-Deco Ornate Corners */}
                 <div className="absolute top-2 left-2 w-8 h-8 border-t-2 border-l-2 border-amber-700 pointer-events-none"></div>
@@ -248,7 +295,7 @@ export const CertificatesPage: React.FC<CertificatesPageProps> = ({ currentUser 
                   <h1 className="font-extrabold text-2xl sm:text-4xl text-amber-950 tracking-wide uppercase pt-2">
                     CHỨNG CHỈ NĂNG LỰC NGHIỆP VỤ
                   </h1>
-                  <div className="text-xs sm:text-sm font-semibold tracking-widest text-amber-800 uppercase font-cinzel">
+                  <div className="text-xs sm:text-sm font-semibold tracking-widest text-amber-800 uppercase">
                     CERTIFICATE OF PROFESSIONAL EXCELLENCE
                   </div>
                 </div>
@@ -259,13 +306,17 @@ export const CertificatesPage: React.FC<CertificatesPageProps> = ({ currentUser 
                     Hội đồng Đào tạo & Giám sát Tiêu chuẩn Dịch vụ Rạp Chiếu Phim trân trọng chứng nhận:
                   </div>
 
-                  {/* Recipient Name */}
+                  {/* Recipient Name - Clean cohesive typography */}
                   <div className="py-1">
-                    <div className="text-2xl sm:text-4xl font-extrabold text-slate-900 tracking-wider uppercase border-b-2 border-amber-400/80 inline-block px-8 pb-1 shadow-xs certificate-name">
+                    <div className="text-2xl sm:text-4xl font-extrabold text-slate-900 tracking-wider uppercase border-b-2 border-amber-400/80 inline-block px-8 pb-1 shadow-xs">
                       {(previewCert.userName || '').normalize('NFC')}
                     </div>
                     <div className="text-xs text-slate-500 font-mono mt-1.5">
-                      Mã Nhân Sự: <span className="font-bold text-slate-800">{previewCert.userStaffCode || 'AR-STAFF-2026'}</span> • Cụm Rạp Chiếu Phim Aurora
+                      Mã Nhân Sự: <span className="font-bold text-slate-800">
+                        {previewCert.userStaffCode?.startsWith('AR-')
+                          ? (currentUser.phone || previewCert.userStaffCode)
+                          : (previewCert.userStaffCode || currentUser.phone || currentUser.staffCode || '0395852972')}
+                      </span> • Cụm Rạp Chiếu Phim Aurora
                     </div>
                   </div>
 
@@ -274,25 +325,25 @@ export const CertificatesPage: React.FC<CertificatesPageProps> = ({ currentUser 
                   </div>
 
                   {/* Course Title Card */}
-                  <div className="bg-gradient-to-r from-amber-50 via-amber-100/60 to-amber-50 border border-amber-300 rounded-2xl py-3 px-6 max-w-xl mx-auto shadow-xs">
-                    <div className="text-base sm:text-lg font-black text-amber-950 tracking-tight">
+                  <div className="bg-gradient-to-r from-amber-50 via-amber-100/60 to-amber-50 border border-amber-300 rounded-2xl py-3.5 px-6 max-w-xl mx-auto shadow-xs">
+                    <div className="text-base sm:text-lg font-black text-amber-950 tracking-tight leading-snug">
                       {(previewCert.courseTitle || '').normalize('NFC')}
                     </div>
-                    <div className="text-[11px] font-bold text-amber-800 uppercase tracking-wider mt-0.5">
+                    <div className="text-[11px] font-bold text-amber-800 uppercase tracking-wider mt-1">
                       Kết quả đánh giá: {previewCert.score || 95}/100 Điểm • Xếp loại: XUẤT SẮC (DISTINCTION)
                     </div>
                   </div>
                 </div>
 
-                {/* Certificate Signatures & Official Seals */}
+                {/* Certificate Signatures & Official Seals - Cohesive typography */}
                 <div className="pt-6 border-t border-amber-300/70 grid grid-cols-3 items-end text-center relative z-10 gap-2 sm:gap-4">
                   {/* Left Signer: Training Director */}
                   <div className="space-y-1">
                     <div className="text-[10px] sm:text-xs font-bold text-slate-500 uppercase tracking-wider">
                       GIÁM ĐỐC ĐÀO TẠO
                     </div>
-                    {/* Simulated hand signature */}
-                    <div className="italic text-lg sm:text-2xl text-blue-900 font-extrabold h-12 flex items-center justify-center select-none transform -rotate-3">
+                    {/* Clean and elegant signature font */}
+                    <div className="font-serif italic text-xl sm:text-2xl text-slate-800 font-bold h-12 flex items-center justify-center select-none">
                       Phạm Thu Hương
                     </div>
                     <div className="text-[11px] font-bold text-slate-800 border-t border-slate-300 pt-1 max-w-[140px] mx-auto">
@@ -314,17 +365,17 @@ export const CertificatesPage: React.FC<CertificatesPageProps> = ({ currentUser 
                       {previewCert.certificateCode}
                     </div>
                     <div className="text-[9px] text-slate-400">
-                      Ngày cấp: {previewCert.issuedAt}
+                      Ngày cấp: {formatDateDMY(previewCert.issuedAt)}
                     </div>
                   </div>
 
-                  {/* Right: QR Code & General Manager */}
+                  {/* Right: General Manager */}
                   <div className="space-y-1">
                     <div className="text-[10px] sm:text-xs font-bold text-slate-500 uppercase tracking-wider">
                       TỔNG GIÁM ĐỐC CỤM RẠP
                     </div>
-                    {/* Simulated hand signature */}
-                    <div className="italic text-lg sm:text-2xl text-blue-900 font-extrabold h-12 flex items-center justify-center select-none transform -rotate-2">
+                    {/* Clean and elegant signature font */}
+                    <div className="font-serif italic text-xl sm:text-2xl text-slate-800 font-bold h-12 flex items-center justify-center select-none">
                       Trần Quang Huy
                     </div>
                     <div className="text-[11px] font-bold text-slate-800 border-t border-slate-300 pt-1 max-w-[140px] mx-auto">
@@ -334,19 +385,10 @@ export const CertificatesPage: React.FC<CertificatesPageProps> = ({ currentUser 
                   </div>
                 </div>
 
-                {/* Footer Hash & Security Verification */}
-                <div className="mt-4 pt-3 border-t border-slate-100 flex items-center justify-between text-[9px] font-mono text-slate-400">
-                  <div className="flex items-center gap-1.5">
-                    <ShieldCheck className="w-3 h-3 text-emerald-600" />
-                    <span>Xác thực điện tử SOP: aurora-cinema.vn/verify/{previewCert.certificateCode}</span>
-                  </div>
-                  <div>Hệ Thống Quản Trị Nhân Sự Rạp Aurora EMS © 2026</div>
-                </div>
-
               </div>
             </div>
 
-            {/* Print CSS styling injection */}
+            {/* Print CSS styling injection fallback */}
             <style dangerouslySetInnerHTML={{ __html: `
               @media print {
                 body * {
@@ -362,7 +404,7 @@ export const CertificatesPage: React.FC<CertificatesPageProps> = ({ currentUser 
                   width: 100vw;
                   height: 100vh;
                   margin: 0;
-                  padding: 20mm;
+                  padding: 15mm;
                   box-sizing: border-box;
                   background-color: white !important;
                   -webkit-print-color-adjust: exact;

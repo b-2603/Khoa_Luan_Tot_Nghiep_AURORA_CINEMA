@@ -109,16 +109,22 @@ export async function startWebcamStream(
 
   // Tự động tìm kiếm và ưu tiên Camera tích hợp của Laptop / PC
   let targetDeviceId = deviceId;
+  const isPhoneOrVirtual = (label: string) => {
+    const l = (label || '').toLowerCase();
+    return l.includes('phone') || l.includes('droid') || l.includes('camo') || 
+           l.includes('virtual') || l.includes('iriun') || l.includes('link to windows') ||
+           l.includes('windows phone') || l.includes('connected device');
+  };
+
   if (!targetDeviceId) {
     try {
       const devices = await getAvailableCameras();
       if (devices.length > 0) {
-        // Tìm camera máy tính (Integrated, HD Webcam, USB, etc.) và tránh camera điện thoại/ảo nếu có sẵn webcam máy
         const builtIn = devices.find(d => {
           const name = (d.label || '').toLowerCase();
-          const isPhoneOrVirtual = name.includes('phone') || name.includes('droid') || name.includes('camo') || name.includes('virtual') || name.includes('iriun') || name.includes('link to windows');
-          return !isPhoneOrVirtual;
-        });
+          return (name.includes('integrated') || name.includes('hd') || name.includes('webcam') || name.includes('built-in') || name.includes('camera')) && !isPhoneOrVirtual(name);
+        }) || devices.find(d => !isPhoneOrVirtual(d.label));
+
         if (builtIn && builtIn.deviceId) {
           targetDeviceId = builtIn.deviceId;
         } else if (devices[0]?.deviceId) {
@@ -128,23 +134,42 @@ export async function startWebcamStream(
     } catch {}
   }
 
+  // Chú ý: Tránh dùng { facingMode: 'user' } trước vì trên Windows 11 sẽ kích hoạt prompt liên kết điện thoại
   const candidateConstraints: MediaStreamConstraints[] = targetDeviceId
     ? [
         { video: { deviceId: { exact: targetDeviceId } } },
         { video: { deviceId: targetDeviceId } },
-        { video: { facingMode: 'user' } },
         { video: true }
       ]
     : [
+        { video: true }, // Mở camera mặc định của phần cứng máy tính
+        { video: { width: { ideal: 1280 }, height: { ideal: 720 } } },
         { video: { facingMode: 'user' } },
-        { video: { width: { ideal: 640 }, height: { ideal: 480 } } },
-        { video: true }, // Tự động mở camera tích hợp của thiết bị hiện tại
       ];
 
   let lastErr = '';
   for (const constraints of candidateConstraints) {
     try {
-      const stream = await navigator.mediaDevices.getUserMedia(constraints);
+      let stream = await navigator.mediaDevices.getUserMedia(constraints);
+
+      // Kiểm tra sau khi cấp quyền: nếu camera đang nhận là Phone Link mà trên máy có Webcam tích hợp, tự động chuyển
+      if (!targetDeviceId) {
+        try {
+          const currentTrack = stream.getVideoTracks()[0];
+          const currentLabel = currentTrack?.label || '';
+          if (isPhoneOrVirtual(currentLabel)) {
+            const allCams = await getAvailableCameras();
+            const realLaptopCam = allCams.find(c => !isPhoneOrVirtual(c.label));
+            if (realLaptopCam && realLaptopCam.deviceId && realLaptopCam.deviceId !== currentTrack.getSettings().deviceId) {
+              currentTrack.stop();
+              stream = await navigator.mediaDevices.getUserMedia({
+                video: { deviceId: { exact: realLaptopCam.deviceId } }
+              });
+            }
+          }
+        } catch {}
+      }
+
       videoElement.srcObject = stream;
       videoElement.muted = true;
       videoElement.setAttribute('playsinline', 'true');
@@ -153,7 +178,6 @@ export async function startWebcamStream(
       try {
         await videoElement.play();
       } catch (playErr) {
-        // Retry play
         setTimeout(() => videoElement.play().catch(() => {}), 100);
       }
 
@@ -171,7 +195,7 @@ export async function startWebcamStream(
       if (err?.name === 'NotAllowedError' || err?.name === 'PermissionDeniedError') {
         return { 
           stream: null, 
-          error: 'Trình duyệt chưa được cấp quyền Camera! Vui lòng bấm biểu tượng ổ khóa trên thanh địa chỉ và chọn "Cho phép Camera".' 
+          error: 'Trình duyệt chưa được cấp quyền Camera! Vui lòng bấm biểu tượng ổ khóa hoặc camera trên thanh địa chỉ và chọn "Cho phép".' 
         };
       }
       if (err?.name === 'NotReadableError') {

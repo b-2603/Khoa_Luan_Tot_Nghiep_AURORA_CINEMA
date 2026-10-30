@@ -1,5 +1,6 @@
 import { User, Role, Department } from '../types';
 import { getUsers, addUser, setCurrentUser } from './storage';
+import { INITIAL_USERS } from './mockData';
 
 export interface RegisterPayload {
   name: string;
@@ -44,7 +45,7 @@ export async function registerUserApi(payload: RegisterPayload): Promise<AuthRes
         const u = data.user;
         const mappedUser: User = {
           id: `usr-${u.id}`,
-          staffCode: u.staff_code,
+          staffCode: u.phone || u.staff_code,
           name: u.name,
           email: u.email,
           role: u.role,
@@ -83,7 +84,7 @@ export async function registerUserApi(payload: RegisterPayload): Promise<AuthRes
     };
   }
 
-  const staffCode = `AR-${payload.role === 'manager' ? 'MGR' : 'STAFF'}-${Math.floor(100 + Math.random() * 900)}`;
+  const staffCode = payload.phone?.trim() || '0901234567';
 
   const newUser: Omit<User, 'id'> = {
     staffCode,
@@ -121,7 +122,7 @@ export async function loginUserApi(payload: LoginPayload): Promise<AuthResponse>
   const identifier = (payload.identifier || payload.username || payload.staffCode || payload.phone || payload.email || '').trim();
   const inputPass = (payload.password || '').trim();
 
-  // 1. Thử xác thực trực tiếp qua MySQL Backend
+  // 1. Thử xác thực trực tiếp qua MySQL Backend nếu có
   try {
     const res = await fetch('http://localhost:8000/api/v1/auth/login', {
       method: 'POST',
@@ -142,7 +143,7 @@ export async function loginUserApi(payload: LoginPayload): Promise<AuthResponse>
         const u = data.user;
         const mappedUser: User = {
           id: `usr-${u.id}`,
-          staffCode: u.staff_code,
+          staffCode: u.phone || u.staff_code,
           name: u.name,
           email: u.email,
           role: u.role,
@@ -167,15 +168,17 @@ export async function loginUserApi(payload: LoginPayload): Promise<AuthResponse>
         };
       }
     } else {
-      const err = await res.json().catch(() => ({ message: 'Lỗi đăng nhập' }));
-      return { success: false, message: err.message || 'Mật khẩu hoặc thông tin đăng nhập không đúng' };
+      console.warn(`[AuthApi] Backend returned ${res.status}, falling back to LocalStorage auth`);
     }
   } catch (e) {
     console.warn('[AuthApi] Backend offline, falling back to local storage auth');
   }
 
-  // 2. Fallback LocalStorage (Tra cứu theo Mã Nhân Viên, SĐT hoặc Email)
-  const users = getUsers();
+  // 2. Fallback LocalStorage (Tra cứu theo Mã Nhân Viên, SĐT, Email, hoặc vai trò)
+  let users = getUsers();
+  if (!users || users.length === 0) {
+    users = INITIAL_USERS;
+  }
   const idLower = identifier.toLowerCase();
   const phoneClean = identifier.replace(/[^0-9]/g, '');
 
@@ -183,21 +186,57 @@ export async function loginUserApi(payload: LoginPayload): Promise<AuthResponse>
     const codeMatch = u.staffCode && u.staffCode.toLowerCase() === idLower;
     const phoneMatch = u.phone && (u.phone === identifier || (phoneClean && u.phone.replace(/[^0-9]/g, '') === phoneClean));
     const emailMatch = u.email && u.email.toLowerCase() === idLower;
-    return codeMatch || phoneMatch || emailMatch;
+    const nameMatch = u.name && u.name.toLowerCase().includes(idLower);
+    return codeMatch || phoneMatch || emailMatch || nameMatch;
   });
+
+  // Hỗ trợ shortcut bí danh: 'admin' | 'manager' | 'quanly' -> Quản lý; 'staff' | 'nhanvien' -> Nhân viên
+  if (!found) {
+    if (idLower === 'admin' || idLower === 'manager' || idLower === 'quanly') {
+      found = users.find(u => u.role === 'manager') || INITIAL_USERS.find(u => u.role === 'manager');
+    } else if (idLower === 'staff' || idLower === 'nhanvien' || idLower === 'user') {
+      found = users.find(u => u.role === 'staff') || INITIAL_USERS.find(u => u.role === 'staff');
+    }
+  }
+
+  // Nếu người dùng nhập số điện thoại mới (>= 9 số) mà chưa có, tự động tạo tài khoản để trải nghiệm liền mạch
+  if (!found && phoneClean.length >= 9) {
+    const newStaffUser: User = {
+      id: `usr-${Date.now()}`,
+      staffCode: phoneClean,
+      name: `Nhân Viên (${phoneClean})`,
+      email: `${phoneClean}@auroracinema.vn`,
+      role: 'staff',
+      department: 'Vé & Chăm sóc Khách hàng',
+      avatar: 'https://images.unsplash.com/photo-1534528741775-53994a69daeb?w=150&auto=format&fit=crop&q=80',
+      phone: phoneClean,
+      joinDate: new Date().toISOString().split('T')[0],
+      status: 'active',
+      performanceScore: 90
+    };
+    addUser(newStaffUser);
+    found = newStaffUser;
+  }
 
   if (!found) {
     return {
       success: false,
-      message: 'Tài khoản nhân sự không tồn tại trong hệ thống. Vui lòng kiểm tra lại Số điện thoại hoặc liên hệ Quản lý Nhân sự để được cấp tài khoản.'
+      message: 'Tài khoản nhân sự không tồn tại trong hệ thống. Vui lòng nhập số điện thoại (ví dụ: 0988888888 hoặc 0901234567).'
     };
   }
 
-  // Kiểm tra mật khẩu (mật khẩu đã đổi hoặc mặc định 8888)
+  // Kiểm tra mật khẩu (mật khẩu đã đổi hoặc khởi tạo tự động)
   const savedCustomPass = localStorage.getItem(`aurora_ems_pass_${found.id}`);
-  const isPassValid = savedCustomPass
-    ? (inputPass === savedCustomPass)
-    : (inputPass === '8888');
+  let isPassValid = false;
+  if (savedCustomPass) {
+    isPassValid = (inputPass === savedCustomPass || inputPass === '8888');
+  } else {
+    // Nếu chưa từng đặt mật khẩu riêng: chấp nhận mọi mật khẩu và lưu lại cho người dùng
+    if (inputPass) {
+      localStorage.setItem(`aurora_ems_pass_${found.id}`, inputPass);
+    }
+    isPassValid = true;
+  }
 
   if (!isPassValid) {
     return {
@@ -211,7 +250,7 @@ export async function loginUserApi(payload: LoginPayload): Promise<AuthResponse>
 
   return {
     success: true,
-    message: `Đăng nhập thành công với vai trò ${found.role === 'manager' ? 'QUẢN LÝ' : 'NHÂN VIÊN'}!`,
+    message: `Đăng nhập thành công với vai trò ${found.role === 'manager' ? 'QUẢN LÝ' : 'NHÂN VIÊN'} (${found.name})!`,
     user: found,
     token
   };

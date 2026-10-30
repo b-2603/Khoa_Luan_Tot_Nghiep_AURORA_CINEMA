@@ -8,11 +8,23 @@ import {
   fetchAttendanceExceptions, handleExceptionActionApi, 
   submitAttendanceExceptionApi, saveAttendanceApi 
 } from '../services/apiClient';
-import { getTodayDateString } from '../utils/dateUtils';
+import { getTodayDateString, formatDateDMY, formatDateTimeDMY } from '../utils/dateUtils';
+import { ProofPhotoCapture } from '../components/ProofPhotoCapture';
 import { 
   AlertCircle, CheckCircle2, XCircle, Clock, FileText, 
-  UserCheck, Plus, X, Send, Filter, Check, ArrowRight
+  UserCheck, Plus, X, Send, Filter, Check, ArrowRight,
+  Camera, Eye, Sparkles
 } from 'lucide-react';
+
+export const SUGGESTED_LATE_REASONS = [
+  'Hỏng xe / Sự cố phương tiện',
+  'Ùn tắc giao thông nghiêm trọng',
+  'Thời tiết mưa bão / Ngập lụt',
+  'Sức khỏe đột xuất / Y tế',
+  'Hỗ trợ sự cố khẩn cấp tại rạp',
+  'Lỗi máy chấm công Face ID',
+  'Việc gia đình khẩn cấp',
+];
 
 interface AttendanceExceptionsPageProps {
   currentUser?: User | null;
@@ -31,6 +43,8 @@ export const AttendanceExceptionsPage: React.FC<AttendanceExceptionsPageProps> =
   const [targetDate, setTargetDate] = useState(getTodayDateString());
   const [type, setType] = useState<'late_justification' | 'leave_request' | 'shift_swap'>('late_justification');
   const [reason, setReason] = useState('');
+  const [proofImage, setProofImage] = useState<string | undefined>(undefined);
+  const [zoomImage, setZoomImage] = useState<string | null>(null);
   const [submitSuccess, setSubmitSuccess] = useState(false);
   const [toastMessage, setToastMessage] = useState<string | null>(null);
 
@@ -84,7 +98,6 @@ export const AttendanceExceptionsPage: React.FC<AttendanceExceptionsPageProps> =
 
   const handleSubmitException = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!reason.trim()) return;
 
     const user = currentUser || getUsers()[0];
     const typeTitles: Record<string, string> = {
@@ -93,20 +106,26 @@ export const AttendanceExceptionsPage: React.FC<AttendanceExceptionsPageProps> =
       shift_swap: 'Yêu Cầu Đổi Ca Trực',
     };
 
+    if (!reason.trim()) return;
+
     const now = new Date();
     const hh = String(now.getHours()).padStart(2, '0');
     const mm = String(now.getMinutes()).padStart(2, '0');
+    const dd = String(now.getDate()).padStart(2, '0');
+    const month = String(now.getMonth() + 1).padStart(2, '0');
+    const yyyy = now.getFullYear();
 
     const newExc = {
       userId: user.id,
       userName: user.name,
-      staffCode: user.staffCode || `AR-${user.id}`,
+      staffCode: user.phone || user.staffCode || '0901234567',
       type,
       typeTitle: typeTitles[type] || 'Giải trình Chấm công',
-      reason,
+      reason: reason.trim(),
       targetDate,
+      proofImage,
       status: 'pending' as const,
-      submittedAt: `${getTodayDateString()} ${hh}:${mm}`,
+      submittedAt: `${dd}/${month}/${yyyy} ${hh}:${mm}`,
     };
 
     saveAttendanceException(newExc);
@@ -115,6 +134,7 @@ export const AttendanceExceptionsPage: React.FC<AttendanceExceptionsPageProps> =
     setExceptions(getAttendanceExceptions());
     setIsSubmitModalOpen(false);
     setReason('');
+    setProofImage(undefined);
     setSubmitSuccess(true);
     setTimeout(() => setSubmitSuccess(false), 3500);
   };
@@ -282,10 +302,10 @@ export const AttendanceExceptionsPage: React.FC<AttendanceExceptionsPageProps> =
                       {exc.typeTitle}
                     </span>
                     <span className="text-xs text-slate-500 font-mono">
-                      📅 Ngày ca làm: <strong className="text-slate-800">{exc.targetDate}</strong>
+                      📅 Ngày ca làm: <strong className="text-slate-800">{formatDateDMY(exc.targetDate)}</strong>
                     </span>
                     <span className="text-[11px] text-slate-400">
-                      • Nộp lúc: {exc.submittedAt}
+                      • Nộp lúc: {formatDateTimeDMY(exc.submittedAt)}
                     </span>
                   </div>
 
@@ -313,6 +333,39 @@ export const AttendanceExceptionsPage: React.FC<AttendanceExceptionsPageProps> =
                   "{exc.reason}"
                 </p>
               </div>
+
+              {/* Ảnh minh chứng nếu có */}
+              {exc.proofImage && (
+                <div className="p-3 bg-amber-50/50 border border-amber-200 rounded-xl flex items-center justify-between gap-3">
+                  <div className="flex items-center gap-3">
+                    <div 
+                      onClick={() => setZoomImage(exc.proofImage!)}
+                      className="relative w-16 h-12 rounded-lg overflow-hidden border border-amber-300 cursor-pointer group shadow-2xs shrink-0"
+                      title="Bấm để xem ảnh phóng to"
+                    >
+                      <img src={exc.proofImage} alt="Minh chứng" className="w-full h-full object-cover group-hover:scale-105 transition" />
+                      <div className="absolute inset-0 bg-black/30 opacity-0 group-hover:opacity-100 flex items-center justify-center transition">
+                        <Eye className="w-4 h-4 text-white" />
+                      </div>
+                    </div>
+                    <div>
+                      <div className="text-xs font-bold text-amber-950 flex items-center gap-1.5">
+                        <Camera className="w-3.5 h-3.5 text-amber-600" />
+                        <span>Ảnh chụp minh chứng xác thực</span>
+                      </div>
+                      <p className="text-[11px] text-slate-500">Đã chụp/tải kèm thời điểm gửi đơn.</p>
+                    </div>
+                  </div>
+                  <button
+                    type="button"
+                    onClick={() => setZoomImage(exc.proofImage!)}
+                    className="px-3 py-1.5 bg-white hover:bg-amber-100 text-amber-900 border border-amber-300 text-xs font-bold rounded-lg transition flex items-center gap-1 shrink-0 cursor-pointer shadow-2xs"
+                  >
+                    <Eye className="w-3.5 h-3.5" />
+                    <span>Xem Ảnh</span>
+                  </button>
+                </div>
+              )}
 
               {/* Actions / Review Feedback */}
               {exc.status === 'pending' ? (
@@ -404,15 +457,20 @@ export const AttendanceExceptionsPage: React.FC<AttendanceExceptionsPageProps> =
               </div>
 
               <div>
-                <label className="block text-xs font-semibold text-slate-700 mb-1">
-                  Ngày Phát Sinh Ngoại Lệ:
-                </label>
+                <div className="flex items-center justify-between mb-1">
+                  <label className="block text-xs font-semibold text-slate-700">
+                    Ngày Phát Sinh Ngoại Lệ:
+                  </label>
+                  <span className="text-[11px] font-mono text-amber-700 font-bold bg-amber-50 px-2 py-0.5 rounded border border-amber-200">
+                    {formatDateDMY(targetDate)}
+                  </span>
+                </div>
                 <input
                   type="date"
                   value={targetDate}
                   onChange={(e) => setTargetDate(e.target.value)}
                   required
-                  className="w-full px-3 py-2 bg-white border border-slate-300 rounded-xl text-xs text-slate-900 focus:outline-none focus:border-amber-500"
+                  className="w-full px-3 py-2 bg-white border border-slate-300 rounded-xl text-xs text-slate-900 focus:outline-none focus:border-amber-500 shadow-2xs font-mono"
                 />
               </div>
 
@@ -425,28 +483,77 @@ export const AttendanceExceptionsPage: React.FC<AttendanceExceptionsPageProps> =
                   required
                   value={reason}
                   onChange={(e) => setReason(e.target.value)}
-                  placeholder="Mô tả chi tiết nguyên nhân (ví dụ: Xe bị hỏng trên đường đến rạp, hỗ trợ khách khẩn cấp tại phòng chiếu IMAX, hệ thống mạng rạp bảo trì...)"
-                  className="w-full px-3 py-2 bg-white border border-slate-300 rounded-xl text-xs text-slate-900 focus:outline-none focus:border-amber-500 resize-none"
+                  placeholder="Nhập lý do giải trình chi tiết..."
+                  className="w-full px-3.5 py-2.5 bg-white border border-slate-300 rounded-xl text-xs text-slate-900 focus:outline-none focus:border-amber-500 resize-none shadow-2xs font-medium"
                 />
               </div>
+
+              <ProofPhotoCapture
+                proofImage={proofImage}
+                onImageChange={setProofImage}
+                staffInfo={`${currentUser?.name || 'Nhân sự'} • ${currentUser?.staffCode || ''}`}
+              />
 
               <div className="flex justify-end gap-2.5 pt-3 border-t border-slate-100">
                 <button
                   type="button"
                   onClick={() => setIsSubmitModalOpen(false)}
-                  className="px-4 py-2 border border-slate-200 text-slate-600 hover:bg-slate-100 text-xs font-semibold rounded-xl transition"
+                  className="px-4 py-2 border border-slate-200 text-slate-600 hover:bg-slate-100 text-xs font-semibold rounded-xl transition cursor-pointer"
                 >
                   Hủy Bỏ
                 </button>
                 <button
                   type="submit"
-                  className="px-5 py-2 bg-amber-500 hover:bg-amber-600 active:bg-amber-700 text-slate-950 text-xs font-bold rounded-xl shadow-xs flex items-center gap-1.5 transition"
+                  className="px-5 py-2 bg-amber-500 hover:bg-amber-600 active:bg-amber-700 text-slate-950 text-xs font-bold rounded-xl shadow-xs flex items-center gap-1.5 transition cursor-pointer"
                 >
                   <Send className="w-4 h-4" />
                   Gửi Đơn Lên Quản Lý
                 </button>
               </div>
             </form>
+          </div>
+        </div>
+      )}
+
+      {/* Modal xem ảnh minh chứng phóng to */}
+      {zoomImage && (
+        <div 
+          className="fixed inset-0 z-50 flex items-center justify-center bg-black/80 backdrop-blur-sm p-4 animate-in fade-in duration-150"
+          onClick={() => setZoomImage(null)}
+        >
+          <div 
+            className="relative max-w-3xl w-full bg-slate-900 rounded-2xl overflow-hidden border border-slate-700 shadow-2xl"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <div className="flex items-center justify-between p-3.5 bg-slate-800 border-b border-slate-700 text-white">
+              <span className="text-xs font-bold text-[#f4c04a] flex items-center gap-2">
+                <Camera className="w-4 h-4 text-[#f4c04a]" />
+                Ảnh Minh Chứng Đi Muộn
+              </span>
+              <button
+                type="button"
+                onClick={() => setZoomImage(null)}
+                className="p-1 text-slate-400 hover:text-white rounded-lg hover:bg-slate-700 transition"
+              >
+                <X className="w-5 h-5" />
+              </button>
+            </div>
+            <div className="p-4 flex items-center justify-center bg-black/60 max-h-[75vh] overflow-auto">
+              <img 
+                src={zoomImage} 
+                alt="Minh chứng chi tiết" 
+                className="max-h-[65vh] max-w-full rounded-xl object-contain border border-slate-800"
+              />
+            </div>
+            <div className="p-3 bg-slate-800/80 text-right">
+              <button
+                type="button"
+                onClick={() => setZoomImage(null)}
+                className="px-4 py-1.5 bg-slate-700 hover:bg-slate-600 text-white text-xs font-semibold rounded-xl transition cursor-pointer"
+              >
+                Đóng
+              </button>
+            </div>
           </div>
         </div>
       )}

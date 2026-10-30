@@ -13,7 +13,8 @@ import {
   Clock, 
   AlertCircle, 
   Sparkles, 
-  Home
+  Home,
+  GraduationCap
 } from 'lucide-react';
 
 import { getAttendanceExceptions } from '../services/storage';
@@ -69,27 +70,29 @@ export const Sidebar: React.FC<SidebarProps> = ({ userRole, activeTab, onTabChan
 
   const managerMenuItems: MenuItem[] = [
     { id: 'dashboard', label: 'Trang Chủ Quản Trị', icon: Home },
-    { id: 'employees', label: 'Tra Cứu Danh Sách Nhân Viên', icon: Users },
-    { id: 'create-employee', label: 'Tạo Tài Khoản Nhân Viên', icon: UserPlus },
-    { id: 'manager-scheduler', label: 'Duyệt Ca & Xếp Lịch Làm Việc', icon: CalendarRange, badge: 'Tự động', isAi: true },
-    { id: 'attendance', label: 'Quản Lý Chấm Công', icon: Clock },
+    { id: 'employees', label: 'Quản Lý Nhân Sự & Tài Khoản', icon: Users },
+    { id: 'manager-scheduler', label: 'Duyệt Ca & Xếp Lịch Làm Việc', icon: CalendarRange },
     { 
-      id: 'attendance-exceptions', 
-      label: 'Xử Lý Ngoại Lệ Chấm Công', 
-      icon: AlertCircle,
+      id: 'attendance', 
+      label: 'Quản Lý Chấm Công', 
+      icon: Clock,
       badge: pendingCount > 0 ? `${pendingCount} Chờ duyệt` : undefined 
     },
-    { id: 'manager-quiz-creator', label: 'Tạo Khóa Học & Đề Khảo Thí', icon: Sparkles, badge: 'Đề thi', isAi: true },
+    { id: 'manager-quiz-creator', label: 'Khóa Học & Đề Khảo Thí', icon: GraduationCap },
   ];
 
   const menu = userRole === 'manager' ? managerMenuItems : staffMenuItems;
 
   return (
-    <aside className="w-64 bg-white border-r border-slate-200 p-4 flex flex-col justify-between shrink-0 min-h-[calc(100vh-61px)] shadow-sm">
+    <aside 
+      className="w-64 shrink-0 h-full flex flex-col justify-between p-4 overflow-y-auto sidebar-custom-scroll select-none border-r border-white/10 shadow-[6px_0_24px_rgba(13,27,46,0.18)] z-30"
+      style={{ background: 'linear-gradient(180deg, #0d1b2e 0%, #112847 56%, #0a1626 100%)' }}
+    >
       <div className="space-y-6">
         <div>
-          <div className="text-[11px] font-bold uppercase tracking-wider text-slate-400 px-3 mb-3">
-            {userRole === 'manager' ? 'QUẢN LÝ' : 'NHÂN VIÊN'}
+          <div className="text-[11px] font-bold uppercase tracking-wider text-[#8ea1c1] px-3 mb-3 flex items-center justify-between">
+            <span>{userRole === 'manager' ? 'QUẢN LÝ CỤM RẠP' : 'NHÂN VIÊN CỤM RẠP'}</span>
+            <span className="w-1.5 h-1.5 rounded-full bg-[#f4c04a]/70"></span>
           </div>
           <nav className="space-y-1">
             {menu.map((item) => {
@@ -99,22 +102,35 @@ export const Sidebar: React.FC<SidebarProps> = ({ userRole, activeTab, onTabChan
                 <button
                   key={item.id}
                   onClick={() => onTabChange(item.id as NavTab)}
-                  className={`w-full flex items-center justify-between px-3.5 py-2.5 rounded-xl text-xs font-semibold transition-all ${
+                  className={`group w-full flex items-center justify-between px-3.5 py-2.5 rounded-xl text-xs transition-all duration-150 cursor-pointer ${
                     isActive
-                      ? 'bg-amber-500/10 text-amber-700 border border-amber-500/30 shadow-sm font-bold'
-                      : 'text-slate-600 hover:text-slate-900 hover:bg-slate-100'
+                      ? 'text-[#0d1b2e] font-bold shadow-md shadow-amber-500/25 border border-[#ffe39a]'
+                      : 'text-[#dce6f7] hover:text-white hover:bg-white/[0.08] border border-transparent font-medium'
                   }`}
+                  style={
+                    isActive
+                      ? { background: 'linear-gradient(105deg, #f4c04a 0%, #ffd466 100%)' }
+                      : undefined
+                  }
                 >
                   <div className="flex items-center gap-2.5 text-left">
-                    <Icon className={`w-4 h-4 ${isActive ? 'text-amber-600' : 'text-slate-400'}`} />
-                    <span>{item.label}</span>
+                    <Icon 
+                      className={`w-4 h-4 transition-colors ${
+                        isActive 
+                          ? 'text-[#0d1b2e]' 
+                          : 'text-[#8ea1c1] group-hover:text-[#f4c04a]'
+                      }`} 
+                    />
+                    <span className="tracking-tight">{item.label}</span>
                   </div>
 
                   {item.badge && (
                     <span className={`text-[9px] px-1.5 py-0.5 rounded font-mono font-bold ${
-                      item.isAi 
-                        ? 'bg-purple-50 text-purple-700 border border-purple-200' 
-                        : 'bg-slate-100 text-slate-500 border border-slate-200'
+                      isActive 
+                        ? 'bg-[#0d1b2e]/15 text-[#0d1b2e] border border-[#0d1b2e]/20'
+                        : item.isAi 
+                        ? 'bg-purple-900/60 text-purple-200 border border-purple-400/40' 
+                        : 'bg-white/10 text-[#f4c04a] border border-[#f4c04a]/30'
                     }`}>
                       {item.badge}
                     </span>
@@ -127,12 +143,15 @@ export const Sidebar: React.FC<SidebarProps> = ({ userRole, activeTab, onTabChan
       </div>
 
       {/* System Status Footer */}
-      <div className="p-3.5 bg-slate-50 border border-slate-200 rounded-2xl text-center space-y-1 shadow-xs">
-        <div className="flex items-center justify-center gap-1.5 text-xs text-amber-700 font-bold">
-          <Sparkles className="w-3.5 h-3.5 text-amber-500" />
-          <span>AURORA CINEMAS EMS</span>
+      <div className="mt-4 p-3.5 bg-white/[0.05] border border-white/10 rounded-2xl text-center space-y-1 backdrop-blur-xs">
+        <div className="flex items-center justify-center gap-1.5 text-xs text-[#f4c04a] font-bold tracking-wide">
+          <Sparkles className="w-3.5 h-3.5 text-[#f4c04a]" />
+          <span className="text-[#f8fbff]">AURORA CINEMAS EMS</span>
         </div>
-        <p className="text-[10px] text-slate-500">Hệ thống quản lý nhân sự</p>
+        <div className="flex items-center justify-center gap-1.5 text-[10px] text-[#8ea1c1]">
+          <span className="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-pulse"></span>
+          <span>Đồng bộ hệ thống cụm rạp</span>
+        </div>
       </div>
     </aside>
   );

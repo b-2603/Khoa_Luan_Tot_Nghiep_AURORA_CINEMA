@@ -42,7 +42,7 @@ export async function fetchEmployees(search = '', dept = 'all'): Promise<User[]>
         // Map backend snake_case to frontend camelCase
         const mappedUsers: User[] = json.data.map((u: any) => ({
           id: `usr-${u.id}`,
-          staffCode: u.staff_code,
+          staffCode: u.phone || u.staff_code,
           name: u.name,
           email: u.email,
           role: u.role,
@@ -117,7 +117,7 @@ export async function updateEmployee(id: string, updates: Partial<User>): Promis
         const u = json.data;
         const fresh: User = {
           id: `usr-${u.id}`,
-          staffCode: u.staff_code,
+          staffCode: u.phone || u.staff_code,
           name: u.name,
           email: u.email,
           role: u.role,
@@ -316,7 +316,7 @@ export async function fetchCertificates(userId?: string): Promise<Certificate[]>
           id: `cert-${c.id}`,
           userId: `usr-${c.user_id}`,
           userName: c.user_name,
-          userStaffCode: c.user_staff_code,
+          userStaffCode: (c.phone || c.user_phone) || (c.user_staff_code && !c.user_staff_code.startsWith('AR-') ? c.user_staff_code : (c.phone || c.user_phone || '0395852972')),
           courseId: `crs-${c.course_id}`,
           courseTitle: c.course_title,
           certificateCode: c.certificate_code,
@@ -409,7 +409,7 @@ export async function fetchShiftRegistrations(userId?: string, date?: string): P
 }
 
 // 5.2. ĐĂNG KÝ NGUYỆN VỌNG CA LÀM VIỆC (UC09)
-export async function registerShiftPreference(userId: string, shiftId: string, date: string): Promise<boolean> {
+export async function registerShiftPreference(userId: string, shiftId: string, date: string, forceOverride?: boolean): Promise<boolean> {
   const numUserId = parseInt(userId.replace('usr-', '')) || 2;
   const numShiftId = parseInt(shiftId.replace('shift-', '')) || 1;
 
@@ -420,7 +420,8 @@ export async function registerShiftPreference(userId: string, shiftId: string, d
       body: JSON.stringify({
         user_id: numUserId,
         shift_id: numShiftId,
-        date
+        date,
+        force_override: !!forceOverride
       }),
       signal: AbortSignal.timeout(3000)
     });
@@ -431,7 +432,7 @@ export async function registerShiftPreference(userId: string, shiftId: string, d
 }
 
 // 5.3. HỦY NGUYỆN VỌNG ĐĂNG KÝ CA LÀM VIỆC (UC09)
-export async function cancelShiftRegistration(userId: string, shiftId: string, date: string): Promise<boolean> {
+export async function cancelShiftRegistration(userId: string, shiftId: string, date: string, forceOverride?: boolean): Promise<boolean> {
   const numUserId = parseInt(userId.replace('usr-', '')) || 2;
   const numShiftId = parseInt(shiftId.replace('shift-', '')) || 1;
 
@@ -442,7 +443,8 @@ export async function cancelShiftRegistration(userId: string, shiftId: string, d
       body: JSON.stringify({
         user_id: numUserId,
         shift_id: numShiftId,
-        date
+        date,
+        force_override: !!forceOverride
       }),
       signal: AbortSignal.timeout(3000)
     });

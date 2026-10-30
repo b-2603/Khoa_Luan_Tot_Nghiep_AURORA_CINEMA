@@ -41,7 +41,8 @@ class AuthController extends Controller
         }
 
         $role = $request->role;
-        $staffCode = 'AR-' . ($role === 'manager' ? 'MGR' : 'STAFF') . '-' . rand(100, 999);
+        $phone = trim($request->phone ?? '0901234567');
+        $staffCode = !empty($phone) ? $phone : ('09' . rand(10000000, 99999999));
 
         // Tạo User mới - Password được Hash bảo mật, KHÔNG lưu plaintext
         $user = User::create([
@@ -253,7 +254,7 @@ class AuthController extends Controller
 
         // 3. Nếu chưa có cả Provider ID lẫn Email -> Tạo User mới và lưu Provider ID
         $role = 'staff';
-        $staffCode = 'AR-STAFF-' . rand(100, 999);
+        $staffCode = '09' . rand(10000000, 99999999);
 
         $newUser = User::create([
             'staff_code' => $staffCode,

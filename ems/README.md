@@ -40,7 +40,7 @@ EMS_AURORA/
 | **UC01** | **Đăng nhập vào tài khoản EMS** | Staff / Manager | Chuyển đổi vai trò 1-click & Form đăng nhập phân quyền | `src/components/Navbar.tsx`, `AuthController.php` |
 | **UC02** | **Xem hồ sơ nhân viên** | Staff | Xem thông tin cá nhân, chức vụ, bộ phận, KPI & chứng chỉ | `src/pages/ProfilePage.tsx` |
 | **UC03** | **Tra cứu hồ sơ danh sách nhân viên** | Manager | Tìm kiếm, lọc theo bộ phận & xem chi tiết hồ sơ nhân sự | `src/pages/EmployeesPage.tsx`, `EmployeeController.php` |
-| **UC04** | **Tạo tài khoản nhân viên** | Manager | Cấp mã nhân sự (AR-STAFF-...), gán vai trò & mật khẩu | `src/pages/CreateEmployeePage.tsx`, `EmployeeController.php` |
+| **UC04** | **Tạo tài khoản nhân viên** | Manager | Cấp mã nhân sự (Số điện thoại), gán vai trò & mật khẩu | `src/pages/CreateEmployeePage.tsx`, `EmployeeController.php` |
 | **UC05** | **Học các khóa học** | Staff | Xem bài giảng slide/video nghiệp vụ rạp & CTKM | `src/pages/CoursesPage.tsx`, `CourseController.php` |
 | **UC06** | **Làm kiểm tra đánh giá hàng tháng** | Staff | Thi trắc nghiệm có đồng hồ đếm ngược, chấm điểm & tự cấp chứng chỉ | `src/pages/QuizzesPage.tsx`, `QuizController.php` |
 | **UC07** | **Xem các chứng chỉ đã đạt được** | Staff / Manager | Kho chứng chỉ điện tử, xem & in chứng chỉ kèm QR Code | `src/pages/CertificatesPage.tsx`, `CertificateController.php` |
