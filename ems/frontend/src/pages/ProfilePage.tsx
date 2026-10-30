@@ -1,10 +1,13 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { User } from '../types';
-import { Mail, Phone, Calendar, Shield, Award, Star, Camera, ShieldCheck, CheckCircle2, AlertTriangle, RefreshCw, Trash2, X, Sparkles, Upload, Image, Link as LinkIcon, Check, Lock, Key } from 'lucide-react';
+import { Mail, Phone, Calendar, Shield, Award, Star, Camera, ShieldCheck, CheckCircle2, AlertTriangle, RefreshCw, Trash2, X, Sparkles, Upload, Image, Link as LinkIcon, Check, Lock, Key, Maximize2, Crop, ZoomIn } from 'lucide-react';
 import { getCertificates, updateUser } from '../services/storage';
 import { updateEmployee } from '../services/apiClient';
 import { changePasswordApi } from '../services/authApi';
 import { getEnrolledFace, saveEnrolledFace, removeEnrolledFace, startWebcamStream, extractFaceFromVideo, FaceFeatures } from '../services/biometrics';
+import { formatDateDMY } from '../utils/dateUtils';
+import { AvatarCropperModal } from '../components/AvatarCropperModal';
+import { ImageLightboxModal } from '../components/ImageLightboxModal';
 
 const PRESET_AVATARS = [
   'https://images.unsplash.com/photo-1534528741775-53994a69daeb?w=300&auto=format&fit=crop&q=80',
@@ -25,6 +28,12 @@ export const ProfilePage: React.FC<ProfilePageProps> = ({ currentUser, onUpdateU
   const [enrolledFace, setEnrolledFace] = useState<FaceFeatures | null>(null);
   const [avatarUrl, setAvatarUrl] = useState<string>(currentUser.avatar);
 
+  // Zoom Lightbox State (Xem ảnh phóng to)
+  const [lightboxUrl, setLightboxUrl] = useState<string | null>(null);
+
+  // Circular Avatar Cropper State (Cắt ảnh vừa tròn khung hình)
+  const [croppingImage, setCroppingImage] = useState<string | null>(null);
+
   // Face Enrollment Camera Modal State (Chỉ phục vụ Face ID hệ thống)
   const [isFaceModalOpen, setIsFaceModalOpen] = useState(false);
   const [cameraReady, setCameraReady] = useState(false);
@@ -35,9 +44,25 @@ export const ProfilePage: React.FC<ProfilePageProps> = ({ currentUser, onUpdateU
 
   // Profile Avatar Modal State (Đổi ảnh hồ sơ theo ý thích)
   const [isAvatarModalOpen, setIsAvatarModalOpen] = useState(false);
+  const [isAvatarMenuOpen, setIsAvatarMenuOpen] = useState(false);
   const [customAvatarUrl, setCustomAvatarUrl] = useState('');
   const [avatarPreview, setAvatarPreview] = useState(currentUser.avatar);
   const fileInputRef = useRef<HTMLInputElement | null>(null);
+  const avatarMenuRef = useRef<HTMLDivElement | null>(null);
+
+  useEffect(() => {
+    const handleClickOutside = (e: MouseEvent) => {
+      if (avatarMenuRef.current && !avatarMenuRef.current.contains(e.target as Node)) {
+        setIsAvatarMenuOpen(false);
+      }
+    };
+    if (isAvatarMenuOpen) {
+      document.addEventListener('mousedown', handleClickOutside);
+    }
+    return () => {
+      document.removeEventListener('mousedown', handleClickOutside);
+    };
+  }, [isAvatarMenuOpen]);
 
   const videoRef = useRef<HTMLVideoElement | null>(null);
   const mediaStreamRef = useRef<MediaStream | null>(null);
@@ -165,13 +190,25 @@ export const ProfilePage: React.FC<ProfilePageProps> = ({ currentUser, onUpdateU
   const handleAvatarFileUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
     if (!file) return;
+    if (file.size > 15 * 1024 * 1024) {
+      alert('Vui lòng chọn file ảnh dưới 15MB!');
+      return;
+    }
     const reader = new FileReader();
     reader.onload = () => {
       if (typeof reader.result === 'string') {
-        handleSaveAvatar(reader.result);
+        // Mở chế độ cắt căn chỉnh ảnh tròn khung hình NGAY LẬP TỨC
+        setCroppingImage(reader.result);
+        setIsAvatarModalOpen(false);
       }
     };
     reader.readAsDataURL(file);
+    e.target.value = '';
+  };
+
+  const handleCroppedAvatarSave = (croppedDataUrl: string) => {
+    handleSaveAvatar(croppedDataUrl);
+    setCroppingImage(null);
   };
 
   // Capture and save face to Face ID biometric system (Hiển thị ảnh vừa chụp lên modal)
@@ -234,33 +271,126 @@ export const ProfilePage: React.FC<ProfilePageProps> = ({ currentUser, onUpdateU
       <div className="bg-white border border-slate-200 rounded-3xl p-6 md:p-8 flex flex-col md:flex-row gap-8 items-start shadow-sm">
         {/* Avatar & Key Status */}
         <div className="flex flex-col items-center shrink-0 w-full md:w-auto">
-          <div 
-            className="relative group cursor-pointer" 
-            onClick={() => setIsAvatarModalOpen(true)}
-            title="Bấm để đổi ảnh đại diện hồ sơ"
-          >
+          <div className="relative group" ref={avatarMenuRef}>
+            {/* The Avatar Image */}
             <img
               src={avatarUrl}
               alt={currentUser.name}
-              className="w-32 h-32 rounded-3xl object-cover ring-4 ring-amber-500/20 shadow-lg group-hover:opacity-90 transition"
+              onClick={() => setLightboxUrl(avatarUrl)}
+              className="w-32 h-32 rounded-3xl object-cover ring-4 ring-amber-500/20 shadow-lg cursor-pointer hover:ring-amber-500/40 transition"
+              title="Nhấn để xem phóng to ảnh đại diện"
             />
-            <div className="absolute inset-0 bg-slate-950/40 rounded-3xl opacity-0 group-hover:opacity-100 transition flex flex-col items-center justify-center text-white text-[11px] font-bold gap-1 backdrop-blur-xs">
-              <Camera className="w-5 h-5 text-amber-300" />
-              <span>Đổi ảnh</span>
+
+            {/* Hover Quick Action Overlay (Desktop) */}
+            <div className="absolute inset-0 bg-slate-950/60 rounded-3xl opacity-0 group-hover:opacity-100 transition duration-200 flex items-center justify-center gap-1.5 backdrop-blur-2xs pointer-events-none group-hover:pointer-events-auto">
+              <button
+                type="button"
+                onClick={() => fileInputRef.current?.click()}
+                className="p-2 bg-amber-500 hover:bg-amber-400 text-slate-950 rounded-xl transition cursor-pointer shadow-sm hover:scale-110 active:scale-95"
+                title="Đổi ảnh mới (Cắt tròn ngay)"
+              >
+                <Camera className="w-4 h-4 text-slate-950" />
+              </button>
+              <button
+                type="button"
+                onClick={() => setCroppingImage(avatarUrl)}
+                className="p-2 bg-white/20 hover:bg-white/40 text-white rounded-xl backdrop-blur-sm transition cursor-pointer hover:scale-110 active:scale-95"
+                title="Căn chỉnh / Cắt lại góc ảnh này"
+              >
+                <Crop className="w-4 h-4 text-white" />
+              </button>
+              <button
+                type="button"
+                onClick={() => setLightboxUrl(avatarUrl)}
+                className="p-2 bg-white/20 hover:bg-white/40 text-white rounded-xl backdrop-blur-sm transition cursor-pointer hover:scale-110 active:scale-95"
+                title="Xem ảnh phóng to"
+              >
+                <Maximize2 className="w-4 h-4 text-white" />
+              </button>
+              <button
+                type="button"
+                onClick={() => setIsAvatarModalOpen(true)}
+                className="p-2 bg-white/20 hover:bg-white/40 text-white rounded-xl backdrop-blur-sm transition cursor-pointer hover:scale-110 active:scale-95"
+                title="Mẫu avatar có sẵn & URL"
+              >
+                <Image className="w-4 h-4 text-white" />
+              </button>
             </div>
-            <span className="absolute bottom-2 right-2 w-4 h-4 bg-emerald-500 border-2 border-white rounded-full"></span>
+
+            {/* Floating Camera Button Badge at Bottom-Right (Mobile & Quick Access) */}
+            <button
+              type="button"
+              onClick={() => setIsAvatarMenuOpen((prev) => !prev)}
+              className="absolute -bottom-1 -right-1 p-2 bg-amber-500 hover:bg-amber-400 text-slate-950 rounded-2xl shadow-md border-2 border-white cursor-pointer transition transform hover:scale-110 active:scale-95 z-10"
+              title="Tùy chọn ảnh đại diện"
+            >
+              <Camera className="w-3.5 h-3.5 text-slate-950" />
+            </button>
+
+            {/* Status Indicator Dot */}
+            <span className="absolute top-2 right-2 w-3.5 h-3.5 bg-emerald-500 border-2 border-white rounded-full shadow-xs pointer-events-none"></span>
+
+            {/* Mobile / Click Popover Menu */}
+            {isAvatarMenuOpen && (
+              <div className="absolute top-full right-0 mt-2 w-48 bg-white border border-slate-200 rounded-2xl shadow-xl p-1.5 z-30 animate-in fade-in zoom-in-95 duration-150 space-y-0.5">
+                <button
+                  type="button"
+                  onClick={() => {
+                    setIsAvatarMenuOpen(false);
+                    fileInputRef.current?.click();
+                  }}
+                  className="w-full flex items-center gap-2.5 px-3 py-2 text-xs font-bold text-slate-800 hover:bg-amber-50 hover:text-amber-900 rounded-xl transition text-left cursor-pointer"
+                >
+                  <Camera className="w-4 h-4 text-amber-600" />
+                  <span>Đổi ảnh mới (Cắt ngay)</span>
+                </button>
+                <button
+                  type="button"
+                  onClick={() => {
+                    setIsAvatarMenuOpen(false);
+                    setCroppingImage(avatarUrl);
+                  }}
+                  className="w-full flex items-center gap-2.5 px-3 py-2 text-xs font-bold text-slate-800 hover:bg-indigo-50 hover:text-indigo-900 rounded-xl transition text-left cursor-pointer"
+                >
+                  <Crop className="w-4 h-4 text-indigo-600" />
+                  <span>Cắt lại góc ảnh này</span>
+                </button>
+                <button
+                  type="button"
+                  onClick={() => {
+                    setIsAvatarMenuOpen(false);
+                    setLightboxUrl(avatarUrl);
+                  }}
+                  className="w-full flex items-center gap-2.5 px-3 py-2 text-xs font-bold text-slate-800 hover:bg-slate-100 rounded-xl transition text-left cursor-pointer"
+                >
+                  <Maximize2 className="w-4 h-4 text-slate-500" />
+                  <span>Xem ảnh phóng to</span>
+                </button>
+                <button
+                  type="button"
+                  onClick={() => {
+                    setIsAvatarMenuOpen(false);
+                    setIsAvatarModalOpen(true);
+                  }}
+                  className="w-full flex items-center gap-2.5 px-3 py-2 text-xs font-bold text-slate-800 hover:bg-slate-100 rounded-xl transition text-left cursor-pointer"
+                >
+                  <Image className="w-4 h-4 text-slate-500" />
+                  <span>Mẫu có sẵn & Link ảnh</span>
+                </button>
+              </div>
+            )}
           </div>
 
-          <button
-            type="button"
-            onClick={() => setIsAvatarModalOpen(true)}
-            className="mt-2.5 text-[11px] font-bold text-amber-800 hover:text-amber-900 flex items-center gap-1.5 px-3 py-1 rounded-xl bg-amber-50 hover:bg-amber-100 border border-amber-200 transition cursor-pointer shadow-xs"
-          >
-            <Camera className="w-3.5 h-3.5 text-amber-600" />
-            Đổi ảnh hồ sơ
-          </button>
+          {/* Hidden File Input for Direct Avatar Upload & Immediate Crop */}
+          <input
+            type="file"
+            ref={fileInputRef}
+            accept="image/*"
+            onChange={handleAvatarFileUpload}
+            className="hidden"
+          />
 
-          <h3 className="font-black text-lg text-slate-900 mt-2">{currentUser.name}</h3>
+          <h3 className="font-black text-lg text-slate-900 mt-3">{currentUser.name}</h3>
           <span className="text-xs font-mono text-amber-700 font-bold">{currentUser.staffCode}</span>
           <span className="mt-2 text-[11px] px-3 py-1 rounded-full bg-purple-50 text-purple-700 border border-purple-200 font-bold">
             {currentUser.role === 'manager' ? 'Quản lý Đào tạo & HR' : 'Nhân viên Phục vụ Rạp'}
@@ -423,18 +553,30 @@ export const ProfilePage: React.FC<ProfilePageProps> = ({ currentUser, onUpdateU
             Chưa có chứng chỉ nào trong hồ sơ.
           </div>
         ) : (
-          <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-3.5">
             {certs.map(c => (
-              <div key={c.certificateCode || c.id} className="p-4 bg-slate-50 border border-slate-200 rounded-2xl flex items-center justify-between">
-                <div>
-                  <div className="text-xs font-bold text-amber-800">{c.courseTitle}</div>
-                  <div className="text-[10px] text-slate-500 mt-1 font-mono">Mã: {c.certificateCode}</div>
-                  <div className="text-[10px] text-slate-400">Cấp ngày: {c.issuedAt}</div>
+              <div 
+                key={c.certificateCode || c.id} 
+                className="p-4 bg-slate-50/80 hover:bg-slate-50 border border-slate-200 rounded-2xl flex items-center justify-between gap-3 transition-colors shadow-2xs"
+              >
+                <div className="flex-1 min-w-0 space-y-1">
+                  <div className="text-xs font-bold text-slate-900 leading-snug line-clamp-2" title={c.courseTitle}>
+                    {c.courseTitle}
+                  </div>
+                  <div className="text-[11px] text-slate-500 font-mono truncate">
+                    Mã: <span className="font-semibold text-slate-700">{c.certificateCode}</span>
+                  </div>
+                  <div className="text-[11px] text-slate-500 flex items-center gap-1.5">
+                    <Calendar className="w-3 h-3 text-amber-600 shrink-0" />
+                    <span>Cấp ngày: <strong className="font-semibold text-slate-700">{formatDateDMY(c.issuedAt)}</strong></span>
+                  </div>
                 </div>
-                <div className="text-right">
-                  <span className="text-xs font-bold text-emerald-700 px-2.5 py-1 rounded bg-emerald-100 border border-emerald-200">
-                    {c.score} Điểm
-                  </span>
+
+                <div className="shrink-0 self-center pl-2">
+                  <div className="inline-flex items-center gap-1 px-3 py-1.5 rounded-xl bg-emerald-50 border border-emerald-200/90 text-emerald-800 shadow-2xs whitespace-nowrap">
+                    <span className="text-sm font-black text-emerald-700 leading-none">{c.score}</span>
+                    <span className="text-[11px] font-bold text-emerald-600 leading-none">Điểm</span>
+                  </div>
                 </div>
               </div>
             ))}
@@ -703,36 +845,77 @@ export const ProfilePage: React.FC<ProfilePageProps> = ({ currentUser, onUpdateU
 
             {/* Current / Preview Avatar */}
             <div className="flex flex-col items-center justify-center mb-6">
-              <div className="relative">
+              <div 
+                className="relative group cursor-pointer"
+                onClick={() => setLightboxUrl(avatarPreview || avatarUrl)}
+                title="Bấm để xem ảnh phóng to"
+              >
                 <img
                   src={avatarPreview || avatarUrl}
                   alt="Preview avatar"
-                  className="w-28 h-28 rounded-3xl object-cover ring-4 ring-amber-500/20 shadow-md"
+                  className="w-28 h-28 rounded-3xl object-cover ring-4 ring-amber-500/20 shadow-md group-hover:ring-amber-500/50 transition"
                 />
+                <div className="absolute inset-0 bg-slate-950/45 rounded-3xl opacity-0 group-hover:opacity-100 transition flex items-center justify-center text-white backdrop-blur-2xs gap-2 text-xs font-bold">
+                  <button
+                    type="button"
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      setCroppingImage(avatarPreview || avatarUrl);
+                    }}
+                    className="p-2 bg-amber-500 hover:bg-amber-600 text-slate-950 rounded-xl transition cursor-pointer shadow-sm"
+                    title="Cắt góc ảnh này"
+                  >
+                    <Crop className="w-4 h-4 text-slate-950" />
+                  </button>
+                  <button
+                    type="button"
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      setLightboxUrl(avatarPreview || avatarUrl);
+                    }}
+                    className="p-2 bg-white/20 hover:bg-white/40 text-white rounded-xl transition cursor-pointer backdrop-blur-sm"
+                    title="Phóng to"
+                  >
+                    <Maximize2 className="w-4 h-4 text-white" />
+                  </button>
+                </div>
               </div>
               <span className="text-[11px] text-slate-500 mt-2 font-medium">Ảnh đại diện đang áp dụng</span>
+              <div className="flex items-center gap-2 mt-2">
+                <button
+                  type="button"
+                  onClick={() => setCroppingImage(avatarPreview || avatarUrl)}
+                  className="text-[11px] font-bold text-amber-900 hover:text-amber-950 flex items-center gap-1.5 cursor-pointer bg-amber-100 hover:bg-amber-200 px-3 py-1.5 rounded-xl border border-amber-300 shadow-2xs transition"
+                  title="Cắt và căn chỉnh góc ảnh này làm avatar"
+                >
+                  <Crop className="w-3.5 h-3.5 text-amber-700" />
+                  <span>Cắt lại góc ảnh này</span>
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setLightboxUrl(avatarPreview || avatarUrl)}
+                  className="text-[11px] font-bold text-slate-700 hover:text-slate-900 flex items-center gap-1.5 cursor-pointer bg-slate-100 hover:bg-slate-200 px-3 py-1.5 rounded-xl border border-slate-200 shadow-2xs transition"
+                >
+                  <Maximize2 className="w-3.5 h-3.5 text-slate-500" />
+                  <span>Xem phóng to</span>
+                </button>
+              </div>
             </div>
 
             {/* Upload Options */}
             <div className="space-y-4">
               <div>
-                <label className="block text-xs font-bold text-slate-700 mb-1.5">
-                  1. Tải ảnh từ máy tính / điện thoại
+                <label className="block text-xs font-bold text-slate-700 mb-1.5 flex items-center justify-between">
+                  <span>1. Tải ảnh từ máy tính / điện thoại</span>
+                  <span className="text-[10px] text-amber-600 font-semibold">Cắt tròn khung hình ngay lúc tải</span>
                 </label>
-                <input
-                  type="file"
-                  ref={fileInputRef}
-                  accept="image/*"
-                  onChange={handleAvatarFileUpload}
-                  className="hidden"
-                />
                 <button
                   type="button"
                   onClick={() => fileInputRef.current?.click()}
-                  className="w-full py-2.5 px-4 bg-slate-100 hover:bg-slate-200 border border-slate-300 rounded-xl text-xs font-bold text-slate-700 flex items-center justify-center gap-2 transition cursor-pointer"
+                  className="w-full py-2.5 px-4 bg-slate-100 hover:bg-slate-200 border border-slate-300 rounded-xl text-xs font-bold text-slate-700 flex items-center justify-center gap-2 transition cursor-pointer shadow-2xs"
                 >
                   <Upload className="w-4 h-4 text-amber-600" />
-                  Chọn File Ảnh Từ Thiết Bị (JPG, PNG)
+                  <span>Chọn File Ảnh Từ Thiết Bị (JPG, PNG)</span>
                 </button>
               </div>
 
@@ -757,13 +940,16 @@ export const ProfilePage: React.FC<ProfilePageProps> = ({ currentUser, onUpdateU
                     type="button"
                     onClick={() => {
                       if (customAvatarUrl.trim()) {
-                        handleSaveAvatar(customAvatarUrl.trim());
+                        setCroppingImage(customAvatarUrl.trim());
+                        setIsAvatarModalOpen(false);
                       }
                     }}
                     disabled={!customAvatarUrl.trim()}
-                    className="px-4 py-2 bg-amber-600 hover:bg-amber-700 disabled:bg-slate-200 disabled:text-slate-400 text-white font-bold text-xs rounded-xl transition"
+                    className="px-4 py-2 bg-amber-500 hover:bg-amber-600 disabled:opacity-50 text-slate-950 font-bold text-xs rounded-xl transition cursor-pointer flex items-center gap-1.5"
+                    title="Cắt căn chỉnh ảnh này cho vừa tròn"
                   >
-                    Lưu Link
+                    <Crop className="w-3.5 h-3.5 text-slate-950" />
+                    <span>Cắt & Áp Dụng</span>
                   </button>
                 </div>
               </div>
@@ -778,11 +964,11 @@ export const ProfilePage: React.FC<ProfilePageProps> = ({ currentUser, onUpdateU
                       key={idx}
                       type="button"
                       onClick={() => {
-                        setAvatarPreview(preset);
-                        handleSaveAvatar(preset);
+                        setCroppingImage(preset);
+                        setIsAvatarModalOpen(false);
                       }}
                       className="group relative rounded-xl overflow-hidden aspect-square border-2 border-transparent hover:border-amber-500 transition cursor-pointer"
-                      title="Chọn ảnh này"
+                      title="Chọn và cắt ảnh này làm avatar"
                     >
                       <img src={preset} alt={`Preset ${idx}`} className="w-full h-full object-cover" />
                     </button>
@@ -796,7 +982,7 @@ export const ProfilePage: React.FC<ProfilePageProps> = ({ currentUser, onUpdateU
               <button
                 type="button"
                 onClick={() => setIsAvatarModalOpen(false)}
-                className="px-4 py-2 text-slate-600 hover:bg-slate-100 text-xs font-semibold rounded-xl transition"
+                className="px-4 py-2 text-slate-600 hover:bg-slate-100 text-xs font-semibold rounded-xl transition cursor-pointer"
               >
                 Đóng
               </button>
@@ -804,6 +990,22 @@ export const ProfilePage: React.FC<ProfilePageProps> = ({ currentUser, onUpdateU
           </div>
         </div>
       )}
+
+      {/* MODAL CẮT CHỈNH SỬA ẢNH TRÒN KHUNG HÌNH (AVATAR CROPPER) */}
+      <AvatarCropperModal
+        isOpen={!!croppingImage}
+        imageSrc={croppingImage || ''}
+        onClose={() => setCroppingImage(null)}
+        onCropComplete={handleCroppedAvatarSave}
+      />
+
+      {/* MODAL XEM ẢNH DƯỚI DẠNG PHÓNG TO (LIGHTBOX) */}
+      <ImageLightboxModal
+        isOpen={!!lightboxUrl}
+        imageUrl={lightboxUrl || ''}
+        title={`Ảnh Đại Diện - ${currentUser.name}`}
+        onClose={() => setLightboxUrl(null)}
+      />
     </div>
   );
 };

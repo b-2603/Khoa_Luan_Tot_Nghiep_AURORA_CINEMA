@@ -7,7 +7,7 @@ export const CreateEmployeePage: React.FC = () => {
   const [name, setName] = useState('');
   const [email, setEmail] = useState('');
   const [phone, setPhone] = useState('');
-  const [department, setDepartment] = useState<Department>('Vé & Chăm sóc Khách hàng');
+  const [department, setDepartment] = useState<Department>('Box ticket');
   const [role, setRole] = useState<Role>('staff');
   const [password, setPassword] = useState('8888');
   const [submitted, setSubmitted] = useState(false);
@@ -124,38 +124,21 @@ export const CreateEmployeePage: React.FC = () => {
             </div>
           </div>
 
-          <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-            <div>
-              <label className="block text-xs font-semibold text-slate-700 mb-1.5 flex items-center gap-1.5">
-                <Building className="w-3.5 h-3.5 text-purple-600" />
-                <span>Bộ Phận Trực Thuộc</span>
-              </label>
-              <select
-                value={department}
-                onChange={(e) => setDepartment(e.target.value as Department)}
-                className="w-full px-3.5 py-2.5 bg-slate-50 border border-slate-200 rounded-xl text-xs text-slate-900 focus:outline-none focus:border-amber-500 focus:bg-white transition"
-              >
-                <option value="Vé & Chăm sóc Khách hàng">Vé & Chăm sóc Khách hàng</option>
-                <option value="Bắp nước & Quầy Concession">Bắp nước & Quầy Concession</option>
-                <option value="Kỹ thuật Phim & Âm thanh">Kỹ thuật Phim & Âm thanh</option>
-                <option value="Quản lý Đào tạo & Nhân sự">Quản lý Đào tạo & Nhân sự</option>
-              </select>
-            </div>
-
-            <div>
-              <label className="block text-xs font-semibold text-slate-700 mb-1.5 flex items-center gap-1.5">
-                <Shield className="w-3.5 h-3.5 text-amber-600" />
-                <span>Vai Trò Hệ Thống (Role)</span>
-              </label>
-              <select
-                value={role}
-                onChange={(e) => setRole(e.target.value as Role)}
-                className="w-full px-3.5 py-2.5 bg-slate-50 border border-slate-200 rounded-xl text-xs text-slate-900 focus:outline-none focus:border-amber-500 focus:bg-white transition"
-              >
-                <option value="staff">Nhân viên Phục vụ (Staff)</option>
-                <option value="manager">Quản lý Đào tạo (Manager)</option>
-              </select>
-            </div>
+          <div>
+            <label className="block text-xs font-semibold text-slate-700 mb-1.5 flex items-center gap-1.5">
+              <Building className="w-3.5 h-3.5 text-amber-600" />
+              <span>Nghiệp Vụ Chi Nhánh *</span>
+            </label>
+            <select
+              value={department}
+              onChange={(e) => setDepartment(e.target.value as Department)}
+              className="w-full px-3.5 py-2.5 bg-slate-50 border border-slate-200 rounded-xl text-xs text-slate-900 font-semibold focus:outline-none focus:border-amber-500 focus:bg-white transition"
+            >
+              <option value="Box ticket">1. Box ticket: Nhân viên bán vé</option>
+              <option value="Concession">2. Concession: Nhân viên bán bắp nước</option>
+              <option value="Usher">3. Usher: Nhân viên dọn rạp</option>
+              <option value="Processing">4. Processing: Nhân viên chế biến</option>
+            </select>
           </div>
 
           <div>

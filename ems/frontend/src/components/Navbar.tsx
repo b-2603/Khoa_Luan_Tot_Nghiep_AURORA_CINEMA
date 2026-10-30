@@ -22,7 +22,7 @@ export const Navbar: React.FC<NavbarProps> = ({
   };
 
   return (
-    <header className="glass-nav sticky top-0 z-40 px-4 lg:px-8 py-3 flex items-center justify-between shadow-sm bg-white/95 border-b border-slate-200">
+    <header className="glass-nav sticky top-0 z-40 px-4 lg:px-8 py-3 flex items-center justify-between shadow-sm bg-white/95 border-b border-slate-200 shrink-0">
       {/* Brand & Logo - Synchronized with POS and TMS */}
       <div className="flex items-center gap-3.5">
         <img
@@ -46,17 +46,8 @@ export const Navbar: React.FC<NavbarProps> = ({
 
       {/* Right Controls */}
       <div className="flex items-center gap-3">
-        {/* AI Assistant Button */}
-        <button
-          onClick={onOpenAiAssistant}
-          className="flex items-center gap-1.5 px-3.5 py-1.5 text-xs font-bold bg-gradient-to-r from-purple-600 to-indigo-600 hover:from-purple-500 hover:to-indigo-500 text-white rounded-xl shadow-md transition cursor-pointer"
-        >
-          <Bot className="w-4 h-4 text-cyan-100" />
-          <span>Trợ Lý Nghiệp Vụ</span>
-        </button>
-
         {/* User Info Capsule */}
-        <div className="flex items-center gap-2.5 pl-2 border-l border-slate-200">
+        <div className="flex items-center gap-2.5">
           <img
             src={currentUser.avatar}
             alt={currentUser.name}

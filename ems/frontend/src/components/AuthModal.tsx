@@ -53,7 +53,7 @@ export const AuthModal: React.FC<AuthModalProps> = ({ isOpen, onClose, onLoginSu
       return;
     }
 
-    const staffCode = `AR-${role === 'manager' ? 'MGR' : 'STAFF'}-${Math.floor(100 + Math.random() * 900)}`;
+    const staffCode = phone.trim() || '0901234567';
     const created = addUser({
       staffCode,
       name,
@@ -79,7 +79,7 @@ export const AuthModal: React.FC<AuthModalProps> = ({ isOpen, onClose, onLoginSu
     const googleUser = users.find(u => u.email.includes('minh')) || users[0];
     const created: User = {
       id: `usr-google-${Date.now()}`,
-      staffCode: `AR-STAFF-${Math.floor(200 + Math.random() * 800)}`,
+      staffCode: '0908888888',
       name: 'Nguyễn Văn Minh (Google Account)',
       email: 'minh.nguyen.google@auroracinema.vn',
       role: 'staff',
@@ -100,7 +100,7 @@ export const AuthModal: React.FC<AuthModalProps> = ({ isOpen, onClose, onLoginSu
   const handleFacebookLogin = () => {
     const fbUser: User = {
       id: `usr-fb-${Date.now()}`,
-      staffCode: `AR-STAFF-${Math.floor(300 + Math.random() * 700)}`,
+      staffCode: '0919999999',
       name: 'Trần Thu Hà (Facebook Account)',
       email: 'ha.tran.fb@auroracinema.vn',
       role: 'staff',

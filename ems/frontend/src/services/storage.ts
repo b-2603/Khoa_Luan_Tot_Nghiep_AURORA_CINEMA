@@ -137,6 +137,14 @@ export const saveCourse = (course: Course): void => {
   setItem(KEYS.COURSES, courses);
 };
 
+export const deleteCourse = (id: string): boolean => {
+  const courses = getCourses();
+  const next = courses.filter(course => course.id !== id);
+  if (next.length === courses.length) return false;
+  setItem(KEYS.COURSES, next);
+  return true;
+};
+
 // Quizzes (UC06, UC08)
 export const getQuizzes = (): Quiz[] => getItem<Quiz[]>(KEYS.QUIZZES, INITIAL_QUIZZES);
 export const saveQuiz = (quiz: Quiz): void => {

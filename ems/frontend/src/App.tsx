@@ -4,7 +4,7 @@ import { getCurrentUser } from './services/storage';
 import { Navbar } from './components/Navbar';
 import { Sidebar, NavTab } from './components/Sidebar';
 import { OpenAiKeyModal } from './components/OpenAiKeyModal';
-import { AiAssistantModal } from './components/AiAssistantModal';
+import { MascotAssistantWidget } from './components/MascotAssistantWidget';
 
 // Pages
 import { LoginPage } from './pages/LoginPage';
@@ -41,7 +41,7 @@ export function App() {
 
   // Once Logged in, render EMS System for that role!
   return (
-    <div className="min-h-screen bg-slate-50 text-slate-900 flex flex-col font-sans">
+    <div className="h-screen bg-slate-50 text-slate-900 flex flex-col font-sans overflow-hidden">
       {/* Top Navigation Bar */}
       <Navbar
         currentUser={currentUser}
@@ -51,7 +51,7 @@ export function App() {
       />
 
       {/* Main Workspace Layout */}
-      <div className="flex-1 flex overflow-hidden">
+      <div className="flex-1 flex overflow-hidden relative">
         {/* Sidebar Navigation */}
         <Sidebar
           userRole={currentUser.role}
@@ -66,7 +66,7 @@ export function App() {
           )}
           {activeTab === 'profile' && <ProfilePage currentUser={currentUser} onUpdateUser={setCurrentUser} />}
           {activeTab === 'employees' && <EmployeesPage />}
-          {activeTab === 'create-employee' && <CreateEmployeePage />}
+          {activeTab === 'create-employee' && <EmployeesPage initialAddModal={true} />}
           {activeTab === 'courses' && (
             <CoursesPage onNavigateToQuiz={() => setActiveTab('quizzes')} />
           )}
@@ -95,9 +95,11 @@ export function App() {
             />
           )}
           {activeTab === 'attendance-exceptions' && (
-            <AttendanceExceptionsPage 
+            <AttendancePage 
               currentUser={currentUser} 
+              onUpdateUser={setCurrentUser} 
               onNavigateTab={setActiveTab} 
+              initialSubTab="exceptions"
             />
           )}
           {/* Fallback to DashboardPage if activeTab is not recognized to prevent blank white screen */}
@@ -118,9 +120,9 @@ export function App() {
         onClose={() => setIsOpenAiKeyModalOpen(false)}
       />
 
-      <AiAssistantModal
-        isOpen={isAiAssistantOpen}
-        onClose={() => setIsAiAssistantOpen(false)}
+      <MascotAssistantWidget
+        isFullModalOpen={isAiAssistantOpen}
+        onToggleFullModal={setIsAiAssistantOpen}
         onOpenKeyModal={() => setIsOpenAiKeyModalOpen(true)}
         userRole={currentUser.role}
         userId={currentUser.id}

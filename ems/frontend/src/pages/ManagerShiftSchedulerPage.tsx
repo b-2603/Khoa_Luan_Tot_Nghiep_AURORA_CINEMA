@@ -187,7 +187,7 @@ export const ManagerShiftSchedulerPage: React.FC = () => {
         userId: reg.userId,
         userName: reg.userName,
         userAvatar: staff?.avatar || 'https://images.unsplash.com/photo-1534528741775-53994a69daeb?w=150&auto=format&fit=crop&q=80',
-        staffCode: staff?.staffCode || 'AR-STAFF',
+        staffCode: staff?.phone || staff?.staffCode || '0901234567',
         department: staff?.department || 'Vé & Chăm sóc Khách hàng',
         date: reg.date,
         shiftId: reg.shiftId,
@@ -261,7 +261,7 @@ export const ManagerShiftSchedulerPage: React.FC = () => {
           return {
             userId: staff?.id || `usr-${s.user_id}`,
             userName: s.user_name || staff?.name || 'Nhân viên',
-            staffCode: s.staff_code || staff?.staffCode || 'AR-STAFF',
+            staffCode: staff?.phone || s.phone || (s.staff_code && !s.staff_code.startsWith('AR-') ? s.staff_code : (staff?.staffCode || '0901234567')),
             avatar: staff?.avatar || 'https://images.unsplash.com/photo-1534528741775-53994a69daeb?w=150&auto=format&fit=crop&q=80',
             department: staff?.department || 'Bắp nước & Quầy Concession',
             shiftId: `shift-${s.shift_id}`,
@@ -292,7 +292,7 @@ export const ManagerShiftSchedulerPage: React.FC = () => {
           return {
             userId: res.userId,
             userName: res.userName,
-            staffCode: staff?.staffCode || 'AR-STAFF',
+            staffCode: staff?.phone || staff?.staffCode || '0901234567',
             avatar: staff?.avatar || 'https://images.unsplash.com/photo-1534528741775-53994a69daeb?w=150&auto=format&fit=crop&q=80',
             department: staff?.department || 'Bắp nước & Quầy Concession',
             shiftId: res.suggestedShiftId,
@@ -393,50 +393,21 @@ export const ManagerShiftSchedulerPage: React.FC = () => {
         </div>
 
         {/* Action Header Buttons */}
-        <div className="flex flex-wrap items-center gap-2.5 shrink-0">
+        <div className="flex items-center gap-2">
           {allPendingRegs.length > 0 && (
             <button
               onClick={handleApproveAll}
               disabled={isPublishing}
-              className="px-3.5 py-2.5 bg-emerald-600 hover:bg-emerald-500 text-white font-bold text-xs rounded-xl shadow-sm flex items-center gap-2 transition cursor-pointer"
+              className="px-4 py-2.5 bg-emerald-600 hover:bg-emerald-500 text-white font-bold text-xs rounded-xl shadow-sm flex items-center gap-2 transition cursor-pointer"
             >
               {isPublishing ? (
                 <RefreshCw className="w-4 h-4 animate-spin" />
               ) : (
                 <CheckCheck className="w-4 h-4" />
               )}
-              <span>Duyệt Nhanh ({allPendingRegs.length} Ca Chờ)</span>
+              <span>Phê Duyệt Nhanh ({allPendingRegs.length} Ca Chờ)</span>
             </button>
           )}
-
-          <button
-            onClick={handleAiAutoSchedule}
-            disabled={isAiLoading}
-            className="px-4 py-2.5 bg-gradient-to-r from-purple-600 via-indigo-600 to-amber-500 hover:from-purple-500 hover:to-amber-400 text-white font-extrabold text-xs rounded-xl shadow-md flex items-center gap-2 transition cursor-pointer disabled:opacity-50"
-            title="Tự động phân ca cho ngày đang chọn và mở ngay bảng báo cáo kết quả chi tiết"
-          >
-            {isAiLoading ? (
-              <>
-                <RefreshCw className="w-4 h-4 animate-spin" />
-                <span>Đang Tự Động Phân Ca...</span>
-              </>
-            ) : (
-              <>
-                <Sparkles className="w-4 h-4 text-amber-300" />
-                <span>Tự Động Phân Ca & Duyệt Lịch</span>
-              </>
-            )}
-          </button>
-
-          <button
-            onClick={handleAiScheduleFullWeek}
-            disabled={isAiLoading}
-            className="px-3.5 py-2.5 bg-purple-50 hover:bg-purple-100 text-purple-800 border border-purple-300 font-bold text-xs rounded-xl transition cursor-pointer flex items-center gap-1.5"
-            title="Tự động xếp lịch tối ưu cho toàn bộ 7 ngày trong tuần"
-          >
-            <Zap className="w-4 h-4 text-amber-500" />
-            <span>Tự Động Xếp Lịch Toàn Tuần</span>
-          </button>
         </div>
       </div>
 
@@ -502,30 +473,15 @@ export const ManagerShiftSchedulerPage: React.FC = () => {
           <div className="text-[11px] text-slate-500 mt-1">Đủ định biên các vị trí sảnh/quầy</div>
         </div>
 
-        <div className="bg-gradient-to-br from-purple-500/10 via-amber-500/5 to-white border border-purple-200 rounded-2xl p-4 shadow-sm relative overflow-hidden">
-          <div className="flex items-center justify-between">
-            <div className="text-xs text-purple-900 font-bold flex items-center gap-1.5">
-              <Sparkles className="w-3.5 h-3.5 text-purple-600" />
-              <span>Phân Bổ Ca Tự Động</span>
-            </div>
-            {aiReport && (
-              <span className="text-[10px] font-bold px-1.5 py-0.2 rounded bg-purple-200 text-purple-900">
-                100% Khớp
-              </span>
-            )}
+        <div className="bg-white border border-slate-200 rounded-2xl p-4 shadow-sm">
+          <div className="text-xs text-slate-500 font-medium">Lịch làm việc chính thức</div>
+          <div className="text-2xl font-black text-purple-700 mt-1 flex items-baseline gap-1">
+            <span>{schedules.length}</span>
+            <span className="text-xs font-normal text-slate-400">suất ca</span>
           </div>
-          <p className="text-[11px] text-slate-600 mt-1.5 leading-relaxed">
-            Ưu tiên 100% ca nhân viên mong muốn và tự động gán vào quầy vé, bắp nước, phòng chiếu.
-          </p>
-          {aiReport && (
-            <button
-              onClick={() => setIsAiModalOpen(true)}
-              className="text-[10px] text-purple-700 font-bold mt-1.5 flex items-center gap-1 hover:underline cursor-pointer"
-            >
-              <span>Xem báo cáo phân ca vừa tạo</span>
-              <ChevronRight className="w-3 h-3" />
-            </button>
-          )}
+          <div className="text-[11px] text-purple-700 mt-1 font-semibold flex items-center gap-1">
+            <CalendarRange className="w-3.5 h-3.5" /> Đã phân công trực rạp
+          </div>
         </div>
       </div>
 
@@ -596,7 +552,7 @@ export const ManagerShiftSchedulerPage: React.FC = () => {
                     : 'Tất cả nguyện vọng đăng ký ca đã được xử lý hoàn tất!'}
                 </h3>
                 <p className="text-[11px] text-amber-800 mt-0.5">
-                  Bấm <strong>"Phê Duyệt Ca"</strong> để duyệt từng ca lẻ, hoặc bấm <strong>"Tự Động Phân Ca & Duyệt Lịch"</strong> ở góc trên để hệ thống tự động tối ưu hóa toàn bộ.
+                  Quản lý xem xét nguyện vọng và bấm <strong>"Phê Duyệt"</strong> từng ca lẻ, hoặc bấm <strong>"Phê Duyệt Toàn Bộ Nguyện Vọng"</strong> để đưa vào lịch phân công chính thức.
                 </p>
               </div>
             </div>
@@ -699,7 +655,7 @@ export const ManagerShiftSchedulerPage: React.FC = () => {
                         <div className="flex-1">
                           <div className="font-bold text-sm text-slate-900">{reg.userName}</div>
                           <div className="text-[11px] text-slate-500 font-mono flex items-center gap-2">
-                            <span className="text-amber-700 font-semibold">{staff?.staffCode || 'AR-STAFF'}</span>
+                            <span className="text-amber-700 font-semibold">{staff?.phone || staff?.staffCode || '0901234567'}</span>
                             <span>•</span>
                             <span>{staff?.department || 'Bắp nước & Quầy Concession'}</span>
                           </div>
@@ -800,16 +756,8 @@ export const ManagerShiftSchedulerPage: React.FC = () => {
               </p>
             </div>
             <div className="flex items-center gap-2">
-              <button
-                onClick={handleAiScheduleFullWeek}
-                disabled={isAiLoading}
-                className="px-3 py-1.5 bg-purple-600 hover:bg-purple-500 text-white rounded-xl text-xs font-bold transition flex items-center gap-1.5 cursor-pointer shadow-xs"
-              >
-                <Sparkles className="w-3.5 h-3.5 text-amber-300" />
-                <span>Tự Động Xếp Ca Toàn Tuần</span>
-              </button>
-              <span className="text-xs text-slate-400 font-mono">
-                Tổng số {registrations.length} lượt đăng ký
+              <span className="text-xs text-slate-500 font-semibold px-3 py-1 bg-slate-100 rounded-lg">
+                Tổng số {registrations.length} lượt đăng ký ca
               </span>
             </div>
           </div>
