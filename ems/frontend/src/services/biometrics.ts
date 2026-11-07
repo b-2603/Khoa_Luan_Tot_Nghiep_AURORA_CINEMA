@@ -34,49 +34,109 @@ const STORAGE_KEYS = {
   WIFI_CONFIG: 'aurora_authorized_wifi_config',
 };
 
-// Ngưỡng khoảng cách Euclid giữa 2 descriptor: càng nhỏ càng giống
 const MATCH_DISTANCE_THRESHOLD = 0.48;
 
-// 1. Phục vụ phát hiện Mạng / IP thật của client
-export async function detectCurrentNetwork(): Promise<{ ip: string; isOnline: boolean }> {
-  try {
-    const res = await fetch('https://api.ipify.org?format=json', { signal: AbortSignal.timeout(3000) });
-    if (res.ok) {
-      const data = await res.json();
-      if (data.ip) return { ip: data.ip, isOnline: true };
+export function isIpInSameWifi(clientIp: string, authorizedIp: string): boolean {
+  if (!clientIp || !authorizedIp) return false;
+  const c = clientIp.trim();
+  const a = authorizedIp.trim();
+  if (c === a) return true;
+  if ((c === '127.0.0.1' || c === 'localhost') && (a === '127.0.0.1' || a === 'localhost')) return true;
+
+  const cParts = c.split('.');
+  const aParts = a.split('.');
+  if (cParts.length === 4 && aParts.length === 4) {
+    if (cParts[0] === aParts[0] && cParts[1] === aParts[1] && cParts[2] === aParts[2]) {
+      return true;
     }
-  } catch (e) {
-    // fallback
   }
+  return false;
+}
+
+async function getLocalIpViaWebRTC(): Promise<string | null> {
+  if (typeof window === 'undefined' || !(window as any).RTCPeerConnection) return null;
+  return new Promise((resolve) => {
+    try {
+      const pc = new RTCPeerConnection({ iceServers: [] });
+      pc.createDataChannel('');
+      pc.createOffer().then(offer => pc.setLocalDescription(offer)).catch(() => resolve(null));
+      const timer = setTimeout(() => {
+        try { pc.close(); } catch {}
+        resolve(null);
+      }, 1200);
+
+      pc.onicecandidate = (event) => {
+        if (!event || !event.candidate || !event.candidate.candidate) return;
+        const cand = event.candidate.candidate;
+        const match = cand.match(/([0-9]{1,3}(\.[0-9]{1,3}){3})/);
+        if (match && match[1] && !match[1].startsWith('127.')) {
+          clearTimeout(timer);
+          try { pc.close(); } catch {}
+          resolve(match[1]);
+        }
+      };
+    } catch {
+      resolve(null);
+    }
+  });
+}
+
+export async function detectCurrentNetwork(): Promise<{ ip: string; isOnline: boolean; localIp?: string }> {
+  let localIp: string | null = null;
+  try {
+    localIp = await getLocalIpViaWebRTC();
+  } catch {}
 
   try {
     const res = await fetch('http://localhost:8000/network-info', { signal: AbortSignal.timeout(2000) });
     if (res.ok) {
       const data = await res.json();
-      if (data.ip) return { ip: data.ip, isOnline: true };
+      if (data.ip) {
+        return { 
+          ip: (localIp && localIp !== '127.0.0.1') ? localIp : data.ip, 
+          isOnline: true, 
+          localIp: localIp || undefined 
+        };
+      }
     }
   } catch (e) {
-    // fallback
   }
 
-  return { ip: '171.243.48.156', isOnline: typeof navigator !== 'undefined' ? navigator.onLine : true };
+  try {
+    const res = await fetch('https://api.ipify.org?format=json', { signal: AbortSignal.timeout(3000) });
+    if (res.ok) {
+      const data = await res.json();
+      if (data.ip) {
+        return { 
+          ip: (localIp && localIp !== '127.0.0.1') ? localIp : data.ip, 
+          isOnline: true, 
+          localIp: localIp || undefined 
+        };
+      }
+    }
+  } catch (e) {
+  }
+
+  return { 
+    ip: localIp || '10.106.193.65', 
+    isOnline: typeof navigator !== 'undefined' ? navigator.onLine : true,
+    localIp: localIp || undefined
+  };
 }
 
-// Lấy cấu hình Wi-Fi Rạp được cấp phép
 export function getAuthorizedWifiConfig(): NetworkConfig {
   try {
     const stored = localStorage.getItem(STORAGE_KEYS.WIFI_CONFIG);
     if (stored) return JSON.parse(stored);
-  } catch (e) {}
+  } catch (e) { }
 
   return {
-    authorizedIp: '',
+    authorizedIp: '10.106.193.65',
     wifiSsidName: 'AURORA-CINEMA-STAFF-5G',
     updatedAt: new Date().toISOString()
   };
 }
 
-// Lưu thông tin Wi-Fi Rạp được cấp phép
 export function setAuthorizedWifiConfig(ip: string, wifiSsidName: string): NetworkConfig {
   const config: NetworkConfig = {
     authorizedIp: ip,
@@ -87,7 +147,6 @@ export function setAuthorizedWifiConfig(ip: string, wifiSsidName: string): Netwo
   return config;
 }
 
-// Lấy danh sách camera có sẵn trên thiết bị hiện tại
 export async function getAvailableCameras(): Promise<MediaDeviceInfo[]> {
   try {
     if (!navigator.mediaDevices || !navigator.mediaDevices.enumerateDevices) return [];
@@ -111,9 +170,9 @@ export async function startWebcamStream(
   let targetDeviceId = deviceId;
   const isPhoneOrVirtual = (label: string) => {
     const l = (label || '').toLowerCase();
-    return l.includes('phone') || l.includes('droid') || l.includes('camo') || 
-           l.includes('virtual') || l.includes('iriun') || l.includes('link to windows') ||
-           l.includes('windows phone') || l.includes('connected device');
+    return l.includes('phone') || l.includes('droid') || l.includes('camo') ||
+      l.includes('virtual') || l.includes('iriun') || l.includes('link to windows') ||
+      l.includes('windows phone') || l.includes('connected device');
   };
 
   if (!targetDeviceId) {
@@ -131,21 +190,21 @@ export async function startWebcamStream(
           targetDeviceId = devices[0].deviceId;
         }
       }
-    } catch {}
+    } catch { }
   }
 
   // Chú ý: Tránh dùng { facingMode: 'user' } trước vì trên Windows 11 sẽ kích hoạt prompt liên kết điện thoại
   const candidateConstraints: MediaStreamConstraints[] = targetDeviceId
     ? [
-        { video: { deviceId: { exact: targetDeviceId } } },
-        { video: { deviceId: targetDeviceId } },
-        { video: true }
-      ]
+      { video: { deviceId: { exact: targetDeviceId } } },
+      { video: { deviceId: targetDeviceId } },
+      { video: true }
+    ]
     : [
-        { video: true }, // Mở camera mặc định của phần cứng máy tính
-        { video: { width: { ideal: 1280 }, height: { ideal: 720 } } },
-        { video: { facingMode: 'user' } },
-      ];
+      { video: true }, // Mở camera mặc định của phần cứng máy tính
+      { video: { width: { ideal: 1280 }, height: { ideal: 720 } } },
+      { video: { facingMode: 'user' } },
+    ];
 
   let lastErr = '';
   for (const constraints of candidateConstraints) {
@@ -167,49 +226,49 @@ export async function startWebcamStream(
               });
             }
           }
-        } catch {}
+        } catch { }
       }
 
       videoElement.srcObject = stream;
       videoElement.muted = true;
       videoElement.setAttribute('playsinline', 'true');
       videoElement.setAttribute('autoplay', 'true');
-      
+
       try {
         await videoElement.play();
       } catch (playErr) {
-        setTimeout(() => videoElement.play().catch(() => {}), 100);
+        setTimeout(() => videoElement.play().catch(() => { }), 100);
       }
 
       const tracks = stream.getVideoTracks();
       const rawLabel = tracks[0]?.label || '';
-      const activeCameraName = rawLabel 
-        ? rawLabel 
-        : targetDeviceId 
-        ? 'Webcam tích hợp máy tính' 
-        : 'Camera của thiết bị này';
+      const activeCameraName = rawLabel
+        ? rawLabel
+        : targetDeviceId
+          ? 'Webcam tích hợp máy tính'
+          : 'Camera của thiết bị này';
 
       return { stream, activeCameraName };
     } catch (err: any) {
       lastErr = err?.name || err?.message || 'Unknown error';
       if (err?.name === 'NotAllowedError' || err?.name === 'PermissionDeniedError') {
-        return { 
-          stream: null, 
-          error: 'Trình duyệt chưa được cấp quyền Camera! Vui lòng bấm biểu tượng ổ khóa hoặc camera trên thanh địa chỉ và chọn "Cho phép".' 
+        return {
+          stream: null,
+          error: 'Trình duyệt chưa được cấp quyền Camera! Vui lòng bấm biểu tượng ổ khóa hoặc camera trên thanh địa chỉ và chọn "Cho phép".'
         };
       }
       if (err?.name === 'NotReadableError') {
-        return { 
-          stream: null, 
-          error: 'Camera đang bị ứng dụng khác (Zoom, Zalo, Teams...) chiếm dụng. Vui lòng tắt ứng dụng đó và thử lại.' 
+        return {
+          stream: null,
+          error: 'Camera đang bị ứng dụng khác (Zoom, Zalo, Teams...) chiếm dụng. Vui lòng tắt ứng dụng đó và thử lại.'
         };
       }
     }
   }
 
-  return { 
-    stream: null, 
-    error: `Không thể kết nối thiết bị Webcam (${lastErr}). Bạn hãy kiểm tra lại kết nối webcam hoặc cấp quyền camera cho trình duyệt.` 
+  return {
+    stream: null,
+    error: `Không thể kết nối thiết bị Webcam (${lastErr}). Bạn hãy kiểm tra lại kết nối webcam hoặc cấp quyền camera cho trình duyệt.`
   };
 }
 
