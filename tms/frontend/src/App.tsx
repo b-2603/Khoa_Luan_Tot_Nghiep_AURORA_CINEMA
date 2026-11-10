@@ -11,6 +11,7 @@ import ReportsWorkspace from './components/ReportsWorkspace';
 import PosDeviceManagement from './components/PosDeviceManagement';
 import UserAccountModal, { type UserAccountForm } from './components/UserAccountModal';
 import RbacManagement, { type PermissionAction, type PermissionActions, type RbacAccount, type RbacGrant, type RbacModule } from './components/RbacManagement';
+import CinemaMoviePlanWorkspace, { type CinemaPlanView } from './components/CinemaMoviePlanWorkspace';
 import './components/MarketingWorkspace.css';
 import './components/MarketingReviewHierarchy.css';
 import './components/MarketingWorkspace.layout.css';
@@ -150,7 +151,7 @@ function getRoleNavItems(role: TMSRole): NavItem[] {
     case 'cinema_admin':
       return [
         { id: 'dashboard', name: 'Tổng quan', icon: Home },
-        { id: 'movie_plan', name: 'Kế hoạch phim', icon: Film, children: ['Xem kế hoạch phim', 'Xác nhận kế hoạch', 'Triển khai phim tại rạp'] },
+        { id: 'movie_plan', name: 'Kế hoạch phim', icon: Film, children: ['Kế hoạch đang hiệu lực', 'Xác nhận kế hoạch', 'Triển khai phim tại rạp', 'Lịch sử kế hoạch'] },
         { id: 'schedules', name: 'Lịch chiếu', icon: CalendarDays },
         { id: 'screens', name: 'Phòng chiếu', icon: Building2 },
         { id: 'pricing', name: 'Áp dụng giá vé', icon: Tag },
@@ -206,8 +207,8 @@ const VIEW_RBAC_MODULE: Record<string, string> = {
   accounts: 'users', 'Danh sách tài khoản': 'users', 'Ma trận phân quyền': 'users',
   cinemas: 'screens', 'Hệ thống rạp': 'screens',
   movies: 'movies', 'Danh sách phim': 'movies', 'Kế hoạch phim': 'movies',
-  'Phân bổ phim cho rạp': 'movies', movie_plan: 'movies', 'Xem kế hoạch phim': 'movies',
-  'Xác nhận kế hoạch': 'movies', 'Triển khai phim tại rạp': 'movies', marketing_approvals: 'marketing',
+  'Phân bổ phim cho rạp': 'movies', movie_plan: 'movies', 'Xem kế hoạch phim': 'movies', 'Kế hoạch đang hiệu lực': 'movies',
+  'Xác nhận kế hoạch': 'movies', 'Triển khai phim tại rạp': 'movies', 'Lịch sử kế hoạch': 'movies', marketing_approvals: 'marketing',
   schedules: 'schedules', showtimes: 'schedules',
   screens: 'screens',
   pricing: 'ticket_types',
@@ -500,10 +501,14 @@ export interface MovieAllocation {
   preferred_screen_types: string;
   allocated_start_date: string;
   allocated_end_date: string;
-  status: 'pending' | 'confirmed' | 'deploying' | 'completed';
+  status: 'pending' | 'confirmed' | 'deploying' | 'completed' | 'expired' | 'cancelled';
   confirmed_by?: string;
   confirmed_at?: string;
   note?: string;
+  lifecycle_status?: 'active' | 'upcoming' | 'history';
+  remaining_days?: number;
+  schedule_count?: number;
+  server_date?: string;
 }
 
 export interface MovieItem {
@@ -1702,6 +1707,24 @@ export default function App() {
       loadScreens();
     }
   }, [isLoggedIn, currentUser?.id, currentUser?.role]);
+
+  // Kế hoạch có thể được Admin Tổng duyệt ở một tab/thiết bị khác. Giữ màn
+  // Admin Rạp đồng bộ với aurora_db và tải ngay khi người dùng quay lại tab.
+  useEffect(() => {
+    const planViews = ['movie_plan', 'Xem kế hoạch phim', 'Kế hoạch đang hiệu lực', 'Xác nhận kế hoạch', 'Triển khai phim tại rạp', 'Lịch sử kế hoạch'];
+    if (!isLoggedIn || !['cinema_admin', 'supervisor'].includes(currentUser?.role || '') || !planViews.includes(active)) return;
+    const refresh = () => { void loadMovieAllocations(); };
+    refresh();
+    const timer = window.setInterval(refresh, 15000);
+    const onVisibility = () => { if (document.visibilityState === 'visible') refresh(); };
+    window.addEventListener('focus', refresh);
+    document.addEventListener('visibilitychange', onVisibility);
+    return () => {
+      window.clearInterval(timer);
+      window.removeEventListener('focus', refresh);
+      document.removeEventListener('visibilitychange', onVisibility);
+    };
+  }, [isLoggedIn, currentUser?.id, currentUser?.role, active]);
 
   useEffect(() => {
     if (!isLoggedIn || !['cinema_admin','super_admin'].includes(currentUser?.role || '') || !['staff','NV bán hàng','Nhân viên rạp'].includes(active)) return;
@@ -3793,7 +3816,9 @@ export default function App() {
                       pending: { label: 'Chờ rạp xác nhận', bg: '#fef3c7', color: '#92400e' },
                       confirmed: { label: 'Đã xác nhận', bg: '#ecfdf5', color: '#065f46' },
                       deploying: { label: 'Đang chiếu', bg: '#eff6ff', color: '#1d4ed8' },
-                      completed: { label: 'Đã hoàn thành', bg: '#f1f5f9', color: '#475569' }
+                      completed: { label: 'Đã hoàn thành', bg: '#f1f5f9', color: '#475569' },
+                      expired: { label: 'Đã hết hạn', bg: '#f1f5f9', color: '#64748b' },
+                      cancelled: { label: 'Đã hủy', bg: '#fef2f2', color: '#b91c1c' }
                     }[al.status] || { label: al.status, bg: '#f1f5f9', color: '#475569' };
 
                     return (
@@ -3975,119 +4000,23 @@ export default function App() {
     // ========================================================
     // MOVIE PLAN VIEWS (ADMIN RẠP - USE CASES 2, 3, 4)
     // ========================================================
-    if (a === 'movie_plan' || a === 'Xem kế hoạch phim' || a === 'Xác nhận kế hoạch' || a === 'Triển khai phim tại rạp') {
-      const isConfirmOnly = a === 'Xác nhận kế hoạch';
-      const isDeployOnly = a === 'Triển khai phim tại rạp';
-
+    if (a === 'movie_plan' || a === 'Xem kế hoạch phim' || a === 'Kế hoạch đang hiệu lực' || a === 'Xác nhận kế hoạch' || a === 'Triển khai phim tại rạp' || a === 'Lịch sử kế hoạch') {
       const myTheaterId = Number(currentUser?.theater_id || 0);
       const myTheater = theatersList.find(theater => Number(theater.id) === myTheaterId);
       const myTheaterName = myTheater?.name || currentUser?.theater_name || (myTheaterId > 0 ? `Rạp #${myTheaterId}` : 'Chưa được gán rạp');
-      // API đã giới hạn theo phiên đăng nhập; bộ lọc chính xác này là lớp bảo vệ
-      // bổ sung để dữ liệu rạp khác không thể xuất hiện do trạng thái giao diện cũ.
-      const myAllocations = myTheaterId > 0 ? movieAllocations.filter(al => Number(al.theater_id) === myTheaterId) : [];
-      const pendingAllocations = myAllocations.filter(al => al.status === 'pending');
-      const confirmedAllocations = myAllocations.filter(al => al.status === 'confirmed' || al.status === 'deploying');
+      const myAllocations = myTheaterId > 0 ? movieAllocations.filter(allocation => Number(allocation.theater_id) === myTheaterId) : [];
+      const view: CinemaPlanView = a === 'Xác nhận kế hoạch' ? 'confirm' : a === 'Triển khai phim tại rạp' ? 'deploy' : a === 'Lịch sử kế hoạch' ? 'history' : 'overview';
+      const routeByView: Record<CinemaPlanView, string> = { overview: 'Kế hoạch đang hiệu lực', confirm: 'Xác nhận kế hoạch', deploy: 'Triển khai phim tại rạp', history: 'Lịch sử kế hoạch' };
 
-      return (
-        <div>
-          {/* Sub tabs for cinema admin */}
-          <div className="tms-tabs-bar" style={{ marginBottom: 16 }}>
-            <button className={`tms-tab-btn ${a === 'Xem kế hoạch phim' || a === 'movie_plan' ? 'active' : ''}`} onClick={() => setActive('Xem kế hoạch phim')}>
-              <Film size={16} /><span>Kế hoạch phim được phân bổ ({myAllocations.length})</span>
-            </button>
-            <button className={`tms-tab-btn ${a === 'Xác nhận kế hoạch' ? 'active' : ''}`} onClick={() => setActive('Xác nhận kế hoạch')}>
-              <CheckCircle2 size={16} /><span>Xác nhận kế hoạch ({pendingAllocations.length} chờ duyệt)</span>
-            </button>
-            <button className={`tms-tab-btn ${a === 'Triển khai phim tại rạp' ? 'active' : ''}`} onClick={() => setActive('Triển khai phim tại rạp')}>
-              <CalendarDays size={16} /><span>Triển khai phim tại rạp ({confirmedAllocations.length})</span>
-            </button>
-          </div>
-
-          <div className="tms-card-table">
-            <div className="tms-table-toolbar">
-              <div style={{ fontWeight: 700 }}>
-                {isConfirmOnly ? 'Phim cần Admin Rạp xác nhận tiếp nhận' : isDeployOnly ? 'Chọn phim đã xác nhận để lên lịch chiếu' : 'Danh sách phim được Admin Tổng phân bổ cho rạp'}
-              </div>
-            </div>
-
-            <table className="tms-data-table">
-              <thead>
-                <tr>
-                  <th>Tên Phim</th>
-                  <th>Định Dạng</th>
-                  <th>Chỉ Tiêu Suất</th>
-                  <th>Phân Bổ Từ</th>
-                  <th>Thời Gian Chiếu</th>
-                  <th>Trạng Thái Tại Rạp</th>
-                  <th>Thao Tác</th>
-                </tr>
-              </thead>
-              <tbody>
-                {(isConfirmOnly ? pendingAllocations : isDeployOnly ? confirmedAllocations : myAllocations).map(al => (
-                  <tr key={al.id}>
-                    <td>
-                      <b style={{ fontSize: '0.88rem' }}>{al.movie_title}</b>
-                      <div style={{ fontSize: '0.72rem', color: '#64748b' }}>Phòng ưu tiên: {al.preferred_screen_types}</div>
-                    </td>
-                    <td><span style={{ fontSize: '0.73rem', background: '#f1f5f9', padding: '2px 7px', borderRadius: 4 }}>{al.preferred_screen_types}</span></td>
-                    <td><b style={{ color: '#2563eb' }}>{al.min_screenings_per_day}</b> suất/ngày</td>
-                    <td>
-                      <span style={{ fontSize: '0.73rem', background: '#fef3c7', color: '#92400e', padding: '2px 8px', borderRadius: 4, fontWeight: 700 }}>
-                        👑 Admin Tổng
-                      </span>
-                    </td>
-                    <td>
-                      <div style={{ fontSize: '0.78rem' }}>{al.allocated_start_date}</div>
-                      <div style={{ fontSize: '0.7rem', color: '#64748b' }}>đến {al.allocated_end_date}</div>
-                    </td>
-                    <td>
-                      <span style={{
-                        fontSize: '0.73rem',
-                        fontWeight: 700,
-                        padding: '3px 8px',
-                        borderRadius: 4,
-                        background: al.status === 'confirmed' ? '#ecfdf5' : al.status === 'deploying' ? '#eff6ff' : '#fef3c7',
-                        color: al.status === 'confirmed' ? '#065f46' : al.status === 'deploying' ? '#1d4ed8' : '#92400e'
-                      }}>
-                        {al.status === 'confirmed' ? 'Đã xác nhận' : al.status === 'deploying' ? 'Đang chiếu' : 'Chờ xác nhận'}
-                      </span>
-                    </td>
-                    <td>
-                      <div style={{ display: 'inline-flex', alignItems: 'center', gap: 6 }}>
-                        <button
-                          type="button"
-                          className="tms-btn tms-btn-outline"
-                          style={{ padding: '4px 9px', fontSize: '0.74rem', color: '#1d4ed8' }}
-                          onClick={() => handleViewDeploymentDetail(al.id)}
-                        >
-                          <FileText size={12} /> Xem chi tiết
-                        </button>
-                      {al.status === 'pending' ? (
-                        <button
-                          className="tms-btn tms-btn-success"
-                          style={{ padding: '4px 10px', fontSize: '0.74rem' }}
-                          onClick={() => handleConfirmAllocation(al.id)}
-                        >
-                          <Check size={12} /> Xác nhận tiếp nhận
-                        </button>
-                      ) : (
-                        <button
-                          className="tms-btn tms-btn-primary"
-                          style={{ padding: '4px 10px', fontSize: '0.74rem' }}
-                          onClick={() => openScheduleForAllocation(al)}
-                        >
-                          <CalendarDays size={12} /> Lên lịch chiếu
-                        </button>
-                      )}</div>
-                    </td>
-                  </tr>
-                ))}
-                {(isConfirmOnly ? pendingAllocations : isDeployOnly ? confirmedAllocations : myAllocations).length === 0 && <tr><td colSpan={7}><div className="schedule-empty-state movie-plan-empty"><span className="movie-plan-empty-icon"><Film size={26}/></span><b>{isConfirmOnly ? 'Không có kế hoạch đang chờ xác nhận' : isDeployOnly ? 'Chưa có phim sẵn sàng triển khai' : 'Chưa có kế hoạch phim được phân bổ'}</b><span>{isConfirmOnly ? `${myTheaterName} đã xử lý toàn bộ kế hoạch được giao.` : isDeployOnly ? 'Kế hoạch sẽ xuất hiện tại đây sau khi rạp xác nhận tiếp nhận.' : `Admin Tổng chưa phân bổ kế hoạch phim mới cho ${myTheaterName}.`}</span><small>Dữ liệu sẽ tự động cập nhật khi có phân bổ mới.</small></div></td></tr>}
-              </tbody>
-            </table>
-          </div>
-        </div>
-      );
+      return <CinemaMoviePlanWorkspace
+        view={view}
+        theaterName={myTheaterName}
+        allocations={myAllocations}
+        onChangeView={nextView => setActive(routeByView[nextView])}
+        onViewDetail={handleViewDeploymentDetail}
+        onConfirm={handleConfirmAllocation}
+        onSchedule={openScheduleForAllocation}
+      />;
     }
 
     // SCHEDULES

@@ -75,6 +75,8 @@ Schema có thể triển khai độc lập bằng `database/tms_notifications.sq
 - `DELETE ?action=marketing-movie-plans&id={id}` — xóa bản nháp hoặc kế hoạch đang được yêu cầu sửa.
 - `GET ?action=marketing-plan-approvals` — Admin Tổng xem hàng đợi phê duyệt.
 - `PUT ?action=marketing-plan-approvals` — Admin Tổng duyệt hoặc trả sửa. Body hỗ trợ phản hồi theo hạng mục: `{ "id": 1, "decision": "revision_requested", "note": "Ý kiến chung", "review_items": [{ "section_key": "revenue", "field_label": "Mục tiêu doanh thu", "comment": "Cần bổ sung căn cứ" }] }`.
+  - Khi duyệt, backend từ chối kế hoạch đã hết hạn, thiếu rạp hoặc chứa mã rạp không còn tồn tại.
+  - Phê duyệt và tạo `movie_allocations` chạy trong cùng transaction; chỉ thành công khi số phân bổ bằng đúng số rạp đề xuất. Phản hồi trả `data.allocation_count` để giao diện xác nhận kết quả.
 
 Khi được duyệt, kế hoạch chuyển sang `published` và tạo bản ghi `movie_allocations` cho từng rạp đề xuất để Admin Rạp lên lịch chiếu. Các phản hồi được lưu trong `marketing_movie_plan_review_items`; khi Marketing gửi lại, phản hồi đang mở chuyển thành `resolved`. Mọi lần tạo, cập nhật, gửi, thu hồi, duyệt và công bố phim được ghi trong `marketing_movie_plan_history` của `aurora_db`.
 
@@ -103,6 +105,15 @@ Schema nghiệp vụ nằm tại `database/product_planning.sql`. Có thể áp 
 ```
 
 Các resource `movies`, `screens`, `schedules`, `staff`, `ticket-types`, `products`, `vouchers`, `customers`, `theaters`, `promotions`, `movie-plans`, `movie-allocations` hỗ trợ `GET`; resource được cấp quyền hỗ trợ thêm `POST`, `PUT`, `DELETE` theo nghiệp vụ.
+
+## Vòng đời kế hoạch phim tại rạp
+
+- `GET ?action=movie-plans&lifecycle=active|history|all` — lọc kế hoạch theo ngày máy chủ của `aurora_db`.
+- `GET ?action=movie-allocations&theater_id={id}&lifecycle=active|history|all` — đọc phân bổ theo rạp; mỗi dòng trả thêm `server_date`, `lifecycle_status`, `remaining_days` và `schedule_count`.
+- Khi `expected_end_date` hoặc `allocated_end_date` đã qua, backend giữ nguyên bản ghi nhưng chuyển kế hoạch sang `completed` và phân bổ sang `expired`. Đây là nguồn dữ liệu cho màn “Lịch sử kế hoạch”.
+- `GET ?action=schedule-movies` chỉ trả kế hoạch đã xác nhận, chưa hết hạn và còn thuộc thời gian phân bổ. API tạo suất chiếu cũng kiểm tra lại điều kiện này để không thể lách bằng request thủ công.
+
+Migration chuẩn hóa dữ liệu hiện hữu nằm tại `database/movie_plan_lifecycle.sql`; ứng dụng cũng đồng bộ trạng thái theo cách idempotent khi khởi tạo module kế hoạch.
 
 ## Quy ước phản hồi
 

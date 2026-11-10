@@ -694,6 +694,19 @@ class MarketingController
         $rows=$this->rows("SELECT * FROM movie_plans WHERE id={$id} AND marketing_owner_id IS NOT NULL LIMIT 1");
         if(!$rows)jsonResponse(array('success'=>false,'message'=>'Không tìm thấy kế hoạch Marketing.'),404);
         $plan=$rows[0];if($plan['approval_status']!=='pending_approval')jsonResponse(array('success'=>false,'message'=>'Kế hoạch không còn ở trạng thái chờ duyệt.'),409);
+        if($decision==='approved'){
+            $databaseDate=(string)$this->scalar('SELECT CURDATE()');
+            if(!$this->validDate($plan['expected_start_date'])||!$this->validDate($plan['expected_end_date'])||$plan['expected_end_date']<$plan['expected_start_date']){
+                jsonResponse(array('success'=>false,'message'=>'Không thể duyệt: thời gian triển khai của kế hoạch không hợp lệ. Hãy trả Marketing cập nhật lại ngày bắt đầu và kết thúc.'),422);
+            }
+            if($plan['expected_end_date']<$databaseDate){
+                jsonResponse(array('success'=>false,'message'=>'Không thể duyệt kế hoạch đã hết hạn ngày '.date('d/m/Y',strtotime($plan['expected_end_date'])).'. Hãy yêu cầu Marketing cập nhật thời gian triển khai trước khi duyệt.'),422);
+            }
+            $plannedTheaterIds=array_values(array_unique(array_filter(array_map('intval',explode(',',(string)$plan['planned_theater_ids'])))));
+            if(!$plannedTheaterIds)jsonResponse(array('success'=>false,'message'=>'Không thể duyệt: kế hoạch chưa chọn rạp triển khai.'),422);
+            $validTheaterCount=(int)$this->scalar('SELECT COUNT(*) FROM theaters WHERE id IN ('.implode(',',$plannedTheaterIds).')');
+            if($validTheaterCount!==count($plannedTheaterIds))jsonResponse(array('success'=>false,'message'=>'Không thể duyệt: danh sách rạp đề xuất có dữ liệu không còn tồn tại trong aurora_db.'),422);
+        }
         $actor=$this->db->real_escape_string($user['full_name']);$noteEsc=$this->db->real_escape_string($note);$status=$decision==='approved'?'published':'draft';
         if(!$this->db->query('START TRANSACTION'))jsonResponse(array('success'=>false,'message'=>'Không thể bắt đầu phê duyệt kế hoạch trong aurora_db: '.$this->db->error),500);
         // Giữ giá trị rỗng tương thích cả schema cũ (NOT NULL) và schema mới (NULL).
@@ -706,10 +719,15 @@ class MarketingController
                 if(!$this->db->query("INSERT INTO marketing_movie_plan_review_items(plan_id,review_round,section_key,section_label,field_key,field_label,current_value,comment,status,created_by,created_by_name,created_at) VALUES({$id},{$round},'{$section}','{$sectionLabel}','{$field}','{$label}','{$currentValue}','{$comment}','open',".(int)$user['id'].",'{$actor}',NOW())")){$error=$this->db->error;$this->db->query('ROLLBACK');jsonResponse(array('success'=>false,'message'=>'Không thể lưu nội dung phản hồi: '.$error),500);}
             }
         }
-        if($decision==='approved'&&!$this->distributeApprovedPlan($plan)){$error=$this->db->error;$this->db->query('ROLLBACK');jsonResponse(array('success'=>false,'message'=>'Không thể phân bổ kế hoạch đến Admin Rạp: '.$error),500);}
+        $distributedCount=0;
+        if($decision==='approved'){
+            $distributedCount=$this->distributeApprovedPlan($plan);
+            if($distributedCount===false){$error=$this->db->error;$this->db->query('ROLLBACK');jsonResponse(array('success'=>false,'message'=>'Không thể phân bổ kế hoạch đến Admin Rạp: '.$error),500);}
+            if($distributedCount!==count($plannedTheaterIds)){$this->db->query('ROLLBACK');jsonResponse(array('success'=>false,'message'=>'Phê duyệt đã được hoàn tác vì chưa phân bổ đủ đến tất cả rạp đề xuất.'),409);}
+        }
         if(!$this->logPlanHistory($id,$decision==='approved'?'approved':'revision_requested','pending_approval',$decision,$user,$note)){$error=$this->db->error;$this->db->query('ROLLBACK');jsonResponse(array('success'=>false,'message'=>'Không thể ghi lịch sử phê duyệt: '.$error),500);}
         if(!$this->db->query('COMMIT')){$error=$this->db->error;$this->db->query('ROLLBACK');jsonResponse(array('success'=>false,'message'=>'Không thể hoàn tất phê duyệt trong aurora_db: '.$error),500);}
-        jsonResponse(array('success'=>true,'message'=>$decision==='approved'?'Đã duyệt và phân bổ kế hoạch đến các rạp đề xuất.':'Đã gửi yêu cầu chỉnh sửa đến Marketing.'));
+        jsonResponse(array('success'=>true,'message'=>$decision==='approved'?'Đã duyệt và tạo '.$distributedCount.' phân bổ chờ Admin Rạp xác nhận.':'Đã gửi yêu cầu chỉnh sửa đến Marketing.','data'=>$decision==='approved'?array('plan_id'=>$id,'allocation_count'=>$distributedCount):array()));
     }
 
     private function publishApprovedMovie()
@@ -729,13 +747,15 @@ class MarketingController
     private function distributeApprovedPlan($plan)
     {
         $ids=array_values(array_unique(array_filter(array_map('intval',explode(',',(string)$plan['planned_theater_ids'])))));
+        $distributed=0;
         foreach($ids as $theaterId){
-            $theaters=$this->rows("SELECT id,name FROM theaters WHERE id={$theaterId} LIMIT 1");if(!$theaters)continue;$name=$this->db->real_escape_string($theaters[0]['name']);$title=$this->db->real_escape_string($plan['movie_title']);$format=$this->db->real_escape_string($plan['format']);
+            $theaters=$this->rows("SELECT id,name FROM theaters WHERE id={$theaterId} LIMIT 1");if(!$theaters)return false;$name=$this->db->real_escape_string($theaters[0]['name']);$title=$this->db->real_escape_string($plan['movie_title']);$format=$this->db->real_escape_string($plan['format']);
             $exists=(int)$this->scalar("SELECT id FROM movie_allocations WHERE plan_id=".(int)$plan['id']." AND theater_id={$theaterId} LIMIT 1");
-            if($exists){if(!$this->db->query("UPDATE movie_allocations SET min_screenings_per_day=".(int)$plan['target_screenings_per_day'].",preferred_screen_types='{$format}',allocated_start_date='".$this->db->real_escape_string($plan['expected_start_date'])."',allocated_end_date='".$this->db->real_escape_string($plan['expected_end_date'])."',status='pending' WHERE id={$exists}"))return false;}
+            if($exists){if(!$this->db->query("UPDATE movie_allocations SET min_screenings_per_day=".(int)$plan['target_screenings_per_day'].",preferred_screen_types='{$format}',allocated_start_date='".$this->db->real_escape_string($plan['expected_start_date'])."',allocated_end_date='".$this->db->real_escape_string($plan['expected_end_date'])."',status='pending',confirmed_by='',confirmed_at=NOW() WHERE id={$exists}"))return false;}
             elseif(!$this->db->query("INSERT INTO movie_allocations(plan_id,movie_id,movie_title,theater_id,theater_name,min_screenings_per_day,preferred_screen_types,allocated_start_date,allocated_end_date,status,confirmed_by,confirmed_at) VALUES(".(int)$plan['id'].",".(int)$plan['movie_id'].",'{$title}',{$theaterId},'{$name}',".(int)$plan['target_screenings_per_day'].",'{$format}','".$this->db->real_escape_string($plan['expected_start_date'])."','".$this->db->real_escape_string($plan['expected_end_date'])."','pending','',NOW())"))return false;
+            $distributed++;
         }
-        return true;
+        return $distributed;
     }
 
     private function logPlanHistory($planId,$action,$from,$to,$user,$note)

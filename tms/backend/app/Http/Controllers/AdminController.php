@@ -1979,13 +1979,23 @@ class AdminController
             if (!empty($_GET['year'])) {
                 $where[] = "`plan_year` = " . (int)$_GET['year'];
             }
+            $lifecycle = isset($_GET['lifecycle']) ? strtolower(trim((string)$_GET['lifecycle'])) : 'all';
+            if ($lifecycle === 'active') {
+                $where[] = "expected_end_date >= CURDATE() AND status NOT IN ('completed','cancelled')";
+            } else if ($lifecycle === 'history') {
+                $where[] = "(expected_end_date < CURDATE() OR status IN ('completed','cancelled'))";
+            }
             $planTheaterId = 0;
             if (in_array($role, array('cinema_admin', 'supervisor'), true)) {
                 $planTheaterId = $this->getCurrentTheaterId();
                 if ($planTheaterId <= 0) jsonResponse(array('success' => false, 'message' => 'Tài khoản chưa được gán rạp phụ trách.'), 403);
                 $where[] = "EXISTS (SELECT 1 FROM movie_allocations scoped_ma WHERE scoped_ma.plan_id=movie_plans.id AND scoped_ma.theater_id={$planTheaterId})";
             }
-            $sql = "SELECT * FROM movie_plans WHERE " . implode(' AND ', $where) . " ORDER BY plan_month ASC, expected_start_date ASC, id DESC";
+            $sql = "SELECT *, CURDATE() server_date,
+                           CASE WHEN expected_end_date < CURDATE() OR status IN ('completed','cancelled') THEN 'history'
+                                WHEN expected_start_date > CURDATE() THEN 'upcoming' ELSE 'active' END lifecycle_status,
+                           DATEDIFF(expected_end_date, CURDATE()) remaining_days
+                      FROM movie_plans WHERE " . implode(' AND ', $where) . " ORDER BY plan_month ASC, expected_start_date ASC, id DESC";
             $plans = $this->rows($sql);
             $totalTheaters = $this->scalar("SELECT COUNT(*) FROM theaters");
             if (!$totalTheaters) $totalTheaters = 5;
@@ -2023,7 +2033,28 @@ class AdminController
             if (!empty($_GET['theater_id'])) {
                 $where[] = "`theater_id` = " . (int)$_GET['theater_id'];
             }
-            $sql = "SELECT * FROM movie_allocations WHERE " . implode(' AND ', $where) . " ORDER BY id DESC";
+            $lifecycle = isset($_GET['lifecycle']) ? strtolower(trim((string)$_GET['lifecycle'])) : 'all';
+            if ($lifecycle === 'active') {
+                $where[] = "allocated_end_date >= CURDATE() AND status NOT IN ('expired','completed','cancelled')
+                    AND EXISTS (SELECT 1 FROM movie_plans lifecycle_mp WHERE lifecycle_mp.id=movie_allocations.plan_id
+                        AND lifecycle_mp.expected_end_date>=CURDATE() AND lifecycle_mp.status NOT IN ('completed','cancelled'))";
+            } else if ($lifecycle === 'history') {
+                $where[] = "(allocated_end_date < CURDATE() OR status IN ('expired','completed','cancelled')
+                    OR EXISTS (SELECT 1 FROM movie_plans lifecycle_mp WHERE lifecycle_mp.id=movie_allocations.plan_id
+                        AND (lifecycle_mp.expected_end_date<CURDATE() OR lifecycle_mp.status IN ('completed','cancelled'))))";
+            }
+            $sql = "SELECT movie_allocations.*, CURDATE() server_date,
+                           CASE WHEN allocated_end_date < CURDATE() OR status IN ('expired','completed','cancelled')
+                                      OR EXISTS (SELECT 1 FROM movie_plans lifecycle_mp WHERE lifecycle_mp.id=movie_allocations.plan_id
+                                          AND (lifecycle_mp.expected_end_date<CURDATE() OR lifecycle_mp.status IN ('completed','cancelled'))) THEN 'history'
+                                WHEN allocated_start_date > CURDATE() THEN 'upcoming' ELSE 'active' END lifecycle_status,
+                           DATEDIFF(allocated_end_date, CURDATE()) remaining_days,
+                           (SELECT COUNT(*) FROM showtimes lifecycle_st
+                             INNER JOIN screens lifecycle_sc ON lifecycle_sc.id=lifecycle_st.screen_id
+                            WHERE lifecycle_st.movie_id=movie_allocations.movie_id
+                              AND lifecycle_sc.theater_id=movie_allocations.theater_id
+                              AND lifecycle_st.status<>'CANCELLED') schedule_count
+                      FROM movie_allocations WHERE " . implode(' AND ', $where) . " ORDER BY allocated_end_date DESC, id DESC";
             $rows = $this->rows($sql);
             jsonResponse(array('success' => true, 'data' => $rows));
         }
@@ -2408,6 +2439,10 @@ class AdminController
         // Chuẩn hóa ngay khi khởi tạo để giao diện và dữ liệu luôn dùng cùng một vòng đời.
         $this->db->query("UPDATE movie_plans SET status = CASE WHEN status = 'pending_approval' THEN 'draft' WHEN status = 'approved' THEN 'published' ELSE status END WHERE status IN ('pending_approval', 'approved')");
         $this->db->query("DELETE ma FROM movie_allocations ma INNER JOIN movie_plans mp ON mp.id = ma.plan_id WHERE mp.status = 'draft'");
+        // Lưu kế hoạch hết thời hạn vào lịch sử trong aurora_db. Không xóa dữ
+        // liệu, chỉ khóa khả năng dùng bản phân bổ đó để tạo suất chiếu mới.
+        $this->db->query("UPDATE movie_allocations SET status='expired' WHERE allocated_end_date < CURDATE() AND status IN ('pending','confirmed','deploying')");
+        $this->db->query("UPDATE movie_plans SET status='completed', updated_at=NOW() WHERE expected_end_date < CURDATE() AND status IN ('published','in_progress')");
     }
 
     private function listMovies()
@@ -2464,7 +2499,9 @@ class AdminController
                           INNER JOIN movie_plans mp ON mp.id=ma.plan_id
                          WHERE ma.theater_id=t.id
                            AND ma.status IN ('confirmed','deploying')
-                           AND mp.status IN ('published','in_progress')) allocated_movie_count,
+                           AND mp.status IN ('published','in_progress')
+                           AND ma.allocated_end_date >= CURDATE()
+                           AND mp.expected_end_date >= CURDATE()) allocated_movie_count,
                        (SELECT COUNT(*) FROM showtimes st
                           INNER JOIN screens active_sc ON active_sc.id=st.screen_id
                          WHERE active_sc.theater_id=t.id
@@ -2489,7 +2526,9 @@ class AdminController
         $this->ensurePlanningSchema();
         $where = array(
             "mp.status IN ('published','in_progress')",
-            "ma.status IN ('confirmed','deploying')"
+            "ma.status IN ('confirmed','deploying')",
+            "ma.allocated_end_date >= CURDATE()",
+            "mp.expected_end_date >= CURDATE()"
         );
         if ($role === 'super_admin') {
             $theaterId = isset($_GET['theater_id']) ? (int)$_GET['theater_id'] : 0;
