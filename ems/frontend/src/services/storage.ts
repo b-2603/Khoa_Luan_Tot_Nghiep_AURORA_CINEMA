@@ -14,6 +14,7 @@ const KEYS = {
   ATTENDANCE: 'aurora_ems_attendance',
   EXCEPTIONS: 'aurora_ems_exceptions',
   SHIFT_REMINDERS: 'aurora_ems_shift_reminders',
+  INTERNAL_CHAT: 'aurora_ems_internal_chat',
 };
 
 function getItem<T>(key: string, defaultVal: T): T {
@@ -528,4 +529,122 @@ export const dismissShiftReminder = (userId: string): void => {
     clean(r.userId) === clean(userId) ? { ...r, isRead: true } : r
   );
   setItem(KEYS.SHIFT_REMINDERS, updated);
+};
+
+export interface InternalChatMessage {
+  id: string;
+  threadStaffId: string;
+  senderId: string;
+  senderName: string;
+  senderRole: 'staff' | 'manager';
+  senderAvatar: string;
+  senderDepartment?: string;
+  content: string;
+  topicTag?: string;
+  createdAt: string;
+  readByManager: boolean;
+  readByStaff: boolean;
+}
+
+const DEFAULT_CHAT_MESSAGES: InternalChatMessage[] = [
+  {
+    id: 'chat-init-1',
+    threadStaffId: 'group-all',
+    senderId: 'usr-1',
+    senderName: 'Phạm Thu Hương',
+    senderRole: 'manager',
+    senderAvatar: INITIAL_USERS[0]?.avatar || 'https://images.unsplash.com/photo-1573496359142-b8d87734a5a2?w=150&auto=format&fit=crop&q=80',
+    senderDepartment: 'Ban Quản Lý Cụm Rạp',
+    content: 'Chào toàn thể nhân sự cụm rạp Aurora! Các bạn có vướng mắc về lịch trực, chấm công hoặc sự cố tại quầy vé/bắp nước thì nhắn trực tiếp vào kênh này hoặc nhắn riêng cho chị nhé.',
+    topicTag: 'Thông báo chung',
+    createdAt: '08:30 Hôm nay',
+    readByManager: true,
+    readByStaff: true,
+  },
+  {
+    id: 'chat-init-2',
+    threadStaffId: 'usr-6',
+    senderId: 'usr-1',
+    senderName: 'Phạm Thu Hương',
+    senderRole: 'manager',
+    senderAvatar: INITIAL_USERS[0]?.avatar || 'https://images.unsplash.com/photo-1573496359142-b8d87734a5a2?w=150&auto=format&fit=crop&q=80',
+    senderDepartment: 'Ban Quản Lý Cụm Rạp',
+    content: 'Chào Bảo, nếu em cần hỗ trợ đổi ca hoặc hỏi về lịch trực tuần tiếp theo thì nhắn vào đây cho chị nhé!',
+    topicTag: 'Hỗ trợ nhân sự',
+    createdAt: '09:00 Hôm nay',
+    readByManager: true,
+    readByStaff: true,
+  },
+];
+
+export const getChatMessages = (): InternalChatMessage[] => {
+  return getItem<InternalChatMessage[]>(KEYS.INTERNAL_CHAT, DEFAULT_CHAT_MESSAGES);
+};
+
+export const sendChatMessage = (
+  msg: Omit<InternalChatMessage, 'id' | 'createdAt' | 'readByManager' | 'readByStaff'>
+): InternalChatMessage[] => {
+  const list = getChatMessages();
+  const now = new Date();
+  const hh = String(now.getHours()).padStart(2, '0');
+  const mm = String(now.getMinutes()).padStart(2, '0');
+  const dd = String(now.getDate()).padStart(2, '0');
+  const mo = String(now.getMonth() + 1).padStart(2, '0');
+
+  const created: InternalChatMessage = {
+    ...msg,
+    id: `chat-${Date.now()}-${Math.floor(Math.random() * 1000)}`,
+    createdAt: `${hh}:${mm} (${dd}/${mo})`,
+    readByManager: msg.senderRole === 'manager',
+    readByStaff: msg.senderRole === 'staff',
+  };
+
+  const updated = [...list, created];
+  setItem(KEYS.INTERNAL_CHAT, updated);
+  return updated;
+};
+
+export const markChatThreadRead = (
+  threadStaffId: string,
+  viewerRole: 'staff' | 'manager'
+): InternalChatMessage[] => {
+  const list = getChatMessages();
+  const clean = (id: string) => String(id).replace('usr-', '').trim();
+  const targetClean = threadStaffId === 'group-all' ? 'group-all' : clean(threadStaffId);
+  let changed = false;
+
+  const updated = list.map(m => {
+    const mThreadClean = m.threadStaffId === 'group-all' ? 'group-all' : clean(m.threadStaffId);
+    if (mThreadClean !== targetClean) return m;
+    if (viewerRole === 'manager' && !m.readByManager) {
+      changed = true;
+      return { ...m, readByManager: true };
+    }
+    if (viewerRole === 'staff' && !m.readByStaff) {
+      changed = true;
+      return { ...m, readByStaff: true };
+    }
+    return m;
+  });
+
+  if (changed) {
+    setItem(KEYS.INTERNAL_CHAT, updated);
+  }
+  return updated;
+};
+
+export const getUnreadChatCount = (userId: string, role: 'staff' | 'manager'): number => {
+  const list = getChatMessages();
+  const clean = (id: string) => String(id).replace('usr-', '').trim();
+  const myClean = clean(userId);
+
+  if (role === 'manager') {
+    return list.filter(m => m.senderRole === 'staff' && !m.readByManager).length;
+  }
+  return list.filter(
+    m =>
+      m.senderRole === 'manager' &&
+      !m.readByStaff &&
+      (m.threadStaffId === 'group-all' || clean(m.threadStaffId) === myClean)
+  ).length;
 };
