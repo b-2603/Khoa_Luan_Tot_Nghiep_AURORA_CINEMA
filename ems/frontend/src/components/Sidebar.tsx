@@ -17,7 +17,7 @@ import {
   GraduationCap
 } from 'lucide-react';
 
-import { getAttendanceExceptions } from '../services/storage';
+import { getAttendanceExceptions, getCurrentUser, getShiftReminders } from '../services/storage';
 
 export type NavTab = 
   | 'dashboard'
@@ -50,6 +50,8 @@ interface MenuItem {
 
 export const Sidebar: React.FC<SidebarProps> = ({ userRole, activeTab, onTabChange }) => {
   const pendingCount = getAttendanceExceptions().filter(e => e.status === 'pending').length;
+  const currentUser = getCurrentUser();
+  const hasShiftReminder = userRole === 'staff' && currentUser ? getShiftReminders(currentUser.id).length > 0 : false;
 
   const staffMenuItems: MenuItem[] = [
     { id: 'dashboard', label: 'Trang Chủ Tổng Quan', icon: Home },
@@ -61,7 +63,12 @@ export const Sidebar: React.FC<SidebarProps> = ({ userRole, activeTab, onTabChan
       badge: pendingCount > 0 ? `${pendingCount}` : undefined 
     },
     { id: 'shift-view', label: 'Xem Lịch Phân Ca', icon: Calendar },
-    { id: 'shift-register', label: 'Đăng Ký Lịch Làm Việc', icon: CalendarPlus },
+    { 
+      id: 'shift-register', 
+      label: 'Đăng Ký Lịch Làm Việc', 
+      icon: CalendarPlus,
+      badge: hasShiftReminder ? 'Nhắc nhở' : undefined
+    },
     { id: 'courses', label: 'Học Các Khóa Học', icon: BookOpen },
     { id: 'quizzes', label: 'Làm Bài Kiểm Tra Hàng Tháng', icon: FileCheck },
     { id: 'certificates', label: 'Chứng Chỉ Đã Đạt Được', icon: Award },

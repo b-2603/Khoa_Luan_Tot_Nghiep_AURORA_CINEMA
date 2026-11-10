@@ -398,8 +398,29 @@ export async function fetchShiftRegistrations(userId?: string, date?: string): P
           status: r.status,
           submittedAt: r.created_at ? r.created_at.split(' ')[0] : new Date().toISOString().split('T')[0]
         }));
-        localStorage.setItem('aurora_ems_registrations', JSON.stringify(mapped));
-        return mapped;
+        const localRegs = storage.getShiftRegistrations();
+        const cleanId = (id: string) => String(id).replace('usr-', '').trim();
+        const cleanShift = (s: string) => String(s).replace('shift-', '').trim();
+        const mergedMap = new Map<string, ShiftRegistration>();
+
+        mapped.forEach(r => {
+          const key = `${cleanId(r.userId)}_${r.date}_${cleanShift(r.shiftId)}`;
+          mergedMap.set(key, r);
+        });
+
+        localRegs.forEach(lr => {
+          const key = `${cleanId(lr.userId)}_${lr.date}_${cleanShift(lr.shiftId)}`;
+          const existing = mergedMap.get(key);
+          if (!existing) {
+            mergedMap.set(key, lr);
+          } else if (lr.status !== 'pending' && existing.status === 'pending') {
+            mergedMap.set(key, { ...existing, status: lr.status });
+          }
+        });
+
+        const mergedList = Array.from(mergedMap.values());
+        localStorage.setItem('aurora_ems_registrations', JSON.stringify(mergedList));
+        return mergedList;
       }
     }
   } catch (e) {
@@ -478,24 +499,52 @@ export async function fetchWorkSchedules(date?: string): Promise<WorkSchedule[]>
           status: s.status,
           assignedBy: s.assigned_by
         }));
-        localStorage.setItem('aurora_ems_schedules', JSON.stringify(mappedSchedules));
-        return mappedSchedules;
+        const localSchedules = storage.getWorkSchedules();
+        const cleanId = (id: string) => String(id).replace('usr-', '').trim();
+        const cleanShift = (s: string) => String(s).replace('shift-', '').trim();
+        const mergedMap = new Map<string, WorkSchedule>();
+
+        mappedSchedules.forEach(s => {
+          mergedMap.set(`${cleanId(s.userId)}_${s.date}_${cleanShift(s.shiftId)}`, s);
+        });
+
+        localSchedules.forEach(ls => {
+          mergedMap.set(`${cleanId(ls.userId)}_${ls.date}_${cleanShift(ls.shiftId)}`, ls);
+        });
+
+        const mergedSchedules = storage.syncApprovedRegistrationsToSchedules(
+          undefined,
+          Array.from(mergedMap.values())
+        );
+        localStorage.setItem('aurora_ems_schedules', JSON.stringify(mergedSchedules));
+        return mergedSchedules;
       }
     }
   } catch (e) {
     console.warn('[API Client] Using storage cache for Schedules');
   }
-  return storage.getWorkSchedules();
+  return storage.syncApprovedRegistrationsToSchedules();
 }
 
 // 5.5. AI TỰ ĐỘNG XẾP LỊCH TỐI ƯU DỰA TRÊN NGUYỆN VỌNG (UC11)
-export async function triggerAiAutoScheduler(date: string): Promise<{ success: boolean; data?: any }> {
+// Hỗ trợ xếp 1 ngày hoặc cả tuần, kèm seed để đổi phương án khi bấm tối ưu lại
+export async function triggerAiAutoScheduler(dateOrDates: string | string[], seed?: number): Promise<{ success: boolean; data?: any }> {
   try {
+    const payload: any = {};
+    if (Array.isArray(dateOrDates)) {
+      payload.dates = dateOrDates;
+    } else {
+      payload.date = dateOrDates;
+    }
+    if (seed !== undefined) {
+      payload.seed = seed;
+    }
+
     const res = await fetch(`${API_BASE_URL}/shifts/auto-schedule`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ date }),
-      signal: AbortSignal.timeout(5000)
+      body: JSON.stringify(payload),
+      signal: AbortSignal.timeout(6000)
     });
     if (res.ok) {
       const json = await res.json();
@@ -505,6 +554,60 @@ export async function triggerAiAutoScheduler(date: string): Promise<{ success: b
     console.warn('[API Client] AI auto schedule error:', e);
   }
   return { success: false };
+}
+
+// 5.5.1. QUẢN LÝ TINH CHỈNH THỦ CÔNG 1 CA LÀM VIỆC
+export async function assignWorkSchedule(params: { 
+  userId: string; 
+  shiftId: string; 
+  date: string; 
+  location: string; 
+  managerName?: string 
+}): Promise<{ success: boolean; message: string; id?: number }> {
+  try {
+    const res = await fetch(`${API_BASE_URL}/schedules/assign`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        user_id: params.userId,
+        shift_id: params.shiftId,
+        date: params.date,
+        location: params.location,
+        manager_name: params.managerName || 'Quản lý Phạm Thu Hương (Đã Tinh Chỉnh Thủ Công)'
+      }),
+      signal: AbortSignal.timeout(3500)
+    });
+    if (res.ok) {
+      const json = await res.json();
+      return { success: true, message: json.message || 'Đã lưu phân công', id: json.id };
+    }
+  } catch (e) {
+    console.warn('[API Client] assignWorkSchedule error:', e);
+  }
+  return { success: false, message: 'Lỗi kết nối máy chủ' };
+}
+
+// 5.5.2. QUẢN LÝ XÓA / CHO NGHỈ CA PHÂN CÔNG
+export async function deleteWorkScheduleApi(params: { 
+  id?: string | number; 
+  userId?: string; 
+  date?: string 
+}): Promise<{ success: boolean }> {
+  try {
+    const res = await fetch(`${API_BASE_URL}/schedules/delete`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        id: params.id,
+        user_id: params.userId,
+        date: params.date
+      }),
+      signal: AbortSignal.timeout(3000)
+    });
+    return { success: res.ok };
+  } catch {
+    return { success: false };
+  }
 }
 
 // 5.6. XUẤT BẢN & PHÊ DUYỆT LỊCH LÀM VIỆC CHÍNH THỨC (UC11 -> UC10)

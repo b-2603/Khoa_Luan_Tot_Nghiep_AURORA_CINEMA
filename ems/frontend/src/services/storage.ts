@@ -13,6 +13,7 @@ const KEYS = {
   SCHEDULES: 'aurora_ems_schedules',
   ATTENDANCE: 'aurora_ems_attendance',
   EXCEPTIONS: 'aurora_ems_exceptions',
+  SHIFT_REMINDERS: 'aurora_ems_shift_reminders',
 };
 
 function getItem<T>(key: string, defaultVal: T): T {
@@ -283,6 +284,21 @@ export const getShiftRegistrations = (): ShiftRegistration[] => {
   ]);
 };
 
+export const saveShiftRegistrations = (regs: ShiftRegistration[]): void => {
+  setItem(KEYS.REGISTRATIONS, regs);
+};
+
+export const updateShiftRegistrationStatus = (
+  regId: string,
+  status: 'pending' | 'approved' | 'rejected'
+): ShiftRegistration[] => {
+  const regs = getShiftRegistrations().map(r =>
+    r.id === regId ? { ...r, status } : r
+  );
+  setItem(KEYS.REGISTRATIONS, regs);
+  return regs;
+};
+
 export const saveShiftRegistration = (reg: Omit<ShiftRegistration, 'id'>): ShiftRegistration => {
   const regs = getShiftRegistrations();
   const existingIdx = regs.findIndex(r => r.userId === reg.userId && r.shiftId === reg.shiftId && r.date === reg.date);
@@ -331,6 +347,109 @@ export const saveWorkSchedules = (schedules: WorkSchedule[]): void => {
   setItem(KEYS.SCHEDULES, schedules);
 };
 
+export const mergeWorkSchedules = (newItems: WorkSchedule[], targetDates?: string[]): WorkSchedule[] => {
+  const current = getWorkSchedules();
+  let filtered = current;
+  if (targetDates && targetDates.length > 0) {
+    filtered = current.filter(s => !targetDates.includes(s.date));
+  } else {
+    const datesInNew = Array.from(new Set(newItems.map(s => s.date)));
+    filtered = current.filter(s => !datesInNew.includes(s.date));
+  }
+  const merged = [...filtered, ...newItems];
+  saveWorkSchedules(merged);
+  return merged;
+};
+
+export const saveSingleWorkSchedule = (item: WorkSchedule, oldShiftId?: string): WorkSchedule[] => {
+  const current = getWorkSchedules();
+  const cleanId = (id: string) => String(id).replace('usr-', '').trim();
+  const cleanShift = (s: string) => String(s).replace('shift-', '').trim();
+  const targetShift = cleanShift(oldShiftId || item.shiftId);
+  const filtered = current.filter(s => !(
+    cleanId(s.userId) === cleanId(item.userId) && 
+    s.date === item.date &&
+    cleanShift(s.shiftId) === targetShift
+  ));
+  const updated = [...filtered, item];
+  saveWorkSchedules(updated);
+  return updated;
+};
+
+export const removeSingleWorkSchedule = (userId: string, date: string, shiftId?: string): WorkSchedule[] => {
+  const current = getWorkSchedules();
+  const cleanId = (id: string) => String(id).replace('usr-', '').trim();
+  const cleanShift = (s: string) => String(s).replace('shift-', '').trim();
+  const updated = current.filter(s => {
+    const sameUserAndDate = cleanId(s.userId) === cleanId(userId) && s.date === date;
+    if (!sameUserAndDate) return true;
+    if (!shiftId) return false;
+    return cleanShift(s.shiftId) !== cleanShift(shiftId);
+  });
+  saveWorkSchedules(updated);
+  return updated;
+};
+
+export const syncApprovedRegistrationsToSchedules = (
+  regs?: ShiftRegistration[],
+  existingSchedules?: WorkSchedule[]
+): WorkSchedule[] => {
+  const allRegs = regs || getShiftRegistrations();
+  const currentSchedules = [...(existingSchedules || getWorkSchedules())];
+  const allUsers = getUsers();
+  const cleanId = (id: string) => String(id).replace('usr-', '').trim();
+  const cleanShift = (s: string) => String(s).replace('shift-', '').trim();
+
+  const shiftLabelMap: Record<string, string> = {
+    '1': 'Ca Sáng (08:00–16:00)',
+    '2': 'Ca Chiều (15:30–23:00)',
+    '3': 'Ca Đêm (22:00–02:00)',
+  };
+
+  let changed = false;
+  allRegs.forEach(reg => {
+    if (reg.status !== 'approved') return;
+    const sNum = cleanShift(reg.shiftId);
+    const hasSchedule = currentSchedules.some(
+      s =>
+        cleanId(s.userId) === cleanId(reg.userId) &&
+        s.date === reg.date &&
+        cleanShift(s.shiftId) === sNum
+    );
+    if (!hasSchedule) {
+      const staff = allUsers.find(u => cleanId(u.id) === cleanId(reg.userId));
+      const dept = (staff?.department || '').toLowerCase();
+      let loc = 'Cụm Rạp 1 - Quầy Vé Box Office';
+      if (dept.includes('bắp') || dept.includes('concession') || dept.includes('nước')) {
+        loc = 'Cụm Rạp 1 - Quầy Bắp Nước Concession';
+      } else if (dept.includes('kỹ thuật') || dept.includes('usher') || dept.includes('soát')) {
+        loc = 'Phòng Máy Chiếu & Kỹ Thuật IMAX';
+      }
+      const normShiftId = `shift-${sNum}`;
+      currentSchedules.push({
+        id: `sch-sync-${reg.date}-${cleanId(reg.userId)}-${sNum}`,
+        userId: staff?.id || `usr-${cleanId(reg.userId)}`,
+        userName: staff?.name || reg.userName,
+        userAvatar: staff?.avatar || '',
+        staffCode: staff?.phone || staff?.staffCode || '',
+        department: staff?.department || 'Box ticket',
+        date: reg.date,
+        shiftId: normShiftId,
+        shiftName: shiftLabelMap[sNum] || reg.shiftId,
+        location: loc as any,
+        status: 'assigned',
+        assignedBy: 'Quản lý duyệt',
+      });
+      changed = true;
+    }
+  });
+
+  if (changed) {
+    saveWorkSchedules(currentSchedules);
+  }
+  return currentSchedules;
+};
+
 // Attendance (UC12)
 export const getAttendances = (): Attendance[] => getItem<Attendance[]>(KEYS.ATTENDANCE, INITIAL_ATTENDANCE);
 export const saveAttendance = (att: Attendance): void => {
@@ -363,4 +482,50 @@ export const updateAttendanceExceptionStatus = (id: string, status: 'approved' |
     if (comment) list[idx].reviewComment = comment;
     setItem(KEYS.EXCEPTIONS, list);
   }
+};
+
+export interface ShiftReminder {
+  id: string;
+  userId: string;
+  userName: string;
+  registeredCount: number;
+  requiredCount: number;
+  message: string;
+  createdAt: string;
+  isRead: boolean;
+}
+
+export const getShiftReminders = (userId?: string): ShiftReminder[] => {
+  const list = getItem<ShiftReminder[]>(KEYS.SHIFT_REMINDERS, []);
+  if (!userId) return list;
+  const clean = (id: string) => String(id).replace('usr-', '').trim();
+  return list.filter(r => clean(r.userId) === clean(userId) && !r.isRead);
+};
+
+export const sendShiftReminders = (
+  items: Omit<ShiftReminder, 'id' | 'createdAt' | 'isRead'>[]
+): ShiftReminder[] => {
+  const current = getItem<ShiftReminder[]>(KEYS.SHIFT_REMINDERS, []);
+  const clean = (id: string) => String(id).replace('usr-', '').trim();
+  const targetIds = new Set(items.map(i => clean(i.userId)));
+  const filtered = current.filter(r => !targetIds.has(clean(r.userId)));
+  const nowStr = new Date().toLocaleString('vi-VN');
+  const created: ShiftReminder[] = items.map((item, idx) => ({
+    ...item,
+    id: `rem-${Date.now()}-${idx}`,
+    createdAt: nowStr,
+    isRead: false,
+  }));
+  const updated = [...created, ...filtered];
+  setItem(KEYS.SHIFT_REMINDERS, updated);
+  return updated;
+};
+
+export const dismissShiftReminder = (userId: string): void => {
+  const current = getItem<ShiftReminder[]>(KEYS.SHIFT_REMINDERS, []);
+  const clean = (id: string) => String(id).replace('usr-', '').trim();
+  const updated = current.map(r =>
+    clean(r.userId) === clean(userId) ? { ...r, isRead: true } : r
+  );
+  setItem(KEYS.SHIFT_REMINDERS, updated);
 };

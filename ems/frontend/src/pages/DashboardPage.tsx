@@ -1,4 +1,4 @@
-import React from 'react';
+import React, { useState } from 'react';
 import { User } from '../types';
 import { 
   Users, 
@@ -6,7 +6,8 @@ import {
   Award, 
   Sparkles, 
   ArrowUpRight, 
-  FileCheck
+  FileCheck,
+  Bell
 } from 'lucide-react';
 import { 
   ResponsiveContainer, 
@@ -18,7 +19,7 @@ import {
   BarChart, 
   Bar 
 } from 'recharts';
-import { getCourses, getQuizzes, getCertificates, getUsers } from '../services/storage';
+import { getCourses, getQuizzes, getCertificates, getUsers, getShiftReminders, dismissShiftReminder } from '../services/storage';
 import { NavTab } from '../components/Sidebar';
 
 interface DashboardPageProps {
@@ -33,6 +34,7 @@ export const DashboardPage: React.FC<DashboardPageProps> = ({ currentUser, onNav
   const certificates = getCertificates();
 
   const isManager = currentUser.role === 'manager';
+  const [myReminders, setMyReminders] = useState(() => isManager ? [] : getShiftReminders(currentUser.id));
 
   const performanceData = [
     { month: 'T4', score: 82, attendance: 95 },
@@ -55,6 +57,41 @@ export const DashboardPage: React.FC<DashboardPageProps> = ({ currentUser, onNav
 
   return (
     <div className="space-y-6">
+      {!isManager && myReminders.length > 0 && (
+        <div className="p-4 bg-amber-50 border-2 border-amber-400 rounded-2xl flex flex-col sm:flex-row sm:items-center justify-between gap-3 shadow-sm">
+          <div className="flex items-start gap-3">
+            <div className="p-2.5 bg-amber-500 text-white rounded-xl shrink-0">
+              <Bell className="w-5 h-5" />
+            </div>
+            <div>
+              <div className="font-bold text-xs text-amber-950">
+                Nhắc nhở đăng ký ca làm việc ({myReminders[0].createdAt})
+              </div>
+              <p className="text-xs text-amber-900 mt-0.5 font-medium">
+                {myReminders[0].message}
+              </p>
+            </div>
+          </div>
+          <div className="flex items-center gap-2 shrink-0">
+            <button
+              onClick={() => onNavigate('shift-register')}
+              className="px-4 py-2 bg-amber-600 hover:bg-amber-500 text-white text-xs font-bold rounded-xl cursor-pointer"
+            >
+              Đăng Ký Ca Ngay
+            </button>
+            <button
+              onClick={() => {
+                dismissShiftReminder(currentUser.id);
+                setMyReminders([]);
+              }}
+              className="px-3 py-2 bg-white border border-amber-300 text-amber-900 text-xs font-bold rounded-xl cursor-pointer"
+            >
+              Đã hiểu
+            </button>
+          </div>
+        </div>
+      )}
+
       {/* Bright Glass Welcome Banner */}
       <div className="relative overflow-hidden rounded-3xl bg-gradient-to-r from-amber-500/10 via-purple-600/10 to-cyan-500/10 border border-slate-200 p-6 md:p-8 glass-panel shadow-sm">
         <div className="relative z-10 flex flex-col md:flex-row md:items-center justify-between gap-4">
