@@ -13,6 +13,8 @@ const KEYS = {
   SCHEDULES: 'aurora_ems_schedules',
   ATTENDANCE: 'aurora_ems_attendance',
   EXCEPTIONS: 'aurora_ems_exceptions',
+  SHIFT_REMINDERS: 'aurora_ems_shift_reminders',
+  INTERNAL_CHAT: 'aurora_ems_internal_chat',
 };
 
 function getItem<T>(key: string, defaultVal: T): T {
@@ -190,6 +192,21 @@ export const getShiftRegistrations = (): ShiftRegistration[] => {
   ]);
 };
 
+export const saveShiftRegistrations = (regs: ShiftRegistration[]): void => {
+  setItem(KEYS.REGISTRATIONS, regs);
+};
+
+export const updateShiftRegistrationStatus = (
+  regId: string,
+  status: 'pending' | 'approved' | 'rejected'
+): ShiftRegistration[] => {
+  const regs = getShiftRegistrations().map(r =>
+    r.id === regId ? { ...r, status } : r
+  );
+  setItem(KEYS.REGISTRATIONS, regs);
+  return regs;
+};
+
 export const saveShiftRegistration = (reg: Omit<ShiftRegistration, 'id'>): ShiftRegistration => {
   const regs = getShiftRegistrations();
   const existingIdx = regs.findIndex(r => r.userId === reg.userId && r.shiftId === reg.shiftId && r.date === reg.date);
@@ -238,6 +255,109 @@ export const saveWorkSchedules = (schedules: WorkSchedule[]): void => {
   setItem(KEYS.SCHEDULES, schedules);
 };
 
+export const mergeWorkSchedules = (newItems: WorkSchedule[], targetDates?: string[]): WorkSchedule[] => {
+  const current = getWorkSchedules();
+  let filtered = current;
+  if (targetDates && targetDates.length > 0) {
+    filtered = current.filter(s => !targetDates.includes(s.date));
+  } else {
+    const datesInNew = Array.from(new Set(newItems.map(s => s.date)));
+    filtered = current.filter(s => !datesInNew.includes(s.date));
+  }
+  const merged = [...filtered, ...newItems];
+  saveWorkSchedules(merged);
+  return merged;
+};
+
+export const saveSingleWorkSchedule = (item: WorkSchedule, oldShiftId?: string): WorkSchedule[] => {
+  const current = getWorkSchedules();
+  const cleanId = (id: string) => String(id).replace('usr-', '').trim();
+  const cleanShift = (s: string) => String(s).replace('shift-', '').trim();
+  const targetShift = cleanShift(oldShiftId || item.shiftId);
+  const filtered = current.filter(s => !(
+    cleanId(s.userId) === cleanId(item.userId) &&
+    s.date === item.date &&
+    cleanShift(s.shiftId) === targetShift
+  ));
+  const updated = [...filtered, item];
+  saveWorkSchedules(updated);
+  return updated;
+};
+
+export const removeSingleWorkSchedule = (userId: string, date: string, shiftId?: string): WorkSchedule[] => {
+  const current = getWorkSchedules();
+  const cleanId = (id: string) => String(id).replace('usr-', '').trim();
+  const cleanShift = (s: string) => String(s).replace('shift-', '').trim();
+  const updated = current.filter(s => {
+    const sameUserAndDate = cleanId(s.userId) === cleanId(userId) && s.date === date;
+    if (!sameUserAndDate) return true;
+    if (!shiftId) return false;
+    return cleanShift(s.shiftId) !== cleanShift(shiftId);
+  });
+  saveWorkSchedules(updated);
+  return updated;
+};
+
+export const syncApprovedRegistrationsToSchedules = (
+  regs?: ShiftRegistration[],
+  existingSchedules?: WorkSchedule[]
+): WorkSchedule[] => {
+  const allRegs = regs || getShiftRegistrations();
+  const currentSchedules = [...(existingSchedules || getWorkSchedules())];
+  const allUsers = getUsers();
+  const cleanId = (id: string) => String(id).replace('usr-', '').trim();
+  const cleanShift = (s: string) => String(s).replace('shift-', '').trim();
+
+  const shiftLabelMap: Record<string, string> = {
+    '1': 'Ca Sáng (08:00–16:00)',
+    '2': 'Ca Chiều (15:30–23:00)',
+    '3': 'Ca Đêm (22:00–02:00)',
+  };
+
+  let changed = false;
+  allRegs.forEach(reg => {
+    if (reg.status !== 'approved') return;
+    const sNum = cleanShift(reg.shiftId);
+    const hasSchedule = currentSchedules.some(
+      s =>
+        cleanId(s.userId) === cleanId(reg.userId) &&
+        s.date === reg.date &&
+        cleanShift(s.shiftId) === sNum
+    );
+    if (!hasSchedule) {
+      const staff = allUsers.find(u => cleanId(u.id) === cleanId(reg.userId));
+      const dept = (staff?.department || '').toLowerCase();
+      let loc = 'Cụm Rạp 1 - Quầy Vé Box Office';
+      if (dept.includes('bắp') || dept.includes('concession') || dept.includes('nước')) {
+        loc = 'Cụm Rạp 1 - Quầy Bắp Nước Concession';
+      } else if (dept.includes('kỹ thuật') || dept.includes('usher') || dept.includes('soát')) {
+        loc = 'Phòng Máy Chiếu & Kỹ Thuật IMAX';
+      }
+      const normShiftId = `shift-${sNum}`;
+      currentSchedules.push({
+        id: `sch-sync-${reg.date}-${cleanId(reg.userId)}-${sNum}`,
+        userId: staff?.id || `usr-${cleanId(reg.userId)}`,
+        userName: staff?.name || reg.userName,
+        userAvatar: staff?.avatar || '',
+        staffCode: staff?.phone || staff?.staffCode || '',
+        department: staff?.department || 'Box ticket',
+        date: reg.date,
+        shiftId: normShiftId,
+        shiftName: shiftLabelMap[sNum] || reg.shiftId,
+        location: loc as any,
+        status: 'assigned',
+        assignedBy: 'Quản lý duyệt',
+      });
+      changed = true;
+    }
+  });
+
+  if (changed) {
+    saveWorkSchedules(currentSchedules);
+  }
+  return currentSchedules;
+};
+
 // Attendance (UC12)
 export const getAttendances = (): Attendance[] => getItem<Attendance[]>(KEYS.ATTENDANCE, INITIAL_ATTENDANCE);
 export const saveAttendance = (att: Attendance): void => {
@@ -270,4 +390,168 @@ export const updateAttendanceExceptionStatus = (id: string, status: 'approved' |
     if (comment) list[idx].reviewComment = comment;
     setItem(KEYS.EXCEPTIONS, list);
   }
+};
+
+export interface ShiftReminder {
+  id: string;
+  userId: string;
+  userName: string;
+  registeredCount: number;
+  requiredCount: number;
+  message: string;
+  createdAt: string;
+  isRead: boolean;
+}
+
+export const getShiftReminders = (userId?: string): ShiftReminder[] => {
+  const list = getItem<ShiftReminder[]>(KEYS.SHIFT_REMINDERS, []);
+  if (!userId) return list;
+  const clean = (id: string) => String(id).replace('usr-', '').trim();
+  return list.filter(r => clean(r.userId) === clean(userId) && !r.isRead);
+};
+
+export const sendShiftReminders = (
+  items: Omit<ShiftReminder, 'id' | 'createdAt' | 'isRead'>[]
+): ShiftReminder[] => {
+  const current = getItem<ShiftReminder[]>(KEYS.SHIFT_REMINDERS, []);
+  const clean = (id: string) => String(id).replace('usr-', '').trim();
+  const targetIds = new Set(items.map(i => clean(i.userId)));
+  const filtered = current.filter(r => !targetIds.has(clean(r.userId)));
+  const nowStr = new Date().toLocaleString('vi-VN');
+  const created: ShiftReminder[] = items.map((item, idx) => ({
+    ...item,
+    id: `rem-${Date.now()}-${idx}`,
+    createdAt: nowStr,
+    isRead: false,
+  }));
+  const updated = [...created, ...filtered];
+  setItem(KEYS.SHIFT_REMINDERS, updated);
+  return updated;
+};
+
+export const dismissShiftReminder = (userId: string): void => {
+  const current = getItem<ShiftReminder[]>(KEYS.SHIFT_REMINDERS, []);
+  const clean = (id: string) => String(id).replace('usr-', '').trim();
+  const updated = current.map(r =>
+    clean(r.userId) === clean(userId) ? { ...r, isRead: true } : r
+  );
+  setItem(KEYS.SHIFT_REMINDERS, updated);
+};
+
+export interface InternalChatMessage {
+  id: string;
+  threadStaffId: string;
+  senderId: string;
+  senderName: string;
+  senderRole: 'staff' | 'manager';
+  senderAvatar: string;
+  senderDepartment?: string;
+  content: string;
+  topicTag?: string;
+  createdAt: string;
+  readByManager: boolean;
+  readByStaff: boolean;
+}
+
+const DEFAULT_CHAT_MESSAGES: InternalChatMessage[] = [
+  {
+    id: 'chat-init-1',
+    threadStaffId: 'group-all',
+    senderId: 'usr-1',
+    senderName: 'Phạm Thu Hương',
+    senderRole: 'manager',
+    senderAvatar: INITIAL_USERS[0]?.avatar || 'https://images.unsplash.com/photo-1573496359142-b8d87734a5a2?w=150&auto=format&fit=crop&q=80',
+    senderDepartment: 'Ban Quản Lý Cụm Rạp',
+    content: 'Chào toàn thể nhân sự cụm rạp Aurora! Các bạn có vướng mắc về lịch trực, chấm công hoặc sự cố tại quầy vé/bắp nước thì nhắn trực tiếp vào kênh này hoặc nhắn riêng cho chị nhé.',
+    topicTag: 'Thông báo chung',
+    createdAt: '08:30 Hôm nay',
+    readByManager: true,
+    readByStaff: true,
+  },
+  {
+    id: 'chat-init-2',
+    threadStaffId: 'usr-6',
+    senderId: 'usr-1',
+    senderName: 'Phạm Thu Hương',
+    senderRole: 'manager',
+    senderAvatar: INITIAL_USERS[0]?.avatar || 'https://images.unsplash.com/photo-1573496359142-b8d87734a5a2?w=150&auto=format&fit=crop&q=80',
+    senderDepartment: 'Ban Quản Lý Cụm Rạp',
+    content: 'Chào Bảo, nếu em cần hỗ trợ đổi ca hoặc hỏi về lịch trực tuần tiếp theo thì nhắn vào đây cho chị nhé!',
+    topicTag: 'Hỗ trợ nhân sự',
+    createdAt: '09:00 Hôm nay',
+    readByManager: true,
+    readByStaff: true,
+  },
+];
+
+export const getChatMessages = (): InternalChatMessage[] => {
+  return getItem<InternalChatMessage[]>(KEYS.INTERNAL_CHAT, DEFAULT_CHAT_MESSAGES);
+};
+
+export const sendChatMessage = (
+  msg: Omit<InternalChatMessage, 'id' | 'createdAt' | 'readByManager' | 'readByStaff'>
+): InternalChatMessage[] => {
+  const list = getChatMessages();
+  const now = new Date();
+  const hh = String(now.getHours()).padStart(2, '0');
+  const mm = String(now.getMinutes()).padStart(2, '0');
+  const dd = String(now.getDate()).padStart(2, '0');
+  const mo = String(now.getMonth() + 1).padStart(2, '0');
+
+  const created: InternalChatMessage = {
+    ...msg,
+    id: `chat-${Date.now()}-${Math.floor(Math.random() * 1000)}`,
+    createdAt: `${hh}:${mm} (${dd}/${mo})`,
+    readByManager: msg.senderRole === 'manager',
+    readByStaff: msg.senderRole === 'staff',
+  };
+
+  const updated = [...list, created];
+  setItem(KEYS.INTERNAL_CHAT, updated);
+  return updated;
+};
+
+export const markChatThreadRead = (
+  threadStaffId: string,
+  viewerRole: 'staff' | 'manager'
+): InternalChatMessage[] => {
+  const list = getChatMessages();
+  const clean = (id: string) => String(id).replace('usr-', '').trim();
+  const targetClean = threadStaffId === 'group-all' ? 'group-all' : clean(threadStaffId);
+  let changed = false;
+
+  const updated = list.map(m => {
+    const mThreadClean = m.threadStaffId === 'group-all' ? 'group-all' : clean(m.threadStaffId);
+    if (mThreadClean !== targetClean) return m;
+    if (viewerRole === 'manager' && !m.readByManager) {
+      changed = true;
+      return { ...m, readByManager: true };
+    }
+    if (viewerRole === 'staff' && !m.readByStaff) {
+      changed = true;
+      return { ...m, readByStaff: true };
+    }
+    return m;
+  });
+
+  if (changed) {
+    setItem(KEYS.INTERNAL_CHAT, updated);
+  }
+  return updated;
+};
+
+export const getUnreadChatCount = (userId: string, role: 'staff' | 'manager'): number => {
+  const list = getChatMessages();
+  const clean = (id: string) => String(id).replace('usr-', '').trim();
+  const myClean = clean(userId);
+
+  if (role === 'manager') {
+    return list.filter(m => m.senderRole === 'staff' && !m.readByManager).length;
+  }
+  return list.filter(
+    m =>
+      m.senderRole === 'manager' &&
+      !m.readByStaff &&
+      (m.threadStaffId === 'group-all' || clean(m.threadStaffId) === myClean)
+  ).length;
 };

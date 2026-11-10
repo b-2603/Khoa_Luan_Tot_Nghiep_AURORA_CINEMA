@@ -1,4 +1,4 @@
-import React from 'react';
+import React, { useState, useEffect } from 'react';
 import { Role } from '../types';
 import { 
   BookOpen, 
@@ -14,10 +14,11 @@ import {
   AlertCircle, 
   Sparkles, 
   Home,
-  GraduationCap
+  GraduationCap,
+  MessageSquare
 } from 'lucide-react';
 
-import { getAttendanceExceptions } from '../services/storage';
+import { getAttendanceExceptions, getCurrentUser, getShiftReminders, getUnreadChatCount } from '../services/storage';
 
 export type NavTab = 
   | 'dashboard'
@@ -32,7 +33,8 @@ export type NavTab =
   | 'manager-scheduler'    // UC11: Set lịch làm việc cho nhân viên + AI
   | 'attendance'           // UC12: Quản lý chấm công
   | 'attendance-exceptions'// UC13: Xử lý các trường hợp chấm công
-  | 'manager-quiz-creator';// UC08: Tạo bài kiểm tra/khóa học CTKM + AI
+  | 'manager-quiz-creator' // UC08: Tạo bài kiểm tra/khóa học CTKM + AI
+  | 'internal-chat';
 
 interface SidebarProps {
   userRole: Role;
@@ -50,6 +52,25 @@ interface MenuItem {
 
 export const Sidebar: React.FC<SidebarProps> = ({ userRole, activeTab, onTabChange }) => {
   const pendingCount = getAttendanceExceptions().filter(e => e.status === 'pending').length;
+  const currentUser = getCurrentUser();
+  const hasShiftReminder = userRole === 'staff' && currentUser ? getShiftReminders(currentUser.id).length > 0 : false;
+  const [unreadChatCount, setUnreadChatCount] = useState<number>(() =>
+    currentUser ? getUnreadChatCount(currentUser.id, userRole) : 0
+  );
+
+  useEffect(() => {
+    const syncUnread = () => {
+      const u = getCurrentUser();
+      if (u) setUnreadChatCount(getUnreadChatCount(u.id, userRole));
+    };
+    syncUnread();
+    const timer = setInterval(syncUnread, 1500);
+    window.addEventListener('storage', syncUnread);
+    return () => {
+      clearInterval(timer);
+      window.removeEventListener('storage', syncUnread);
+    };
+  }, [userRole, activeTab]);
 
   const staffMenuItems: MenuItem[] = [
     { id: 'dashboard', label: 'Trang Chủ Tổng Quan', icon: Home },
@@ -61,7 +82,18 @@ export const Sidebar: React.FC<SidebarProps> = ({ userRole, activeTab, onTabChan
       badge: pendingCount > 0 ? `${pendingCount}` : undefined 
     },
     { id: 'shift-view', label: 'Xem Lịch Phân Ca', icon: Calendar },
-    { id: 'shift-register', label: 'Đăng Ký Lịch Làm Việc', icon: CalendarPlus },
+    {
+      id: 'shift-register',
+      label: 'Đăng Ký Lịch Làm Việc',
+      icon: CalendarPlus,
+      badge: hasShiftReminder ? 'Nhắc nhở' : undefined
+    },
+    {
+      id: 'internal-chat',
+      label: 'Kênh Trao Đổi Nội Bộ',
+      icon: MessageSquare,
+      badge: unreadChatCount > 0 ? `${unreadChatCount} tin mới` : undefined
+    },
     { id: 'courses', label: 'Học Các Khóa Học', icon: BookOpen },
     { id: 'quizzes', label: 'Làm Bài Kiểm Tra Hàng Tháng', icon: FileCheck },
     { id: 'certificates', label: 'Chứng Chỉ Đã Đạt Được', icon: Award },
@@ -77,6 +109,12 @@ export const Sidebar: React.FC<SidebarProps> = ({ userRole, activeTab, onTabChan
       label: 'Quản Lý Chấm Công', 
       icon: Clock,
       badge: pendingCount > 0 ? `${pendingCount} Chờ duyệt` : undefined 
+    },
+    {
+      id: 'internal-chat',
+      label: 'Kênh Trao Đổi Nội Bộ',
+      icon: MessageSquare,
+      badge: unreadChatCount > 0 ? `${unreadChatCount} tin mới` : undefined
     },
     { id: 'manager-quiz-creator', label: 'Khóa Học & Đề Khảo Thí', icon: GraduationCap },
   ];

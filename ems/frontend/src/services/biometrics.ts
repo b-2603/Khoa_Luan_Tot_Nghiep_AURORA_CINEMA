@@ -61,7 +61,7 @@ async function getLocalIpViaWebRTC(): Promise<string | null> {
       pc.createDataChannel('');
       pc.createOffer().then(offer => pc.setLocalDescription(offer)).catch(() => resolve(null));
       const timer = setTimeout(() => {
-        try { pc.close(); } catch {}
+        try { pc.close(); } catch { }
         resolve(null);
       }, 1200);
 
@@ -71,7 +71,7 @@ async function getLocalIpViaWebRTC(): Promise<string | null> {
         const match = cand.match(/([0-9]{1,3}(\.[0-9]{1,3}){3})/);
         if (match && match[1] && !match[1].startsWith('127.')) {
           clearTimeout(timer);
-          try { pc.close(); } catch {}
+          try { pc.close(); } catch { }
           resolve(match[1]);
         }
       };
@@ -85,17 +85,19 @@ export async function detectCurrentNetwork(): Promise<{ ip: string; isOnline: bo
   let localIp: string | null = null;
   try {
     localIp = await getLocalIpViaWebRTC();
-  } catch {}
+  } catch { }
 
   try {
     const res = await fetch('http://localhost:8000/network-info', { signal: AbortSignal.timeout(2000) });
     if (res.ok) {
       const data = await res.json();
-      if (data.ip) {
-        return { 
-          ip: (localIp && localIp !== '127.0.0.1') ? localIp : data.ip, 
-          isOnline: true, 
-          localIp: localIp || undefined 
+      const serverIp = (data.ip && data.ip !== '127.0.0.1' && data.ip !== '::1') ? data.ip : null;
+      const resolvedIp = (localIp && localIp !== '127.0.0.1') ? localIp : serverIp;
+      if (resolvedIp) {
+        return {
+          ip: resolvedIp,
+          isOnline: true,
+          localIp: localIp || undefined
         };
       }
     }
@@ -107,18 +109,18 @@ export async function detectCurrentNetwork(): Promise<{ ip: string; isOnline: bo
     if (res.ok) {
       const data = await res.json();
       if (data.ip) {
-        return { 
-          ip: (localIp && localIp !== '127.0.0.1') ? localIp : data.ip, 
-          isOnline: true, 
-          localIp: localIp || undefined 
+        return {
+          ip: (localIp && localIp !== '127.0.0.1') ? localIp : data.ip,
+          isOnline: true,
+          localIp: localIp || undefined
         };
       }
     }
   } catch (e) {
   }
 
-  return { 
-    ip: localIp || '10.106.193.65', 
+  return {
+    ip: localIp || '0.0.0.0',
     isOnline: typeof navigator !== 'undefined' ? navigator.onLine : true,
     localIp: localIp || undefined
   };
@@ -127,11 +129,26 @@ export async function detectCurrentNetwork(): Promise<{ ip: string; isOnline: bo
 export function getAuthorizedWifiConfig(): NetworkConfig {
   try {
     const stored = localStorage.getItem(STORAGE_KEYS.WIFI_CONFIG);
-    if (stored) return JSON.parse(stored);
+    if (stored) {
+      const parsed = JSON.parse(stored);
+      if (
+        parsed.authorizedIp?.startsWith('192.168.') ||
+        parsed.wifiSsidName === 'Wi-Fi Cụm Rạp Aurora (Mạng Hiện Tại)'
+      ) {
+        const resetConfig: NetworkConfig = {
+          authorizedIp: '10.179.243.65',
+          wifiSsidName: 'AURORA-CINEMA-STAFF-5G',
+          updatedAt: new Date().toISOString()
+        };
+        localStorage.setItem(STORAGE_KEYS.WIFI_CONFIG, JSON.stringify(resetConfig));
+        return resetConfig;
+      }
+      return parsed;
+    }
   } catch (e) { }
 
   return {
-    authorizedIp: '10.106.193.65',
+    authorizedIp: '10.179.243.65',
     wifiSsidName: 'AURORA-CINEMA-STAFF-5G',
     updatedAt: new Date().toISOString()
   };

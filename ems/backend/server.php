@@ -127,9 +127,14 @@ if ($route === '/health' || $route === '/') {
     ]);
 }
 
-// Client Network Info for Attendance Wi-Fi Constraint
 if ($route === '/network-info') {
     $ip = $_SERVER['HTTP_CF_CONNECTING_IP'] ?? $_SERVER['HTTP_X_FORWARDED_FOR'] ?? $_SERVER['REMOTE_ADDR'] ?? '127.0.0.1';
+    if ($ip === '127.0.0.1' || $ip === '::1') {
+        $lanIp = gethostbyname(gethostname());
+        if ($lanIp && $lanIp !== '127.0.0.1') {
+            $ip = $lanIp;
+        }
+    }
     jsonResponse([
         'status' => 'success',
         'ip' => $ip,
@@ -1456,33 +1461,45 @@ if ($route === '/schedules' && $method === 'GET') {
 }
 
 // 5. AI Auto Scheduler - Xếp ca tự động KẾT NỐI CHẶT CHẼ với Nguyện Vọng Đăng Ký (UC09 -> UC11)
+// Hỗ trợ xếp 1 ngày hoặc cả tuần (dates array), kèm Seed xoay tua để mỗi lần bấm phân công lại sẽ đổi phương án mới
 if ($route === '/shifts/auto-schedule' && $method === 'POST') {
-    $targetDate = $body['date'] ?? date('Y-m-d', strtotime('+1 day'));
-    $users = $pdo->query("SELECT id, name, staff_code, department FROM ems_users WHERE role = 'staff' AND status = 'active'")->fetchAll();
-    $shifts = $pdo->query("SELECT id, name, code FROM ems_shifts")->fetchAll();
+    $datesInput = $body['dates'] ?? null;
+    $targetDateInput = $body['date'] ?? null;
+
+    if (!empty($datesInput) && is_array($datesInput)) {
+        $datesToSchedule = $datesInput;
+    } elseif (!empty($targetDateInput)) {
+        $datesToSchedule = [$targetDateInput];
+    } else {
+        $datesToSchedule = [date('Y-m-d', strtotime('+1 day'))];
+    }
+
+    $seed = (int)($body['seed'] ?? ($body['iteration'] ?? time()));
+
+    $users = $pdo->query("SELECT id, name, staff_code, department FROM ems_users WHERE role = 'staff' AND status = 'active' ORDER BY id ASC")->fetchAll();
+    $shifts = $pdo->query("SELECT id, name, code FROM ems_shifts ORDER BY id ASC")->fetchAll();
     $shiftsById = [];
     foreach ($shifts as $s) {
         $shiftsById[$s['id']] = $s;
     }
 
-    // Lấy toàn bộ nguyện vọng đăng ký của nhân viên vào ngày này (UC09)
-    $regStmt = $pdo->prepare("SELECT user_id, shift_id FROM ems_shift_registrations WHERE date = ?");
-    $regStmt->execute([$targetDate]);
-    $registrations = $regStmt->fetchAll();
-
-    // Gom nhóm nguyện vọng theo user_id: user_id => [shift_id, ...]
-    $userPreferences = [];
-    foreach ($registrations as $r) {
-        $uid = (int)$r['user_id'];
-        if (!isset($userPreferences[$uid])) $userPreferences[$uid] = [];
-        $userPreferences[$uid][] = (int)$r['shift_id'];
-    }
-
     // Danh sách vị trí làm việc tại cụm rạp
     $departmentLocationMap = [
-        'Vé & Chăm sóc Khách hàng' => 'Cụm Rạp 1 - Quầy Vé Box Office',
-        'Bắp nước & Quầy Concession' => 'Cụm Rạp 1 - Quầy Bắp Nước Concession',
-        'Kỹ thuật Phim & Âm thanh' => 'Phòng Máy Chiếu & Kỹ Thuật IMAX',
+        'Vé & Chăm sóc Khách hàng' => [
+            'Cụm Rạp 1 - Quầy Vé Box Office',
+            'Quầy Vé Tầng 2 & Khách Đoàn',
+            'Quầy Chăm Sóc Khách Hàng VIP'
+        ],
+        'Bắp nước & Quầy Concession' => [
+            'Cụm Rạp 1 - Quầy Bắp Nước Concession',
+            'Quầy Bắp Nước Tầng 2',
+            'Quầy Popcorn & Pha Chế Nhanh'
+        ],
+        'Kỹ thuật Phim & Âm thanh' => [
+            'Phòng Máy Chiếu & Kỹ Thuật IMAX',
+            'Phòng Điều Khiển Âm Thanh Dolby Atmos',
+            'Kỹ Thuật Máy Chiếu Laser 1-4'
+        ],
     ];
     $defaultLocations = [
         'Cụm Rạp 1 - Quầy Vé Box Office',
@@ -1491,91 +1508,193 @@ if ($route === '/shifts/auto-schedule' && $method === 'POST') {
         'Phòng Máy Chiếu & Kỹ Thuật IMAX'
     ];
 
-    // Xóa lịch cũ của ngày này nếu có
     $del = $pdo->prepare("DELETE FROM ems_work_schedules WHERE date = ?");
-    $del->execute([$targetDate]);
-
     $ins = $pdo->prepare("INSERT INTO ems_work_schedules (user_id, shift_id, date, location, status, assigned_by) VALUES (?, ?, ?, ?, 'assigned', ?)");
     $updApproved = $pdo->prepare("UPDATE ems_shift_registrations SET status = 'approved' WHERE user_id = ? AND shift_id = ? AND date = ?");
     $updRejected = $pdo->prepare("UPDATE ems_shift_registrations SET status = 'rejected' WHERE user_id = ? AND shift_id != ? AND date = ?");
 
-    $createdSchedules = [];
-    $matchedCount = 0;
-    $shiftLoad = []; // đếm số người mỗi ca để cân bằng tải
-    foreach ($shifts as $s) {
-        $shiftLoad[$s['id']] = 0;
-    }
+    $allCreatedSchedules = [];
+    $totalMatchedCount = 0;
+    $totalRegistrationsFound = 0;
 
-    foreach ($users as $idx => $u) {
-        $uid = (int)$u['id'];
-        $chosenShiftId = null;
-        $reason = '';
+    // Lưu ca của ngày trước đó để tránh xếp ca Đêm hôm nay -> ca Sáng ngày mai
+    $lastDayShifts = [];
 
-        // ƯU TIÊN 1: Xếp đúng ca nhân viên đã đăng ký nguyện vọng ở UC09!
-        if (isset($userPreferences[$uid]) && count($userPreferences[$uid]) > 0) {
-            $chosenShiftId = $userPreferences[$uid][0]; // Lấy ca mong muốn đầu tiên
-            $shiftName = $shiftsById[$chosenShiftId]['name'] ?? 'Ca Tiêu Chuẩn';
-            $reason = "Khớp 100% nguyện vọng đăng ký của {$u['name']} ({$shiftName})";
-            $matchedCount++;
-        } else {
-            // Nếu chưa đăng ký: Phân bổ vào ca đang thiếu người nhất để cân đối vận hành rạp
-            asort($shiftLoad);
-            $chosenShiftId = array_key_first($shiftLoad);
-            $shiftName = $shiftsById[$chosenShiftId]['name'] ?? 'Ca Tiêu Chuẩn';
-            $reason = "Nhân viên chưa đăng ký -> AI điều phối hỗ trợ {$shiftName} theo lưu lượng khách";
+    foreach ($datesToSchedule as $dayIndex => $targetDate) {
+        // Lấy toàn bộ nguyện vọng đăng ký vào ngày này
+        $regStmt = $pdo->prepare("SELECT user_id, shift_id FROM ems_shift_registrations WHERE date = ?");
+        $regStmt->execute([$targetDate]);
+        $registrations = $regStmt->fetchAll();
+
+        $userPreferences = [];
+        foreach ($registrations as $r) {
+            $uid = (int)$r['user_id'];
+            if (!isset($userPreferences[$uid])) $userPreferences[$uid] = [];
+            $userPreferences[$uid][] = (int)$r['shift_id'];
+        }
+        $totalRegistrationsFound += count($userPreferences);
+
+        // Xóa lịch cũ của ngày này để phân bổ lại
+        $del->execute([$targetDate]);
+
+        // Xoay tua thứ tự nhân viên theo seed và dayIndex để mỗi lần chạy hoặc mỗi ngày có sự luân phiên công bằng
+        $userCount = max(1, count($users));
+        $rotationOffset = (abs($seed) + $dayIndex) % $userCount;
+        $dayUsers = array_merge(array_slice($users, $rotationOffset), array_slice($users, 0, $rotationOffset));
+
+        $shiftLoad = [];
+        foreach ($shifts as $s) {
+            $shiftLoad[$s['id']] = 0;
         }
 
-        $shiftLoad[$chosenShiftId]++;
+        foreach ($dayUsers as $idx => $u) {
+            $uid = (int)$u['id'];
+            $chosenShiftId = null;
+            $reason = '';
 
-        // Xác định vị trí phân công tại rạp theo chuyên môn bộ phận
-        $loc = $departmentLocationMap[$u['department']] ?? $defaultLocations[$idx % count($defaultLocations)];
+            // Nếu nhân viên có đăng ký nguyện vọng:
+            if (isset($userPreferences[$uid]) && count($userPreferences[$uid]) > 0) {
+                // Xoay vòng trong danh sách nguyện vọng nếu nhân viên đăng ký nhiều ca hoặc khi bấm tối ưu lại
+                $prefList = $userPreferences[$uid];
+                $prefIdx = (abs($seed) + $dayIndex) % count($prefList);
+                $chosenShiftId = $prefList[$prefIdx];
+                $shiftName = $shiftsById[$chosenShiftId]['name'] ?? 'Ca Tiêu Chuẩn';
+                $reason = "Khớp nguyện vọng đăng ký của {$u['name']} ({$shiftName})";
+                $totalMatchedCount++;
+            } else {
+                // Nhân viên chưa đăng ký -> AI tự động điều phối cân bằng tải
+                // Tìm ca có số người ít nhất hiện tại
+                $minLoad = min($shiftLoad);
+                $candidateShifts = array_keys(array_filter($shiftLoad, function($v) use ($minLoad) { return $v === $minLoad; }));
 
-        // Lưu lịch phân ca chính thức
-        $assignedBy = 'Smart AI Scheduler (Khớp Nguyện Vọng Đăng Ký)';
-        $ins->execute([$uid, $chosenShiftId, $targetDate, $loc, $assignedBy]);
-        $scheduleId = (int)$pdo->lastInsertId();
+                // Quy tắc nghỉ ngơi: nếu hôm qua làm ca Đêm (id 3) thì ưu tiên né ca Sáng (id 1) hôm nay
+                $yesterdayShift = $lastDayShifts[$uid] ?? null;
+                if ($yesterdayShift === 3 && in_array(2, $candidateShifts)) {
+                    $chosenShiftId = 2; // Gán ca Chiều
+                } else {
+                    $pickIdx = (abs($seed) + $dayIndex + $idx) % count($candidateShifts);
+                    $chosenShiftId = $candidateShifts[$pickIdx];
+                }
 
-        // Cập nhật trạng thái nguyện vọng đăng ký thành approved
-        $updApproved->execute([$uid, $chosenShiftId, $targetDate]);
-        $updRejected->execute([$uid, $chosenShiftId, $targetDate]);
+                $shiftName = $shiftsById[$chosenShiftId]['name'] ?? 'Ca Tiêu Chuẩn';
+                $reason = "AI tự động phân ca {$shiftName} (Phương án cân bằng tải #" . (abs($seed) % 99 + 1) . ")";
+            }
 
-        $createdSchedules[] = [
-            'id' => $scheduleId,
-            'user_id' => $uid,
-            'user_name' => $u['name'],
-            'staff_code' => $u['staff_code'],
-            'shift_id' => $chosenShiftId,
-            'shift_name' => $shiftsById[$chosenShiftId]['name'] ?? '',
-            'location' => $loc,
-            'is_matched_preference' => isset($userPreferences[$uid]),
-            'reason' => $reason
-        ];
+            $shiftLoad[$chosenShiftId]++;
+            $lastDayShifts[$uid] = $chosenShiftId;
+
+            // Xác định vị trí phân công, luân chuyển linh hoạt giữa các quầy của bộ phận
+            $deptLocs = $departmentLocationMap[$u['department']] ?? $defaultLocations;
+            $locIdx = (abs($seed) + $dayIndex + $idx) % count($deptLocs);
+            $loc = $deptLocs[$locIdx];
+
+            // Lưu lịch làm việc chính thức
+            $assignedBy = 'Smart AI Scheduler (Tự Động)';
+            $ins->execute([$uid, $chosenShiftId, $targetDate, $loc, $assignedBy]);
+            $scheduleId = (int)$pdo->lastInsertId();
+
+            $updApproved->execute([$uid, $chosenShiftId, $targetDate]);
+            $updRejected->execute([$uid, $chosenShiftId, $targetDate]);
+
+            $allCreatedSchedules[] = [
+                'id' => $scheduleId,
+                'user_id' => $uid,
+                'user_name' => $u['name'],
+                'staff_code' => $u['staff_code'],
+                'shift_id' => $chosenShiftId,
+                'shift_name' => $shiftsById[$chosenShiftId]['name'] ?? '',
+                'date' => $targetDate,
+                'location' => $loc,
+                'is_matched_preference' => isset($userPreferences[$uid]),
+                'reason' => $reason
+            ];
+        }
     }
 
-    $totalUsers = count($users);
-    $satisfactionRate = $totalUsers > 0 ? round(($matchedCount / max(1, count($userPreferences))) * 100) : 100;
+    $totalSlots = count($allCreatedSchedules);
+    $satisfactionRate = $totalRegistrationsFound > 0
+        ? round(($totalMatchedCount / $totalRegistrationsFound) * 100)
+        : 100;
 
     jsonResponse([
         'status' => 'success',
-        'message' => "Trợ lý AI đã phân tích nguyện vọng đăng ký ca và xếp lịch làm việc tối ưu cho ngày {$targetDate}!",
-        'date' => $targetDate,
-        'total_staff' => $totalUsers,
-        'registrations_found' => count($userPreferences),
-        'matched_preferences' => $matchedCount,
+        'message' => count($datesToSchedule) > 1
+            ? "Đã hoàn tất phân ca AI cho toàn bộ " . count($datesToSchedule) . " ngày trong tuần!"
+            : "Trợ lý AI đã phân ca tối ưu cho ngày {$datesToSchedule[0]}!",
+        'dates' => $datesToSchedule,
+        'total_staff' => count($users),
+        'total_schedules' => $totalSlots,
+        'registrations_found' => $totalRegistrationsFound,
+        'matched_preferences' => $totalMatchedCount,
         'satisfaction_rate' => $satisfactionRate . '%',
-        'schedules' => $createdSchedules
+        'seed_used' => $seed,
+        'schedules' => $allCreatedSchedules
     ]);
+}
+
+// 5.1. Quản lý Tinh chỉnh / Phân công Thủ công 1 ca làm việc (Manual Assignment / Override)
+if ($route === '/schedules/assign' && $method === 'POST') {
+    $userId = (int)str_replace('usr-', '', (string)($body['user_id'] ?? 2));
+    $shiftId = (int)str_replace('shift-', '', (string)($body['shift_id'] ?? 1));
+    $date = $body['date'] ?? date('Y-m-d');
+    $location = $body['location'] ?? 'Cụm Rạp 1 - Quầy Vé Box Office';
+    $managerName = $body['manager_name'] ?? 'Quản lý Phạm Thu Hương (Đã Tinh Chỉnh Thủ Công)';
+
+    // Xóa lịch cũ của user trong ngày này nếu có (chống trùng ca)
+    $del = $pdo->prepare("DELETE FROM ems_work_schedules WHERE user_id = ? AND date = ?");
+    $del->execute([$userId, $date]);
+
+    if ($shiftId > 0) {
+        $ins = $pdo->prepare("INSERT INTO ems_work_schedules (user_id, shift_id, date, location, status, assigned_by) VALUES (?, ?, ?, ?, 'assigned', ?)");
+        $ins->execute([$userId, $shiftId, $date, $location, $managerName]);
+        $newId = (int)$pdo->lastInsertId();
+
+        // Đồng thời cập nhật đăng ký ca thành approved
+        $upd = $pdo->prepare("UPDATE ems_shift_registrations SET status = 'approved' WHERE user_id = ? AND shift_id = ? AND date = ?");
+        $upd->execute([$userId, $shiftId, $date]);
+
+        jsonResponse([
+            'status' => 'success',
+            'id' => $newId,
+            'message' => 'Đã lưu phân công ca làm việc thành công!'
+        ]);
+    } else {
+        // Cho nghỉ ca ngày này
+        jsonResponse([
+            'status' => 'success',
+            'message' => 'Đã chuyển nhân sự sang trạng thái Nghỉ ca trong ngày này!'
+        ]);
+    }
+}
+
+// 5.2. Quản lý Hủy / Xóa 1 ca phân công
+if ($route === '/schedules/delete' && $method === 'POST') {
+    $userId = (int)str_replace('usr-', '', (string)($body['user_id'] ?? 2));
+    $date = $body['date'] ?? null;
+    $id = isset($body['id']) ? (int)str_replace('sch-', '', (string)$body['id']) : null;
+
+    if ($id) {
+        $del = $pdo->prepare("DELETE FROM ems_work_schedules WHERE id = ?");
+        $del->execute([$id]);
+    } elseif ($date && $userId) {
+        $del = $pdo->prepare("DELETE FROM ems_work_schedules WHERE user_id = ? AND date = ?");
+        $del->execute([$userId, $date]);
+    }
+
+    jsonResponse(['status' => 'success', 'message' => 'Đã hủy ca phân công!']);
 }
 
 // 6. Quản lý Xuất bản / Lưu Lịch làm việc Chính thức (UC11 -> UC10)
 if ($route === '/schedules/publish' && $method === 'POST') {
     $schedules = $body['schedules'] ?? [];
-    $targetDate = $body['date'] ?? date('Y-m-d', strtotime('+1 day'));
+    $targetDate = $body['date'] ?? null;
     $managerName = $body['manager_name'] ?? 'Phạm Thu Hương (Quản lý Đào tạo & Nhân sự)';
 
     if (!empty($schedules) && is_array($schedules)) {
-        $del = $pdo->prepare("DELETE FROM ems_work_schedules WHERE date = ?");
-        $del->execute([$targetDate]);
+        if ($targetDate) {
+            $del = $pdo->prepare("DELETE FROM ems_work_schedules WHERE date = ?");
+            $del->execute([$targetDate]);
+        }
 
         $ins = $pdo->prepare("INSERT INTO ems_work_schedules (user_id, shift_id, date, location, status, assigned_by) VALUES (?, ?, ?, ?, 'assigned', ?)");
         $updApproved = $pdo->prepare("UPDATE ems_shift_registrations SET status = 'approved' WHERE user_id = ? AND shift_id = ? AND date = ?");
@@ -1583,15 +1702,23 @@ if ($route === '/schedules/publish' && $method === 'POST') {
         foreach ($schedules as $s) {
             $uid = (int)($s['user_id'] ?? str_replace('usr-', '', $s['userId'] ?? '2'));
             $shiftId = (int)($s['shift_id'] ?? str_replace('shift-', '', $s['shiftId'] ?? '1'));
+            $sDate = $s['date'] ?? $targetDate ?? date('Y-m-d');
             $loc = $s['location'] ?? 'Cụm Rạp 1 - Quầy Vé';
-            $ins->execute([$uid, $shiftId, $targetDate, $loc, $managerName]);
-            $updApproved->execute([$uid, $shiftId, $targetDate]);
+
+            // Xóa lịch cũ trùng ngày của user nếu chưa xóa theo targetDate
+            if (!$targetDate) {
+                $delUser = $pdo->prepare("DELETE FROM ems_work_schedules WHERE user_id = ? AND date = ?");
+                $delUser->execute([$uid, $sDate]);
+            }
+
+            $ins->execute([$uid, $shiftId, $sDate, $loc, $managerName]);
+            $updApproved->execute([$uid, $shiftId, $sDate]);
         }
     }
 
     jsonResponse([
         'status' => 'success',
-        'message' => "Lịch làm việc ngày {$targetDate} đã được xuất bản chính thức tới toàn bộ nhân viên rạp!",
+        'message' => "Lịch làm việc đã được xuất bản chính thức tới toàn bộ nhân viên rạp!",
         'published_count' => count($schedules)
     ]);
 }

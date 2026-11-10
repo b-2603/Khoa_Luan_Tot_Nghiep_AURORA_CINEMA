@@ -32,48 +32,51 @@ export function getTomorrowDateString(): string {
   return formatDateToYYYYMMDD(d);
 }
 
-/**
- * Tạo danh sách các ngày kế tiếp bắt đầu từ Hôm Nay
- * @param count Số lượng ngày cần lấy (mặc định 7 ngày cho 1 tuần)
- */
-export function getUpcomingDays(count: number = 7): DayInfo[] {
+export function getWeekDaysByOffset(weekOffset: number = 1): DayInfo[] {
   const dayNames = ['Chủ Nhật', 'Thứ Hai', 'Thứ Ba', 'Thứ Tư', 'Thứ Năm', 'Thứ Sáu', 'Thứ Bảy'];
+  const shortNames = ['CN', 'Thứ 2', 'Thứ 3', 'Thứ 4', 'Thứ 5', 'Thứ 6', 'Thứ 7'];
   const result: DayInfo[] = [];
-  const baseDate = new Date();
+  const now = new Date();
+  const todayStr = formatDateToYYYYMMDD(now);
+  const tomorrowStr = getTomorrowDateString();
 
-  for (let i = 0; i < count; i++) {
-    const d = new Date(baseDate);
-    d.setDate(baseDate.getDate() + i);
+  const currentDay = now.getDay();
+  const diffToMonday = currentDay === 0 ? -6 : 1 - currentDay;
+
+  const monday = new Date(now);
+  monday.setDate(now.getDate() + diffToMonday + weekOffset * 7);
+
+  for (let i = 0; i < 7; i++) {
+    const d = new Date(monday);
+    d.setDate(monday.getDate() + i);
 
     const dateStr = formatDateToYYYYMMDD(d);
     const dayOfWeek = dayNames[d.getDay()];
+    const shortLabel = shortNames[d.getDay()];
     const dd = String(d.getDate()).padStart(2, '0');
     const mm = String(d.getMonth() + 1).padStart(2, '0');
     const yyyy = d.getFullYear();
     const dayNum = `${dd}/${mm}`;
 
-    let dayLabel = dayOfWeek;
-    let shortLabel = dayOfWeek;
-    if (i === 0) {
-      dayLabel = `Hôm Nay (${dayOfWeek})`;
-      shortLabel = 'Hôm nay';
-    } else if (i === 1) {
-      dayLabel = `Ngày Mai (${dayOfWeek})`;
-      shortLabel = 'Ngày mai';
-    }
+    const isToday = dateStr === todayStr;
+    const isTomorrow = dateStr === tomorrowStr;
 
     result.push({
       date: dateStr,
-      dayLabel,
+      dayLabel: isToday ? `Hôm Nay (${dayOfWeek})` : dayOfWeek,
       dayNum,
       shortLabel,
       fullLabel: `${dayOfWeek} (${dayNum}/${yyyy})`,
-      isToday: i === 0,
-      isTomorrow: i === 1
+      isToday,
+      isTomorrow
     });
   }
 
   return result;
+}
+
+export function getUpcomingDays(_count: number = 7): DayInfo[] {
+  return getWeekDaysByOffset(1);
 }
 
 /**

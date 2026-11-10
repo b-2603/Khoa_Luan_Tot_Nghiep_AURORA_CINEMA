@@ -21,6 +21,7 @@ import { StaffShiftViewPage } from './pages/StaffShiftViewPage';
 import { ManagerShiftSchedulerPage } from './pages/ManagerShiftSchedulerPage';
 import { AttendancePage } from './pages/AttendancePage';
 import { AttendanceExceptionsPage } from './pages/AttendanceExceptionsPage';
+import { InternalChatPage } from './pages/InternalChatPage';
 
 export function App() {
   const [currentUser, setCurrentUser] = useState<User | null>(getCurrentUser());
@@ -102,12 +103,15 @@ export function App() {
               initialSubTab="exceptions"
             />
           )}
+          {activeTab === 'internal-chat' && (
+            <InternalChatPage currentUser={currentUser} />
+          )}
           {/* Fallback to DashboardPage if activeTab is not recognized to prevent blank white screen */}
           {![
             'dashboard', 'profile', 'employees', 'create-employee', 
             'courses', 'quizzes', 'certificates', 'manager-quiz-creator', 
             'shift-register', 'shift-view', 'manager-scheduler', 
-            'attendance', 'attendance-exceptions'
+            'attendance', 'attendance-exceptions', 'internal-chat'
           ].includes(activeTab) && (
             <DashboardPage currentUser={currentUser} onNavigate={setActiveTab} />
           )}

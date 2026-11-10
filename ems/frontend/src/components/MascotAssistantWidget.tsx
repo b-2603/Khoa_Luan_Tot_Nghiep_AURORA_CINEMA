@@ -63,7 +63,13 @@ export const MascotAssistantWidget: React.FC<MascotAssistantWidgetProps> = ({
 
   const [isDragging, setIsDragging] = useState(false);
   const [isMiniChatOpen, setIsMiniChatOpen] = useState(false);
-  const [showGreeting, setShowGreeting] = useState(true);
+  const [showGreeting, setShowGreeting] = useState<boolean>(() => {
+    try {
+      return sessionStorage.getItem('aurora_greeting_closed') !== '1';
+    } catch {
+      return true;
+    }
+  });
 
   const dragStartOffset = useRef<{ x: number; y: number }>({ x: 0, y: 0 });
   const dragStartClient = useRef<{ x: number; y: number }>({ x: 0, y: 0 });
@@ -241,8 +247,11 @@ export const MascotAssistantWidget: React.FC<MascotAssistantWidgetProps> = ({
           </div>
 
           {/* Speech Bubble Greeting / Hint */}
-          {showGreeting && !isMiniChatOpen && !isFullModalOpen && !isDragging && (
+          {showGreeting && !isMiniChatOpen && !isFullModalOpen && (
             <div
+              onMouseDown={(e) => e.stopPropagation()}
+              onTouchStart={(e) => e.stopPropagation()}
+              onClick={(e) => e.stopPropagation()}
               style={{
                 position: 'absolute',
                 bottom: '100%',
@@ -250,7 +259,7 @@ export const MascotAssistantWidget: React.FC<MascotAssistantWidgetProps> = ({
                 left: position.x > window.innerWidth / 2 ? 'auto' : '0',
                 marginBottom: '12px',
               }}
-              className="w-64 bg-[#0d1b2e]/98 backdrop-blur-md text-slate-100 text-[11px] p-3 rounded-3xl shadow-[0_12px_35px_rgba(13,27,46,0.7)] border border-[#f4c04a]/70 animate-in fade-in zoom-in-95 duration-200 pointer-events-auto"
+              className="w-64 bg-[#0d1b2e]/98 backdrop-blur-md text-slate-100 text-[11px] p-3 rounded-3xl shadow-[0_12px_35px_rgba(13,27,46,0.7)] border border-[#f4c04a]/70 animate-in fade-in zoom-in-95 duration-200 pointer-events-auto cursor-default"
             >
               <div className="flex items-start justify-between gap-1.5">
                 <div className="flex items-center gap-1.5">
@@ -261,13 +270,19 @@ export const MascotAssistantWidget: React.FC<MascotAssistantWidgetProps> = ({
                 </div>
                 <button
                   type="button"
+                  onMouseDown={(e) => e.stopPropagation()}
+                  onTouchStart={(e) => e.stopPropagation()}
                   onClick={(e) => {
                     e.stopPropagation();
                     setShowGreeting(false);
+                    try {
+                      sessionStorage.setItem('aurora_greeting_closed', '1');
+                    } catch {}
                   }}
-                  className="text-slate-400 hover:text-white p-0.5 cursor-pointer rounded-lg hover:bg-slate-800 transition"
+                  className="text-slate-400 hover:text-white p-1 -mr-1 -mt-1 cursor-pointer rounded-lg hover:bg-slate-800 transition"
+                  title="Đóng lời chào"
                 >
-                  <X className="w-3.5 h-3.5" />
+                  <X className="w-4 h-4" />
                 </button>
               </div>
 

@@ -1,9 +1,9 @@
 import React, { useState, useEffect } from 'react';
 import { User, WorkSchedule, ShiftRegistration } from '../types';
-import { getWorkSchedules, getShiftRegistrations } from '../services/storage';
+import { getWorkSchedules, getShiftRegistrations, syncApprovedRegistrationsToSchedules } from '../services/storage';
 import { fetchWorkSchedules, fetchShiftRegistrations } from '../services/apiClient';
-import { Calendar, MapPin, Clock, ShieldCheck, CheckCircle2, Sparkles, ThumbsUp, ArrowRight, UserCheck } from 'lucide-react';
-import { formatFriendlyDate } from '../utils/dateUtils';
+import { Calendar, MapPin, Clock, CheckCircle2, Sparkles, ThumbsUp } from 'lucide-react';
+import { formatFriendlyDate, getWeekDaysByOffset } from '../utils/dateUtils';
 
 interface StaffShiftViewPageProps {
   currentUser: User;
@@ -12,25 +12,36 @@ interface StaffShiftViewPageProps {
 export const StaffShiftViewPage: React.FC<StaffShiftViewPageProps> = ({ currentUser }) => {
   const [schedules, setSchedules] = useState<WorkSchedule[]>([]);
   const [registrations, setRegistrations] = useState<ShiftRegistration[]>([]);
-  const [isLoading, setIsLoading] = useState<boolean>(true);
+  const [weekFilter, setWeekFilter] = useState<'all' | 'current' | 'next'>('all');
+
+  const currentWeekDays = getWeekDaysByOffset(0);
+  const nextWeekDays = getWeekDaysByOffset(1);
+  const currentWeekSet = new Set(currentWeekDays.map(d => d.date));
+  const nextWeekSet = new Set(nextWeekDays.map(d => d.date));
 
   useEffect(() => {
-    setIsLoading(false);
     Promise.all([
       fetchWorkSchedules(),
       fetchShiftRegistrations(currentUser.id)
     ]).then(([schedList, regList]) => {
-      if (schedList && schedList.length > 0) setSchedules(schedList);
-      else setSchedules(getWorkSchedules());
-
-      if (regList && regList.length > 0) setRegistrations(regList);
-      else setRegistrations(getShiftRegistrations().filter(r => r.userId === currentUser.id));
+      const allRegs = regList && regList.length > 0 ? regList : getShiftRegistrations();
+      const baseScheds = schedList && schedList.length > 0 ? schedList : getWorkSchedules();
+      const syncedScheds = syncApprovedRegistrationsToSchedules(allRegs, baseScheds);
+      setSchedules(syncedScheds);
+      setRegistrations(allRegs.filter(r => r.userId === currentUser.id || r.userId === currentUser.id.replace('usr-', '')));
     });
   }, [currentUser.id]);
 
-  const mySchedules = schedules.filter(s => 
-    s.userId === currentUser.id || s.userId === currentUser.id.replace('usr-', '')
-  );
+  const cleanUserId = currentUser.id.replace('usr-', '').trim();
+  const allMySchedules = schedules
+    .filter(s => s.userId.replace('usr-', '').trim() === cleanUserId)
+    .sort((a, b) => a.date.localeCompare(b.date));
+
+  const mySchedules = allMySchedules.filter(s => {
+    if (weekFilter === 'current') return currentWeekSet.has(s.date);
+    if (weekFilter === 'next') return nextWeekSet.has(s.date);
+    return true;
+  });
 
   return (
     <div className="space-y-6">
@@ -43,9 +54,31 @@ export const StaffShiftViewPage: React.FC<StaffShiftViewPageProps> = ({ currentU
           </p>
         </div>
 
-        <div className="flex items-center gap-2 bg-emerald-50 border border-emerald-200 px-3.5 py-1.5 rounded-xl text-xs text-emerald-800 font-semibold shrink-0">
-          <CheckCircle2 className="w-4 h-4 text-emerald-600" />
-          <span>Lịch Chính Thức</span>
+        <div className="inline-flex bg-slate-100 p-1 rounded-xl border border-slate-200">
+          <button
+            onClick={() => setWeekFilter('all')}
+            className={`px-3 py-1.5 rounded-lg text-xs font-bold transition cursor-pointer ${
+              weekFilter === 'all' ? 'bg-white text-slate-900 shadow-xs' : 'text-slate-600 hover:text-slate-900'
+            }`}
+          >
+            Tất Cả ({allMySchedules.length})
+          </button>
+          <button
+            onClick={() => setWeekFilter('current')}
+            className={`px-3 py-1.5 rounded-lg text-xs font-bold transition cursor-pointer ${
+              weekFilter === 'current' ? 'bg-white text-slate-900 shadow-xs' : 'text-slate-600 hover:text-slate-900'
+            }`}
+          >
+            Tuần Này ({currentWeekDays[0]?.dayNum} – {currentWeekDays[6]?.dayNum})
+          </button>
+          <button
+            onClick={() => setWeekFilter('next')}
+            className={`px-3 py-1.5 rounded-lg text-xs font-bold transition cursor-pointer ${
+              weekFilter === 'next' ? 'bg-white text-purple-700 shadow-xs' : 'text-slate-600 hover:text-slate-900'
+            }`}
+          >
+            Tuần Tiếp Theo ({nextWeekDays[0]?.dayNum} – {nextWeekDays[6]?.dayNum})
+          </button>
         </div>
       </div>
 

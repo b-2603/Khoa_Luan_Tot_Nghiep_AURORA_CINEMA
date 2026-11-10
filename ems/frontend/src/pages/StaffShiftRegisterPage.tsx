@@ -1,7 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import { User, ShiftRegistration, Shift } from '../types';
 import { INITIAL_SHIFTS } from '../services/mockData';
-import { getShiftRegistrations, saveShiftRegistration, deleteShiftRegistration } from '../services/storage';
+import { getShiftRegistrations, saveShiftRegistration, deleteShiftRegistration, getShiftReminders, dismissShiftReminder, ShiftReminder } from '../services/storage';
 import { fetchShiftRegistrations, registerShiftPreference, cancelShiftRegistration, fetchShifts } from '../services/apiClient';
 import { 
   CalendarPlus, 
@@ -31,9 +31,10 @@ export const StaffShiftRegisterPage: React.FC<StaffShiftRegisterPageProps> = ({ 
   const [shifts, setShifts] = useState<Shift[]>(INITIAL_SHIFTS);
   const [isLoading, setIsLoading] = useState<boolean>(true);
   const [actionMessage, setActionMessage] = useState<{ type: 'success' | 'info' | 'error'; text: string } | null>(null);
+  const [myReminders, setMyReminders] = useState<ShiftReminder[]>(() => getShiftReminders(currentUser.id));
 
   // Chế độ kiểm thử (Demo) cho phép thử nghiệm cả trạng thái Mở (T3 - T5) và Khóa (Sau T5)
-  const [simulationMode, setSimulationMode] = useState<'realtime' | 'simulate_open' | 'simulate_closed'>('realtime');
+  const [simulationMode, setSimulationMode] = useState<'realtime' | 'simulate_open' | 'simulate_closed'>('simulate_open');
 
   // Tính toán trạng thái Cổng Đăng Ký (Chỉ mở từ Thứ 3 đến Thứ 5 hàng tuần)
   const simulatedDate = simulationMode === 'simulate_open'
@@ -115,7 +116,14 @@ export const StaffShiftRegisterPage: React.FC<StaffShiftRegisterPageProps> = ({ 
       submittedAt: new Date().toISOString().split('T')[0]
     });
 
-    setRegistrations(prev => [...prev, newReg]);
+    setRegistrations(prev => {
+      const next = [...prev, newReg];
+      if (next.length >= 4) {
+        dismissShiftReminder(currentUser.id);
+        setMyReminders([]);
+      }
+      return next;
+    });
     await registerShiftPreference(currentUser.id, shiftId, date, simulationMode !== 'realtime');
     showNotification('success', `Đã ghi nhận nguyện vọng đăng ký ${shift?.name || 'ca làm việc'} ngày ${date}!`);
   };
@@ -129,7 +137,9 @@ export const StaffShiftRegisterPage: React.FC<StaffShiftRegisterPageProps> = ({ 
       <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 border-b border-slate-200 pb-4">
         <div>
           <div className="flex items-center gap-2.5">
-            <h2 className="text-xl font-bold text-slate-900">Đăng Ký Lịch Làm Việc Tuần Tới</h2>
+            <h2 className="text-xl font-bold text-slate-900">
+              Đăng Ký Lịch Làm Việc Tuần Tiếp Theo ({weekDays[0]?.dayNum} – {weekDays[6]?.dayNum})
+            </h2>
             <span className={`px-2.5 py-0.5 rounded-full text-[11px] font-bold flex items-center gap-1 border ${
               isRegistrationOpen
                 ? 'bg-emerald-50 text-emerald-800 border-emerald-300'
@@ -155,6 +165,33 @@ export const StaffShiftRegisterPage: React.FC<StaffShiftRegisterPageProps> = ({ 
           </button>
         )}
       </div>
+
+      {myReminders.length > 0 && (
+        <div className="p-4 bg-amber-50 border-2 border-amber-400 rounded-2xl flex flex-col sm:flex-row sm:items-center justify-between gap-3 shadow-xs">
+          <div className="flex items-start gap-3">
+            <div className="p-2 bg-amber-500 text-white rounded-xl shrink-0">
+              <AlertTriangle className="w-5 h-5" />
+            </div>
+            <div>
+              <div className="font-bold text-xs text-amber-950">
+                Thông báo nhắc nhở từ Quản lý ({myReminders[0].createdAt})
+              </div>
+              <p className="text-xs text-amber-900 mt-0.5 font-medium">
+                {myReminders[0].message}
+              </p>
+            </div>
+          </div>
+          <button
+            onClick={() => {
+              dismissShiftReminder(currentUser.id);
+              setMyReminders([]);
+            }}
+            className="px-3.5 py-1.5 bg-amber-600 hover:bg-amber-500 text-white text-xs font-bold rounded-xl shrink-0 cursor-pointer"
+          >
+            Đã hiểu
+          </button>
+        </div>
+      )}
 
       {/* BANNER THÔNG BÁO QUY ĐỊNH MỞ/KHÓA CỔNG ĐĂNG KÝ (THỨ 3 - THỨ 5) */}
       <div className="space-y-2">
