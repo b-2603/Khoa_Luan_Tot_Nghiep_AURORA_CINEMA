@@ -125,6 +125,78 @@ INSERT IGNORE INTO movie_countries (iso_code,name_vi,name_en,sort_order,status) 
 ('TW','Đài Loan','Taiwan',17,'active'),('ID','Indonesia','Indonesia',18,'active'),
 ('MY','Malaysia','Malaysia',19,'active'),('PH','Philippines','Philippines',20,'active');
 
+CREATE TABLE IF NOT EXISTS movie_audio_languages (
+  id SMALLINT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
+  code VARCHAR(20) NOT NULL UNIQUE,
+  name_vi VARCHAR(80) NOT NULL UNIQUE,
+  name_en VARCHAR(80) NOT NULL,
+  sort_order SMALLINT UNSIGNED NOT NULL DEFAULT 100,
+  status ENUM('active','inactive') NOT NULL DEFAULT 'active',
+  created_at TIMESTAMP NULL DEFAULT CURRENT_TIMESTAMP,
+  updated_at DATETIME NULL,
+  KEY idx_movie_audio_language_status (status,sort_order,name_vi)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8 COLLATE=utf8_unicode_ci;
+
+INSERT IGNORE INTO movie_audio_languages (code,name_vi,name_en,sort_order,status) VALUES
+('vi','Tiếng Việt','Vietnamese',1,'active'),('en','Tiếng Anh','English',2,'active'),
+('ko','Tiếng Hàn','Korean',3,'active'),('ja','Tiếng Nhật','Japanese',4,'active'),
+('zh','Tiếng Trung','Chinese',5,'active'),('th','Tiếng Thái','Thai',6,'active'),
+('fr','Tiếng Pháp','French',7,'active'),('es','Tiếng Tây Ban Nha','Spanish',8,'active'),
+('de','Tiếng Đức','German',9,'active'),('ru','Tiếng Nga','Russian',10,'active'),
+('hi','Tiếng Hindi','Hindi',11,'active'),('id','Tiếng Indonesia','Indonesian',12,'active');
+
+CREATE TABLE IF NOT EXISTS movie_subtitle_options (
+  id SMALLINT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
+  code VARCHAR(40) NOT NULL UNIQUE,
+  label_vi VARCHAR(120) NOT NULL UNIQUE,
+  label_en VARCHAR(120) NOT NULL,
+  sort_order SMALLINT UNSIGNED NOT NULL DEFAULT 100,
+  status ENUM('active','inactive') NOT NULL DEFAULT 'active',
+  created_at TIMESTAMP NULL DEFAULT CURRENT_TIMESTAMP,
+  updated_at DATETIME NULL,
+  KEY idx_movie_subtitle_status (status,sort_order,label_vi)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8 COLLATE=utf8_unicode_ci;
+
+INSERT IGNORE INTO movie_subtitle_options (code,label_vi,label_en,sort_order,status) VALUES
+('none','Không','None',1,'active'),('vi','Tiếng Việt','Vietnamese',2,'active'),
+('en','Tiếng Anh','English',3,'active'),('vi_en','Song ngữ Việt - Anh','Vietnamese - English bilingual',4,'active'),
+('sub_vi','Phụ đề Việt','Vietnamese subtitles',5,'active'),('sub_en','Phụ đề Anh','English subtitles',6,'active'),
+('sub_vi_dub_vi','Phụ đề Việt / Lồng tiếng Việt','Vietnamese subtitles / Vietnamese dub',7,'active'),
+('sub_vi_dub_en','Phụ đề Việt / Lồng tiếng Anh','Vietnamese subtitles / English dub',8,'active'),
+('sub_en_dub_vi','Phụ đề Anh / Lồng tiếng Việt','English subtitles / Vietnamese dub',9,'active'),
+('sub_vi_dub_ko','Phụ đề Việt / Lồng tiếng Hàn','Vietnamese subtitles / Korean dub',10,'active');
+
+CREATE TABLE IF NOT EXISTS movie_plan_reason_options (
+  id SMALLINT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
+  code VARCHAR(50) NOT NULL UNIQUE,
+  label_vi VARCHAR(160) NOT NULL UNIQUE,
+  description_vi VARCHAR(255) NULL,
+  sort_order SMALLINT UNSIGNED NOT NULL DEFAULT 100,
+  status ENUM('active','inactive') NOT NULL DEFAULT 'active',
+  created_at TIMESTAMP NULL DEFAULT CURRENT_TIMESTAMP,
+  updated_at DATETIME NULL,
+  KEY idx_movie_plan_reason_status (status,sort_order,label_vi)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8 COLLATE=utf8_unicode_ci;
+
+INSERT IGNORE INTO movie_plan_reason_options (code,label_vi,description_vi,sort_order,status) VALUES
+('market_demand','Nhu cầu thị trường cao','Phù hợp xu hướng tìm kiếm và nhu cầu xem phim hiện tại.',1,'active'),
+('target_audience','Phù hợp đối tượng khán giả mục tiêu','Nội dung phù hợp nhóm khách hàng trọng tâm của Aurora Cinema.',2,'active'),
+('revenue_potential','Tiềm năng doanh thu tốt','Có khả năng đạt mục tiêu vé bán và doanh thu kỳ phát hành.',3,'active'),
+('strong_franchise','Thương hiệu phim có sức hút','Thuộc thương hiệu, loạt phim hoặc sở hữu dàn diễn viên nổi bật.',4,'active'),
+('seasonal_fit','Phù hợp mùa vụ hoặc dịp lễ','Thời điểm phát hành phù hợp lễ, Tết, hè hoặc sự kiện đặc biệt.',5,'active'),
+('content_diversity','Bổ sung đa dạng nội dung','Giúp cân bằng thể loại và làm phong phú danh mục phim đang khai thác.',6,'active'),
+('marketing_support','Có lợi thế truyền thông','Có tài nguyên, đối tác hoặc chiến dịch hỗ trợ quảng bá tốt.',7,'active'),
+('competitive_advantage','Tạo lợi thế cạnh tranh','Tăng sức cạnh tranh với các cụm rạp và nội dung cùng thời điểm.',8,'active'),
+('customer_request','Theo yêu cầu hoặc phản hồi khách hàng','Được đề xuất từ khảo sát, lượt quan tâm hoặc phản hồi khách hàng.',9,'active'),
+('strategic_partnership','Phù hợp hợp tác chiến lược','Gắn với thỏa thuận nhà phát hành hoặc đối tác chiến lược.',10,'active');
+
+INSERT IGNORE INTO movie_audio_languages (code,name_vi,name_en,sort_order,status)
+SELECT CONCAT('legacy_',LEFT(SHA1(TRIM(original_language)),12)),TRIM(original_language),TRIM(original_language),90,'active'
+FROM movies WHERE original_language IS NOT NULL AND TRIM(original_language)<>'' GROUP BY TRIM(original_language);
+INSERT IGNORE INTO movie_subtitle_options (code,label_vi,label_en,sort_order,status)
+SELECT CONCAT('legacy_',LEFT(SHA1(TRIM(localization_versions)),12)),TRIM(localization_versions),TRIM(localization_versions),90,'active'
+FROM movies WHERE localization_versions IS NOT NULL AND TRIM(localization_versions)<>'' GROUP BY TRIM(localization_versions);
+
 -- Quy trình Marketing lập kế hoạch -> Admin Tổng duyệt -> phân bổ đến rạp.
 CREATE TABLE IF NOT EXISTS marketing_movie_plan_history (
   id BIGINT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
@@ -171,6 +243,8 @@ SET @ddl = IF((SELECT COUNT(*) FROM information_schema.COLUMNS WHERE TABLE_SCHEM
 SET @ddl = IF((SELECT COUNT(*) FROM information_schema.COLUMNS WHERE TABLE_SCHEMA=DATABASE() AND TABLE_NAME='movie_plans' AND COLUMN_NAME='reviewed_at')=0,'ALTER TABLE movie_plans ADD reviewed_at DATETIME NULL','SELECT 1'); PREPARE stmt FROM @ddl; EXECUTE stmt; DEALLOCATE PREPARE stmt;
 SET @ddl = IF((SELECT COUNT(*) FROM information_schema.COLUMNS WHERE TABLE_SCHEMA=DATABASE() AND TABLE_NAME='movie_plans' AND COLUMN_NAME='approval_note')=0,'ALTER TABLE movie_plans ADD approval_note TEXT NULL','SELECT 1'); PREPARE stmt FROM @ddl; EXECUTE stmt; DEALLOCATE PREPARE stmt;
 SET @ddl = IF((SELECT COUNT(*) FROM information_schema.COLUMNS WHERE TABLE_SCHEMA=DATABASE() AND TABLE_NAME='movie_plans' AND COLUMN_NAME='recommendation_reason')=0,'ALTER TABLE movie_plans ADD recommendation_reason TEXT NULL','SELECT 1'); PREPARE stmt FROM @ddl; EXECUTE stmt; DEALLOCATE PREPARE stmt;
+SET @ddl = IF((SELECT COUNT(*) FROM information_schema.COLUMNS WHERE TABLE_SCHEMA=DATABASE() AND TABLE_NAME='movie_plans' AND COLUMN_NAME='recommendation_reason_codes')=0,'ALTER TABLE movie_plans ADD recommendation_reason_codes TEXT NULL','SELECT 1'); PREPARE stmt FROM @ddl; EXECUTE stmt; DEALLOCATE PREPARE stmt;
+SET @ddl = IF((SELECT COUNT(*) FROM information_schema.COLUMNS WHERE TABLE_SCHEMA=DATABASE() AND TABLE_NAME='movie_plans' AND COLUMN_NAME='recommendation_reason_detail')=0,'ALTER TABLE movie_plans ADD recommendation_reason_detail TEXT NULL','SELECT 1'); PREPARE stmt FROM @ddl; EXECUTE stmt; DEALLOCATE PREPARE stmt;
 SET @ddl = IF((SELECT COUNT(*) FROM information_schema.COLUMNS WHERE TABLE_SCHEMA=DATABASE() AND TABLE_NAME='movie_plans' AND COLUMN_NAME='target_tickets')=0,'ALTER TABLE movie_plans ADD target_tickets INT UNSIGNED NOT NULL DEFAULT 0','SELECT 1'); PREPARE stmt FROM @ddl; EXECUTE stmt; DEALLOCATE PREPARE stmt;
 SET @ddl = IF((SELECT COUNT(*) FROM information_schema.COLUMNS WHERE TABLE_SCHEMA=DATABASE() AND TABLE_NAME='movie_plans' AND COLUMN_NAME='campaign_name')=0,'ALTER TABLE movie_plans ADD campaign_name VARCHAR(200) NULL','SELECT 1'); PREPARE stmt FROM @ddl; EXECUTE stmt; DEALLOCATE PREPARE stmt;
 SET @ddl = IF((SELECT COUNT(*) FROM information_schema.COLUMNS WHERE TABLE_SCHEMA=DATABASE() AND TABLE_NAME='movie_plans' AND COLUMN_NAME='marketing_budget')=0,'ALTER TABLE movie_plans ADD marketing_budget DECIMAL(14,2) NOT NULL DEFAULT 0','SELECT 1'); PREPARE stmt FROM @ddl; EXECUTE stmt; DEALLOCATE PREPARE stmt;
@@ -180,3 +254,4 @@ SET @ddl = IF((SELECT COUNT(*) FROM information_schema.COLUMNS WHERE TABLE_SCHEM
 SET @ddl = IF((SELECT COUNT(*) FROM information_schema.COLUMNS WHERE TABLE_SCHEMA=DATABASE() AND TABLE_NAME='movies' AND COLUMN_NAME='marketing_owner_id')=0,'ALTER TABLE movies ADD marketing_owner_id BIGINT UNSIGNED NULL','SELECT 1'); PREPARE stmt FROM @ddl; EXECUTE stmt; DEALLOCATE PREPARE stmt;
 
 UPDATE movie_plans SET approval_status=CASE WHEN status='draft' THEN 'draft' ELSE 'approved' END WHERE marketing_owner_id IS NULL;
+UPDATE movie_plans SET recommendation_reason_detail=recommendation_reason WHERE (recommendation_reason_detail IS NULL OR TRIM(recommendation_reason_detail)='') AND recommendation_reason IS NOT NULL AND TRIM(recommendation_reason)<>'';

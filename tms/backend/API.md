@@ -42,6 +42,8 @@ Thời gian TMS dùng múi giờ Việt Nam (`Asia/Ho_Chi_Minh`, UTC+07:00); cá
 - `GET|POST|PUT ?action=schedules` — lịch chiếu dùng `aurora_db.showtimes` làm nguồn dữ liệu. Database lưu `OPEN`, `CLOSED`, `CANCELLED`; API trả `scheduled`, `running`, `finished`, `cancelled`, trong đó `running` và `finished` được xác định theo `starts_at`, `ends_at` thay vì cho người dùng đặt thủ công.
   - Frontend hiển thị ngày theo `DD/MM/YYYY`, còn API nhận và lưu `show_date` theo ISO `YYYY-MM-DD` để ghép chính xác vào `starts_at`/`ends_at`.
   - Suất mới mặc định ngày kế tiếp theo giờ Việt Nam; backend kiểm tra ngày lịch thực, thời gian tương lai, phân bổ phim và xung đột phòng trước khi ghi.
+- `POST ?action=schedule-auto-draft` — tạo bản xem trước, chưa ghi database. Body gồm `movie_id`, `allocation_id`, `show_date`, `ticket_type_ids` và `theater_id` khi Admin Tổng lập lịch. Backend lấy chỉ tiêu `min_screenings_per_day`, trừ số suất không bị hủy đã có trong ngày, rồi tìm phòng/giờ trống gần nhất theo quy tắc vận hành và bảng giá trong `aurora_db`.
+  - Khi lưu các suất đã xem trước qua `POST ?action=schedules`, gửi `auto_schedule` gồm `allocation_id`, `expected_count` (tổng chỉ tiêu/ngày) và `expected_new_count` (số suất mới). Backend kiểm tra lại số đã có cộng số mới đúng bằng chỉ tiêu trước khi ghi.
 - `GET ?action=users&account_type=internal` — tài khoản vận hành TMS; chỉ trả về `super_admin`, `cinema_admin`, `supervisor`, `accounting`.
 - `GET ?action=users&account_type=customer` — hồ sơ customer, hạng thành viên, điểm, số lượt đặt vé, tổng chi tiêu và OAuth; chỉ Admin Tổng được truy cập.
 - `POST|PUT ?action=users` — tạo/cập nhật tài khoản nội bộ. API từ chối tạo hoặc chuyển đổi sang vai trò `customer`.
@@ -63,16 +65,24 @@ Schema có thể triển khai độc lập bằng `database/tms_notifications.sq
 
 ### Quy trình kế hoạch phim Marketing
 
-- `GET ?action=marketing-movies` — Danh sách phim dùng chung tương ứng với màn “Danh sách phim” của Admin Tổng. Phim `draft` không được trả trong danh sách; phản hồi `meta.approved_candidates` chỉ chứa phim thuộc kế hoạch của Marketing đã được Admin Tổng duyệt.
+- `GET ?action=marketing-movies` — Danh sách phim dùng chung tương ứng với màn “Danh sách phim” của Admin Tổng. Phim `draft` không được trả trong danh sách; mỗi phim có `can_edit = 1` chỉ khi thuộc kế hoạch đã duyệt của tài khoản Marketing hiện tại. `meta.permissions` mô tả quyền hiệu lực, `meta.approved_candidates` chỉ chứa phim thuộc kế hoạch của chính tài khoản đã được Admin Tổng duyệt; `meta.audio_languages` và `meta.subtitle_options` là danh mục lựa chọn đang hoạt động lấy từ `aurora_db`.
 - `PUT ?action=marketing-movies&operation=publish-approved` — body `{ "id": plan_id }`. Thêm phim đã duyệt vào danh sách và chuyển trạng thái phim từ `draft` sang `coming_soon`. Backend từ chối nếu kế hoạch chưa duyệt, không thuộc Marketing hiện tại hoặc phim đã được công bố.
-- `GET ?action=marketing-movie-plans` — danh sách, KPI trạng thái, kho phim, danh sách rạp và lịch sử phê duyệt.
+- `PUT ?action=marketing-movies&operation=update&id={movie_id}` — cập nhật hồ sơ/media của phim do tài khoản Marketing hiện tại lập kế hoạch và đã được duyệt. Phim của Admin Tổng hoặc tài khoản khác trả `403`; Marketing không có API tạo trực tiếp, nhập Excel hoặc xóa phim dùng chung. Thao tác hợp lệ được ghi vào `audit_logs`.
+- `GET ?action=marketing-movie-plans` — danh sách, KPI trạng thái, kho phim, danh sách rạp, lịch sử phê duyệt và hai danh mục `meta.audio_languages`/`meta.subtitle_options` dùng cho bước Media & phiên bản phim.
 - `POST ?action=marketing-movie-plans` — Marketing tạo bản nháp qua quy trình 5 bước. Có thể chọn phim trong kho bằng `movie_id`, hoặc gửi `movie_mode: "new"` cùng `movie_profile` để tạo hồ sơ phim nháp. Kế hoạch hỗ trợ thời gian, lý do đề xuất, số vé/doanh thu mục tiêu, suất chiếu, rạp, chiến dịch, ngân sách Marketing, đề xuất khuyến mãi, quyền phát hành và trạng thái phân loại.
   - `movie_profile.genre` nhận mảng tối đa 8 thể loại, ví dụ `["Hành động", "Khoa học viễn tưởng"]`. Backend loại bỏ giá trị rỗng/trùng và lưu dạng chuỗi phân cách bằng dấu phẩy trong cột `aurora_db.movies.genre` hiện có. `GET marketing-movie-plans` trả `meta.genres` được tổng hợp từ dữ liệu phim trong database để frontend dựng bộ chọn nhiều lựa chọn.
+  - `movie_profile.audio_language` và `movie_profile.subtitle` phải thuộc danh mục đang hoạt động trong `aurora_db.movie_audio_languages` và `aurora_db.movie_subtitle_options`. Backend trả `422` nếu frontend gửi giá trị ngoài danh mục.
+  - `recommendation_reason_codes` nhận một mảng gồm 1–8 mã đang hoạt động từ `aurora_db.movie_plan_reason_options`; `recommendation_reason_detail` là phần phân tích chi tiết bắt buộc. API đồng thời duy trì `recommendation_reason` dạng tổng hợp để tương thích với hồ sơ và quy trình duyệt cũ.
 - `PUT ?action=marketing-movie-plans&id={id}` — cập nhật kế hoạch ở trạng thái `draft` hoặc `revision_requested`.
 - `PUT ?action=marketing-movie-plans&id={id}&operation=submit` — gửi kế hoạch đến Admin Tổng.
 - `PUT ?action=marketing-movie-plans&id={id}&operation=withdraw` — thu hồi kế hoạch đang chờ duyệt.
 - `PUT ?action=marketing-movie-plans&id={id}&operation=publish-movie` — sau khi được duyệt, Marketing đưa phim vào Danh sách phim (`coming_soon`).
 - `DELETE ?action=marketing-movie-plans&id={id}` — xóa bản nháp hoặc kế hoạch đang được yêu cầu sửa.
+
+### Quản lý vòng đời phim Admin Tổng
+
+- `GET ?action=movie-management` — trung tâm điều hành riêng biệt với kho hồ sơ `movies`: tổng hợp trạng thái phát hành, mức ưu tiên, phim nổi bật, độ phủ rạp, phân bổ, suất chiếu, vé đã ghi nhận và cảnh báo vận hành từ `aurora_db`. Hỗ trợ `q`, `status`, `priority` và `attention=1`.
+- `PUT ?action=movie-management&id={movie_id}` — cập nhật có kiểm soát `status`, `management_priority`, `is_hot`, `release_date`, `expected_end_date` và `management_note`; không thay đổi hồ sơ nội dung phim. Chỉ Admin Tổng có quyền và mọi thay đổi được ghi Audit Log.
 - `GET ?action=marketing-plan-approvals` — Admin Tổng xem hàng đợi phê duyệt.
 - `PUT ?action=marketing-plan-approvals` — Admin Tổng duyệt hoặc trả sửa. Body hỗ trợ phản hồi theo hạng mục: `{ "id": 1, "decision": "revision_requested", "note": "Ý kiến chung", "review_items": [{ "section_key": "revenue", "field_label": "Mục tiêu doanh thu", "comment": "Cần bổ sung căn cứ" }] }`.
   - Khi duyệt, backend từ chối kế hoạch đã hết hạn, thiếu rạp hoặc chứa mã rạp không còn tồn tại.

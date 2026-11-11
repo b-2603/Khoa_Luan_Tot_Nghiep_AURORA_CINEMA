@@ -1062,6 +1062,15 @@ if ($action === 'schedule-availability') {
     jsonResponse(array('success' => false, 'message' => 'Phương thức không được hỗ trợ cho kiểm tra khung giờ trống.'), 405);
 }
 
+if ($action === 'schedule-auto-draft') {
+    if ($requestMethod === 'POST') {
+        requireAdmin();
+        $controller->requireRbacPermission('schedules', true);
+        $controller->scheduleAutoDraft();
+    }
+    jsonResponse(array('success'=>false,'message'=>'Phương thức không được hỗ trợ cho xếp lịch tự động.'),405);
+}
+
 if ($action === 'movie-plan-detail') {
     requireAdmin();
     $controller->requireRbacPermission('movies', $requestMethod === 'GET' ? 'view' : 'update');
@@ -1197,6 +1206,12 @@ if ($action === 'movies-import' && $requestMethod === 'POST') {
         jsonResponse(array('success' => false, 'message' => 'Chưa có phim nào được tạo: '.$e->getMessage()), 400);
     }
     jsonResponse(array('success' => true, 'message' => 'Đã tạo thành công '.$added.' phim vào kho hệ thống.', 'data' => array('added' => $added)));
+}
+
+if ($action === 'movie-management') {
+    requireAdmin();
+    $controller->requireRbacPermission('movies', $requestMethod === 'GET' ? 'view' : 'update');
+    $controller->movieManagement();
 }
 
 $resources = array('movies', 'screens', 'schedules', 'staff', 'ticket-types', 'products', 'vouchers', 'customers', 'theaters', 'promotions', 'system-configs', 'transactions', 'refunds', 'movie-plans', 'movie-allocations');

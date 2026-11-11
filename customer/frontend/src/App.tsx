@@ -340,11 +340,11 @@ export default function App() {
       .catch(() => setAuthUser(null))
       .finally(() => setAuthChecked(true));
 
-    // Lấy dữ liệu phim trực tiếp từ MySQL Database aurora_db
-    fetch(`${API_URL}?action=movies&_=${Date.now()}`, { cache: 'no-store' })
+    // Refresh the shared catalog so date-driven status changes appear without a page reload.
+    const refreshMovies = () => fetch(`${API_URL}?action=movies&_=${Date.now()}`, { cache: 'no-store' })
       .then(response => response.json())
       .then(result => {
-        if (result && result.movies && result.movies.length > 0) {
+        if (result && Array.isArray(result.movies)) {
           setMoviesList(result.movies.map((m: any) => ({
             id: m.id,
             title: m.title,
@@ -370,6 +370,8 @@ export default function App() {
         }
       })
       .catch(() => {});
+    refreshMovies();
+    const moviesRefreshTimer = window.setInterval(refreshMovies, 60_000);
 
     loadPromotions();
 
@@ -385,6 +387,7 @@ export default function App() {
         }
       })
       .catch(() => {});
+    return () => window.clearInterval(moviesRefreshTimer);
   }, []);
 
   useEffect(() => {

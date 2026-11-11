@@ -121,6 +121,12 @@ function aurora_vietnam_now() {
     return $now->format('Y-m-d H:i:s');
 }
 
+function aurora_sync_movie_statuses($db) {
+    $today = substr(aurora_vietnam_now(), 0, 10);
+    $todayEsc = $db->real_escape_string($today);
+    return $db->query("UPDATE movies SET status=CASE WHEN release_date>'{$todayEsc}' THEN 'coming_soon' ELSE 'now_showing' END WHERE UPPER(status) IN ('COMING_SOON','NOW_SHOWING') AND release_date IS NOT NULL AND status<>CASE WHEN release_date>'{$todayEsc}' THEN 'coming_soon' ELSE 'now_showing' END");
+}
+
 // Search interactions are retained in aurora_db for reporting without
 // attaching personal data to guests. A session identifier is sufficient for
 // deduplication and becomes traceable to the member after they sign in.
@@ -859,6 +865,7 @@ if ($resource === 'address_districts') {
 }
 
 if ($resource === 'movies') {
+    if (!aurora_sync_movie_statuses($db)) aurora_response(array('message'=>'Không thể tự đồng bộ trạng thái phim theo ngày khởi chiếu trong aurora_db.'), 500);
     $status = isset($_GET['status']) ? strtoupper(trim((string)$_GET['status'])) : '';
     $allowedStatuses = array('COMING_SOON', 'NOW_SHOWING', 'SPECIAL_SHOWING', 'ENDED');
     $catalogNow = $db->real_escape_string(aurora_vietnam_now());

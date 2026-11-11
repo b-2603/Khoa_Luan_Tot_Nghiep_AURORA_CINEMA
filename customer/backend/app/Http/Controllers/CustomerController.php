@@ -19,6 +19,7 @@ class CustomerController extends Controller
 
     public function movies(Request $request): JsonResponse
     {
+        $this->syncMovieStatuses();
         $query = DB::table('movies')->select([
             'id', 'title', 'description', 'duration_minutes', 'age_rating', 'format',
             'poster_url', 'trailer_url', 'status', 'release_date',
@@ -38,6 +39,7 @@ class CustomerController extends Controller
 
     public function movieDetail(int $movie): JsonResponse
     {
+        $this->syncMovieStatuses();
         $item = DB::table('movies')->where('id', $movie)->first();
         if (!$item) return response()->json(['message' => 'Không tìm thấy phim.'], 404);
 
@@ -47,6 +49,12 @@ class CustomerController extends Controller
             'format' => $item->format, 'posterUrl' => $item->poster_url, 'trailerUrl' => $item->trailer_url,
             'status' => $item->status, 'releaseDate' => $item->release_date,
         ]]);
+    }
+
+    private function syncMovieStatuses(): void
+    {
+        $today = now('Asia/Ho_Chi_Minh')->toDateString();
+        DB::update("UPDATE movies SET status=CASE WHEN release_date>? THEN 'coming_soon' ELSE 'now_showing' END WHERE UPPER(status) IN ('COMING_SOON','NOW_SHOWING') AND release_date IS NOT NULL AND status<>CASE WHEN release_date>? THEN 'coming_soon' ELSE 'now_showing' END", [$today, $today]);
     }
 
     public function theaters(): JsonResponse

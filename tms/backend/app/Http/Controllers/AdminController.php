@@ -2407,6 +2407,22 @@ class AdminController
         if (!$masterTable || !$masterTable->num_rows) {
             jsonResponse(array('success' => false, 'message' => 'Không tìm thấy bảng movies trong aurora_db.'), 500);
         }
+        $managementColumns = array(
+            'management_priority' => "VARCHAR(20) NOT NULL DEFAULT 'normal'",
+            'management_note' => 'TEXT NULL',
+            'lifecycle_updated_by' => 'VARCHAR(120) NULL',
+            'lifecycle_updated_at' => 'DATETIME NULL'
+        );
+        foreach ($managementColumns as $column => $definition) {
+            $exists = $this->db->query("SHOW COLUMNS FROM movies LIKE '{$column}'");
+            if (!$exists || $exists->num_rows === 0) {
+                if (!$this->db->query("ALTER TABLE movies ADD COLUMN {$column} {$definition}")) {
+                    jsonResponse(array('success'=>false,'message'=>'Không thể nâng cấp dữ liệu điều hành phim trong aurora_db: '.$this->db->error),500);
+                }
+            }
+        }
+        $priorityIndex = $this->db->query("SHOW INDEX FROM movies WHERE Key_name='idx_movies_management_priority'");
+        if (!$priorityIndex || $priorityIndex->num_rows === 0) $this->db->query('CREATE INDEX idx_movies_management_priority ON movies (management_priority,status,release_date)');
     }
 
     private function ensurePlanningSchema()
@@ -2464,6 +2480,91 @@ class AdminController
         }
         unset($movie);
         jsonResponse(array('success' => true, 'data' => $movies));
+    }
+
+    /**
+     * Operational command center for a movie lifecycle.  This is deliberately
+     * separate from the master catalogue CRUD: it changes release operations,
+     * priority and internal notes without rewriting the movie profile.
+     */
+    public function movieManagement()
+    {
+        $user = requireAdmin();
+        if ($this->getCurrentRole() !== 'super_admin') jsonResponse(array('success'=>false,'message'=>'Chỉ Admin Tổng được điều hành vòng đời phim toàn hệ thống.'),403);
+        $this->ensureMovieCatalogSchema();
+        $this->ensurePlanningSchema();
+        $method = isset($_SERVER['REQUEST_METHOD']) ? $_SERVER['REQUEST_METHOD'] : 'GET';
+        if ($method === 'GET') return $this->listMovieManagement();
+        if ($method === 'PUT' || $method === 'POST') return $this->updateMovieManagement($user);
+        jsonResponse(array('success'=>false,'message'=>'Phương thức điều hành phim không được hỗ trợ.'),405);
+    }
+
+    private function listMovieManagement()
+    {
+        $where = array('1=1');
+        if (!empty($_GET['q'])) {
+            $q = $this->db->real_escape_string(trim((string)$_GET['q']));
+            $where[] = "(m.title LIKE '%{$q}%' OR m.original_title LIKE '%{$q}%' OR m.movie_code LIKE '%{$q}%')";
+        }
+        if (!empty($_GET['status']) && in_array($_GET['status'],array('draft','coming_soon','now_showing','special_showing','ended'),true)) {
+            $where[] = "m.status='".$this->db->real_escape_string($_GET['status'])."'";
+        }
+        if (!empty($_GET['priority']) && in_array($_GET['priority'],array('normal','high','critical'),true)) {
+            $where[] = "m.management_priority='".$this->db->real_escape_string($_GET['priority'])."'";
+        }
+        $activeShowtimeSql = "(SELECT COUNT(*) FROM showtimes live_st WHERE live_st.movie_id=m.id AND live_st.status='OPEN' AND live_st.ends_at>=NOW())";
+        $attentionSql = "(TRIM(COALESCE(m.poster_url,''))='' OR TRIM(COALESCE(m.trailer_url,''))='' OR m.expected_end_date<m.release_date OR (m.status='now_showing' AND {$activeShowtimeSql}=0) OR (m.status='coming_soon' AND m.release_date<CURDATE()))";
+        if (!empty($_GET['attention']) && $_GET['attention']==='1') $where[] = $attentionSql;
+        $sql = "SELECT m.id,m.movie_code,m.title,m.original_title,m.genre,m.duration_minutes,m.age_rating,m.format,m.release_date,m.expected_end_date,m.poster_url,m.trailer_url,m.status,m.is_hot,m.management_priority,m.management_note,m.lifecycle_updated_by,m.lifecycle_updated_at,m.updated_at,
+            (SELECT COUNT(DISTINCT ma.theater_id) FROM movie_allocations ma WHERE ma.movie_id=m.id AND ma.status IN ('pending','confirmed','deploying')) allocated_theaters,
+            (SELECT COUNT(*) FROM movie_allocations ma WHERE ma.movie_id=m.id AND ma.status IN ('confirmed','deploying') AND ma.allocated_end_date>=CURDATE()) active_allocations,
+            {$activeShowtimeSql} active_showtimes,
+            (SELECT COUNT(*) FROM showtimes all_st WHERE all_st.movie_id=m.id) total_showtimes,
+            (SELECT MIN(next_st.starts_at) FROM showtimes next_st WHERE next_st.movie_id=m.id AND next_st.status='OPEN' AND next_st.starts_at>=NOW()) next_showtime_at,
+            (SELECT COUNT(bs.id) FROM booking_seats bs INNER JOIN bookings b ON b.id=bs.booking_id INNER JOIN showtimes sold_st ON sold_st.id=b.showtime_id WHERE sold_st.movie_id=m.id AND b.status NOT IN ('CANCELLED','EXPIRED')) sold_tickets,
+            CASE WHEN m.expected_end_date<m.release_date OR (m.status='now_showing' AND {$activeShowtimeSql}=0) THEN 'critical' WHEN {$attentionSql} THEN 'warning' ELSE 'ready' END attention_level,
+            CASE WHEN m.expected_end_date<m.release_date THEN 'Ngày kết thúc trước ngày phát hành' WHEN m.status='now_showing' AND {$activeShowtimeSql}=0 THEN 'Đang chiếu nhưng chưa có suất chiếu hoạt động' WHEN m.status='coming_soon' AND m.release_date<CURDATE() THEN 'Đã qua ngày phát hành nhưng vẫn ở trạng thái sắp chiếu' WHEN TRIM(COALESCE(m.poster_url,''))='' THEN 'Thiếu poster phim' WHEN TRIM(COALESCE(m.trailer_url,''))='' THEN 'Thiếu trailer phim' ELSE '' END attention_message
+            FROM movies m WHERE ".implode(' AND ',$where)." ORDER BY CASE m.management_priority WHEN 'critical' THEN 0 WHEN 'high' THEN 1 ELSE 2 END,CASE m.status WHEN 'now_showing' THEN 0 WHEN 'special_showing' THEN 1 WHEN 'coming_soon' THEN 2 WHEN 'draft' THEN 3 ELSE 4 END,m.release_date ASC,m.id DESC";
+        $rows = $this->rows($sql);
+        foreach ($rows as &$row) {
+            foreach (array('id','duration_minutes','is_hot','allocated_theaters','active_allocations','active_showtimes','total_showtimes','sold_tickets') as $field) $row[$field]=(int)$row[$field];
+        }
+        unset($row);
+        $summary = array(
+            'total'=>(int)$this->scalar('SELECT COUNT(*) FROM movies'),
+            'now_showing'=>(int)$this->scalar("SELECT COUNT(*) FROM movies WHERE status='now_showing'"),
+            'coming_soon'=>(int)$this->scalar("SELECT COUNT(*) FROM movies WHERE status='coming_soon'"),
+            'special_showing'=>(int)$this->scalar("SELECT COUNT(*) FROM movies WHERE status='special_showing'"),
+            'hot'=>(int)$this->scalar('SELECT COUNT(*) FROM movies WHERE is_hot=1'),
+            'attention'=>(int)$this->scalar("SELECT COUNT(*) FROM movies m WHERE {$attentionSql}"),
+            'active_showtimes'=>(int)$this->scalar("SELECT COUNT(*) FROM showtimes WHERE status='OPEN' AND ends_at>=NOW()"),
+            'active_theaters'=>(int)$this->scalar("SELECT COUNT(DISTINCT theater_id) FROM movie_allocations WHERE status IN ('confirmed','deploying') AND allocated_end_date>=CURDATE()")
+        );
+        jsonResponse(array('success'=>true,'data'=>$rows,'meta'=>array('summary'=>$summary,'server_date'=>(string)$this->scalar('SELECT CURDATE()'),'source'=>'aurora_db')));
+    }
+
+    private function updateMovieManagement($user)
+    {
+        $input = requestJson();
+        $id = isset($_GET['id']) ? (int)$_GET['id'] : (isset($input['id'])?(int)$input['id']:0);
+        if ($id<=0) jsonResponse(array('success'=>false,'message'=>'Phim cần điều hành không hợp lệ.'),422);
+        $existing = $this->rows("SELECT id,movie_code,title,status,management_priority,is_hot,release_date,expected_end_date FROM movies WHERE id={$id} LIMIT 1");
+        if (!$existing) jsonResponse(array('success'=>false,'message'=>'Không tìm thấy phim trong aurora_db.'),404);
+        $status = isset($input['status'])?trim((string)$input['status']):$existing[0]['status'];
+        $priority = isset($input['management_priority'])?trim((string)$input['management_priority']):$existing[0]['management_priority'];
+        $isHot = isset($input['is_hot'])&&!empty($input['is_hot'])?1:0;
+        $note = isset($input['management_note'])?trim((string)$input['management_note']):'';
+        $release = isset($input['release_date'])?trim((string)$input['release_date']):$existing[0]['release_date'];
+        $end = isset($input['expected_end_date'])?trim((string)$input['expected_end_date']):$existing[0]['expected_end_date'];
+        if (!in_array($status,array('coming_soon','now_showing','special_showing','ended'),true)) jsonResponse(array('success'=>false,'message'=>'Trạng thái vòng đời phim không hợp lệ.'),422);
+        if (!in_array($priority,array('normal','high','critical'),true)) jsonResponse(array('success'=>false,'message'=>'Mức ưu tiên điều hành không hợp lệ.'),422);
+        if (!preg_match('/^\d{4}-\d{2}-\d{2}$/',$release)||!preg_match('/^\d{4}-\d{2}-\d{2}$/',$end)||$end<$release) jsonResponse(array('success'=>false,'message'=>'Thời gian phát hành không hợp lệ hoặc ngày kết thúc đứng trước ngày phát hành.'),422);
+        if (strlen($note)>2000) jsonResponse(array('success'=>false,'message'=>'Ghi chú điều hành chỉ được tối đa 2.000 ký tự.'),422);
+        $actor = isset($user['full_name'])?$user['full_name']:(isset($user['username'])?$user['username']:'Admin Tổng');
+        $statusEsc=$this->db->real_escape_string($status);$priorityEsc=$this->db->real_escape_string($priority);$noteEsc=$this->db->real_escape_string($note);$releaseEsc=$this->db->real_escape_string($release);$endEsc=$this->db->real_escape_string($end);$actorEsc=$this->db->real_escape_string($actor);
+        if (!$this->db->query("UPDATE movies SET status='{$statusEsc}',management_priority='{$priorityEsc}',is_hot={$isHot},management_note='{$noteEsc}',release_date='{$releaseEsc}',expected_end_date='{$endEsc}',lifecycle_updated_by='{$actorEsc}',lifecycle_updated_at=NOW(),updated_at=NOW() WHERE id={$id} LIMIT 1")) jsonResponse(array('success'=>false,'message'=>'Không thể cập nhật điều hành phim trong aurora_db: '.$this->db->error),500);
+        if (function_exists('writeTmsAuditLog')) writeTmsAuditLog($this->db,'MOVIE_LIFECYCLE_UPDATED','Điều hành vòng đời phim '.$existing[0]['movie_code'].' - '.$existing[0]['title'].'.',array('module'=>'movies','entity_type'=>'movie','entity_id'=>(string)$id,'severity'=>'success','metadata'=>array('from_status'=>$existing[0]['status'],'to_status'=>$status,'priority'=>$priority,'is_hot'=>$isHot)));
+        jsonResponse(array('success'=>true,'message'=>'Đã cập nhật trạng thái điều hành phim trong aurora_db.','data'=>array('id'=>$id)));
     }
 
     /**
@@ -2707,6 +2808,17 @@ class AdminController
               AND '{$dateEsc}' BETWEEN ma.allocated_start_date AND ma.allocated_end_date");
         $allocatedTheaters = array();
         foreach ($allocationRows as $allocationRow) $allocatedTheaters[(int)$allocationRow['theater_id']] = true;
+        $autoSchedule = isset($input['auto_schedule']) && is_array($input['auto_schedule']) ? $input['auto_schedule'] : array();
+        if ($autoSchedule) {
+            if ($wasUpdate) jsonResponse(array('success'=>false,'message'=>'Lịch tự động chỉ áp dụng khi tạo suất chiếu mới.'),422);
+            $autoAllocationId = isset($autoSchedule['allocation_id']) ? (int)$autoSchedule['allocation_id'] : 0;
+            $autoExpectedCount = isset($autoSchedule['expected_count']) ? (int)$autoSchedule['expected_count'] : 0;
+            $autoExpectedNewCount = isset($autoSchedule['expected_new_count']) ? (int)$autoSchedule['expected_new_count'] : 0;
+            $autoAllocation = $autoAllocationId > 0 ? $this->row("SELECT ma.min_screenings_per_day FROM movie_allocations ma INNER JOIN movie_plans mp ON mp.id=ma.plan_id WHERE ma.id={$autoAllocationId} AND ma.movie_id={$movieId} AND ma.theater_id={$selectedTheaterId} AND ma.status IN ('confirmed','deploying') AND mp.status IN ('published','in_progress') AND '{$dateEsc}' BETWEEN ma.allocated_start_date AND ma.allocated_end_date LIMIT 1") : null;
+            if (!$autoAllocation) jsonResponse(array('success'=>false,'message'=>'Phân bổ dùng để xếp lịch không còn hiệu lực cho phim, rạp hoặc ngày đã chọn. Hãy tạo lại bản nháp tự động.'),409);
+            $existingAutoShowtimes = (int)$this->scalar("SELECT COUNT(*) FROM showtimes st INNER JOIN screens sc ON sc.id=st.screen_id WHERE st.movie_id={$movieId} AND sc.theater_id={$selectedTheaterId} AND DATE(st.starts_at)='{$dateEsc}' AND st.status<>'CANCELLED'");
+            if ($autoExpectedCount < 1 || $autoExpectedCount !== (int)$autoAllocation['min_screenings_per_day'] || $autoExpectedNewCount !== count($rawSlots) || $existingAutoShowtimes + count($rawSlots) !== $autoExpectedCount) jsonResponse(array('success'=>false,'message'=>'Số suất hiện có cộng với số suất mới phải đúng bằng chỉ tiêu '.(int)$autoAllocation['min_screenings_per_day'].' suất/ngày. Hãy tạo lại bản nháp tự động.'),422);
+        }
         foreach ($screens as $screenRow) {
             $screenTheaterId = isset($screenRow['theater_id']) ? (int)$screenRow['theater_id'] : 0;
             if ($screenTheaterId <= 0 || !isset($allocatedTheaters[$screenTheaterId])) {
@@ -2814,6 +2926,123 @@ class AdminController
      * Suggest free start times for a room. This is deliberately read-only:
      * saveSchedule remains the final transactional guard against collisions.
      */
+    public function scheduleAutoDraft()
+    {
+        requireAdmin();
+        $role = $this->getCurrentRole();
+        if (!in_array($role, array('super_admin','cinema_admin'), true)) jsonResponse(array('success'=>false,'message'=>'Chỉ Admin Tổng hoặc Admin Rạp được xếp lịch chiếu.'),403);
+        $input = requestJson();
+        $theaterId = $role === 'super_admin' ? (isset($input['theater_id']) ? (int)$input['theater_id'] : 0) : $this->getCurrentTheaterId();
+        $movieId = isset($input['movie_id']) ? (int)$input['movie_id'] : 0;
+        $allocationId = isset($input['allocation_id']) ? (int)$input['allocation_id'] : 0;
+        $showDate = isset($input['show_date']) ? trim((string)$input['show_date']) : '';
+        $ticketTypeIds = isset($input['ticket_type_ids']) && is_array($input['ticket_type_ids']) ? array_values(array_unique(array_filter(array_map('intval',$input['ticket_type_ids'])))) : array();
+        if ($theaterId < 1 || $movieId < 1 || !$ticketTypeIds || !preg_match('/^\d{4}-\d{2}-\d{2}$/',$showDate)) jsonResponse(array('success'=>false,'message'=>'Vui lòng chọn rạp, phim, ngày chiếu và ít nhất một loại vé.'),422);
+        $dateParts = explode('-',$showDate);
+        if (!checkdate((int)$dateParts[1],(int)$dateParts[2],(int)$dateParts[0])) jsonResponse(array('success'=>false,'message'=>'Ngày chiếu không hợp lệ.'),422);
+        $dateEsc = $this->db->real_escape_string($showDate);
+        if ($showDate < (string)$this->scalar('SELECT CURDATE()')) jsonResponse(array('success'=>false,'message'=>'Không thể tự xếp lịch vào ngày đã qua.'),422);
+        $this->ensurePlanningSchema();
+        $allocationWhere = $allocationId > 0 ? ' AND ma.id='.$allocationId : '';
+        $allocationRows = $this->rows("SELECT ma.id allocation_id,ma.plan_id,ma.min_screenings_per_day,ma.preferred_screen_types,mp.plan_code,mp.plan_name,m.duration_minutes
+            FROM movie_allocations ma INNER JOIN movie_plans mp ON mp.id=ma.plan_id INNER JOIN movies m ON m.id=ma.movie_id
+            WHERE ma.movie_id={$movieId} AND ma.theater_id={$theaterId}{$allocationWhere}
+              AND ma.status IN ('confirmed','deploying') AND mp.status IN ('published','in_progress')
+              AND '{$dateEsc}' BETWEEN ma.allocated_start_date AND ma.allocated_end_date
+            ORDER BY ma.id DESC LIMIT 1");
+        if (!$allocationRows) jsonResponse(array('success'=>false,'message'=>'Phim chưa có phân bổ đang hiệu lực cho rạp và ngày đã chọn.'),409);
+        $allocation = $allocationRows[0];
+        $requiredCount = (int)$allocation['min_screenings_per_day'];
+        $duration = (int)$allocation['duration_minutes'];
+        if ($requiredCount < 1 || $requiredCount > 120) jsonResponse(array('success'=>false,'message'=>'Chỉ tiêu suất/ngày của phân bổ phải nằm trong khoảng 1 đến 120.'),422);
+        $existingCount = (int)$this->scalar("SELECT COUNT(*) FROM showtimes st INNER JOIN screens sc ON sc.id=st.screen_id WHERE st.movie_id={$movieId} AND sc.theater_id={$theaterId} AND DATE(st.starts_at)='{$dateEsc}' AND st.status<>'CANCELLED'");
+        if ($existingCount >= $requiredCount) jsonResponse(array('success'=>false,'message'=>'Ngày này đã có '.$existingCount.'/'.$requiredCount.' suất chiếu cho phim theo kế hoạch; không cần tạo thêm.'),409);
+        $missingCount = $requiredCount - $existingCount;
+        if ($duration < 1 || $duration > 600) jsonResponse(array('success'=>false,'message'=>'Thời lượng phim trong aurora_db không hợp lệ.'),422);
+        $screens = $this->rows("SELECT id,name,screen_type FROM screens WHERE theater_id={$theaterId} AND status='active' ORDER BY id");
+        if (!$screens) jsonResponse(array('success'=>false,'message'=>'Rạp chưa có phòng chiếu đang hoạt động để xếp lịch.'),409);
+        $screenIds = array();
+        $screenRanks = array();
+        $preferredTypes = strtolower((string)$allocation['preferred_screen_types']);
+        foreach ($screens as $screen) {
+            $screenId = (int)$screen['id'];
+            $screenIds[] = $screenId;
+            $screenType = strtolower(trim((string)$screen['screen_type']));
+            $rank = $screenType !== '' ? strpos($preferredTypes,$screenType) : false;
+            $screenRanks[$screenId] = $rank === false ? 10000 : (int)$rank;
+        }
+        $this->ensureTicketPricingSchema();
+        $ticketTypeSql = implode(',',$ticketTypeIds);
+        $isHoliday = (int)$this->scalar("SELECT COUNT(*) FROM tms_holiday_dates WHERE holiday_date='{$dateEsc}' AND is_active=1") > 0;
+        $dayType = $isHoliday ? 'holiday' : ((int)date('N',strtotime($showDate)) >= 6 ? 'weekend' : 'weekday');
+        $priceRows = $this->rows("SELECT t.id ticket_type_id,p.time_slot,p.price FROM ticket_types t INNER JOIN tms_ticket_price_matrix p ON p.ticket_type_id=t.id WHERE t.id IN ({$ticketTypeSql}) AND t.status='active' AND p.day_type='{$dayType}' AND p.is_active=1");
+        $pricesByTimeSlot = array();
+        foreach ($priceRows as $priceRow) $pricesByTimeSlot[$priceRow['time_slot']][(int)$priceRow['ticket_type_id']] = (float)$priceRow['price'];
+        $occupiedRows = $this->rows("SELECT screen_id,starts_at,ends_at FROM showtimes WHERE screen_id IN (".implode(',',$screenIds).") AND status<>'CANCELLED' AND DATE(starts_at)='{$dateEsc}' ORDER BY starts_at");
+        $occupiedByScreen = array();
+        foreach ($screens as $screen) $occupiedByScreen[(int)$screen['id']] = array();
+        foreach ($occupiedRows as $occupiedRow) {
+            $screenId = (int)$occupiedRow['screen_id'];
+            $start = substr($occupiedRow['starts_at'],11,5);
+            $end = substr($occupiedRow['ends_at'],11,5);
+            $occupiedByScreen[$screenId][] = array('start'=>((int)substr($start,0,2))*60+(int)substr($start,3,2),'end'=>((int)substr($end,0,2))*60+(int)substr($end,3,2));
+        }
+        $rules = $this->getScheduleAutomationRules();
+        $operatingStart = ((int)substr($rules['operating_start_time'],0,2))*60+(int)substr($rules['operating_start_time'],3,2);
+        $turnaround = (int)$rules['same_screen_gap_minutes'];
+        $stagger = (int)$rules['cross_screen_stagger_minutes'];
+        if ($showDate === (string)$this->scalar('SELECT CURDATE()')) {
+            $currentTime = (string)$this->scalar("SELECT DATE_FORMAT(DATE_ADD(NOW(),INTERVAL 5 MINUTE),'%H:%i')");
+            $currentMinute = ((int)substr($currentTime,0,2))*60+(int)substr($currentTime,3,2);
+            $roundedMinute = (int)(ceil($currentMinute/5)*5);
+            if ($roundedMinute > $operatingStart) $operatingStart = $roundedMinute;
+        }
+        $slots = array();
+        $batchStart = null;
+        $usedScreens = array();
+        for ($slotIndex=0; $slotIndex<$missingCount; $slotIndex++) {
+            $best = null;
+            foreach ($screens as $screen) {
+                $screenId = (int)$screen['id'];
+                $targetMinute = $operatingStart;
+                if ($slots) {
+                    if (isset($usedScreens[$screenId])) {
+                        foreach ($slots as $previousSlot) if ((int)$previousSlot['screen_id']===$screenId && (int)$previousSlot['end_minute']+$turnaround>$targetMinute) $targetMinute=(int)$previousSlot['end_minute']+$turnaround;
+                    } else {
+                        $targetMinute = (int)$batchStart + (count($usedScreens)*$stagger);
+                    }
+                }
+                for ($minute=$targetMinute; $minute+$duration<1440; $minute+=5) {
+                    $endMinute = $minute+$duration;
+                    $hour = (int)floor($minute/60);
+                    $timeSlot = $hour<12 ? 'morning' : ($hour<18 ? 'standard' : 'evening');
+                    $validTicketTypes = isset($pricesByTimeSlot[$timeSlot]) ? $pricesByTimeSlot[$timeSlot] : array();
+                    $slotPrice = null;
+                    $allTicketsAvailable = true;
+                    foreach ($ticketTypeIds as $ticketTypeId) {
+                        if (!isset($validTicketTypes[$ticketTypeId])) { $allTicketsAvailable=false; break; }
+                        if ($slotPrice===null || $validTicketTypes[$ticketTypeId]<$slotPrice) $slotPrice=$validTicketTypes[$ticketTypeId];
+                    }
+                    if (!$allTicketsAvailable) continue;
+                    $free = true;
+                    foreach ($occupiedByScreen[$screenId] as $busy) {
+                        if ($minute<(int)$busy['end']+$turnaround && $endMinute>(int)$busy['start']-$turnaround) { $free=false; break; }
+                    }
+                    if (!$free) continue;
+                    $candidate = array('screen_id'=>$screenId,'screen_name'=>$screen['name'],'start_minute'=>$minute,'end_minute'=>$endMinute,'price'=>(float)$slotPrice,'rank'=>$screenRanks[$screenId]);
+                    if ($best===null || $candidate['start_minute']<$best['start_minute'] || ($candidate['start_minute']===$best['start_minute'] && ($candidate['rank']<$best['rank'] || ($candidate['rank']===$best['rank'] && $candidate['screen_id']<$best['screen_id'])))) $best=$candidate;
+                    break;
+                }
+            }
+            if ($best===null) jsonResponse(array('success'=>false,'message'=>'Chỉ xếp được '.count($slots).'/'.$missingCount.' suất còn thiếu theo phòng trống, giờ vận hành và loại vé đã chọn. Hãy đổi ngày, phòng hoặc loại vé.'),409);
+            if ($batchStart===null) $batchStart=(int)$best['start_minute'];
+            $usedScreens[(int)$best['screen_id']]=true;
+            $occupiedByScreen[(int)$best['screen_id']][]=array('start'=>(int)$best['start_minute'],'end'=>(int)$best['end_minute']);
+            $slots[]=array('screen_id'=>(int)$best['screen_id'],'screen_name'=>$best['screen_name'],'start_time'=>sprintf('%02d:%02d',(int)floor($best['start_minute']/60),$best['start_minute']%60),'end_time'=>sprintf('%02d:%02d',(int)floor($best['end_minute']/60),$best['end_minute']%60),'price'=>(float)$best['price']);
+        }
+        jsonResponse(array('success'=>true,'data'=>array('allocation_id'=>(int)$allocation['allocation_id'],'plan_code'=>$allocation['plan_code'],'plan_name'=>$allocation['plan_name'],'target_count'=>$requiredCount,'existing_count'=>$existingCount,'required_count'=>$missingCount,'duration_minutes'=>$duration,'turnaround_minutes'=>$turnaround,'slots'=>$slots)));
+    }
+
     public function scheduleAvailability()
     {
         requireAdmin();

@@ -37,6 +37,29 @@ class MarketingController
         return array_values($options);
     }
 
+    private function movieLanguageOptions()
+    {
+        return $this->rows("SELECT code,name_vi,name_en FROM movie_audio_languages WHERE status='active' ORDER BY sort_order,name_vi");
+    }
+
+    private function movieSubtitleOptions()
+    {
+        return $this->rows("SELECT code,label_vi,label_en FROM movie_subtitle_options WHERE status='active' ORDER BY sort_order,label_vi");
+    }
+
+    private function moviePlanReasonOptions()
+    {
+        return $this->rows("SELECT code,label_vi,description_vi FROM movie_plan_reason_options WHERE status='active' ORDER BY sort_order,label_vi");
+    }
+
+    private function activeMovieCatalogValueExists($table, $column, $value)
+    {
+        $allowed = array('movie_audio_languages'=>array('name_vi'), 'movie_subtitle_options'=>array('label_vi'));
+        if (!isset($allowed[$table]) || !in_array($column, $allowed[$table], true)) return false;
+        $valueEsc = $this->db->real_escape_string(trim((string)$value));
+        return (int)$this->scalar("SELECT COUNT(*) FROM `{$table}` WHERE `{$column}`='{$valueEsc}' AND status='active'") === 1;
+    }
+
     private function columnExists($table, $column)
     {
         $tableEsc = $this->db->real_escape_string($table);
@@ -157,6 +180,39 @@ class MarketingController
                 updated_at DATETIME NULL,
                 KEY idx_movie_country_status (status,sort_order,name_vi)
             ) ENGINE=InnoDB DEFAULT CHARSET=utf8 COLLATE=utf8_unicode_ci",
+            "CREATE TABLE IF NOT EXISTS movie_audio_languages (
+                id SMALLINT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
+                code VARCHAR(20) NOT NULL UNIQUE,
+                name_vi VARCHAR(80) NOT NULL UNIQUE,
+                name_en VARCHAR(80) NOT NULL,
+                sort_order SMALLINT UNSIGNED NOT NULL DEFAULT 100,
+                status ENUM('active','inactive') NOT NULL DEFAULT 'active',
+                created_at TIMESTAMP NULL DEFAULT CURRENT_TIMESTAMP,
+                updated_at DATETIME NULL,
+                KEY idx_movie_audio_language_status (status,sort_order,name_vi)
+            ) ENGINE=InnoDB DEFAULT CHARSET=utf8 COLLATE=utf8_unicode_ci",
+            "CREATE TABLE IF NOT EXISTS movie_subtitle_options (
+                id SMALLINT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
+                code VARCHAR(40) NOT NULL UNIQUE,
+                label_vi VARCHAR(120) NOT NULL UNIQUE,
+                label_en VARCHAR(120) NOT NULL,
+                sort_order SMALLINT UNSIGNED NOT NULL DEFAULT 100,
+                status ENUM('active','inactive') NOT NULL DEFAULT 'active',
+                created_at TIMESTAMP NULL DEFAULT CURRENT_TIMESTAMP,
+                updated_at DATETIME NULL,
+                KEY idx_movie_subtitle_status (status,sort_order,label_vi)
+            ) ENGINE=InnoDB DEFAULT CHARSET=utf8 COLLATE=utf8_unicode_ci",
+            "CREATE TABLE IF NOT EXISTS movie_plan_reason_options (
+                id SMALLINT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
+                code VARCHAR(50) NOT NULL UNIQUE,
+                label_vi VARCHAR(160) NOT NULL UNIQUE,
+                description_vi VARCHAR(255) NULL,
+                sort_order SMALLINT UNSIGNED NOT NULL DEFAULT 100,
+                status ENUM('active','inactive') NOT NULL DEFAULT 'active',
+                created_at TIMESTAMP NULL DEFAULT CURRENT_TIMESTAMP,
+                updated_at DATETIME NULL,
+                KEY idx_movie_plan_reason_status (status,sort_order,label_vi)
+            ) ENGINE=InnoDB DEFAULT CHARSET=utf8 COLLATE=utf8_unicode_ci",
             "CREATE TABLE IF NOT EXISTS marketing_movie_plan_history (
                 id BIGINT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
                 plan_id BIGINT UNSIGNED NOT NULL,
@@ -200,6 +256,8 @@ class MarketingController
             'reviewed_at' => 'DATETIME NULL',
             'approval_note' => 'TEXT NULL',
             'recommendation_reason' => 'TEXT NULL',
+            'recommendation_reason_codes' => 'TEXT NULL',
+            'recommendation_reason_detail' => 'TEXT NULL',
             'target_tickets' => 'INT UNSIGNED NOT NULL DEFAULT 0',
             'campaign_name' => 'VARCHAR(200) NULL',
             'marketing_budget' => 'DECIMAL(14,2) NOT NULL DEFAULT 0',
@@ -244,6 +302,42 @@ class MarketingController
             ('IT','Ý','Italy',15,'active'),('SG','Singapore','Singapore',16,'active'),
             ('TW','Đài Loan','Taiwan',17,'active'),('ID','Indonesia','Indonesia',18,'active'),
             ('MY','Malaysia','Malaysia',19,'active'),('PH','Philippines','Philippines',20,'active')");
+        $this->db->query("INSERT IGNORE INTO movie_audio_languages (code,name_vi,name_en,sort_order,status) VALUES
+            ('vi','Tiếng Việt','Vietnamese',1,'active'),('en','Tiếng Anh','English',2,'active'),
+            ('ko','Tiếng Hàn','Korean',3,'active'),('ja','Tiếng Nhật','Japanese',4,'active'),
+            ('zh','Tiếng Trung','Chinese',5,'active'),('th','Tiếng Thái','Thai',6,'active'),
+            ('fr','Tiếng Pháp','French',7,'active'),('es','Tiếng Tây Ban Nha','Spanish',8,'active'),
+            ('de','Tiếng Đức','German',9,'active'),('ru','Tiếng Nga','Russian',10,'active'),
+            ('hi','Tiếng Hindi','Hindi',11,'active'),('id','Tiếng Indonesia','Indonesian',12,'active')");
+        $this->db->query("INSERT IGNORE INTO movie_subtitle_options (code,label_vi,label_en,sort_order,status) VALUES
+            ('none','Không','None',1,'active'),('vi','Tiếng Việt','Vietnamese',2,'active'),
+            ('en','Tiếng Anh','English',3,'active'),('vi_en','Song ngữ Việt - Anh','Vietnamese - English bilingual',4,'active'),
+            ('sub_vi','Phụ đề Việt','Vietnamese subtitles',5,'active'),('sub_en','Phụ đề Anh','English subtitles',6,'active'),
+            ('sub_vi_dub_vi','Phụ đề Việt / Lồng tiếng Việt','Vietnamese subtitles / Vietnamese dub',7,'active'),
+            ('sub_vi_dub_en','Phụ đề Việt / Lồng tiếng Anh','Vietnamese subtitles / English dub',8,'active'),
+            ('sub_en_dub_vi','Phụ đề Anh / Lồng tiếng Việt','English subtitles / Vietnamese dub',9,'active'),
+            ('sub_vi_dub_ko','Phụ đề Việt / Lồng tiếng Hàn','Vietnamese subtitles / Korean dub',10,'active')");
+        $this->db->query("INSERT IGNORE INTO movie_plan_reason_options (code,label_vi,description_vi,sort_order,status) VALUES
+            ('market_demand','Nhu cầu thị trường cao','Phù hợp xu hướng tìm kiếm và nhu cầu xem phim hiện tại.',1,'active'),
+            ('target_audience','Phù hợp đối tượng khán giả mục tiêu','Nội dung phù hợp nhóm khách hàng trọng tâm của Aurora Cinema.',2,'active'),
+            ('revenue_potential','Tiềm năng doanh thu tốt','Có khả năng đạt mục tiêu vé bán và doanh thu kỳ phát hành.',3,'active'),
+            ('strong_franchise','Thương hiệu phim có sức hút','Thuộc thương hiệu, loạt phim hoặc sở hữu dàn diễn viên nổi bật.',4,'active'),
+            ('seasonal_fit','Phù hợp mùa vụ hoặc dịp lễ','Thời điểm phát hành phù hợp lễ, Tết, hè hoặc sự kiện đặc biệt.',5,'active'),
+            ('content_diversity','Bổ sung đa dạng nội dung','Giúp cân bằng thể loại và làm phong phú danh mục phim đang khai thác.',6,'active'),
+            ('marketing_support','Có lợi thế truyền thông','Có tài nguyên, đối tác hoặc chiến dịch hỗ trợ quảng bá tốt.',7,'active'),
+            ('competitive_advantage','Tạo lợi thế cạnh tranh','Tăng sức cạnh tranh với các cụm rạp và nội dung cùng thời điểm.',8,'active'),
+            ('customer_request','Theo yêu cầu hoặc phản hồi khách hàng','Được đề xuất từ khảo sát, lượt quan tâm hoặc phản hồi khách hàng.',9,'active'),
+            ('strategic_partnership','Phù hợp hợp tác chiến lược','Gắn với thỏa thuận nhà phát hành hoặc đối tác chiến lược.',10,'active')");
+        // Preserve valid values already stored by older versions by promoting
+        // them into the managed catalogs instead of losing them in the new
+        // select controls.
+        $this->db->query("INSERT IGNORE INTO movie_audio_languages (code,name_vi,name_en,sort_order,status)
+            SELECT CONCAT('legacy_',LEFT(SHA1(TRIM(original_language)),12)),TRIM(original_language),TRIM(original_language),90,'active'
+            FROM movies WHERE original_language IS NOT NULL AND TRIM(original_language)<>'' GROUP BY TRIM(original_language)");
+        $this->db->query("INSERT IGNORE INTO movie_subtitle_options (code,label_vi,label_en,sort_order,status)
+            SELECT CONCAT('legacy_',LEFT(SHA1(TRIM(localization_versions)),12)),TRIM(localization_versions),TRIM(localization_versions),90,'active'
+            FROM movies WHERE localization_versions IS NOT NULL AND TRIM(localization_versions)<>'' GROUP BY TRIM(localization_versions)");
+        $this->db->query("UPDATE movie_plans SET recommendation_reason_detail=recommendation_reason WHERE (recommendation_reason_detail IS NULL OR TRIM(recommendation_reason_detail)='') AND recommendation_reason IS NOT NULL AND TRIM(recommendation_reason)<>''");
         if ((int)$this->scalar('SELECT COUNT(*) FROM marketing_campaigns') === 0) {
             $this->db->query("INSERT INTO marketing_campaigns (campaign_code,name,objective,channel,budget,start_date,end_date,status,created_at) VALUES
                 ('MKT-AUTUMN','Mùa phim cuối năm','Tăng nhận diện và lượng vé đặt trực tuyến','Facebook, Website',120000000,CURDATE(),DATE_ADD(CURDATE(), INTERVAL 45 DAY),'planned',NOW()),
@@ -391,14 +485,21 @@ class MarketingController
             if($requestMethod==='PUT'&&$operation==='update')return $this->updateCatalogMovie();
             jsonResponse(array('success'=>false,'message'=>'Marketing được chỉnh sửa phim đã có; phim mới chỉ được thêm thông qua kế hoạch đã được Admin Tổng duyệt.'),405);
         }
-        $where = "status<>'draft'";
+        if(!$this->db->query("UPDATE movies SET status=CASE WHEN release_date>CURDATE() THEN 'coming_soon' ELSE 'now_showing' END WHERE UPPER(status) IN ('COMING_SOON','NOW_SHOWING') AND release_date IS NOT NULL AND status<>CASE WHEN release_date>CURDATE() THEN 'coming_soon' ELSE 'now_showing' END"))jsonResponse(array('success'=>false,'message'=>'Không thể tự đồng bộ trạng thái phim theo ngày khởi chiếu trong aurora_db: '.$this->db->error),500);
+        $where = "m.status<>'draft'";
         if (!empty($_GET['q'])) {
             $q = $this->db->real_escape_string(trim((string)$_GET['q']));
-            $where .= " AND (title LIKE '%{$q}%' OR original_title LIKE '%{$q}%' OR movie_code LIKE '%{$q}%')";
+            $where .= " AND (m.title LIKE '%{$q}%' OR m.original_title LIKE '%{$q}%' OR m.movie_code LIKE '%{$q}%')";
         }
-        if(!empty($_GET['status'])&&in_array($_GET['status'],array('coming_soon','now_showing','special_showing','ended','archived'),true))$where.=" AND status='".$this->db->real_escape_string($_GET['status'])."'";
-        $data = $this->rows("SELECT id,movie_code,title,original_title,genre,duration_minutes,age_rating,director,cast,writer,producer,production_country,production_year,description,plot_details,original_language,localization_versions,format,release_date,expected_end_date,distributor,poster_url,banner_url,trailer_url,status,updated_at FROM movies WHERE {$where} ORDER BY CASE status WHEN 'now_showing' THEN 0 WHEN 'special_showing' THEN 1 WHEN 'coming_soon' THEN 2 ELSE 3 END,release_date DESC,id DESC");
+        if(!empty($_GET['status'])&&in_array($_GET['status'],array('coming_soon','now_showing','special_showing','ended','archived'),true))$where.=" AND m.status='".$this->db->real_escape_string($_GET['status'])."'";
         $ownerId=(int)$user['id'];
+        // Marketing sees the same shared catalog as Admin Tổng, but an edit
+        // grant is scoped to movies that originated from this account's own
+        // approved planning workflow.  The flag is calculated by the API so
+        // hiding a button in the browser is never the security boundary.
+        $data = $this->rows("SELECT m.id,m.movie_code,m.title,m.original_title,m.genre,m.duration_minutes,m.age_rating,m.director,m.cast,m.writer,m.producer,m.production_country,m.production_year,m.description,m.plot_details,m.original_language,m.localization_versions,m.format,m.release_date,m.expected_end_date,m.distributor,m.poster_url,m.banner_url,m.trailer_url,m.status,m.updated_at,
+            CASE WHEN m.marketing_owner_id={$ownerId} OR EXISTS(SELECT 1 FROM movie_plans own_plan WHERE own_plan.movie_id=m.id AND own_plan.marketing_owner_id={$ownerId} AND own_plan.approval_status='approved') THEN 1 ELSE 0 END AS can_edit
+            FROM movies m WHERE {$where} ORDER BY CASE m.status WHEN 'now_showing' THEN 0 WHEN 'special_showing' THEN 1 WHEN 'coming_soon' THEN 2 ELSE 3 END,m.release_date DESC,m.id DESC");
         $candidates=$this->rows("SELECT mp.id AS plan_id,mp.plan_code,mp.plan_name,mp.approved_at,mp.target_revenue,mp.target_tickets,mp.planned_theater_ids,m.id AS movie_id,m.movie_code,m.title,m.original_title,m.genre,m.duration_minutes,m.age_rating,m.format,m.release_date,m.poster_url FROM movie_plans mp INNER JOIN movies m ON m.id=mp.movie_id WHERE mp.marketing_owner_id={$ownerId} AND mp.approval_status='approved' AND m.status='draft' ORDER BY mp.approved_at DESC,mp.id DESC");
         jsonResponse(array('success'=>true,'data'=>$data,'meta'=>array('summary'=>array(
             'total'=>(int)$this->scalar("SELECT COUNT(*) FROM movies WHERE status<>'draft'"),
@@ -406,7 +507,9 @@ class MarketingController
             'coming_soon'=>(int)$this->scalar("SELECT COUNT(*) FROM movies WHERE status='coming_soon'"),
             'special_showing'=>(int)$this->scalar("SELECT COUNT(*) FROM movies WHERE status='special_showing'"),
             'eligible'=>count($candidates)
-        ),'approved_candidates'=>$candidates,'genres'=>$this->genreOptions(),'countries'=>$this->rows("SELECT id,iso_code,name_vi,name_en FROM movie_countries WHERE status='active' ORDER BY sort_order,name_vi"))));
+        ),'approved_candidates'=>$candidates,'genres'=>$this->genreOptions(),'countries'=>$this->rows("SELECT id,iso_code,name_vi,name_en FROM movie_countries WHERE status='active' ORDER BY sort_order,name_vi"),'audio_languages'=>$this->movieLanguageOptions(),'subtitle_options'=>$this->movieSubtitleOptions(),'permissions'=>array(
+            'can_view'=>true,'can_update_owned'=>true,'can_publish_approved'=>true,'can_create_direct'=>false,'can_import'=>false,'can_delete'=>false
+        ))));
     }
 
     private function updateCatalogMovie()
@@ -416,9 +519,11 @@ class MarketingController
         $input=requestJson();
         $id=isset($_GET['id'])?(int)$_GET['id']:(isset($input['id'])?(int)$input['id']:0);
         if($id<=0)jsonResponse(array('success'=>false,'message'=>'Phim cần chỉnh sửa không hợp lệ.'),422);
-        $existing=$this->rows("SELECT id,movie_code,status FROM movies WHERE id={$id} LIMIT 1");
+        $existing=$this->rows("SELECT id,movie_code,status,marketing_owner_id FROM movies WHERE id={$id} LIMIT 1");
         if(!$existing)jsonResponse(array('success'=>false,'message'=>'Không tìm thấy phim trong aurora_db.'),404);
         if($existing[0]['status']==='draft')jsonResponse(array('success'=>false,'message'=>'Phim bản nháp phải hoàn tất quy trình phê duyệt trước khi được chỉnh sửa tại Danh sách phim.'),409);
+        $owned=(int)$existing[0]['marketing_owner_id']===(int)$user['id']||(int)$this->scalar("SELECT COUNT(*) FROM movie_plans WHERE movie_id={$id} AND marketing_owner_id=".(int)$user['id']." AND approval_status='approved'")>0;
+        if(!$owned)jsonResponse(array('success'=>false,'message'=>'Bạn chỉ được chỉnh sửa phim do tài khoản Marketing này lập kế hoạch và đã được Admin Tổng phê duyệt.'),403);
 
         $stringFields=array('title','original_title','genre','age_rating','director','cast','writer','producer','production_country','description','plot_details','original_language','localization_versions','format','release_date','expected_end_date','distributor','poster_url','banner_url','trailer_url','status');
         $movie=array();
@@ -432,9 +537,12 @@ class MarketingController
         if($year===false||($year!==null&&($year<1888||$year>2100)))jsonResponse(array('success'=>false,'message'=>'Năm sản xuất không hợp lệ.'),422);
         if(!in_array($movie['age_rating'],array('P','K','T13','T16','T18'),true))jsonResponse(array('success'=>false,'message'=>'Phân loại độ tuổi không hợp lệ.'),422);
         if(!in_array($movie['status'],array('now_showing','coming_soon','special_showing','ended'),true))jsonResponse(array('success'=>false,'message'=>'Trạng thái phim không hợp lệ.'),422);
+        if(!$this->activeMovieCatalogValueExists('movie_audio_languages','name_vi',$movie['original_language']))jsonResponse(array('success'=>false,'message'=>'Ngôn ngữ âm thanh không thuộc danh mục đang sử dụng trong aurora_db.'),422);
+        if($movie['localization_versions']!==''&&!$this->activeMovieCatalogValueExists('movie_subtitle_options','label_vi',$movie['localization_versions']))jsonResponse(array('success'=>false,'message'=>'Phụ đề không thuộc danh mục đang sử dụng trong aurora_db.'),422);
         if(!$this->validDate($movie['release_date'])||($movie['expected_end_date']!==''&&!$this->validDate($movie['expected_end_date'])))jsonResponse(array('success'=>false,'message'=>'Ngày phát hành không hợp lệ. Vui lòng nhập theo thứ tự ngày / tháng / năm.'),422);
         if($movie['expected_end_date']==='')$movie['expected_end_date']=$movie['release_date'];
         if($movie['expected_end_date']<$movie['release_date'])jsonResponse(array('success'=>false,'message'=>'Ngày kết thúc dự kiến phải từ ngày khởi chiếu trở đi.'),422);
+        if(in_array($movie['status'],array('coming_soon','now_showing'),true))$movie['status']=$movie['release_date']<=(string)$this->scalar('SELECT CURDATE()')?'now_showing':'coming_soon';
         $countryEsc=$this->db->real_escape_string($movie['production_country']);
         if((int)$this->scalar("SELECT COUNT(*) FROM movie_countries WHERE name_vi='{$countryEsc}' AND status='active'")!==1)jsonResponse(array('success'=>false,'message'=>'Quốc gia sản xuất không thuộc danh mục đang sử dụng trong aurora_db.'),422);
 
@@ -451,6 +559,7 @@ class MarketingController
         $sets[]='production_year='.($year===null?'NULL':(int)$year);
         $sets[]='updated_at=NOW()';
         if(!$this->db->query("UPDATE movies SET ".implode(',',$sets)." WHERE id={$id} AND status<>'draft' LIMIT 1"))jsonResponse(array('success'=>false,'message'=>'Không thể cập nhật phim trong aurora_db: '.$this->db->error),500);
+        if(function_exists('writeTmsAuditLog'))writeTmsAuditLog($this->db,'MARKETING_MOVIE_UPDATED','Marketing cập nhật phim '.$existing[0]['movie_code'].' trong kho phim dùng chung.',array('module'=>'marketing','entity_type'=>'movie','entity_id'=>(string)$id,'severity'=>'success','metadata'=>array('movie_code'=>$existing[0]['movie_code'],'scope'=>'owned_approved_movie')));
         jsonResponse(array('success'=>true,'message'=>'Marketing đã cập nhật thông tin phim trong aurora_db.','data'=>array('id'=>$id,'movie_code'=>$existing[0]['movie_code'])));
     }
 
@@ -509,10 +618,18 @@ class MarketingController
             (SELECT GROUP_CONCAT(t.name ORDER BY t.name SEPARATOR ', ') FROM theaters t WHERE FIND_IN_SET(t.id,REPLACE(mp.planned_theater_ids,' ',''))) theater_names
             FROM movie_plans mp LEFT JOIN movies m ON m.id=mp.movie_id WHERE {$where}
             ORDER BY CASE mp.approval_status WHEN 'pending_approval' THEN 0 WHEN 'revision_requested' THEN 1 WHEN 'draft' THEN 2 ELSE 3 END,mp.updated_at DESC,mp.id DESC");
+        $reasonOptions=$this->moviePlanReasonOptions();
+        $reasonLabels=array();foreach($reasonOptions as $option)$reasonLabels[$option['code']]=$option['label_vi'];
         foreach ($data as &$plan) {
             $plan['history'] = $this->rows("SELECT action_name,from_status,to_status,actor_name,actor_role,note,created_at FROM marketing_movie_plan_history WHERE plan_id=".(int)$plan['id']." ORDER BY id DESC");
             $plan['review_items'] = $this->rows("SELECT id,review_round,section_key,section_label,field_key,field_label,current_value,comment,status,created_by_name,created_at,resolved_at FROM marketing_movie_plan_review_items WHERE plan_id=".(int)$plan['id']." ORDER BY review_round DESC,id ASC");
             $plan['theater_ids'] = array_values(array_filter(array_map('intval', explode(',', (string)$plan['planned_theater_ids']))));
+            $decodedReasons=json_decode((string)$plan['recommendation_reason_codes'],true);
+            $validReasonCodes=array();$selectedReasonLabels=array();
+            if(is_array($decodedReasons)){foreach($decodedReasons as $code){$code=trim((string)$code);if($code!==''&&isset($reasonLabels[$code])&&!in_array($code,$validReasonCodes,true)){$validReasonCodes[]=$code;$selectedReasonLabels[]=$reasonLabels[$code];}}}
+            $plan['recommendation_reason_codes']=$validReasonCodes;
+            $plan['recommendation_reason_labels']=$selectedReasonLabels;
+            if(trim((string)$plan['recommendation_reason_detail'])===''&&trim((string)$plan['recommendation_reason'])!=='')$plan['recommendation_reason_detail']=$plan['recommendation_reason'];
         }
         unset($plan);
         $summaryWhere = $adminView ? 'marketing_owner_id IS NOT NULL' : '1=1';
@@ -527,6 +644,9 @@ class MarketingController
             'movies'=>$this->rows("SELECT id,movie_code,title,original_title,genre,duration_minutes,age_rating,production_country,director,cast,description,format,original_language,localization_versions,release_date,expected_end_date,poster_url,banner_url,trailer_url,status,marketing_owner_id FROM movies WHERE status NOT IN ('draft','ended','archived') ORDER BY release_date DESC,title"),
             'genres'=>$this->genreOptions(),
             'countries'=>$this->rows("SELECT id,iso_code,name_vi,name_en FROM movie_countries WHERE status='active' ORDER BY sort_order,name_vi"),
+            'audio_languages'=>$this->movieLanguageOptions(),
+            'subtitle_options'=>$this->movieSubtitleOptions(),
+            'reason_options'=>$reasonOptions,
             'theaters'=>$this->rows("SELECT t.id,t.name,t.city,(SELECT COUNT(*) FROM screens s WHERE s.theater_id=t.id) total_screens FROM theaters t ORDER BY t.name")
         )));
     }
@@ -544,7 +664,13 @@ class MarketingController
         $screenings = isset($input['target_screenings_per_day']) ? (int)$input['target_screenings_per_day'] : 0;
         $targetTickets = isset($input['target_tickets']) ? (int)$input['target_tickets'] : 0;
         $priority = isset($input['priority_level']) && in_array($input['priority_level'], array('blockbuster','high','medium','low'), true) ? $input['priority_level'] : 'medium';
-        $reason = isset($input['recommendation_reason']) ? trim((string)$input['recommendation_reason']) : '';
+        $reasonCodes=array();if(isset($input['recommendation_reason_codes'])&&is_array($input['recommendation_reason_codes'])){foreach($input['recommendation_reason_codes'] as $value){$value=trim((string)$value);if($value!==''&&!in_array($value,$reasonCodes,true))$reasonCodes[]=$value;}}
+        if(count($reasonCodes)>8)jsonResponse(array('success'=>false,'message'=>'Chỉ được chọn tối đa 8 lý do đề xuất.'),422);
+        $reasonDetail=isset($input['recommendation_reason_detail'])?trim((string)$input['recommendation_reason_detail']):trim((string)(isset($input['recommendation_reason'])?$input['recommendation_reason']:''));
+        $availableReasons=$this->moviePlanReasonOptions();$reasonMap=array();foreach($availableReasons as $option)$reasonMap[$option['code']]=$option['label_vi'];
+        foreach($reasonCodes as $code)if(!isset($reasonMap[$code]))jsonResponse(array('success'=>false,'message'=>'Lý do đề xuất không thuộc danh mục đang hoạt động trong aurora_db.'),422);
+        $reasonLabels=array();foreach($reasonCodes as $code)$reasonLabels[]=$reasonMap[$code];
+        $reason=implode(', ',$reasonLabels).($reasonDetail!==''?((count($reasonLabels)?'. Chi tiết: ':'').$reasonDetail):'');
         $note = isset($input['note']) ? trim((string)$input['note']) : '';
         $campaignName = isset($input['campaign_name']) ? trim((string)$input['campaign_name']) : '';
         $marketingBudget = isset($input['marketing_budget']) ? max(0,(float)$input['marketing_budget']) : 0;
@@ -552,7 +678,7 @@ class MarketingController
         $rights = isset($input['release_rights_status']) && in_array($input['release_rights_status'],array('pending_verification','verified','not_required'),true) ? $input['release_rights_status'] : 'pending_verification';
         $classification = isset($input['content_classification_status']) && in_array($input['content_classification_status'],array('pending_review','verified','supplement_required'),true) ? $input['content_classification_status'] : 'pending_review';
         $theaterIds = isset($input['theater_ids']) && is_array($input['theater_ids']) ? array_values(array_unique(array_filter(array_map('intval',$input['theater_ids'])))) : array();
-        if ($name === '' || !$this->validDate($start) || !$this->validDate($end) || $start > $end || $reason === '') jsonResponse(array('success'=>false,'message'=>'Tên, thời gian và lý do đề xuất kế hoạch chưa hợp lệ.'),422);
+        if ($name === '' || !$this->validDate($start) || !$this->validDate($end) || $start > $end || !$reasonCodes || $reasonDetail === '') jsonResponse(array('success'=>false,'message'=>'Vui lòng chọn ít nhất một lý do và nhập nội dung chi tiết cho đề xuất.'),422);
         if ($revenue <= 0 || $screenings <= 0 || $targetTickets <= 0) jsonResponse(array('success'=>false,'message'=>'Doanh thu, số vé và số suất chiếu mục tiêu phải lớn hơn 0.'),422);
         if (!$theaterIds) jsonResponse(array('success'=>false,'message'=>'Vui lòng đề xuất ít nhất một rạp triển khai.'),422);
         $validTheaters = (int)$this->scalar('SELECT COUNT(*) FROM theaters WHERE id IN ('.implode(',',$theaterIds).')');
@@ -573,6 +699,7 @@ class MarketingController
             $rawGenres=isset($profile['genre'])?$profile['genre']:array();if(!is_array($rawGenres))$rawGenres=explode(',',(string)$rawGenres);$genres=array();foreach($rawGenres as $genre){$genre=trim((string)$genre);if($genre!==''&&!in_array($genre,$genres,true))$genres[]=$genre;if(count($genres)>=8)break;}$movieValues['genre']=implode(', ',$genres);
             $duration = isset($profile['duration_minutes']) ? (int)$profile['duration_minutes'] : 0;
             if ($movieValues['title']===''||$movieValues['genre']===''||strlen($movieValues['genre'])>150||$duration<=0||$duration>600||$movieValues['age_rating']===''||$movieValues['production_country']===''||$movieValues['director']===''||$movieValues['description']===''||$movieValues['format']===''||$movieValues['audio_language']==='') {$this->db->query('ROLLBACK');jsonResponse(array('success'=>false,'message'=>'Hồ sơ phim mới còn thiếu trường bắt buộc hoặc danh sách thể loại vượt quá giới hạn.'),422);}
+            if(!$this->activeMovieCatalogValueExists('movie_audio_languages','name_vi',$movieValues['audio_language'])||!$this->activeMovieCatalogValueExists('movie_subtitle_options','label_vi',$movieValues['subtitle'])){$this->db->query('ROLLBACK');jsonResponse(array('success'=>false,'message'=>'Ngôn ngữ âm thanh hoặc phụ đề không thuộc danh mục đang sử dụng trong aurora_db.'),422);}
             $countryEsc=$this->db->real_escape_string($movieValues['production_country']);
             if((int)$this->scalar("SELECT COUNT(*) FROM movie_countries WHERE name_vi='{$countryEsc}' AND status='active'")!==1){$this->db->query('ROLLBACK');jsonResponse(array('success'=>false,'message'=>'Quốc gia sản xuất không thuộc danh mục đang sử dụng trong aurora_db.'),422);}
             $safe=array();foreach($movieValues as $key=>$value)$safe[$key]=$this->db->real_escape_string($value);
@@ -597,6 +724,7 @@ class MarketingController
             $rawGenres=isset($profile['genre'])?$profile['genre']:array();if(!is_array($rawGenres))$rawGenres=explode(',',(string)$rawGenres);$genres=array();foreach($rawGenres as $genre){$genre=trim((string)$genre);if($genre!==''&&!in_array($genre,$genres,true))$genres[]=$genre;if(count($genres)>=8)break;}$movieValues['genre']=implode(', ',$genres);
             $duration=isset($profile['duration_minutes'])?(int)$profile['duration_minutes']:0;
             if($movieValues['title']===''||$movieValues['genre']===''||strlen($movieValues['genre'])>150||$duration<=0||$duration>600||$movieValues['age_rating']===''||$movieValues['production_country']===''||$movieValues['director']===''||$movieValues['description']===''||$movieValues['format']===''||$movieValues['audio_language']===''){$this->db->query('ROLLBACK');jsonResponse(array('success'=>false,'message'=>'Thông tin phim trong kho còn thiếu trường bắt buộc. Vui lòng kiểm tra lại hồ sơ đã nạp.'),422);}
+            if(!$this->activeMovieCatalogValueExists('movie_audio_languages','name_vi',$movieValues['audio_language'])||!$this->activeMovieCatalogValueExists('movie_subtitle_options','label_vi',$movieValues['subtitle'])){$this->db->query('ROLLBACK');jsonResponse(array('success'=>false,'message'=>'Ngôn ngữ âm thanh hoặc phụ đề không thuộc danh mục đang sử dụng trong aurora_db.'),422);}
             $countryEsc=$this->db->real_escape_string($movieValues['production_country']);
             if((int)$this->scalar("SELECT COUNT(*) FROM movie_countries WHERE name_vi='{$countryEsc}' AND status='active'")!==1){$this->db->query('ROLLBACK');jsonResponse(array('success'=>false,'message'=>'Quốc gia sản xuất không thuộc danh mục đang sử dụng trong aurora_db.'),422);}
             $safe=array();foreach($movieValues as $key=>$value)$safe[$key]=$this->db->real_escape_string($value);
@@ -611,7 +739,7 @@ class MarketingController
         $values = array(
             'plan_code'=>$planCode,'plan_name'=>$name,'plan_month'=>$month,'plan_year'=>$year,'movie_id'=>$movieId,
             'movie_title'=>$movie['title'],'format'=>$movie['format'],'expected_start_date'=>$start,'expected_end_date'=>$end,
-            'target_revenue'=>$revenue,'target_screenings_per_day'=>$screenings,'target_tickets'=>$targetTickets,'priority_level'=>$priority,'recommendation_reason'=>$reason,'note'=>$note,
+            'target_revenue'=>$revenue,'target_screenings_per_day'=>$screenings,'target_tickets'=>$targetTickets,'priority_level'=>$priority,'recommendation_reason'=>$reason,'recommendation_reason_codes'=>json_encode($reasonCodes),'recommendation_reason_detail'=>$reasonDetail,'note'=>$note,
             'campaign_name'=>$campaignName,'marketing_budget'=>$marketingBudget,'promotion_proposed'=>$promotionProposed,'release_rights_status'=>$rights,'content_classification_status'=>$classification,
             'planned_theater_ids'=>implode(',',$theaterIds)
         );
@@ -767,11 +895,17 @@ class MarketingController
     private function dashboard()
     {
         $data = array(
+            'generated_at'=>date('Y-m-d H:i:s'),
             'campaigns_total'=>(int)$this->scalar('SELECT COUNT(*) FROM marketing_campaigns'),
             'campaigns_running'=>(int)$this->scalar("SELECT COUNT(*) FROM marketing_campaigns WHERE status='running'"),
+            'campaigns_planned'=>(int)$this->scalar("SELECT COUNT(*) FROM marketing_campaigns WHERE status='planned'"),
+            'campaigns_completed'=>(int)$this->scalar("SELECT COUNT(*) FROM marketing_campaigns WHERE status='completed'"),
             'budget_total'=>(float)$this->scalar('SELECT COALESCE(SUM(budget),0) FROM marketing_campaigns'),
+            'budget_active'=>(float)$this->scalar("SELECT COALESCE(SUM(budget),0) FROM marketing_campaigns WHERE status IN ('planned','running')"),
             'promotions_pending'=>(int)$this->scalar("SELECT COUNT(*) FROM marketing_promotions WHERE approval_status='pending'"),
+            'promotions_active'=>(int)$this->scalar("SELECT COUNT(*) FROM marketing_promotions WHERE status='active'"),
             'active_vouchers'=>(int)$this->scalar("SELECT COUNT(*) FROM marketing_vouchers WHERE status='active'"),
+            'voucher_quantity'=>(int)$this->scalar('SELECT COALESCE(SUM(quantity),0) FROM marketing_vouchers'),
             'voucher_redemptions'=>(int)$this->scalar('SELECT COALESCE(SUM(used_count),0) FROM marketing_vouchers'),
             'published_contents'=>(int)$this->scalar("SELECT COUNT(*) FROM marketing_contents WHERE status='published'"),
             'scheduled_notifications'=>(int)$this->scalar("SELECT COUNT(*) FROM marketing_notifications WHERE status='scheduled'"),
@@ -780,8 +914,9 @@ class MarketingController
             'movie_plans_pending'=>(int)$this->scalar("SELECT COUNT(*) FROM movie_plans WHERE marketing_owner_id IS NOT NULL AND approval_status='pending_approval'"),
             'movie_plans_revision'=>(int)$this->scalar("SELECT COUNT(*) FROM movie_plans WHERE marketing_owner_id IS NOT NULL AND approval_status='revision_requested'"),
             'movie_plans_approved'=>(int)$this->scalar("SELECT COUNT(*) FROM movie_plans WHERE marketing_owner_id IS NOT NULL AND approval_status='approved'"),
-            'recent_campaigns'=>$this->rows('SELECT * FROM marketing_campaigns ORDER BY id DESC LIMIT 5'),
-            'upcoming_contents'=>$this->rows("SELECT * FROM marketing_contents WHERE status IN ('scheduled','published') ORDER BY publish_at DESC LIMIT 5")
+            'recent_campaigns'=>$this->rows('SELECT id,campaign_code,name,channel,budget,start_date,end_date,status FROM marketing_campaigns ORDER BY COALESCE(updated_at,created_at) DESC,id DESC LIMIT 6'),
+            'upcoming_contents'=>$this->rows("SELECT id,title,placement,publish_at,status FROM marketing_contents WHERE status IN ('scheduled','published') AND (publish_at IS NULL OR publish_at>=DATE_SUB(NOW(),INTERVAL 1 DAY)) ORDER BY publish_at ASC LIMIT 5"),
+            'channel_breakdown'=>$this->rows("SELECT channel,COUNT(*) campaign_count,COALESCE(SUM(budget),0) budget FROM marketing_campaigns GROUP BY channel ORDER BY budget DESC")
         );
         jsonResponse(array('success'=>true,'data'=>$data));
     }
