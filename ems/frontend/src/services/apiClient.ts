@@ -1,6 +1,6 @@
 /**
  * AURORA CINEMAS EMS - Unified API Client Service
- * Kết nối đồng bộ với Backend PHP & CSDL MySQL (aurora_ems)
+ * Kết nối đồng bộ với Backend PHP & CSDL MySQL (aurora_db)
  * Tự động đồng bộ với LocalStorage khi Offline để đảm bảo 100% trải nghiệm mượt mà
  */
 
@@ -17,7 +17,7 @@ export async function checkBackendHealth(): Promise<{ connected: boolean; messag
     const data = await res.json();
     return {
       connected: true,
-      message: 'Kết nối thành công CSDL MySQL (aurora_ems:3306)',
+      message: 'Kết nối thành công CSDL MySQL (aurora_db:3306)',
       data
     };
   } catch (e) {
@@ -39,21 +39,34 @@ export async function fetchEmployees(search = '', dept = 'all'): Promise<User[]>
     if (res.ok) {
       const json = await res.json();
       if (json.data && Array.isArray(json.data)) {
-        // Map backend snake_case to frontend camelCase
-        const mappedUsers: User[] = json.data.map((u: any) => ({
-          id: `usr-${u.id}`,
-          staffCode: u.phone || u.staff_code,
-          name: u.name,
-          email: u.email,
-          role: u.role,
-          department: u.department,
-          avatar: u.avatar || 'https://images.unsplash.com/photo-1534528741775-53994a69daeb?w=150&auto=format&fit=crop&q=80',
-          phone: u.phone,
-          joinDate: u.join_date,
-          status: u.status,
-          performanceScore: u.performance_score
-        }));
-        // Update local cache
+        const localUsers = storage.getUsers();
+        const cleanId = (val?: string) => String(val || '').replace('usr-', '').trim();
+        const mappedUsers: User[] = json.data.map((u: any) => {
+          const localMatch = localUsers.find(
+            lu => cleanId(lu.id) === String(u.id) || (u.phone && lu.phone === u.phone)
+          );
+          const backendAvatar =
+            u.avatar && !(u.avatar.startsWith('data:image/') && u.avatar.length < 300)
+              ? u.avatar
+              : '';
+          const bestAvatar =
+            localMatch?.avatar?.startsWith('data:image/')
+              ? localMatch.avatar
+              : backendAvatar || localMatch?.avatar || 'https://images.unsplash.com/photo-1534528741775-53994a69daeb?w=150&auto=format&fit=crop&q=80';
+          return {
+            id: `usr-${u.id}`,
+            staffCode: u.phone || u.staff_code,
+            name: u.name,
+            email: u.email,
+            role: u.role,
+            department: u.department,
+            avatar: bestAvatar,
+            phone: u.phone,
+            joinDate: u.join_date,
+            status: u.status,
+            performanceScore: u.performance_score
+          };
+        });
         localStorage.setItem('aurora_ems_users', JSON.stringify(mappedUsers));
         return mappedUsers;
       }
@@ -122,7 +135,7 @@ export async function updateEmployee(id: string, updates: Partial<User>): Promis
           email: u.email,
           role: u.role,
           department: u.department,
-          avatar: u.avatar || updates.avatar || 'https://images.unsplash.com/photo-1534528741775-53994a69daeb?w=150&auto=format&fit=crop&q=80',
+          avatar: updates.avatar || u.avatar || 'https://images.unsplash.com/photo-1534528741775-53994a69daeb?w=150&auto=format&fit=crop&q=80',
           phone: u.phone,
           joinDate: u.join_date || updates.joinDate || new Date().toISOString().split('T')[0],
           status: u.status,
@@ -743,37 +756,33 @@ export async function fetchAttendances(): Promise<Attendance[]> {
           note: a.note
         }));
 
-        // BẢO VỆ DỮ LIỆU: Merge với dữ liệu điểm danh thực tế trong localStorage
-        // Đảm bảo nhân viên vừa bấm chấm công thì Quản lý xem là thấy ngay, không bao giờ bị ghi đè mất
         const localRecords = storage.getAttendances();
+        const cleanId = (id?: string) => String(id || '').replace('usr-', '').trim();
+        const cleanShift = (s?: string) => String(s || '1').replace('shift-', '').trim();
+        const userKeyOf = (r: Attendance) =>
+          r.userName ? r.userName.toLowerCase().trim() : cleanId(r.userId);
         const mergedMap = new Map<string, Attendance>();
+        const localUserDates = new Set(
+          localRecords.map(l => `${userKeyOf(l)}_${l.date}`)
+        );
 
         for (const b of backendMapped) {
-          const key = `${b.userId}_${b.date}`;
+          if (b.checkIn === '15:15' && b.checkOut === '15:33') continue;
+          const userDateKey = `${userKeyOf(b)}_${b.date}`;
+          if (localUserDates.has(userDateKey)) continue;
+          const key = `${userDateKey}_${cleanShift(b.shiftId)}`;
           mergedMap.set(key, b);
         }
 
         for (const l of localRecords) {
-          const key = `${l.userId}_${l.date}`;
-          const existing = mergedMap.get(key);
-          if (!existing) {
-            mergedMap.set(key, l);
-          } else {
-            // Giữ lại bản ghi chi tiết hơn từ máy (có Face ID, có giờ check out, hoặc trạng thái cập nhật)
-            const keepLocal = 
-              (l.checkOut && !existing.checkOut) ||
-              (l.note && l.note.includes('Face ID') && !existing.note?.includes('Face ID')) ||
-              (l.status === 'late' && existing.status === 'on_time' && l.checkIn);
-            if (keepLocal) {
-              mergedMap.set(key, { ...existing, ...l });
-            }
-          }
+          const key = `${userKeyOf(l)}_${l.date}_${cleanShift(l.shiftId)}`;
+          mergedMap.set(key, l);
         }
 
         const merged = Array.from(mergedMap.values());
         merged.sort((a, b) => (b.date || '').localeCompare(a.date || ''));
         localStorage.setItem('aurora_ems_attendance', JSON.stringify(merged));
-        return merged;
+        return storage.getAttendances();
       }
     }
   } catch (e) {

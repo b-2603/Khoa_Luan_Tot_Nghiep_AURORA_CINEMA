@@ -196,20 +196,52 @@ export const addUser = (newUser: Omit<User, 'id'>): User => {
 
 export const updateUser = (id: string, updates: Partial<User>): User | null => {
   const users = getUsers();
-  const index = users.findIndex(u => u.id === id);
-  if (index === -1) return null;
+  const current = getCurrentUser();
+  const cleanId = (val?: string) => String(val || '').replace('usr-', '').trim();
+  let index = users.findIndex(u => cleanId(u.id) === cleanId(id));
+  if (index === -1 && current && cleanId(current.id) === cleanId(id)) {
+    index = users.findIndex(
+      u =>
+        (current.phone && u.phone === current.phone) ||
+        (current.staffCode && u.staffCode === current.staffCode) ||
+        (current.email && u.email.toLowerCase() === current.email.toLowerCase())
+    );
+  }
+
   const phone = updates.phone?.trim();
   const safeUpdates = {
     ...updates,
     ...(phone ? { phone, staffCode: phone } : {})
   };
-  const updated = { ...users[index], ...safeUpdates };
-  users[index] = updated;
-  setItem(KEYS.USERS, users);
 
-  const current = getCurrentUser();
-  if (current && current.id === id) {
-    setCurrentUser(updated);
+  let updated: User;
+  if (index >= 0) {
+    updated = { ...users[index], ...safeUpdates };
+    users[index] = updated;
+  } else if (current) {
+    updated = { ...current, ...safeUpdates, id };
+    users.push(updated);
+  } else {
+    return null;
+  }
+
+  try {
+    setItem(KEYS.USERS, users);
+  } catch (e) {
+    console.warn('[Storage] setItem users warning:', e);
+  }
+
+  if (
+    current &&
+    (cleanId(current.id) === cleanId(id) ||
+      (current.phone && current.phone === updated.phone) ||
+      (current.staffCode && current.staffCode === updated.staffCode))
+  ) {
+    try {
+      setCurrentUser({ ...current, ...safeUpdates });
+    } catch (e) {
+      console.warn('[Storage] setCurrentUser warning:', e);
+    }
   }
   return updated;
 };
@@ -452,16 +484,65 @@ export const syncApprovedRegistrationsToSchedules = (
 };
 
 // Attendance (UC12)
-export const getAttendances = (): Attendance[] => getItem<Attendance[]>(KEYS.ATTENDANCE, INITIAL_ATTENDANCE);
+export const getAttendances = (): Attendance[] => {
+  if (!localStorage.getItem('aurora_ems_att_reset_v4')) {
+    const today = getTodayDateString();
+    const initialRaw = getItem<Attendance[]>(KEYS.ATTENDANCE, INITIAL_ATTENDANCE);
+    const cleaned = initialRaw.filter(
+      a => !(a.date === today && (a.checkIn === '15:15' || a.checkOut === '15:33' || a.userName?.toLowerCase() === 'staff'))
+    );
+    setItem(KEYS.ATTENDANCE, cleaned);
+    localStorage.setItem('aurora_ems_att_reset_v4', '1');
+  }
+  const raw = getItem<Attendance[]>(KEYS.ATTENDANCE, INITIAL_ATTENDANCE);
+  const cleanId = (id?: string) => String(id || '').replace('usr-', '').trim();
+  const cleanShift = (s?: string) => String(s || '1').replace('shift-', '').trim();
+  const map = new Map<string, Attendance>();
+  for (const item of raw) {
+    const userKey = item.userName ? item.userName.toLowerCase().trim() : cleanId(item.userId);
+    const key = `${userKey}_${item.date}_${cleanShift(item.shiftId)}`;
+    if (!map.has(key)) {
+      map.set(key, item);
+    }
+  }
+  return Array.from(map.values());
+};
 export const saveAttendance = (att: Attendance): void => {
   const list = getAttendances();
-  const idx = list.findIndex(a => a.id === att.id);
+  const cleanId = (id?: string) => String(id || '').replace('usr-', '').trim();
+  const cleanShift = (s?: string) => String(s || '1').replace('shift-', '').trim();
+  const sameUser = (a: Attendance, b: Attendance) =>
+    cleanId(a.userId) === cleanId(b.userId) ||
+    (Boolean(a.userName && b.userName) && a.userName.toLowerCase().trim() === b.userName.toLowerCase().trim());
+
+  const idx = list.findIndex(
+    a =>
+      a.id === att.id ||
+      (sameUser(a, att) &&
+        a.date === att.date &&
+        cleanShift(a.shiftId) === cleanShift(att.shiftId))
+  );
   if (idx >= 0) list[idx] = att;
   else list.unshift(att);
   setItem(KEYS.ATTENDANCE, list);
 };
 export const deleteAttendance = (id: string): void => {
-  const list = getAttendances().filter(a => a.id !== id);
+  const raw = getItem<Attendance[]>(KEYS.ATTENDANCE, INITIAL_ATTENDANCE);
+  const target = raw.find(a => a.id === id);
+  const cleanId = (uid?: string) => String(uid || '').replace('usr-', '').trim();
+  const cleanShift = (s?: string) => String(s || '1').replace('shift-', '').trim();
+  const list = raw.filter(a => {
+    if (a.id === id) return false;
+    if (
+      target &&
+      cleanId(a.userId) === cleanId(target.userId) &&
+      a.date === target.date &&
+      cleanShift(a.shiftId) === cleanShift(target.shiftId)
+    ) {
+      return false;
+    }
+    return true;
+  });
   setItem(KEYS.ATTENDANCE, list);
 };
 

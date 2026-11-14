@@ -31,26 +31,17 @@ export interface DetectedFaceBox {
 
 const STORAGE_KEYS = {
   FACE_PREFIX: 'aurora_enrolled_face_v2_',
-  WIFI_CONFIG: 'aurora_authorized_wifi_config',
+  WIFI_CONFIG: 'aurora_authorized_wifi_config_v3',
 };
 
-const MATCH_DISTANCE_THRESHOLD = 0.48;
+const MATCH_DISTANCE_THRESHOLD = 0.42;
 
 export function isIpInSameWifi(clientIp: string, authorizedIp: string): boolean {
   if (!clientIp || !authorizedIp) return false;
   const c = clientIp.trim();
   const a = authorizedIp.trim();
-  if (c === a) return true;
-  if ((c === '127.0.0.1' || c === 'localhost') && (a === '127.0.0.1' || a === 'localhost')) return true;
-
-  const cParts = c.split('.');
-  const aParts = a.split('.');
-  if (cParts.length === 4 && aParts.length === 4) {
-    if (cParts[0] === aParts[0] && cParts[1] === aParts[1] && cParts[2] === aParts[2]) {
-      return true;
-    }
-  }
-  return false;
+  if (c === 'Đang dò mạng...' || c === 'Chưa xác định') return false;
+  return c === a;
 }
 
 async function getLocalIpViaWebRTC(): Promise<string | null> {
@@ -82,47 +73,27 @@ async function getLocalIpViaWebRTC(): Promise<string | null> {
 }
 
 export async function detectCurrentNetwork(): Promise<{ ip: string; isOnline: boolean; localIp?: string }> {
-  let localIp: string | null = null;
-  try {
-    localIp = await getLocalIpViaWebRTC();
-  } catch { }
+  const [rtcRes, localApiRes, publicIpRes] = await Promise.allSettled([
+    getLocalIpViaWebRTC(),
+    fetch('http://localhost:8000/network-info', { signal: AbortSignal.timeout(1200) }).then(r => (r.ok ? r.json() : null)),
+    fetch('https://api.ipify.org?format=json', { signal: AbortSignal.timeout(1500) }).then(r => (r.ok ? r.json() : null)),
+  ]);
 
-  try {
-    const res = await fetch('http://localhost:8000/network-info', { signal: AbortSignal.timeout(2000) });
-    if (res.ok) {
-      const data = await res.json();
-      const serverIp = (data.ip && data.ip !== '127.0.0.1' && data.ip !== '::1') ? data.ip : null;
-      const resolvedIp = (localIp && localIp !== '127.0.0.1') ? localIp : serverIp;
-      if (resolvedIp) {
-        return {
-          ip: resolvedIp,
-          isOnline: true,
-          localIp: localIp || undefined
-        };
-      }
-    }
-  } catch (e) {
-  }
+  const localIp = rtcRes.status === 'fulfilled' && rtcRes.value && rtcRes.value !== '127.0.0.1' ? rtcRes.value : null;
+  const serverIp =
+    localApiRes.status === 'fulfilled' &&
+      localApiRes.value?.ip &&
+      localApiRes.value.ip !== '127.0.0.1' &&
+      localApiRes.value.ip !== '::1'
+      ? localApiRes.value.ip
+      : null;
+  const publicIp = publicIpRes.status === 'fulfilled' && publicIpRes.value?.ip ? publicIpRes.value.ip : null;
 
-  try {
-    const res = await fetch('https://api.ipify.org?format=json', { signal: AbortSignal.timeout(3000) });
-    if (res.ok) {
-      const data = await res.json();
-      if (data.ip) {
-        return {
-          ip: (localIp && localIp !== '127.0.0.1') ? localIp : data.ip,
-          isOnline: true,
-          localIp: localIp || undefined
-        };
-      }
-    }
-  } catch (e) {
-  }
-
+  const resolvedIp = localIp || serverIp || publicIp || 'Chưa xác định';
   return {
-    ip: localIp || '0.0.0.0',
+    ip: resolvedIp,
     isOnline: typeof navigator !== 'undefined' ? navigator.onLine : true,
-    localIp: localIp || undefined
+    localIp: localIp || serverIp || undefined,
   };
 }
 
@@ -131,26 +102,16 @@ export function getAuthorizedWifiConfig(): NetworkConfig {
     const stored = localStorage.getItem(STORAGE_KEYS.WIFI_CONFIG);
     if (stored) {
       const parsed = JSON.parse(stored);
-      if (
-        parsed.authorizedIp?.startsWith('192.168.') ||
-        parsed.wifiSsidName === 'Wi-Fi Cụm Rạp Aurora (Mạng Hiện Tại)'
-      ) {
-        const resetConfig: NetworkConfig = {
-          authorizedIp: '10.179.243.65',
-          wifiSsidName: 'AURORA-CINEMA-STAFF-5G',
-          updatedAt: new Date().toISOString()
-        };
-        localStorage.setItem(STORAGE_KEYS.WIFI_CONFIG, JSON.stringify(resetConfig));
-        return resetConfig;
+      if (parsed && parsed.authorizedIp) {
+        return parsed;
       }
-      return parsed;
     }
   } catch (e) { }
 
   return {
-    authorizedIp: '10.179.243.65',
+    authorizedIp: '192.168.1.206',
+    updatedAt: new Date().toISOString(),
     wifiSsidName: 'AURORA-CINEMA-STAFF-5G',
-    updatedAt: new Date().toISOString()
   };
 }
 
@@ -158,7 +119,7 @@ export function setAuthorizedWifiConfig(ip: string, wifiSsidName: string): Netwo
   const config: NetworkConfig = {
     authorizedIp: ip,
     wifiSsidName: wifiSsidName || 'AURORA-CINEMA-STAFF-5G',
-    updatedAt: new Date().toISOString()
+    updatedAt: new Date().toISOString(),
   };
   localStorage.setItem(STORAGE_KEYS.WIFI_CONFIG, JSON.stringify(config));
   return config;
@@ -310,7 +271,8 @@ export function loadFaceModels(): Promise<void> {
 
 type MediaSource = HTMLVideoElement | HTMLImageElement | HTMLCanvasElement;
 
-const detectorOptions = () => new faceapi.TinyFaceDetectorOptions({ inputSize: 320, scoreThreshold: 0.5 });
+const detectorOptions = (inputSize = 320, scoreThreshold = 0.25) =>
+  new faceapi.TinyFaceDetectorOptions({ inputSize, scoreThreshold });
 
 // Cắt vùng khuôn mặt (có chừa lề) thành ảnh vuông 120x120
 function cropFaceToDataUrl(source: MediaSource, box: { x: number; y: number; width: number; height: number }): string {
@@ -330,6 +292,138 @@ function cropFaceToDataUrl(source: MediaSource, box: { x: number; y: number; wid
   }
 }
 
+function checkFaceOcclusionAndQuality(
+  video: HTMLVideoElement,
+  box: { x: number; y: number; width: number; height: number },
+  landmarks: faceapi.FaceLandmarks68,
+  score: number
+): { isOccluded: boolean; reason?: string } {
+  if (score < 0.62) {
+    return {
+      isOccluded: true,
+      reason: 'Khuôn mặt bị che khuất hoặc chưa rõ! Vui lòng bỏ tay/vật che mặt ra.'
+    };
+  }
+
+  const pts = landmarks.positions;
+  if (!pts || pts.length < 68) {
+    return {
+      isOccluded: true,
+      reason: 'Không nhận diện đủ ngũ quan khuôn mặt!'
+    };
+  }
+
+  const avgPoint = (indices: number[]) => {
+    let sx = 0;
+    let sy = 0;
+    for (const idx of indices) {
+      sx += pts[idx].x;
+      sy += pts[idx].y;
+    }
+    return { x: sx / indices.length, y: sy / indices.length };
+  };
+
+  const leftEye = avgPoint([36, 37, 38, 39, 40, 41]);
+  const rightEye = avgPoint([42, 43, 44, 45, 46, 47]);
+  const noseTip = pts[30];
+  const mouthCenter = avgPoint([60, 61, 62, 63, 64, 65, 66, 67]);
+
+  const eyeDist = Math.hypot(rightEye.x - leftEye.x, rightEye.y - leftEye.y);
+  const eyeDistRatio = eyeDist / Math.max(1, box.width);
+  if (eyeDistRatio < 0.24 || eyeDistRatio > 0.56) {
+    return {
+      isOccluded: true,
+      reason: 'Vui lòng nhìn thẳng chính diện và không che mặt!'
+    };
+  }
+
+  const eyeTilt = Math.abs(rightEye.y - leftEye.y) / Math.max(1, eyeDist);
+  if (eyeTilt > 0.28) {
+    return {
+      isOccluded: true,
+      reason: 'Vui lòng giữ thẳng đầu và nhìn trực diện vào camera!'
+    };
+  }
+
+  const noseRatioX = (noseTip.x - leftEye.x) / Math.max(1, rightEye.x - leftEye.x);
+  if (noseRatioX < 0.28 || noseRatioX > 0.72) {
+    return {
+      isOccluded: true,
+      reason: 'Khuôn mặt bị lệch hoặc bị che khuất! Vui lòng bỏ tay ra và nhìn thẳng.'
+    };
+  }
+
+  const eyeMidY = (leftEye.y + rightEye.y) / 2;
+  const noseToEye = (noseTip.y - eyeMidY) / Math.max(1, box.height);
+  const mouthToNose = (mouthCenter.y - noseTip.y) / Math.max(1, box.height);
+  if (noseToEye < 0.11 || noseToEye > 0.40 || mouthToNose < 0.11 || mouthToNose > 0.40) {
+    return {
+      isOccluded: true,
+      reason: 'Phát hiện vật che mặt! Vui lòng để lộ rõ mắt, mũi, miệng.'
+    };
+  }
+
+  try {
+    const canvas = document.createElement('canvas');
+    const cSize = 96;
+    canvas.width = cSize;
+    canvas.height = cSize;
+    const ctx = canvas.getContext('2d');
+    if (ctx) {
+      ctx.drawImage(video, box.x, box.y, box.width, box.height, 0, 0, cSize, cSize);
+      const imgData = ctx.getImageData(0, 0, cSize, cSize).data;
+
+      const regionStats = (cx: number, cy: number, rx: number, ry: number) => {
+        const x0 = Math.max(0, Math.floor(((cx - box.x) / box.width) * cSize - rx));
+        const x1 = Math.min(cSize - 1, Math.ceil(((cx - box.x) / box.width) * cSize + rx));
+        const y0 = Math.max(0, Math.floor(((cy - box.y) / box.height) * cSize - ry));
+        const y1 = Math.min(cSize - 1, Math.ceil(((cy - box.y) / box.height) * cSize + ry));
+
+        let sum = 0;
+        let sumSq = 0;
+        let min = 255;
+        let max = 0;
+        let n = 0;
+        for (let y = y0; y <= y1; y++) {
+          for (let x = x0; x <= x1; x++) {
+            const i = (y * cSize + x) * 4;
+            const lum = 0.299 * imgData[i] + 0.587 * imgData[i + 1] + 0.114 * imgData[i + 2];
+            sum += lum;
+            sumSq += lum * lum;
+            if (lum < min) min = lum;
+            if (lum > max) max = lum;
+            n++;
+          }
+        }
+        if (n === 0) return { mean: 0, std: 0, range: 0 };
+        const mean = sum / n;
+        const std = Math.sqrt(Math.max(0, sumSq / n - mean * mean));
+        return { mean, std, range: max - min };
+      };
+
+      const lEyeStat = regionStats(leftEye.x, leftEye.y, 9, 6);
+      const rEyeStat = regionStats(rightEye.x, rightEye.y, 9, 6);
+      const mouthStat = regionStats(mouthCenter.x, mouthCenter.y, 12, 7);
+
+      if (lEyeStat.range < 24 || rEyeStat.range < 24 || lEyeStat.std < 6.5 || rEyeStat.std < 6.5) {
+        return {
+          isOccluded: true,
+          reason: 'Phát hiện tay hoặc vật che vùng mắt! Vui lòng bỏ tay ra.'
+        };
+      }
+
+      if (mouthStat.range < 20 || mouthStat.std < 5.5) {
+        return {
+          isOccluded: true,
+          reason: 'Phát hiện vật che vùng mũi/miệng! Vui lòng bỏ tay hoặc khẩu trang ra.'
+        };
+      }
+    }
+  } catch { }
+
+  return { isOccluded: false };
+}
+
 // 4. BẮT NÉT & NHẬN DIỆN KHUÔN MẶT THỜI GIAN THỰC (REAL-TIME FACE TRACKER)
 export async function detectFaceInRealtime(video: HTMLVideoElement): Promise<DetectedFaceBox> {
   if (!video || video.readyState < 2 || !video.videoWidth) {
@@ -338,44 +432,51 @@ export async function detectFaceInRealtime(video: HTMLVideoElement): Promise<Det
 
   try {
     await loadFaceModels();
-    const result = await faceapi
-      .detectSingleFace(video, detectorOptions())
+    const results = await faceapi
+      .detectAllFaces(video, detectorOptions(320, 0.35))
       .withFaceLandmarks(true)
-      .withFaceDescriptor();
+      .withFaceDescriptors();
 
-    if (!result) {
+    if (!results || results.length === 0) {
       return {
         hasFace: false,
         confidence: 0,
-        isOccluded: true,
-        occlusionReason: 'Không thấy khuôn mặt! Vui lòng nhìn thẳng vào camera và bỏ tay/vật che ra.'
+        isOccluded: false,
+        occlusionReason: 'Không thấy khuôn mặt! Vui lòng nhìn thẳng vào camera.'
       };
     }
 
     const vw = video.videoWidth;
     const vh = video.videoHeight;
+
+    const sortedByCenter = [...results].sort((a, b) => {
+      const acx = a.detection.box.x + a.detection.box.width / 2 - vw / 2;
+      const acy = a.detection.box.y + a.detection.box.height / 2 - vh / 2;
+      const bcx = b.detection.box.x + b.detection.box.width / 2 - vw / 2;
+      const bcy = b.detection.box.y + b.detection.box.height / 2 - vh / 2;
+      return Math.hypot(acx, acy) - Math.hypot(bcx, bcy);
+    });
+
+    const result = sortedByCenter[0];
     const box = result.detection.box;
     const score = result.detection.score;
     const confidence = Math.round(score * 100);
 
-    // Khuôn mặt phải đủ rõ (tay che hoặc che một phần làm điểm tin cậy tụt thấp)
-    if (score < 0.7) {
+    const occlusionCheck = checkFaceOcclusionAndQuality(
+      video,
+      { x: box.x, y: box.y, width: box.width, height: box.height },
+      result.landmarks,
+      score
+    );
+
+    if (occlusionCheck.isOccluded) {
       return {
-        hasFace: false,
+        hasFace: true,
+        box: { x: box.x, y: box.y, width: box.width, height: box.height },
         confidence,
         isOccluded: true,
-        occlusionReason: 'Khuôn mặt bị che khuất hoặc không rõ! Vui lòng bỏ tay/vật che ra khỏi mặt.'
+        occlusionReason: occlusionCheck.reason || 'Khuôn mặt đang bị che khuất! Vui lòng bỏ tay ra.'
       };
-    }
-
-    // Khuôn mặt phải nằm trong vòng tròn và đủ lớn
-    const cx = box.x + box.width / 2;
-    const cy = box.y + box.height / 2;
-    if (box.width < vw * 0.18) {
-      return { hasFace: false, confidence, occlusionReason: 'Hãy lại gần camera hơn một chút' };
-    }
-    if (Math.abs(cx - vw / 2) > vw * 0.16 || Math.abs(cy - vh / 2) > vh * 0.2) {
-      return { hasFace: false, confidence, occlusionReason: 'Hãy căn khuôn mặt vào giữa vòng tròn' };
     }
 
     return {
@@ -395,16 +496,16 @@ export async function detectFaceInRealtime(video: HTMLVideoElement): Promise<Det
 export async function extractFaceFromVideo(video: HTMLVideoElement, knownTrack?: DetectedFaceBox): Promise<FaceFeatures | null> {
   if (!video) return null;
   const track = knownTrack || (await detectFaceInRealtime(video));
-  if (!track.hasFace || track.isOccluded || !track.descriptor || !track.box) {
-    return null;
+  if (track.hasFace && !track.isOccluded && track.confidence >= 62 && track.descriptor && track.box) {
+    return {
+      descriptor: track.descriptor,
+      capturedImage: cropFaceToDataUrl(video, track.box),
+      hasValidFeatures: true,
+      timestamp: Date.now()
+    };
   }
 
-  return {
-    descriptor: track.descriptor,
-    capturedImage: cropFaceToDataUrl(video, track.box),
-    hasValidFeatures: true,
-    timestamp: Date.now()
-  };
+  return null;
 }
 
 // 6. So khớp hai khuôn mặt bằng khoảng cách Euclid giữa descriptor 128 chiều
@@ -483,7 +584,7 @@ export function extractFaceFromDataUrl(dataUrl: string): Promise<FaceFeatures | 
           .detectSingleFace(img, detectorOptions())
           .withFaceLandmarks(true)
           .withFaceDescriptor();
-        if (!result || result.detection.score < 0.7) {
+        if (!result || result.detection.score < 0.4) {
           resolve(null);
           return;
         }

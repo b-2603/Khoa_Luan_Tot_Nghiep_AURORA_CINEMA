@@ -23,8 +23,17 @@ import {
   UserCheck, LogIn, LogOut, Calendar, User as UserIcon, X, Sparkles, Building2,
   MapPin, Wifi, Camera, ShieldCheck, RefreshCw, Radio, Eye, Check, XCircle,
   Scan, Settings, UserPlus, FileText, Send, ArrowRight, Lock, CheckCheck,
-  ChevronRight, CalendarDays
+  ChevronRight, CalendarDays, DollarSign, Award
 } from 'lucide-react';
+import { 
+  calculateShiftWage, 
+  formatCurrencyVND, 
+  checkIsHoliday, 
+  BASE_HOURLY_RATE,
+  formatLateDuration,
+  calculateLateMinutes
+} from '../services/payrollService';
+import { MonthlyPayrollTable } from '../components/MonthlyPayrollTable';
 
 export const SUGGESTED_LATE_REASONS = [
   'Hỏng xe / Sự cố phương tiện di chuyển',
@@ -198,7 +207,7 @@ interface AttendancePageProps {
   currentUser?: User | null;
   onUpdateUser?: (user: User) => void;
   onNavigateTab?: (tab: any) => void;
-  initialSubTab?: 'monitor' | 'exceptions' | 'punch';
+  initialSubTab?: 'monitor' | 'exceptions' | 'punch' | 'payroll';
 }
 
 export const AttendancePage: React.FC<AttendancePageProps> = ({ 
@@ -210,10 +219,11 @@ export const AttendancePage: React.FC<AttendancePageProps> = ({
   const isManager = currentUser?.role === 'manager';
   
   // Tab chính được hợp nhất:
-  // - 'monitor': Bảng Giám Sát Chấm Công Chi Nhánh (Check-in, ca làm việc, chi nhánh, so khớp giờ)
+  // - 'monitor': Bảng Giám Sát Chấm Công & Ca Trực Chi Nhánh
+  // - 'payroll': Bảng Lương & Tổng Hợp Công Cuối Tháng (Quản lý)
   // - 'exceptions': Xử Lý Lỗi Chấm Công & Duyệt Trễ (Đơn giải trình, duyệt miễn trừ, xử lý trễ/quên chấm)
   // - 'punch': Máy Quét Điểm Danh Face ID (Kiosk rạp)
-  const [activeSubTab, setActiveSubTab] = useState<'monitor' | 'exceptions' | 'punch'>(
+  const [activeSubTab, setActiveSubTab] = useState<'monitor' | 'exceptions' | 'punch' | 'payroll'>(
     initialSubTab || (isManager ? 'monitor' : 'punch')
   );
 
@@ -415,6 +425,7 @@ export const AttendancePage: React.FC<AttendancePageProps> = ({
 
     let isMounted = true;
     let trackInterval: any = null;
+    let consecutiveMatchCount = 0;
     autoPunchLockRef.current = false;
     setIsAutoPunching(false);
 
@@ -426,33 +437,42 @@ export const AttendancePage: React.FC<AttendancePageProps> = ({
       if (!isMounted) return;
       setRealtimeFaceTrack(track);
 
-      if (!isWifiValid) {
+      if (!track.hasFace || track.isOccluded || track.confidence < 62) {
+        consecutiveMatchCount = 0;
+        setLastScanResult(null);
+        setIsAutoPunching(false);
         return;
       }
 
-      if (track.hasFace && track.confidence > 0.65 && !track.isOccluded && enrolledFace && !autoPunchLockRef.current) {
+      if (!isWifiValid || !enrolledFace) {
+        return;
+      }
+
+      const currentFace = await extractFaceFromVideo(video, track);
+      if (!currentFace || !isMounted) {
+        consecutiveMatchCount = 0;
+        setLastScanResult(null);
+        return;
+      }
+
+      const result = compareFaces(currentFace, enrolledFace);
+      if (!result.isMatch) {
+        consecutiveMatchCount = 0;
+        setLastScanResult(result);
+        setIsAutoPunching(false);
+        return;
+      }
+
+      consecutiveMatchCount += 1;
+      if (consecutiveMatchCount >= 2 && !autoPunchLockRef.current) {
         autoPunchLockRef.current = true;
+        setLastScanResult(result);
         setIsAutoPunching(true);
-
-        const currentFace = await extractFaceFromVideo(video);
-        if (currentFace && isMounted) {
-          const result = compareFaces(currentFace, enrolledFace);
-          setLastScanResult(result);
-
-          if (result.isMatch) {
-            setTimeout(() => {
-              if (isMounted && executeVerifiedPunchRef.current) {
-                executeVerifiedPunchRef.current(result);
-              }
-            }, 600);
-          } else {
-            setIsAutoPunching(false);
-            autoPunchLockRef.current = false;
+        setTimeout(() => {
+          if (isMounted && executeVerifiedPunchRef.current) {
+            executeVerifiedPunchRef.current(result);
           }
-        } else {
-          setIsAutoPunching(false);
-          autoPunchLockRef.current = false;
-        }
+        }, 450);
       }
     }, 450);
 
@@ -462,7 +482,48 @@ export const AttendancePage: React.FC<AttendancePageProps> = ({
     };
   }, [isVerifyModalOpen, cameraReady, enrolledFace, isWifiValid]);
 
+  const cleanAttUserId = (id?: string) => String(id || '').replace('usr-', '').trim();
+  const cleanAttShiftId = (s?: string) => String(s || '1').replace('shift-', '').trim();
+
+  const todayUserAttendances = attendances.filter(a => {
+    const sameUser =
+      (selectedUser?.id && cleanAttUserId(a.userId) === cleanAttUserId(selectedUser.id)) ||
+      (selectedUser?.name && a.userName?.toLowerCase().trim() === selectedUser.name.toLowerCase().trim());
+    return sameUser && a.date === todayStr;
+  });
+
+  const openTodayAttendance = todayUserAttendances.find(
+    a =>
+      Boolean(a.checkIn) &&
+      !a.checkOut &&
+      (!a.shiftId || cleanAttShiftId(a.shiftId) === cleanAttShiftId(selectedShift.id))
+  );
+  const exactShiftAttendance = todayUserAttendances.find(
+    a => a.shiftId && cleanAttShiftId(a.shiftId) === cleanAttShiftId(selectedShift.id)
+  );
+  const legacyTodayAttendance = todayUserAttendances.find(a => !a.shiftId);
+
+  const currentShiftAttendance = openTodayAttendance || exactShiftAttendance || legacyTodayAttendance;
+
+  const isInActiveShift = Boolean(currentShiftAttendance?.checkIn && !currentShiftAttendance?.checkOut);
+  const hasCompletedShiftCycle = Boolean(currentShiftAttendance?.checkIn && currentShiftAttendance?.checkOut);
+
   const startVerification = (type: 'check_in' | 'check_out') => {
+    if (type === 'check_in' && isInActiveShift) {
+      showToast(
+        `Bạn đã xác thực Check-in vào ca lúc ${currentShiftAttendance?.checkIn}. Vui lòng Check-out tan ca trước!`,
+        'info'
+      );
+      return;
+    }
+    if (type === 'check_out' && !isInActiveShift) {
+      showToast(
+        `Bạn cần Check-in vào ca trước khi thực hiện Check-out tan ca!`,
+        'error'
+      );
+      return;
+    }
+
     setVerifyActionType(type);
     setIsVerifyModalOpen(true);
     setLastScanResult(null);
@@ -485,6 +546,7 @@ export const AttendancePage: React.FC<AttendancePageProps> = ({
     }
     saveEnrolledFace(selectedUser.id, face);
     setEnrolledFace(face);
+    setLastScanResult(null);
     showToast(`Đã đăng ký Face ID thành công cho nhân sự ${selectedUser.name}!`, 'success');
   };
 
@@ -494,7 +556,22 @@ export const AttendancePage: React.FC<AttendancePageProps> = ({
       return;
     }
 
+    if (!enrolledFace) {
+      showToast('❌ Nhân sự chưa có dữ liệu khuôn mặt mẫu! Vui lòng nhờ Quản lý đăng ký khuôn mặt trước.', 'error');
+      return;
+    }
+
+    if (realtimeFaceTrack.isOccluded || !realtimeFaceTrack.hasFace) {
+      showToast('❌ Khuôn mặt đang bị che khuất hoặc không rõ! Vui lòng bỏ tay ra và nhìn thẳng vào camera.', 'error');
+      return;
+    }
+
     const finalScan = scanResult || lastScanResult;
+    if (!finalScan || !finalScan.isMatch) {
+      showToast('❌ Chưa quét khớp khuôn mặt Face ID! Vui lòng nhìn thẳng vào camera để xác thực.', 'error');
+      return;
+    }
+
     if (!selectedUser) return;
     const now = new Date();
     const hh = String(now.getHours()).padStart(2, '0');
@@ -502,17 +579,28 @@ export const AttendancePage: React.FC<AttendancePageProps> = ({
     const currentTimeStr = `${hh}:${mm}`;
 
     if (verifyActionType === 'check_in') {
+      if (isInActiveShift) {
+        setIsVerifyModalOpen(false);
+        stopCameraStream();
+        showToast(
+          `Bạn đã Check-in vào ca lúc ${currentShiftAttendance?.checkIn} hôm nay rồi!`,
+          'info'
+        );
+        return;
+      }
+
       const evaluation = evaluateCheckIn(currentTimeStr, selectedShift);
       const status: 'on_time' | 'late' = evaluation.status;
       const note = `[Face ID: ${finalScan?.similarity || 95}% • Wi-Fi: ${authorizedConfig.wifiSsidName || 'Rạp'}] ${evaluation.noteDetail}`;
 
       const newRecord: Attendance = {
-        id: `att-${Date.now()}`,
+        id: currentShiftAttendance?.id || `att-${Date.now()}`,
         userId: selectedUser.id,
         userName: selectedUser.name,
         staffCode: selectedUser.phone || selectedUser.staffCode || '0901234567',
         date: todayStr,
         checkIn: currentTimeStr,
+        checkOut: undefined,
         status,
         hoursWorked: 0,
         note,
@@ -531,10 +619,7 @@ export const AttendancePage: React.FC<AttendancePageProps> = ({
         status === 'on_time' ? 'success' : 'info'
       );
     } else {
-      const todayRecord = attendances.find(a => 
-        (a.userId === selectedUser.id || a.userName === selectedUser.name) && 
-        a.date === todayStr && !a.checkOut
-      );
+      const todayRecord = openTodayAttendance || currentShiftAttendance;
       if (!todayRecord) {
         setIsVerifyModalOpen(false);
         stopCameraStream();
@@ -803,7 +888,27 @@ export const AttendancePage: React.FC<AttendancePageProps> = ({
     const hasCheckedIn = Boolean(attRecord && attRecord.checkIn);
     const hasCheckedOut = Boolean(attRecord && attRecord.checkOut);
 
-    // 6. Đánh giá tính chuẩn xác theo ca làm việc (Shift Compliance)
+    // 6. Tìm đơn ngoại lệ đang chờ hoặc đã duyệt
+    const matchedExc = exceptions.find(e => 
+      (e.userId === staff.id || e.staffCode === staff.staffCode || e.userName.toLowerCase() === staff.name.toLowerCase()) && 
+      e.targetDate === monitorDate
+    );
+
+    // 7. Tính toán mức lương & tiền phạt trễ (xử lý chính xác số phút trễ theo ca, gồm cả ca đêm qua 00:00)
+    const isExcused = matchedExc?.status === 'approved' || (attRecord?.note || '').includes('miễn phạt');
+    const wageDetail = calculateShiftWage({
+      date: monitorDate,
+      checkIn: attRecord?.checkIn,
+      checkOut: attRecord?.checkOut,
+      shiftStartTime: shift?.startTime || '08:00',
+      shiftEndTime: shift?.endTime || '16:00',
+      hoursWorked: attRecord?.hoursWorked,
+      isExcused,
+    });
+
+    const isLate = wageDetail.lateMinutes > 5;
+
+    // 8. Đánh giá tính chuẩn xác theo ca làm việc (Shift Compliance)
     let compliance: {
       code: 'on_time' | 'late' | 'not_attended' | 'off_duty' | 'extra_shift';
       label: string;
@@ -835,29 +940,25 @@ export const AttendancePage: React.FC<AttendancePageProps> = ({
           badgeColor: 'bg-blue-50 text-blue-700 border-blue-200',
         };
       } else {
-        if (attRecord?.status === 'late') {
+        if (isLate && !isExcused) {
           compliance = {
             code: 'late',
-            label: '⏱️ Đi muộn so với ca',
-            subText: `Check-in ${attRecord.checkIn} (Ca bắt đầu ${shift?.startTime})`,
-            badgeColor: 'bg-amber-50 text-amber-800 border-amber-300',
+            label: `⏱️ Trễ ${formatLateDuration(wageDetail.lateMinutes)}`,
+            subText: `Vào ${attRecord?.checkIn} (Ca bắt đầu ${shift?.startTime})`,
+            badgeColor: wageDetail.lateInfo.isExcessiveLate 
+              ? 'bg-rose-100 text-rose-800 border-rose-300 font-bold animate-pulse'
+              : 'bg-amber-50 text-amber-800 border-amber-300 font-bold',
           };
         } else {
           compliance = {
             code: 'on_time',
-            label: '✓ Đúng ca & đúng giờ',
-            subText: `Check-in ${attRecord?.checkIn} (Đạt chuẩn)`,
+            label: isExcused ? '🛡️ Đã duyệt miễn phạt trễ' : '✓ Đúng ca & đúng giờ',
+            subText: `Check-in ${attRecord?.checkIn} (${isExcused ? 'Đã duyệt' : 'Đạt chuẩn'})`,
             badgeColor: 'bg-emerald-50 text-emerald-700 border-emerald-200',
           };
         }
       }
     }
-
-    // 7. Tìm đơn ngoại lệ đang chờ hoặc đã duyệt
-    const matchedExc = exceptions.find(e => 
-      (e.userId === staff.id || e.staffCode === staff.staffCode || e.userName.toLowerCase() === staff.name.toLowerCase()) && 
-      e.targetDate === monitorDate
-    );
 
     return {
       staff,
@@ -869,6 +970,7 @@ export const AttendancePage: React.FC<AttendancePageProps> = ({
       hasCheckedOut,
       compliance,
       matchedExc,
+      wageDetail,
     };
   });
 
@@ -904,6 +1006,9 @@ export const AttendancePage: React.FC<AttendancePageProps> = ({
   const attendedCount = staffMonitorRows.filter(r => r.hasCheckedIn).length;
   const notAttendedCount = staffMonitorRows.filter(r => !r.hasCheckedIn && r.scheduledItem).length;
   const lateCountInMonitor = staffMonitorRows.filter(r => r.compliance.code === 'late').length;
+  const totalDayEstimatedWage = staffMonitorRows.reduce((sum, r) => sum + r.wageDetail.netShiftWage, 0);
+  const totalDayPenalties = staffMonitorRows.reduce((sum, r) => sum + r.wageDetail.penaltyAmount, 0);
+  const monitorDateHoliday = checkIsHoliday(monitorDate);
 
   // KPI Tab 2 (Exceptions)
   const pendingExceptionsCount = exceptions.filter(e => e.status === 'pending').length;
@@ -1013,12 +1118,27 @@ export const AttendancePage: React.FC<AttendancePageProps> = ({
                   {pendingExceptionsCount} Chờ Duyệt
                 </span>
               ) : (
-              <span className="px-2 py-0.5 rounded-full text-[10px] bg-slate-200 text-slate-700">
-                {exceptions.length}
-              </span>
-            )}
-          </button>
-          )} {/* end isManager exceptions tab */}
+                <span className="px-2 py-0.5 rounded-full text-[10px] bg-slate-200 text-slate-700">
+                  {exceptions.length}
+                </span>
+              )}
+            </button>
+          )}
+
+          {/* Tab Bảng Lương & Tổng Hợp Công Cuối Tháng: dành cho quản lý */}
+          {isManager && (
+            <button
+              onClick={() => setActiveSubTab('payroll')}
+              className={`flex items-center gap-2 px-4 py-2.5 rounded-xl text-xs font-bold transition cursor-pointer ${
+                activeSubTab === 'payroll'
+                  ? 'bg-slate-900 text-white shadow-xs'
+                  : 'bg-slate-50 hover:bg-slate-100 text-slate-600 border border-slate-200'
+              }`}
+            >
+              <DollarSign className="w-4 h-4 text-emerald-400" />
+              <span>Bảng Lương & Tổng Hợp Công Cuối Tháng</span>
+            </button>
+          )}
 
           <button
             onClick={() => setActiveSubTab('punch')}
@@ -1039,11 +1159,37 @@ export const AttendancePage: React.FC<AttendancePageProps> = ({
       {/* =================================================================== */}
       {activeSubTab === 'monitor' && (
         <div className="space-y-4 animate-in fade-in duration-150">
+          {/* Holiday Alert Banner */}
+          {monitorDateHoliday.isHoliday && (
+            <div className="bg-gradient-to-r from-purple-700 via-indigo-700 to-rose-700 text-white p-4 rounded-2xl shadow-md flex items-center justify-between animate-in fade-in">
+              <div className="flex items-center gap-3.5">
+                <div className="w-11 h-11 rounded-xl bg-white/20 backdrop-blur-xs flex items-center justify-center text-2xl shrink-0 shadow-xs">
+                  🎉
+                </div>
+                <div>
+                  <div className="font-black text-sm uppercase tracking-wide flex items-center gap-2">
+                    <span>Đại Lễ: {monitorDateHoliday.holidayName}</span>
+                    <span className="px-2.5 py-0.5 rounded-full bg-amber-400 text-slate-950 font-black text-[11px] shadow-xs">
+                      HỆ SỐ LƯƠNG x300%
+                    </span>
+                  </div>
+                  <div className="text-xs text-purple-100 mt-1">
+                    Toàn bộ ca làm việc trong ngày lễ này được tính <strong>gấp 3 lần đơn giá giờ</strong> ({formatCurrencyVND(BASE_HOURLY_RATE * 3)}/giờ = {formatCurrencyVND(BASE_HOURLY_RATE * 8 * 3)}/ca 8h).
+                  </div>
+                </div>
+              </div>
+              <div className="hidden md:block text-right pr-2">
+                <div className="text-[11px] text-purple-200">Đơn giá chuẩn ca 8h</div>
+                <div className="text-xl font-black text-amber-300">{formatCurrencyVND(BASE_HOURLY_RATE * 8 * 3)}</div>
+              </div>
+            </div>
+          )}
+
           {/* Quick Statistics Banner */}
-          <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
+          <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-6 gap-3">
             <div className="bg-white p-3.5 rounded-xl border border-slate-200 shadow-xs">
               <div className="text-[11px] font-medium text-slate-500 flex items-center justify-between">
-                <span>Tổng Nhân Sự Cụm Rạp</span>
+                <span>Tổng Quân Số</span>
                 <Building2 className="w-3.5 h-3.5 text-slate-400" />
               </div>
               <div className="text-xl font-bold text-slate-900 mt-1">{totalStaffCount}</div>
@@ -1052,34 +1198,56 @@ export const AttendancePage: React.FC<AttendancePageProps> = ({
 
             <div className="bg-white p-3.5 rounded-xl border border-emerald-200 bg-emerald-50/20 shadow-xs">
               <div className="text-[11px] font-medium text-emerald-700 flex items-center justify-between">
-                <span>Đã Điểm Danh Ca</span>
+                <span>Đã Điểm Danh</span>
                 <CheckCircle2 className="w-3.5 h-3.5 text-emerald-600" />
               </div>
               <div className="text-xl font-bold text-emerald-700 mt-1">{attendedCount}</div>
               <div className="text-[10px] text-emerald-600 font-medium mt-0.5">
-                Đạt {totalStaffCount > 0 ? Math.round((attendedCount / totalStaffCount) * 100) : 0}% tổng quân số
+                Đạt {totalStaffCount > 0 ? Math.round((attendedCount / totalStaffCount) * 100) : 0}% quân số
               </div>
             </div>
 
             <div className="bg-white p-3.5 rounded-xl border border-amber-200 bg-amber-50/20 shadow-xs">
               <div className="text-[11px] font-medium text-amber-700 flex items-center justify-between">
-                <span>Đi Muộn Cần Duyệt Trễ</span>
+                <span>Đi Muộn Ca</span>
                 <AlertTriangle className="w-3.5 h-3.5 text-amber-600" />
               </div>
               <div className="text-xl font-bold text-amber-700 mt-1">{lateCountInMonitor}</div>
               <div className="text-[10px] text-amber-600 font-medium mt-0.5">
-                Có thể bấm duyệt miễn trừ ngay
+                Bấm duyệt trễ để miễn phạt
               </div>
             </div>
 
             <div className="bg-white p-3.5 rounded-xl border border-rose-200 bg-rose-50/20 shadow-xs">
               <div className="text-[11px] font-medium text-rose-700 flex items-center justify-between">
-                <span>Chưa Chấm Công Theo Ca</span>
+                <span>Chưa Chấm Ca</span>
                 <AlertCircle className="w-3.5 h-3.5 text-rose-600" />
               </div>
               <div className="text-xl font-bold text-rose-700 mt-1">{notAttendedCount}</div>
               <div className="text-[10px] text-rose-600 font-medium mt-0.5">
-                Có ca nhưng chưa quẹt Face ID
+                Chưa quét Face ID
+              </div>
+            </div>
+
+            <div className="bg-white p-3.5 rounded-xl border border-blue-200 bg-blue-50/20 shadow-xs">
+              <div className="text-[11px] font-medium text-blue-700 flex items-center justify-between">
+                <span>Ước Tính Quỹ Lương</span>
+                <DollarSign className="w-3.5 h-3.5 text-blue-600" />
+              </div>
+              <div className="text-base font-bold text-blue-800 mt-1 truncate">{formatCurrencyVND(totalDayEstimatedWage)}</div>
+              <div className="text-[10px] text-blue-600 font-medium mt-0.5">
+                {monitorDateHoliday.isHoliday ? '⭐ Đã x3 ngày lễ' : 'Lương ngày thường'}
+              </div>
+            </div>
+
+            <div className="bg-white p-3.5 rounded-xl border border-orange-200 bg-orange-50/20 shadow-xs">
+              <div className="text-[11px] font-medium text-orange-700 flex items-center justify-between">
+                <span>Tổng Phạt Trễ Ngày</span>
+                <AlertTriangle className="w-3.5 h-3.5 text-orange-600" />
+              </div>
+              <div className="text-base font-bold text-orange-800 mt-1 truncate">{formatCurrencyVND(totalDayPenalties)}</div>
+              <div className="text-[10px] text-orange-600 font-medium mt-0.5">
+                Hoàn khi duyệt trễ
               </div>
             </div>
           </div>
@@ -1172,13 +1340,18 @@ export const AttendancePage: React.FC<AttendancePageProps> = ({
           <div className="bg-white border border-slate-200 rounded-2xl overflow-hidden shadow-xs">
             <div className="p-4 border-b border-slate-200 bg-slate-50/50 flex flex-col sm:flex-row sm:items-center justify-between gap-2">
               <div className="text-xs font-bold text-slate-900 flex items-center gap-2">
-                <span>Bảng Kiểm Tra Điểm Danh & Ca Trực ({formatDateDMY(monitorDate)})</span>
+                <span>Bảng Kiểm Tra Điểm Danh, Đi Trễ & Quy Ra Lương Ngày ({formatDateDMY(monitorDate)})</span>
                 <span className="text-[11px] px-2 py-0.5 rounded-full bg-slate-200 text-slate-700 font-semibold">
                   {filteredMonitorRows.length} nhân sự
                 </span>
+                {monitorDateHoliday.isHoliday && (
+                  <span className="text-[10px] px-2 py-0.5 rounded-full bg-purple-100 text-purple-700 font-bold border border-purple-200">
+                    ⭐ Ngày Lễ x3 Lương
+                  </span>
+                )}
               </div>
               <div className="text-[11px] text-slate-500">
-                So khớp dữ liệu phân ca thực tế và máy quét Face ID
+                Chuẩn lương: {formatCurrencyVND(BASE_HOURLY_RATE)}/h • Ngày lễ x3 ({formatCurrencyVND(BASE_HOURLY_RATE * 3)}/h)
               </div>
             </div>
 
@@ -1186,27 +1359,28 @@ export const AttendancePage: React.FC<AttendancePageProps> = ({
               <table className="w-full text-left text-xs text-slate-700">
                 <thead className="bg-slate-50 uppercase font-bold text-[10px] text-slate-500 border-b border-slate-200">
                   <tr>
-                    <th className="px-4 py-3.5">Nhân Viên & Nghiệp Vụ</th>
-                    <th className="px-4 py-3.5">Chi Nhánh</th>
-                    <th className="px-4 py-3.5">Ca Phân Công Theo Lịch</th>
-                    <th className="px-4 py-3.5">Giờ Chấm Công Thực Tế</th>
-                    <th className="px-4 py-3.5">So Khớp Ca Làm Việc</th>
-                    <th className="px-4 py-3.5 text-right">Xử Lý & Thao Tác Quản Lý</th>
+                    <th className="px-3.5 py-3.5">Nhân Viên & Bộ Phận</th>
+                    <th className="px-3 py-3.5">Ca Phân Công</th>
+                    <th className="px-3 py-3.5">Chấm Công Thực Tế</th>
+                    <th className="px-3 py-3.5">Đi Trễ & Trừ Lương</th>
+                    <th className="px-3 py-3.5 text-center">Hệ Số Ngày</th>
+                    <th className="px-3.5 py-3.5 text-right">Lương Ca Ngày Đó</th>
+                    <th className="px-3.5 py-3.5 text-right">Xử Lý & Thao Tác</th>
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-slate-100">
                   {filteredMonitorRows.length === 0 ? (
                     <tr>
-                      <td colSpan={6} className="px-4 py-10 text-center text-slate-400">
+                      <td colSpan={7} className="px-4 py-10 text-center text-slate-400">
                         Không tìm thấy nhân viên nào phù hợp với bộ lọc ngày {formatDateDMY(monitorDate)}.
                       </td>
                     </tr>
                   ) : (
                     filteredMonitorRows.map((row) => (
                       <tr key={row.staff.id} className="hover:bg-slate-50/80 transition">
-                        {/* Nhân Viên & Nghiệp Vụ */}
-                        <td className="px-4 py-3.5">
-                          <div className="flex items-center gap-3">
+                        {/* Nhân Viên & Bộ Phận */}
+                        <td className="px-3.5 py-3.5">
+                          <div className="flex items-center gap-2.5">
                             {row.staff.avatar ? (
                               <img 
                                 src={row.staff.avatar} 
@@ -1227,25 +1401,21 @@ export const AttendancePage: React.FC<AttendancePageProps> = ({
                                   {row.staff.department || 'Nhân viên rạp'}
                                 </span>
                               </div>
+                              <div className="text-[10px] text-slate-400 flex items-center gap-1 mt-0.5">
+                                <MapPin className="w-2.5 h-2.5 text-rose-500 shrink-0" />
+                                <span className="truncate">{row.branch}</span>
+                              </div>
                             </div>
                           </div>
                         </td>
 
-                        {/* Chi Nhánh */}
-                        <td className="px-4 py-3.5">
-                          <div className="flex items-center gap-1.5 font-medium text-slate-800">
-                            <MapPin className="w-3.5 h-3.5 text-rose-500 shrink-0" />
-                            <span className="truncate">{row.branch}</span>
-                          </div>
-                        </td>
-
-                        {/* Ca Phân Công Theo Lịch */}
-                        <td className="px-4 py-3.5">
+                        {/* Ca Phân Công */}
+                        <td className="px-3 py-3.5">
                           {row.scheduledItem ? (
                             <div>
-                              <div className="font-bold text-slate-900 flex items-center gap-1.5">
+                              <div className="font-bold text-slate-900 flex items-center gap-1">
                                 <Clock className="w-3.5 h-3.5 text-amber-600 shrink-0" />
-                                <span>{row.shift?.name || row.scheduledItem.shiftName}</span>
+                                <span className="truncate">{row.shift?.name || row.scheduledItem.shiftName}</span>
                               </div>
                               <div className="text-[10px] text-slate-500 mt-0.5">
                                 Khung giờ: <span className="font-mono font-medium text-slate-700">{row.shift?.startTime} - {row.shift?.endTime}</span>
@@ -1258,8 +1428,8 @@ export const AttendancePage: React.FC<AttendancePageProps> = ({
                           )}
                         </td>
 
-                        {/* Giờ Chấm Công Thực Tế */}
-                        <td className="px-4 py-3.5">
+                        {/* Chấm Công Thực Tế */}
+                        <td className="px-3 py-3.5">
                           {row.hasCheckedIn ? (
                             <div className="space-y-0.5">
                               <div className="flex items-center gap-1.5 font-mono text-xs">
@@ -1270,51 +1440,116 @@ export const AttendancePage: React.FC<AttendancePageProps> = ({
                                 <span className="text-slate-300">|</span>
                                 <span className="text-slate-500 text-[10px]">Ra:</span>
                                 <span className="font-bold text-slate-700">
-                                  {row.attRecord?.checkOut || 'Đang trong ca'}
+                                  {row.attRecord?.checkOut || 'Đang trực'}
                                 </span>
                               </div>
-                              {row.attRecord?.hoursWorked ? (
-                                <div className="text-[10px] text-slate-500">
-                                  Đã làm: <strong className="text-slate-800">{row.attRecord.hoursWorked} giờ</strong>
-                                </div>
-                              ) : null}
+                              <div className="text-[10px] text-slate-500">
+                                Đã tính: <strong className="text-slate-800">{row.wageDetail.hoursWorked} giờ</strong>
+                              </div>
                             </div>
                           ) : (
-                            <span className="inline-flex items-center gap-1 text-[11px] font-bold text-rose-600 bg-rose-50 px-2 py-0.5 rounded-lg border border-rose-200">
+                            <span className="inline-flex items-center gap-1 text-[10px] font-bold text-rose-600 bg-rose-50 px-2 py-0.5 rounded-lg border border-rose-200">
                               <XCircle className="w-3 h-3" />
                               Chưa chấm công
                             </span>
                           )}
                         </td>
 
-                        {/* So Khớp Ca Làm Việc */}
-                        <td className="px-4 py-3.5">
-                          <div className="space-y-1">
-                            <span className={`inline-flex items-center gap-1 text-[10px] px-2.5 py-1 rounded-full font-bold border ${row.compliance.badgeColor}`}>
-                              {row.compliance.label}
+                        {/* Đi Trễ & Trừ Lương */}
+                        <td className="px-3 py-3.5">
+                          {row.hasCheckedIn ? (
+                            <div className="space-y-1">
+                              {row.wageDetail.lateMinutes > 0 ? (
+                                <>
+                                  <div className="flex items-center gap-1">
+                                    <span className={`inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-bold border ${
+                                      row.wageDetail.lateInfo.tier === 'critical'
+                                        ? 'bg-rose-100 text-rose-800 border-rose-300 animate-pulse'
+                                        : row.wageDetail.lateInfo.tier === 'severe'
+                                        ? 'bg-rose-50 text-rose-800 border-rose-300'
+                                        : row.wageDetail.lateInfo.tier === 'moderate'
+                                        ? 'bg-orange-100 text-orange-800 border-orange-300'
+                                        : 'bg-amber-100 text-amber-800 border-amber-300'
+                                    }`}>
+                                      ⏱️ Trễ {formatLateDuration(row.wageDetail.lateMinutes)}
+                                    </span>
+                                  </div>
+                                  
+                                  {row.wageDetail.lateInfo.isExcused ? (
+                                    <div className="text-[10px] font-bold text-emerald-700 flex items-center gap-1">
+                                      <ShieldCheck className="w-3 h-3 text-emerald-600 shrink-0" />
+                                      <span>Đã duyệt miễn phạt (0đ)</span>
+                                    </div>
+                                  ) : (
+                                    <div className="text-[10px] font-bold text-rose-600">
+                                      Trừ lương: -{formatCurrencyVND(row.wageDetail.penaltyAmount)}
+                                      {row.wageDetail.lateInfo.isExcessiveLate && (
+                                        <span className="block text-[9px] text-rose-500 font-normal">
+                                          🚨 Trễ quá lâu (&gt;60p): Cảnh cáo kỷ luật
+                                        </span>
+                                      )}
+                                    </div>
+                                  )}
+                                </>
+                              ) : (
+                                <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-bold bg-emerald-50 text-emerald-700 border border-emerald-200">
+                                  ✓ Đúng giờ (0đ phạt)
+                                </span>
+                              )}
+                            </div>
+                          ) : (
+                            <span className="text-[10px] text-slate-400 italic">—</span>
+                          )}
+                        </td>
+
+                        {/* Hệ Số Ngày */}
+                        <td className="px-3 py-3.5 text-center">
+                          {row.wageDetail.isHoliday ? (
+                            <div className="inline-flex flex-col items-center">
+                              <span className="px-2 py-0.5 rounded-full bg-purple-100 text-purple-800 font-bold text-[10px] border border-purple-200 shadow-2xs">
+                                ⭐ Lễ x3 Lương
+                              </span>
+                              <span className="text-[9px] text-purple-600 mt-0.5 font-medium truncate max-w-[120px]" title={row.wageDetail.holidayName}>
+                                {row.wageDetail.holidayName}
+                              </span>
+                            </div>
+                          ) : (
+                            <span className="px-2 py-0.5 rounded-md bg-slate-100 text-slate-600 text-[10px] font-medium border border-slate-200">
+                              Thường (x1.0)
                             </span>
-                            {row.compliance.subText && (
-                              <div className="text-[10px] text-slate-500 italic max-w-xs truncate">
-                                {row.compliance.subText}
+                          )}
+                        </td>
+
+                        {/* Lương Ca Ngày Đó */}
+                        <td className="px-3.5 py-3.5 text-right font-mono">
+                          {row.hasCheckedIn ? (
+                            <div>
+                              <div className="text-sm font-black text-emerald-600">
+                                {formatCurrencyVND(row.wageDetail.netShiftWage)}
                               </div>
-                            )}
-                            {row.attRecord?.note && (
-                              <div className="text-[9px] text-slate-400 font-mono max-w-xs truncate" title={row.attRecord.note}>
-                                {row.attRecord.note}
+                              <div className="text-[10px] text-slate-400 mt-0.5">
+                                Gốc: {formatCurrencyVND(row.wageDetail.rawShiftWage)}
+                                {row.wageDetail.penaltyAmount > 0 && (
+                                  <span className="text-rose-500 font-semibold block">
+                                    -{formatCurrencyVND(row.wageDetail.penaltyAmount)}
+                                  </span>
+                                )}
                               </div>
-                            )}
-                          </div>
+                            </div>
+                          ) : (
+                            <span className="text-slate-400 font-sans text-[11px]">0 VNĐ</span>
+                          )}
                         </td>
 
                         {/* Xử Lý & Thao Tác Quản Lý */}
-                        <td className="px-4 py-3.5 text-right">
-                          <div className="flex items-center justify-end gap-2">
-                            {/* Nút Duyệt Trễ Nhanh (nếu đi muộn) */}
-                            {row.compliance.code === 'late' && (
+                        <td className="px-3.5 py-3.5 text-right">
+                          <div className="flex items-center justify-end gap-1.5">
+                            {/* Nút Duyệt Trễ Nhanh (nếu đi muộn và chưa được duyệt miễn phạt) */}
+                            {(row.wageDetail.lateMinutes > 5 || row.compliance.code === 'late') && !row.wageDetail.lateInfo.isExcused && (
                               <button
                                 onClick={() => row.attRecord && handleQuickForgiveLate(row.attRecord)}
-                                className="px-2.5 py-1.5 bg-amber-500 hover:bg-amber-600 active:bg-amber-700 text-slate-950 text-[11px] font-bold rounded-lg shadow-2xs transition flex items-center gap-1 cursor-pointer"
-                                title="Phê duyệt miễn phạt đi muộn"
+                                className="px-2.5 py-1.5 bg-amber-500 hover:bg-amber-600 active:bg-amber-700 text-slate-950 text-[11px] font-bold rounded-lg shadow-2xs transition flex items-center gap-1 cursor-pointer shrink-0"
+                                title="Phê duyệt miễn trừ phạt trễ và hoàn lương ca"
                               >
                                 <CheckCheck className="w-3.5 h-3.5" />
                                 <span>Duyệt Trễ</span>
@@ -1331,7 +1566,7 @@ export const AttendancePage: React.FC<AttendancePageProps> = ({
                                   setModalLocation(row.branch);
                                   setIsModalOpen(true);
                                 }}
-                                className="px-2.5 py-1.5 bg-slate-100 hover:bg-slate-200 text-slate-700 text-[11px] font-bold rounded-lg border border-slate-300 transition flex items-center gap-1 cursor-pointer"
+                                className="px-2.5 py-1.5 bg-slate-100 hover:bg-slate-200 text-slate-700 text-[11px] font-bold rounded-lg border border-slate-300 transition flex items-center gap-1 cursor-pointer shrink-0"
                                 title="Ghi nhận giờ vào ra bổ sung"
                               >
                                 <Plus className="w-3.5 h-3.5" />
@@ -1359,6 +1594,17 @@ export const AttendancePage: React.FC<AttendancePageProps> = ({
             </div>
           </div>
         </div>
+      )}
+
+      {/* =================================================================== */}
+      {/* TAB PAYROLL: BẢNG LƯƠNG & TỔNG HỢP CÔNG CUỐI THÁNG                  */}
+      {/* =================================================================== */}
+      {activeSubTab === 'payroll' && isManager && (
+        <MonthlyPayrollTable 
+          users={users} 
+          attendances={attendances} 
+          shifts={AVAILABLE_SHIFTS as any} 
+        />
       )}
 
       {/* =================================================================== */}
@@ -1606,24 +1852,43 @@ export const AttendancePage: React.FC<AttendancePageProps> = ({
                       isWifiValid 
                         ? 'bg-emerald-50 text-emerald-700 border-emerald-300' 
                         : 'bg-rose-50 text-rose-700 border-rose-300'
-                    }`}>
+                    }`}
+                    title={`IP hiện tại: ${currentNetworkIp} | IP Wi-Fi rạp yêu cầu: ${authorizedConfig.authorizedIp}`}
+                    >
                       <Wifi className="w-3.5 h-3.5" />
-                      <span>{isWifiValid ? `Đã kết nối Wi-Fi rạp (${authorizedConfig.wifiSsidName})` : 'Chưa kết nối Wi-Fi rạp (Khóa điểm danh)'}</span>
+                      <span>
+                        {isWifiValid
+                          ? `Đã kết nối Wi-Fi rạp (${authorizedConfig.wifiSsidName} • ${currentNetworkIp})`
+                          : `Chưa kết nối Wi-Fi rạp (IP hiện tại: ${currentNetworkIp} ≠ Rạp: ${authorizedConfig.authorizedIp})`}
+                      </span>
                     </div>
 
-                    <button
-                      type="button"
-                      onClick={() => {
-                        setWifiInputIp(authorizedConfig.authorizedIp || '10.106.193.65');
-                        setWifiInputSsid(authorizedConfig.wifiSsidName || 'AURORA-CINEMA-STAFF-5G');
-                        setIsWifiModalOpen(true);
-                      }}
-                      className="inline-flex items-center gap-1 px-2.5 py-1 text-xs font-semibold text-slate-700 bg-white hover:bg-slate-50 border border-slate-300 rounded-xl shadow-2xs transition cursor-pointer"
-                      title="Cấu hình IP Wi-Fi rạp"
-                    >
-                      <Settings className="w-3.5 h-3.5 text-slate-500" />
-                      <span>Cài đặt Wi-Fi</span>
-                    </button>
+                    {isManager ? (
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setWifiInputIp(authorizedConfig.authorizedIp || '10.106.193.65');
+                          setWifiInputSsid(authorizedConfig.wifiSsidName || 'AURORA-CINEMA-STAFF-5G');
+                          setIsWifiModalOpen(true);
+                        }}
+                        className="inline-flex items-center gap-1 px-2.5 py-1 text-xs font-semibold text-slate-700 bg-white hover:bg-slate-50 border border-slate-300 rounded-xl shadow-2xs transition cursor-pointer"
+                        title="Cấu hình IP Wi-Fi rạp (Chỉ Quản lý)"
+                      >
+                        <Settings className="w-3.5 h-3.5 text-slate-500" />
+                        <span>Cài đặt Wi-Fi</span>
+                      </button>
+                    ) : (
+                      <button
+                        type="button"
+                        onClick={refreshNetworkInfo}
+                        disabled={isCheckingNetwork}
+                        className="inline-flex items-center gap-1 px-2.5 py-1 text-xs font-semibold text-slate-700 bg-white hover:bg-slate-50 border border-slate-300 rounded-xl shadow-2xs transition cursor-pointer"
+                        title="Kiểm tra lại kết nối Wi-Fi rạp"
+                      >
+                        <RefreshCw className={`w-3.5 h-3.5 text-slate-500 ${isCheckingNetwork ? 'animate-spin' : ''}`} />
+                        <span>Kiểm tra lại mạng</span>
+                      </button>
+                    )}
                   </div>
                 </div>
 
@@ -1724,22 +1989,58 @@ export const AttendancePage: React.FC<AttendancePageProps> = ({
                 </div>
               </div>
 
-              {/* Action Punch Buttons triggering verification */}
-              <div className="flex sm:flex-col gap-2.5 min-w-[220px]">
+              <div className="flex sm:flex-col gap-2.5 min-w-[235px]">
                 <button
+                  type="button"
+                  disabled={isInActiveShift}
                   onClick={() => startVerification('check_in')}
-                  className="flex-1 flex items-center justify-center gap-2 px-4 py-3 rounded-xl font-bold text-xs bg-emerald-600 hover:bg-emerald-700 active:bg-emerald-800 text-white shadow-emerald-500/20 cursor-pointer transition shadow-xs"
+                  className={`flex-1 flex items-center justify-center gap-2 px-4 py-3 rounded-xl font-bold text-xs transition shadow-xs ${
+                    isInActiveShift
+                      ? 'bg-emerald-50 text-emerald-700 border border-emerald-300 cursor-not-allowed'
+                      : 'bg-emerald-600 hover:bg-emerald-700 active:bg-emerald-800 text-white shadow-emerald-500/20 cursor-pointer'
+                  }`}
                 >
-                  <LogIn className="w-4 h-4" />
-                  Xác Thực & Check-in Vào Ca
+                  {isInActiveShift ? (
+                    <>
+                      <CheckCircle2 className="w-4 h-4 text-emerald-600 shrink-0" />
+                      <span>Đã Vào Ca ({currentShiftAttendance?.checkIn})</span>
+                    </>
+                  ) : (
+                    <>
+                      <LogIn className="w-4 h-4 shrink-0" />
+                      <span>Xác Thực & Check-in Vào Ca</span>
+                    </>
+                  )}
                 </button>
 
                 <button
+                  type="button"
+                  disabled={!isInActiveShift}
                   onClick={() => startVerification('check_out')}
-                  className="flex-1 flex items-center justify-center gap-2 px-4 py-3 rounded-xl font-bold text-xs bg-rose-600 hover:bg-rose-700 active:bg-rose-800 text-white shadow-rose-500/20 cursor-pointer transition shadow-xs"
+                  className={`flex-1 flex items-center justify-center gap-2 px-4 py-3 rounded-xl font-bold text-xs transition shadow-xs ${
+                    !isInActiveShift
+                      ? 'bg-slate-100 text-slate-500 border border-slate-200 cursor-not-allowed'
+                      : 'bg-rose-600 hover:bg-rose-700 active:bg-rose-800 text-white shadow-rose-500/20 cursor-pointer'
+                  }`}
                 >
-                  <LogOut className="w-4 h-4" />
-                  Xác Thực & Check-out Tan Ca
+                  {!isInActiveShift ? (
+                    hasCompletedShiftCycle ? (
+                      <>
+                        <CheckCircle2 className="w-4 h-4 text-emerald-600 shrink-0" />
+                        <span>Đã Tan Ca ({currentShiftAttendance?.checkOut})</span>
+                      </>
+                    ) : (
+                      <>
+                        <Lock className="w-3.5 h-3.5 shrink-0" />
+                        <span>Check-out Tan Ca (Chưa vào ca)</span>
+                      </>
+                    )
+                  ) : (
+                    <>
+                      <LogOut className="w-4 h-4 shrink-0" />
+                      <span>Xác Thực & Check-out Tan Ca</span>
+                    </>
+                  )}
                 </button>
               </div>
             </div>
@@ -1857,10 +2158,15 @@ export const AttendancePage: React.FC<AttendancePageProps> = ({
                   <CheckCircle2 className="w-4 h-4 text-emerald-500" />
                   Đã khớp khuôn mặt ({lastScanResult.similarity}%)
                 </span>
+              ) : lastScanResult && !lastScanResult.isMatch && realtimeFaceTrack.hasFace ? (
+                <span className="text-xs font-semibold text-rose-600 flex items-center gap-1.5">
+                  <XCircle className="w-4 h-4 text-rose-500 shrink-0" />
+                  Khuôn mặt không khớp mẫu đã lưu ({lastScanResult.similarity}%)
+                </span>
               ) : realtimeFaceTrack.isOccluded ? (
                 <span className="text-xs font-semibold text-rose-600 flex items-center gap-1.5 animate-pulse">
                   <AlertTriangle className="w-4 h-4 text-rose-500 shrink-0" />
-                  Vui lòng không che mặt hoặc bỏ khẩu trang
+                  {realtimeFaceTrack.occlusionReason || 'Vui lòng nhìn thẳng vào camera'}
                 </span>
               ) : realtimeFaceTrack.hasFace ? (
                 <span className="text-xs font-medium text-amber-600 flex items-center gap-1.5">
@@ -1882,7 +2188,6 @@ export const AttendancePage: React.FC<AttendancePageProps> = ({
               )}
             </div>
 
-            {/* Enroll button for Manager */}
             {isManager && (
               <div className="w-full mt-2">
                 <button
@@ -1911,16 +2216,32 @@ export const AttendancePage: React.FC<AttendancePageProps> = ({
               <button
                 type="button"
                 onClick={() => handleCompleteVerifiedPunch()}
-                disabled={isAutoPunching || !isWifiValid}
+                disabled={isAutoPunching || !isWifiValid || !enrolledFace || !lastScanResult?.isMatch}
                 className={`flex-1 py-2.5 text-xs font-bold rounded-xl flex items-center justify-center gap-1.5 transition ${
-                  isWifiValid && !isAutoPunching
+                  isWifiValid && enrolledFace && lastScanResult?.isMatch && !isAutoPunching
                     ? 'bg-emerald-600 hover:bg-emerald-700 text-white shadow-xs cursor-pointer'
                     : 'bg-slate-100 text-slate-400 cursor-not-allowed border border-slate-200'
                 }`}
-                title={!isWifiValid ? 'Bạn chưa vào đúng Wi-Fi rạp nên nút này bị khóa' : 'Xác nhận chấm công'}
+                title={
+                  !isWifiValid
+                    ? 'Bạn chưa vào đúng Wi-Fi rạp nên nút này bị khóa'
+                    : !enrolledFace
+                    ? 'Nhân sự chưa đăng ký khuôn mặt mẫu'
+                    : !lastScanResult?.isMatch
+                    ? 'Cần quét khớp khuôn mặt chính chủ trước khi xác nhận'
+                    : 'Xác nhận chấm công'
+                }
               >
                 <Check className="w-4 h-4" />
-                {isAutoPunching ? 'Đang lưu...' : !isWifiValid ? 'Bị Khóa Wi-Fi' : 'Xác Nhận'}
+                {isAutoPunching
+                  ? 'Đang lưu...'
+                  : !isWifiValid
+                  ? 'Bị Khóa Wi-Fi'
+                  : !enrolledFace
+                  ? 'Chưa Có Mẫu Mặt'
+                  : !lastScanResult?.isMatch
+                  ? 'Chờ Quét Mặt...'
+                  : 'Xác Nhận'}
               </button>
             </div>
           </div>
@@ -1930,7 +2251,7 @@ export const AttendancePage: React.FC<AttendancePageProps> = ({
       {/* =================================================================== */}
       {/* MODAL: CẤU HÌNH IP WI-FI RẠP CHO CHẤM CÔNG                          */}
       {/* =================================================================== */}
-      {isWifiModalOpen && (
+      {isWifiModalOpen && isManager && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/50 backdrop-blur-xs p-4 animate-in fade-in duration-150">
           <div className="bg-white rounded-2xl max-w-md w-full p-6 shadow-2xl border border-slate-200 animate-in zoom-in-95 duration-150">
             <div className="flex items-center justify-between border-b border-slate-100 pb-3 mb-4">

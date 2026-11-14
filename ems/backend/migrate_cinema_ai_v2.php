@@ -4,7 +4,7 @@
  * Pending Actions (xác nhận hành động nguy hiểm), Conversation Context (bộ nhớ thực thể)
  * + Seed dữ liệu bán vé / doanh thu để AI có thể phân tích.
  */
-$pdo = new PDO("mysql:host=127.0.0.1;port=3306;dbname=aurora_ems;charset=utf8mb4", 'root', '', [
+$pdo = new PDO("mysql:host=127.0.0.1;port=3306;dbname=aurora_db;charset=utf8mb4", 'root', '', [
     PDO::ATTR_ERRMODE => PDO::ERRMODE_EXCEPTION,
     PDO::ATTR_DEFAULT_FETCH_MODE => PDO::FETCH_ASSOC,
 ]);

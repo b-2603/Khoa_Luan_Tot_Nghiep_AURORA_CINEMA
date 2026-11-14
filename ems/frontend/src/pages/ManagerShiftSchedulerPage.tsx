@@ -19,6 +19,7 @@ import {
   ClipboardList, ShieldCheck, UserPlus
 } from 'lucide-react';
 import { getWeekDaysByOffset, getTodayDateString } from '../utils/dateUtils';
+import { MonthlyPlannerPanel } from '../components/MonthlyPlannerPanel';
 
 const LOCATIONS = [
   'Cụm Rạp 1 - Quầy Vé Box Office',
@@ -93,7 +94,7 @@ export const ManagerShiftSchedulerPage: React.FC = () => {
     }
   });
 
-  const [activeTab, setActiveTab] = useState<'published' | 'registrations'>('published');
+  const [activeTab, setActiveTab] = useState<'published' | 'registrations' | 'monthly'>('monthly');
   const [isAiLoading, setIsAiLoading] = useState(false);
   const [isPublishing, setIsPublishing] = useState(false);
   const [processingId, setProcessingId] = useState<string | null>(null);
@@ -597,6 +598,7 @@ export const ManagerShiftSchedulerPage: React.FC = () => {
 
       <div className="flex flex-wrap gap-1.5 bg-slate-200/70 p-1.5 rounded-2xl">
         {[
+          { key: 'monthly', icon: <Sparkles className="w-4 h-4" />, label: 'Lịch Tháng Tự Động', badge: null },
           { key: 'published', icon: <LayoutGrid className="w-4 h-4" />, label: 'Bảng Lịch Cả Tuần (7 Ngày)', badge: weekSchedules.length },
           { key: 'registrations', icon: <ClipboardList className="w-4 h-4" />, label: 'Duyệt Đăng Ký Ca', badge: pendingRegs.length },
         ].map(tab => (
@@ -619,6 +621,17 @@ export const ManagerShiftSchedulerPage: React.FC = () => {
           </button>
         ))}
       </div>
+
+      {activeTab === 'monthly' && (
+        <MonthlyPlannerPanel
+          staff={users}
+          onPublished={count => {
+            setSchedules(getWorkSchedules());
+            showToast('success', `Đã xuất bản ${count} ca vào lịch chính thức.`);
+            setActiveTab('published');
+          }}
+        />
+      )}
 
       {activeTab === 'published' && (
         <div className="bg-white border border-slate-200 rounded-2xl overflow-hidden shadow-sm">

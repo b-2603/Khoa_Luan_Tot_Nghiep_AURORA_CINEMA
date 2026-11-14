@@ -3,7 +3,7 @@
  * ==============================================================================
  * AURORA CINEMAS EMS - RESTful API Server Engine (PHP & MySQL Database Backend)
  * Khóa luận tốt nghiệp: Quản lý rạp chiếu phim AURORA CINEMAS tích hợp AI
- * Tương thích trực tiếp với XAMPP / MariaDB / CSDL aurora_ems (11 bảng)
+ * Tương thích trực tiếp với XAMPP / MariaDB / CSDL aurora_db (bảng ems_*)
  * ==============================================================================
  */
 
@@ -39,7 +39,7 @@ if (file_exists($envPath)) {
 
 $dbHost = $env['DB_HOST'] ?? '127.0.0.1';
 $dbPort = $env['DB_PORT'] ?? '3306';
-$dbName = $env['DB_DATABASE'] ?? 'aurora_ems';
+$dbName = $env['DB_DATABASE'] ?? 'aurora_db';
 $dbUser = $env['DB_USERNAME'] ?? 'root';
 $dbPass = $env['DB_PASSWORD'] ?? '';
 $openAiKey = $env['OPENAI_API_KEY'] ?? '';
@@ -53,20 +53,20 @@ try {
         PDO::MYSQL_ATTR_INIT_COMMAND => "SET NAMES utf8mb4"
     ]);
     // Dọn dẹp tài khoản rác tạo ngẫu nhiên trong quá trình thử nghiệm
-    $pdo->exec("DELETE FROM users WHERE staff_code LIKE 'khach%' OR email LIKE 'khach%' OR name = 'Nhân viên Rạp Phim'");
+    $pdo->exec("DELETE FROM ems_users WHERE staff_code LIKE 'khach%' OR email LIKE 'khach%' OR name = 'Nhân viên Rạp Phim'");
     // Đồng bộ mật khẩu mặc định 8888 cho tài khoản ban đầu nếu chưa được cấu hình
     $defaultHash = password_hash('8888', PASSWORD_BCRYPT);
-    $pdo->exec("UPDATE users SET password = '{$defaultHash}' WHERE password = '' OR password IS NULL OR password LIKE '%4Auid%'");
+    $pdo->exec("UPDATE ems_users SET password = '{$defaultHash}' WHERE password = '' OR password IS NULL OR password LIKE '%4Auid%'");
     // Tất cả mã nhân viên đều là số điện thoại (SĐT)
     try {
-        $pdo->exec("UPDATE users SET staff_code = phone WHERE phone IS NOT NULL AND phone != '' AND staff_code != phone");
+        $pdo->exec("UPDATE ems_users SET staff_code = phone WHERE phone IS NOT NULL AND phone != '' AND staff_code != phone");
     } catch (Exception $e) {}
 } catch (PDOException $e) {
     http_response_code(500);
     echo json_encode([
         'status' => 'error',
         'message' => 'Không thể kết nối CSDL MySQL: ' . $e->getMessage(),
-        'hint' => 'Hãy đảm bảo MySQL trong XAMPP đang ở trạng thái Start và database aurora_ems đã được import.'
+        'hint' => 'Hãy đảm bảo MySQL trong XAMPP đang ở trạng thái Start và database aurora_db đã được import.'
     ], JSON_UNESCAPED_UNICODE);
     exit;
 }
@@ -110,9 +110,9 @@ function verifyUserPassword($inputPass, $hashedPass) {
 if ($route === '/health' || $route === '/') {
     $stmt = $pdo->query("SHOW TABLES");
     $tables = $stmt->fetchAll(PDO::FETCH_COLUMN);
-    $userCount = $pdo->query("SELECT count(*) FROM users")->fetchColumn();
-    $courseCount = $pdo->query("SELECT count(*) FROM courses")->fetchColumn();
-    $quizCount = $pdo->query("SELECT count(*) FROM quizzes")->fetchColumn();
+    $userCount = $pdo->query("SELECT count(*) FROM ems_users")->fetchColumn();
+    $courseCount = $pdo->query("SELECT count(*) FROM ems_courses")->fetchColumn();
+    $quizCount = $pdo->query("SELECT count(*) FROM ems_quizzes")->fetchColumn();
 
     jsonResponse([
         'status' => 'success',
@@ -198,7 +198,7 @@ if ($route === '/ai/chat' && $method === 'POST') {
 
     // RBAC: xác thực vai trò trực tiếp từ bảng users trong MySQL (tránh giả mạo role)
     $uid = !empty($body['user_id']) ? intval(str_replace('usr-', '', (string)$body['user_id'])) : 1;
-    $uStmt = $pdo->prepare("SELECT id, name, role, department FROM users WHERE id = ? LIMIT 1");
+    $uStmt = $pdo->prepare("SELECT id, name, role, department FROM ems_users WHERE id = ? LIMIT 1");
     $uStmt->execute([$uid]);
     $uRow = $uStmt->fetch(PDO::FETCH_ASSOC);
 
@@ -243,7 +243,7 @@ if ($route === '/ai/tools' && $method === 'GET') {
 // Endpoint: GET /api/ai/tool-logs (Nhật ký thực thi AI Tools - Audit log)
 if ($route === '/ai/tool-logs' && $method === 'GET') {
     $limit = isset($_GET['limit']) ? intval($_GET['limit']) : 50;
-    $stmt = $pdo->prepare("SELECT * FROM ai_tool_logs ORDER BY id DESC LIMIT ?");
+    $stmt = $pdo->prepare("SELECT * FROM ems_ai_tool_logs ORDER BY id DESC LIMIT ?");
     $stmt->bindValue(1, $limit, PDO::PARAM_INT);
     $stmt->execute();
     $logs = $stmt->fetchAll(PDO::FETCH_ASSOC);
@@ -263,8 +263,8 @@ if ($route === '/ai/tool-logs' && $method === 'GET') {
 if ($route === '/ai/conversations' && $method === 'GET') {
     $userId = isset($_GET['user_id']) ? intval($_GET['user_id']) : null;
     $sql = "SELECT c.*, COUNT(m.id) as message_count 
-            FROM ai_conversations c 
-            LEFT JOIN ai_messages m ON c.id = m.conversation_id";
+            FROM ems_ai_conversations c 
+            LEFT JOIN ems_ai_messages m ON c.id = m.conversation_id";
     if ($userId) {
         $sql .= " WHERE c.user_id = {$userId}";
     }
@@ -290,7 +290,7 @@ if ($route === '/auth/login' && $method === 'POST') {
     }
 
     $idLower = strtolower($identifier);
-    $stmt = $pdo->prepare("SELECT * FROM users WHERE LOWER(staff_code) = ? OR phone = ? OR LOWER(email) = ? LIMIT 1");
+    $stmt = $pdo->prepare("SELECT * FROM ems_users WHERE LOWER(staff_code) = ? OR phone = ? OR LOWER(email) = ? LIMIT 1");
     $stmt->execute([$idLower, $identifier, $idLower]);
     $user = $stmt->fetch();
 
@@ -327,7 +327,7 @@ if ($route === '/auth/change-password' && $method === 'POST') {
         jsonResponse(['status' => 'error', 'message' => 'Vui lòng cung cấp đầy đủ thông tin mật khẩu.'], 400);
     }
 
-    $stmt = $pdo->prepare("SELECT * FROM users WHERE id = ? LIMIT 1");
+    $stmt = $pdo->prepare("SELECT * FROM ems_users WHERE id = ? LIMIT 1");
     $stmt->execute([$userId]);
     $user = $stmt->fetch();
 
@@ -340,7 +340,7 @@ if ($route === '/auth/change-password' && $method === 'POST') {
     }
 
     $hashed = password_hash($newPassword, PASSWORD_BCRYPT);
-    $upd = $pdo->prepare("UPDATE users SET password = ? WHERE id = ?");
+    $upd = $pdo->prepare("UPDATE ems_users SET password = ? WHERE id = ?");
     $upd->execute([$hashed, $userId]);
 
     jsonResponse([
@@ -362,7 +362,7 @@ if ($route === '/auth/register' && $method === 'POST') {
     }
 
     // Check existing
-    $stmt = $pdo->prepare("SELECT id FROM users WHERE LOWER(email) = ?");
+    $stmt = $pdo->prepare("SELECT id FROM ems_users WHERE LOWER(email) = ?");
     $stmt->execute([$email]);
     if ($stmt->fetch()) {
         jsonResponse(['status' => 'error', 'message' => 'Địa chỉ Email này đã tồn tại trên hệ thống.'], 400);
@@ -374,11 +374,11 @@ if ($route === '/auth/register' && $method === 'POST') {
         ? 'https://images.unsplash.com/photo-1573496359142-b8d87734a5a2?w=150&auto=format&fit=crop&q=80'
         : 'https://images.unsplash.com/photo-1534528741775-53994a69daeb?w=150&auto=format&fit=crop&q=80';
 
-    $ins = $pdo->prepare("INSERT INTO users (staff_code, name, email, password, role, department, avatar, phone, join_date, status, performance_score) VALUES (?, ?, ?, ?, ?, ?, ?, ?, CURDATE(), 'active', 90)");
+    $ins = $pdo->prepare("INSERT INTO ems_users (staff_code, name, email, password, role, department, avatar, phone, join_date, status, performance_score) VALUES (?, ?, ?, ?, ?, ?, ?, ?, CURDATE(), 'active', 90)");
     $ins->execute([$staffCode, $name, $email, $hashed, $role, $dept, $avatar, $phone]);
 
     $newId = $pdo->lastInsertId();
-    $user = $pdo->query("SELECT * FROM users WHERE id = {$newId}")->fetch();
+    $user = $pdo->query("SELECT * FROM ems_users WHERE id = {$newId}")->fetch();
     unset($user['password'], $user['remember_token']);
 
     jsonResponse([
@@ -396,7 +396,7 @@ if ($route === '/employees' && $method === 'GET') {
     $search = $_GET['search'] ?? '';
     $dept = $_GET['dept'] ?? 'all';
 
-    $sql = "SELECT id, staff_code, name, email, role, department, avatar, phone, join_date, status, performance_score FROM users WHERE 1=1";
+    $sql = "SELECT id, staff_code, name, email, role, department, avatar, phone, join_date, status, performance_score FROM ems_users WHERE 1=1";
     $params = [];
 
     if (!empty($search)) {
@@ -436,11 +436,11 @@ if ($route === '/employees' && $method === 'POST') {
         ? 'https://images.unsplash.com/photo-1573496359142-b8d87734a5a2?w=150&auto=format&fit=crop&q=80'
         : 'https://images.unsplash.com/photo-1534528741775-53994a69daeb?w=150&auto=format&fit=crop&q=80';
 
-    $stmt = $pdo->prepare("INSERT INTO users (staff_code, name, email, password, role, department, avatar, phone, join_date, status, performance_score) VALUES (?, ?, ?, ?, ?, ?, ?, ?, CURDATE(), 'active', 90)");
+    $stmt = $pdo->prepare("INSERT INTO ems_users (staff_code, name, email, password, role, department, avatar, phone, join_date, status, performance_score) VALUES (?, ?, ?, ?, ?, ?, ?, ?, CURDATE(), 'active', 90)");
     $stmt->execute([$staffCode, $name, $email, $hashed, $role, $dept, $avatar, $phone]);
 
     $id = $pdo->lastInsertId();
-    $newUser = $pdo->query("SELECT id, staff_code, name, email, role, department, avatar, phone, join_date, status, performance_score FROM users WHERE id = {$id}")->fetch();
+    $newUser = $pdo->query("SELECT id, staff_code, name, email, role, department, avatar, phone, join_date, status, performance_score FROM ems_users WHERE id = {$id}")->fetch();
 
     jsonResponse([
         'status' => 'success',
@@ -456,7 +456,7 @@ if ((preg_match('#^/employees/([0-9]+)$#', $route, $matches) && in_array($method
         jsonResponse(['status' => 'error', 'message' => 'Mã nhân viên không hợp lệ.'], 400);
     }
 
-    $existing = $pdo->prepare("SELECT * FROM users WHERE id = ?");
+    $existing = $pdo->prepare("SELECT * FROM ems_users WHERE id = ?");
     $existing->execute([$empId]);
     $user = $existing->fetch();
     if (!$user) {
@@ -474,7 +474,7 @@ if ((preg_match('#^/employees/([0-9]+)$#', $route, $matches) && in_array($method
 
     // Kiểm tra trùng email nếu đổi email
     if ($email !== strtolower($user['email'])) {
-        $chk = $pdo->prepare("SELECT id FROM users WHERE LOWER(email) = ? AND id != ?");
+        $chk = $pdo->prepare("SELECT id FROM ems_users WHERE LOWER(email) = ? AND id != ?");
         $chk->execute([$email, $empId]);
         if ($chk->fetch()) {
             jsonResponse(['status' => 'error', 'message' => 'Địa chỉ Email này đã được sử dụng bởi nhân viên khác.'], 400);
@@ -482,10 +482,10 @@ if ((preg_match('#^/employees/([0-9]+)$#', $route, $matches) && in_array($method
     }
 
     $staffCode = !empty($phone) ? $phone : $user['staff_code'];
-    $upd = $pdo->prepare("UPDATE users SET staff_code=?, name=?, email=?, role=?, department=?, phone=?, status=?, performance_score=?, avatar=? WHERE id=?");
+    $upd = $pdo->prepare("UPDATE ems_users SET staff_code=?, name=?, email=?, role=?, department=?, phone=?, status=?, performance_score=?, avatar=? WHERE id=?");
     $upd->execute([$staffCode, $name, $email, $role, $dept, $phone, $status, $score, $avatar, $empId]);
 
-    $updatedUser = $pdo->query("SELECT id, staff_code, name, email, role, department, avatar, phone, join_date, status, performance_score FROM users WHERE id = {$empId}")->fetch();
+    $updatedUser = $pdo->query("SELECT id, staff_code, name, email, role, department, avatar, phone, join_date, status, performance_score FROM ems_users WHERE id = {$empId}")->fetch();
 
     jsonResponse([
         'status' => 'success',
@@ -505,7 +505,7 @@ if ((preg_match('#^/employees/([0-9]+)$#', $route, $matches) && in_array($method
         jsonResponse(['status' => 'error', 'message' => 'Không thể xóa tài khoản Quản trị viên hệ thống cấp cao (ID #1).'], 400);
     }
 
-    $del = $pdo->prepare("DELETE FROM users WHERE id = ?");
+    $del = $pdo->prepare("DELETE FROM ems_users WHERE id = ?");
     $del->execute([$empId]);
 
     jsonResponse([
@@ -811,7 +811,7 @@ if ($route === '/courses' && $method === 'GET') {
         ]
     ];
 
-    $stmt = $pdo->query("SELECT c.*, q.id as quiz_id FROM courses c LEFT JOIN quizzes q ON q.course_id = c.id ORDER BY c.id ASC");
+    $stmt = $pdo->query("SELECT c.*, q.id as quiz_id FROM ems_courses c LEFT JOIN ems_quizzes q ON q.course_id = c.id ORDER BY c.id ASC");
     $courses = $stmt->fetchAll();
 
     // Gắn thông tin nâng cao và modules chi tiết
@@ -844,7 +844,7 @@ if ($route === '/courses' && $method === 'POST') {
     $isCtkm = !empty($body['is_ctkm']) ? 1 : 0;
     $thumbnail = $body['thumbnail'] ?? 'https://images.unsplash.com/photo-1489599849927-2ee91cede3ba?w=600&auto=format&fit=crop&q=80';
 
-    $stmt = $pdo->prepare("INSERT INTO courses (title, description, category, duration_minutes, is_ctkm, thumbnail, enrolled_count, completed_count) VALUES (?, ?, ?, ?, ?, ?, 10, 5)");
+    $stmt = $pdo->prepare("INSERT INTO ems_courses (title, description, category, duration_minutes, is_ctkm, thumbnail, enrolled_count, completed_count) VALUES (?, ?, ?, ?, ?, ?, 10, 5)");
     $stmt->execute([$title, $desc, $category, $duration, $isCtkm, $thumbnail]);
     $newId = $pdo->lastInsertId();
 
@@ -859,12 +859,12 @@ if ($route === '/courses' && $method === 'POST') {
 // UC06, UC08: QUIZZES & QUESTIONS (+ AI GENERATOR)
 // ------------------------------------------------------------------------------
 if ($route === '/quizzes' && $method === 'GET') {
-    $stmt = $pdo->query("SELECT q.*, c.title as course_title FROM quizzes q JOIN courses c ON q.course_id = c.id ORDER BY q.id ASC");
+    $stmt = $pdo->query("SELECT q.*, c.title as course_title FROM ems_quizzes q JOIN ems_courses c ON q.course_id = c.id ORDER BY q.id ASC");
     $quizzes = $stmt->fetchAll();
 
     foreach ($quizzes as &$qz) {
         $qz['is_ctkm'] = (bool)$qz['is_ctkm'];
-        $qStmt = $pdo->prepare("SELECT id, question_text, options, correct_answer_index, explanation FROM quiz_questions WHERE quiz_id = ?");
+        $qStmt = $pdo->prepare("SELECT id, question_text, options, correct_answer_index, explanation FROM ems_quiz_questions WHERE quiz_id = ?");
         $qStmt->execute([$qz['id']]);
         $questions = $qStmt->fetchAll();
 
@@ -897,7 +897,7 @@ if (preg_match('#^/quizzes/([0-9]+)/attempt$#', $route, $matches) && $method ===
     $userAnswers = $body['answers'] ?? []; // Map question_id => selected_index
 
     // Fetch quiz questions
-    $stmt = $pdo->prepare("SELECT id, correct_answer_index FROM quiz_questions WHERE quiz_id = ?");
+    $stmt = $pdo->prepare("SELECT id, correct_answer_index FROM ems_quiz_questions WHERE quiz_id = ?");
     $stmt->execute([$quizId]);
     $questions = $stmt->fetchAll();
 
@@ -929,7 +929,7 @@ if (preg_match('#^/quizzes/([0-9]+)/attempt$#', $route, $matches) && $method ===
 
     // Save attempt
     $feedback = $passed ? 'Chúc mừng bạn đã hoàn thành xuất sắc bài kiểm tra!' : 'Bạn chưa đạt điểm tối thiểu. Vui lòng ôn tập lại.';
-    $ins = $pdo->prepare("INSERT INTO quiz_attempts (quiz_id, user_id, score, passed, feedback, completed_at) VALUES (?, ?, ?, ?, ?, NOW())");
+    $ins = $pdo->prepare("INSERT INTO ems_quiz_attempts (quiz_id, user_id, score, passed, feedback, completed_at) VALUES (?, ?, ?, ?, ?, NOW())");
     $ins->execute([$quizId, $userId, $score, $passed ? 1 : 0, $feedback]);
 
     // Issue certificate if passed
@@ -938,25 +938,25 @@ if (preg_match('#^/quizzes/([0-9]+)/attempt$#', $route, $matches) && $method ===
         $qrCode = !empty($body['qr_code_url']) ? $body['qr_code_url'] : ("https://api.qrserver.com/v1/create-qr-code/?size=150x150&data=" . urlencode($certCode));
 
         // Find course_id
-        $cStmt = $pdo->prepare("SELECT course_id FROM quizzes WHERE id = ?");
+        $cStmt = $pdo->prepare("SELECT course_id FROM ems_quizzes WHERE id = ?");
         $cStmt->execute([$quizId]);
         $courseId = $cStmt->fetchColumn() ?: 1;
 
         // Check if certificate already exists for this user and course or code
-        $chk = $pdo->prepare("SELECT id FROM certificates WHERE user_id = ? AND course_id = ? LIMIT 1");
+        $chk = $pdo->prepare("SELECT id FROM ems_certificates WHERE user_id = ? AND course_id = ? LIMIT 1");
         $chk->execute([$userId, $courseId]);
         $existing = $chk->fetch();
 
         if ($existing) {
-            $upd = $pdo->prepare("UPDATE certificates SET score = ?, certificate_code = ?, issued_at = CURDATE(), qr_code_url = ? WHERE id = ?");
+            $upd = $pdo->prepare("UPDATE ems_certificates SET score = ?, certificate_code = ?, issued_at = CURDATE(), qr_code_url = ? WHERE id = ?");
             $upd->execute([$score, $certCode, $qrCode, $existing['id']]);
         } else {
-            $cIns = $pdo->prepare("INSERT INTO certificates (user_id, course_id, certificate_code, issued_at, score, qr_code_url) VALUES (?, ?, ?, CURDATE(), ?, ?)");
+            $cIns = $pdo->prepare("INSERT INTO ems_certificates (user_id, course_id, certificate_code, issued_at, score, qr_code_url) VALUES (?, ?, ?, CURDATE(), ?, ?)");
             $cIns->execute([$userId, $courseId, $certCode, $score, $qrCode]);
         }
 
         // Increment course completed_count
-        $pdo->query("UPDATE courses SET completed_count = completed_count + 1 WHERE id = {$courseId}");
+        $pdo->query("UPDATE ems_courses SET completed_count = completed_count + 1 WHERE id = {$courseId}");
     }
 
     jsonResponse([
@@ -1080,11 +1080,11 @@ Yêu cầu định dạng: BẮT BUỘC chỉ trả về JSON Array các object 
     // Optional: save to database if requested
     if (!empty($body['save_to_db'])) {
         $qTitle = "Kiểm Tra Nghiệp Vụ AI: " . $topicPrompt;
-        $qIns = $pdo->prepare("INSERT INTO quizzes (course_id, title, pass_score, duration_minutes, is_ctkm) VALUES (?, ?, 80, 15, 1)");
+        $qIns = $pdo->prepare("INSERT INTO ems_quizzes (course_id, title, pass_score, duration_minutes, is_ctkm) VALUES (?, ?, 80, 15, 1)");
         $qIns->execute([$courseId, $qTitle]);
         $newQuizId = $pdo->lastInsertId();
 
-        $itemIns = $pdo->prepare("INSERT INTO quiz_questions (quiz_id, question_text, options, correct_answer_index, explanation) VALUES (?, ?, ?, ?, ?)");
+        $itemIns = $pdo->prepare("INSERT INTO ems_quiz_questions (quiz_id, question_text, options, correct_answer_index, explanation) VALUES (?, ?, ?, ?, ?)");
         foreach ($generatedQuestions as $gq) {
             $itemIns->execute([$newQuizId, $gq['question_text'], json_encode($gq['options'], JSON_UNESCAPED_UNICODE), $gq['correct_answer_index'], $gq['explanation']]);
         }
@@ -1147,7 +1147,7 @@ if ($route === '/certificates' && $method === 'GET') {
     $rawUserId = $_GET['user_id'] ?? null;
     $userId = $rawUserId ? (int)str_replace('usr-', '', $rawUserId) : null;
 
-    $sql = "SELECT cert.id, cert.certificate_code, cert.issued_at, cert.score, cert.qr_code_url, u.id as user_id, u.name as user_name, COALESCE(NULLIF(u.phone, ''), u.staff_code) as user_staff_code, u.phone as user_phone, c.id as course_id, c.title as course_title FROM certificates cert JOIN users u ON cert.user_id = u.id JOIN courses c ON cert.course_id = c.id WHERE 1=1";
+    $sql = "SELECT cert.id, cert.certificate_code, cert.issued_at, cert.score, cert.qr_code_url, u.id as user_id, u.name as user_name, COALESCE(NULLIF(u.phone, ''), u.staff_code) as user_staff_code, u.phone as user_phone, c.id as course_id, c.title as course_title FROM ems_certificates cert JOIN ems_users u ON cert.user_id = u.id JOIN ems_courses c ON cert.course_id = c.id WHERE 1=1";
     $params = [];
     if ($userId) {
         $sql .= " AND cert.user_id = ?";
@@ -1182,22 +1182,22 @@ if ($route === '/certificates' && $method === 'POST') {
     $qrCode = !empty($body['qr_code_url']) ? $body['qr_code_url'] : ("https://api.qrserver.com/v1/create-qr-code/?size=150x150&data=" . urlencode($certCode));
 
     // Check if certificate exists with certCode or (user_id, course_id)
-    $chk = $pdo->prepare("SELECT id FROM certificates WHERE certificate_code = ? OR (user_id = ? AND course_id = ?) LIMIT 1");
+    $chk = $pdo->prepare("SELECT id FROM ems_certificates WHERE certificate_code = ? OR (user_id = ? AND course_id = ?) LIMIT 1");
     $chk->execute([$certCode, $userId, $courseId]);
     $existing = $chk->fetch();
 
     if ($existing) {
-        $upd = $pdo->prepare("UPDATE certificates SET user_id = ?, course_id = ?, score = ?, issued_at = ?, qr_code_url = ?, certificate_code = ? WHERE id = ?");
+        $upd = $pdo->prepare("UPDATE ems_certificates SET user_id = ?, course_id = ?, score = ?, issued_at = ?, qr_code_url = ?, certificate_code = ? WHERE id = ?");
         $upd->execute([$userId, $courseId, $score, $issuedAt, $qrCode, $certCode, $existing['id']]);
         $certId = (int)$existing['id'];
     } else {
-        $ins = $pdo->prepare("INSERT INTO certificates (user_id, course_id, certificate_code, issued_at, score, qr_code_url) VALUES (?, ?, ?, ?, ?, ?)");
+        $ins = $pdo->prepare("INSERT INTO ems_certificates (user_id, course_id, certificate_code, issued_at, score, qr_code_url) VALUES (?, ?, ?, ?, ?, ?)");
         $ins->execute([$userId, $courseId, $certCode, $issuedAt, $score, $qrCode]);
         $certId = (int)$pdo->lastInsertId();
     }
 
     // Increment completed_count of course
-    $pdo->query("UPDATE courses SET completed_count = completed_count + 1 WHERE id = {$courseId}");
+    $pdo->query("UPDATE ems_courses SET completed_count = completed_count + 1 WHERE id = {$courseId}");
 
     jsonResponse([
         'status' => 'success',
@@ -1211,7 +1211,7 @@ if ($route === '/certificates' && $method === 'POST') {
 // UC09, UC10, UC11: SHIFTS & WORK SCHEDULES (ĐĂNG KÝ NGUYỆN VỌNG & XẾP LỊCH AI)
 // ------------------------------------------------------------------------------
 if ($route === '/shifts' && $method === 'GET') {
-    $stmt = $pdo->query("SELECT * FROM shifts ORDER BY id ASC");
+    $stmt = $pdo->query("SELECT * FROM ems_shifts ORDER BY id ASC");
     $shifts = $stmt->fetchAll();
     jsonResponse(['status' => 'success', 'data' => $shifts]);
 }
@@ -1225,9 +1225,9 @@ if ($route === '/shifts/registrations' && $method === 'GET') {
     $sql = "SELECT sr.id, sr.user_id, sr.shift_id, sr.date, sr.status, sr.created_at,
                    u.name as user_name, u.staff_code, u.department, u.avatar as user_avatar,
                    s.name as shift_name, s.code as shift_code, s.start_time, s.end_time, s.color as shift_color
-            FROM shift_registrations sr
-            JOIN users u ON sr.user_id = u.id
-            JOIN shifts s ON sr.shift_id = s.id
+            FROM ems_shift_registrations sr
+            JOIN ems_users u ON sr.user_id = u.id
+            JOIN ems_shifts s ON sr.shift_id = s.id
             WHERE 1=1";
     $params = [];
 
@@ -1273,7 +1273,7 @@ if ($route === '/shifts/register' && $method === 'POST') {
     }
 
     // Kiểm tra xem đã đăng ký chưa
-    $chk = $pdo->prepare("SELECT id, status FROM shift_registrations WHERE user_id = ? AND shift_id = ? AND date = ?");
+    $chk = $pdo->prepare("SELECT id, status FROM ems_shift_registrations WHERE user_id = ? AND shift_id = ? AND date = ?");
     $chk->execute([$userId, $shiftId, $date]);
     $existing = $chk->fetch();
 
@@ -1286,7 +1286,7 @@ if ($route === '/shifts/register' && $method === 'POST') {
         ]);
     }
 
-    $stmt = $pdo->prepare("INSERT INTO shift_registrations (user_id, shift_id, date, status) VALUES (?, ?, ?, 'pending')");
+    $stmt = $pdo->prepare("INSERT INTO ems_shift_registrations (user_id, shift_id, date, status) VALUES (?, ?, ?, 'pending')");
     $stmt->execute([$userId, $shiftId, $date]);
     $newId = (int)$pdo->lastInsertId();
 
@@ -1314,7 +1314,7 @@ if ($route === '/shifts/register/cancel' && $method === 'POST') {
         ], 403);
     }
 
-    $stmt = $pdo->prepare("DELETE FROM shift_registrations WHERE user_id = ? AND shift_id = ? AND date = ? AND status = 'pending'");
+    $stmt = $pdo->prepare("DELETE FROM ems_shift_registrations WHERE user_id = ? AND shift_id = ? AND date = ? AND status = 'pending'");
     $stmt->execute([$userId, $shiftId, $date]);
     $deleted = $stmt->rowCount();
 
@@ -1328,7 +1328,7 @@ if ($route === '/shifts/register/cancel' && $method === 'POST') {
 // Hủy đăng ký theo ID
 if (preg_match('#^/shifts/registrations/([0-9]+)$#', $route, $matches) && $method === 'DELETE') {
     $regId = (int)$matches[1];
-    $stmt = $pdo->prepare("DELETE FROM shift_registrations WHERE id = ?");
+    $stmt = $pdo->prepare("DELETE FROM ems_shift_registrations WHERE id = ?");
     $stmt->execute([$regId]);
 
     jsonResponse([
@@ -1344,7 +1344,7 @@ if (preg_match('#^/shifts/registrations/([0-9]+)/approve$#', $route, $matches) &
     $managerName = $body['manager_name'] ?? 'Phạm Thu Hương (Quản lý Đào tạo)';
 
     // Tìm thông tin đăng ký ca
-    $stmt = $pdo->prepare("SELECT sr.*, u.name as user_name, u.department, s.name as shift_name FROM shift_registrations sr JOIN users u ON sr.user_id = u.id JOIN shifts s ON sr.shift_id = s.id WHERE sr.id = ?");
+    $stmt = $pdo->prepare("SELECT sr.*, u.name as user_name, u.department, s.name as shift_name FROM ems_shift_registrations sr JOIN ems_users u ON sr.user_id = u.id JOIN ems_shifts s ON sr.shift_id = s.id WHERE sr.id = ?");
     $stmt->execute([$regId]);
     $reg = $stmt->fetch();
 
@@ -1353,7 +1353,7 @@ if (preg_match('#^/shifts/registrations/([0-9]+)/approve$#', $route, $matches) &
     }
 
     // Cập nhật trạng thái thành approved
-    $upd = $pdo->prepare("UPDATE shift_registrations SET status = 'approved' WHERE id = ?");
+    $upd = $pdo->prepare("UPDATE ems_shift_registrations SET status = 'approved' WHERE id = ?");
     $upd->execute([$regId]);
 
     // Gán vị trí trực rạp theo bộ phận nếu chưa có
@@ -1371,10 +1371,10 @@ if (preg_match('#^/shifts/registrations/([0-9]+)/approve$#', $route, $matches) &
 
     // Đưa vào bảng work_schedules (Lịch làm việc chính thức)
     // Xóa lịch cũ của user trong ngày này nếu có
-    $del = $pdo->prepare("DELETE FROM work_schedules WHERE user_id = ? AND date = ?");
+    $del = $pdo->prepare("DELETE FROM ems_work_schedules WHERE user_id = ? AND date = ?");
     $del->execute([$reg['user_id'], $reg['date']]);
 
-    $ins = $pdo->prepare("INSERT INTO work_schedules (user_id, shift_id, date, location, status, assigned_by) VALUES (?, ?, ?, ?, 'assigned', ?)");
+    $ins = $pdo->prepare("INSERT INTO ems_work_schedules (user_id, shift_id, date, location, status, assigned_by) VALUES (?, ?, ?, ?, 'assigned', ?)");
     $ins->execute([$reg['user_id'], $reg['shift_id'], $reg['date'], $location, $managerName]);
 
     jsonResponse([
@@ -1393,7 +1393,7 @@ if (preg_match('#^/shifts/registrations/([0-9]+)/reject$#', $route, $matches) &&
     $regId = (int)$matches[1];
     $reason = $body['reason'] ?? 'Ca trực đã đủ định biên nhân sự theo quy định rạp.';
 
-    $stmt = $pdo->prepare("UPDATE shift_registrations SET status = 'rejected' WHERE id = ?");
+    $stmt = $pdo->prepare("UPDATE ems_shift_registrations SET status = 'rejected' WHERE id = ?");
     $stmt->execute([$regId]);
 
     jsonResponse([
@@ -1408,9 +1408,9 @@ if ($route === '/shifts/registrations/approve-all' && $method === 'POST') {
     $managerName = $body['manager_name'] ?? 'Phạm Thu Hương (Quản lý Đào tạo & Nhân sự)';
 
     $sql = "SELECT sr.*, u.name as user_name, u.department, s.name as shift_name 
-            FROM shift_registrations sr 
-            JOIN users u ON sr.user_id = u.id 
-            JOIN shifts s ON sr.shift_id = s.id 
+            FROM ems_shift_registrations sr 
+            JOIN ems_users u ON sr.user_id = u.id 
+            JOIN ems_shifts s ON sr.shift_id = s.id 
             WHERE sr.status = 'pending'";
     $params = [];
     if ($targetDate) {
@@ -1425,7 +1425,7 @@ if ($route === '/shifts/registrations/approve-all' && $method === 'POST') {
     $approvedCount = 0;
     foreach ($pendingList as $p) {
         // Cập nhật approved
-        $pdo->prepare("UPDATE shift_registrations SET status = 'approved' WHERE id = ?")->execute([$p['id']]);
+        $pdo->prepare("UPDATE ems_shift_registrations SET status = 'approved' WHERE id = ?")->execute([$p['id']]);
 
         // Vị trí rạp
         $loc = 'Cụm Rạp 1 - Quầy Vé Box Office';
@@ -1434,10 +1434,10 @@ if ($route === '/shifts/registrations/approve-all' && $method === 'POST') {
         elseif (str_contains($p['department'], 'Vé')) $loc = 'Cụm Rạp 1 - Quầy Vé Box Office';
 
         // Ghi vào work_schedules
-        $del = $pdo->prepare("DELETE FROM work_schedules WHERE user_id = ? AND date = ?");
+        $del = $pdo->prepare("DELETE FROM ems_work_schedules WHERE user_id = ? AND date = ?");
         $del->execute([$p['user_id'], $p['date']]);
 
-        $ins = $pdo->prepare("INSERT INTO work_schedules (user_id, shift_id, date, location, status, assigned_by) VALUES (?, ?, ?, ?, 'assigned', ?)");
+        $ins = $pdo->prepare("INSERT INTO ems_work_schedules (user_id, shift_id, date, location, status, assigned_by) VALUES (?, ?, ?, ?, 'assigned', ?)");
         $ins->execute([$p['user_id'], $p['shift_id'], $p['date'], $loc, $managerName]);
         $approvedCount++;
     }
@@ -1457,9 +1457,9 @@ if ($route === '/schedules' && $method === 'GET') {
     $sql = "SELECT ws.id, ws.date, ws.location, ws.status, ws.assigned_by,
                    u.id as user_id, u.name as user_name, u.staff_code, u.department, u.avatar as user_avatar,
                    s.id as shift_id, s.name as shift_name, s.code as shift_code, s.start_time, s.end_time, s.color as shift_color
-            FROM work_schedules ws
-            JOIN users u ON ws.user_id = u.id
-            JOIN shifts s ON ws.shift_id = s.id
+            FROM ems_work_schedules ws
+            JOIN ems_users u ON ws.user_id = u.id
+            JOIN ems_shifts s ON ws.shift_id = s.id
             WHERE 1=1";
     $params = [];
 
@@ -1500,8 +1500,8 @@ if ($route === '/shifts/auto-schedule' && $method === 'POST') {
 
     $seed = (int)($body['seed'] ?? ($body['iteration'] ?? time()));
 
-    $users = $pdo->query("SELECT id, name, staff_code, department FROM users WHERE role = 'staff' AND status = 'active' ORDER BY id ASC")->fetchAll();
-    $shifts = $pdo->query("SELECT id, name, code FROM shifts ORDER BY id ASC")->fetchAll();
+    $users = $pdo->query("SELECT id, name, staff_code, department FROM ems_users WHERE role = 'staff' AND status = 'active' ORDER BY id ASC")->fetchAll();
+    $shifts = $pdo->query("SELECT id, name, code FROM ems_shifts ORDER BY id ASC")->fetchAll();
     $shiftsById = [];
     foreach ($shifts as $s) {
         $shiftsById[$s['id']] = $s;
@@ -1531,10 +1531,10 @@ if ($route === '/shifts/auto-schedule' && $method === 'POST') {
         'Phòng Máy Chiếu & Kỹ Thuật IMAX'
     ];
 
-    $del = $pdo->prepare("DELETE FROM work_schedules WHERE date = ?");
-    $ins = $pdo->prepare("INSERT INTO work_schedules (user_id, shift_id, date, location, status, assigned_by) VALUES (?, ?, ?, ?, 'assigned', ?)");
-    $updApproved = $pdo->prepare("UPDATE shift_registrations SET status = 'approved' WHERE user_id = ? AND shift_id = ? AND date = ?");
-    $updRejected = $pdo->prepare("UPDATE shift_registrations SET status = 'rejected' WHERE user_id = ? AND shift_id != ? AND date = ?");
+    $del = $pdo->prepare("DELETE FROM ems_work_schedules WHERE date = ?");
+    $ins = $pdo->prepare("INSERT INTO ems_work_schedules (user_id, shift_id, date, location, status, assigned_by) VALUES (?, ?, ?, ?, 'assigned', ?)");
+    $updApproved = $pdo->prepare("UPDATE ems_shift_registrations SET status = 'approved' WHERE user_id = ? AND shift_id = ? AND date = ?");
+    $updRejected = $pdo->prepare("UPDATE ems_shift_registrations SET status = 'rejected' WHERE user_id = ? AND shift_id != ? AND date = ?");
 
     $allCreatedSchedules = [];
     $totalMatchedCount = 0;
@@ -1545,7 +1545,7 @@ if ($route === '/shifts/auto-schedule' && $method === 'POST') {
 
     foreach ($datesToSchedule as $dayIndex => $targetDate) {
         // Lấy toàn bộ nguyện vọng đăng ký vào ngày này
-        $regStmt = $pdo->prepare("SELECT user_id, shift_id FROM shift_registrations WHERE date = ?");
+        $regStmt = $pdo->prepare("SELECT user_id, shift_id FROM ems_shift_registrations WHERE date = ?");
         $regStmt->execute([$targetDate]);
         $registrations = $regStmt->fetchAll();
 
@@ -1664,16 +1664,16 @@ if ($route === '/schedules/assign' && $method === 'POST') {
     $managerName = $body['manager_name'] ?? 'Quản lý Phạm Thu Hương (Đã Tinh Chỉnh Thủ Công)';
 
     // Xóa lịch cũ của user trong ngày này nếu có (chống trùng ca)
-    $del = $pdo->prepare("DELETE FROM work_schedules WHERE user_id = ? AND date = ?");
+    $del = $pdo->prepare("DELETE FROM ems_work_schedules WHERE user_id = ? AND date = ?");
     $del->execute([$userId, $date]);
 
     if ($shiftId > 0) {
-        $ins = $pdo->prepare("INSERT INTO work_schedules (user_id, shift_id, date, location, status, assigned_by) VALUES (?, ?, ?, ?, 'assigned', ?)");
+        $ins = $pdo->prepare("INSERT INTO ems_work_schedules (user_id, shift_id, date, location, status, assigned_by) VALUES (?, ?, ?, ?, 'assigned', ?)");
         $ins->execute([$userId, $shiftId, $date, $location, $managerName]);
         $newId = (int)$pdo->lastInsertId();
 
         // Đồng thời cập nhật đăng ký ca thành approved
-        $upd = $pdo->prepare("UPDATE shift_registrations SET status = 'approved' WHERE user_id = ? AND shift_id = ? AND date = ?");
+        $upd = $pdo->prepare("UPDATE ems_shift_registrations SET status = 'approved' WHERE user_id = ? AND shift_id = ? AND date = ?");
         $upd->execute([$userId, $shiftId, $date]);
 
         jsonResponse([
@@ -1697,10 +1697,10 @@ if ($route === '/schedules/delete' && $method === 'POST') {
     $id = isset($body['id']) ? (int)str_replace('sch-', '', (string)$body['id']) : null;
 
     if ($id) {
-        $del = $pdo->prepare("DELETE FROM work_schedules WHERE id = ?");
+        $del = $pdo->prepare("DELETE FROM ems_work_schedules WHERE id = ?");
         $del->execute([$id]);
     } elseif ($date && $userId) {
-        $del = $pdo->prepare("DELETE FROM work_schedules WHERE user_id = ? AND date = ?");
+        $del = $pdo->prepare("DELETE FROM ems_work_schedules WHERE user_id = ? AND date = ?");
         $del->execute([$userId, $date]);
     }
 
@@ -1715,12 +1715,12 @@ if ($route === '/schedules/publish' && $method === 'POST') {
 
     if (!empty($schedules) && is_array($schedules)) {
         if ($targetDate) {
-            $del = $pdo->prepare("DELETE FROM work_schedules WHERE date = ?");
+            $del = $pdo->prepare("DELETE FROM ems_work_schedules WHERE date = ?");
             $del->execute([$targetDate]);
         }
 
-        $ins = $pdo->prepare("INSERT INTO work_schedules (user_id, shift_id, date, location, status, assigned_by) VALUES (?, ?, ?, ?, 'assigned', ?)");
-        $updApproved = $pdo->prepare("UPDATE shift_registrations SET status = 'approved' WHERE user_id = ? AND shift_id = ? AND date = ?");
+        $ins = $pdo->prepare("INSERT INTO ems_work_schedules (user_id, shift_id, date, location, status, assigned_by) VALUES (?, ?, ?, ?, 'assigned', ?)");
+        $updApproved = $pdo->prepare("UPDATE ems_shift_registrations SET status = 'approved' WHERE user_id = ? AND shift_id = ? AND date = ?");
 
         foreach ($schedules as $s) {
             $uid = (int)($s['user_id'] ?? str_replace('usr-', '', $s['userId'] ?? '2'));
@@ -1730,7 +1730,7 @@ if ($route === '/schedules/publish' && $method === 'POST') {
             
             // Xóa lịch cũ trùng ngày của user nếu chưa xóa theo targetDate
             if (!$targetDate) {
-                $delUser = $pdo->prepare("DELETE FROM work_schedules WHERE user_id = ? AND date = ?");
+                $delUser = $pdo->prepare("DELETE FROM ems_work_schedules WHERE user_id = ? AND date = ?");
                 $delUser->execute([$uid, $sDate]);
             }
 
@@ -1750,7 +1750,7 @@ if ($route === '/schedules/publish' && $method === 'POST') {
 // UC12: ATTENDANCE TRACKING (Chấm công & Nhật ký)
 // ------------------------------------------------------------------------------
 if ($route === '/attendances' && $method === 'GET') {
-    $sql = "SELECT a.id, a.date, a.check_in, a.check_out, a.status, a.hours_worked, a.note, u.id as user_id, u.name as user_name, u.staff_code FROM attendances a JOIN users u ON a.user_id = u.id ORDER BY a.date DESC, a.id DESC";
+    $sql = "SELECT a.id, a.date, a.check_in, a.check_out, a.status, a.hours_worked, a.note, u.id as user_id, u.name as user_name, u.staff_code FROM ems_attendances a JOIN ems_users u ON a.user_id = u.id ORDER BY a.date DESC, a.id DESC";
     $attendances = $pdo->query($sql)->fetchAll();
 
     jsonResponse([
@@ -1772,16 +1772,16 @@ if ($route === '/attendances' && $method === 'POST') {
     $note = $body['note'] ?? '';
 
     // Check if record exists for this user and date
-    $stmt = $pdo->prepare("SELECT id FROM attendances WHERE user_id = ? AND date = ?");
+    $stmt = $pdo->prepare("SELECT id FROM ems_attendances WHERE user_id = ? AND date = ?");
     $stmt->execute([$userId, $date]);
     $existing = $stmt->fetch();
 
     if ($existing) {
-        $up = $pdo->prepare("UPDATE attendances SET check_in = COALESCE(?, check_in), check_out = COALESCE(?, check_out), status = ?, hours_worked = ?, note = ? WHERE id = ?");
+        $up = $pdo->prepare("UPDATE ems_attendances SET check_in = COALESCE(?, check_in), check_out = ?, status = ?, hours_worked = ?, note = ? WHERE id = ?");
         $up->execute([$checkIn, $checkOut, $status, $hoursWorked, $note, $existing['id']]);
         $recordId = $existing['id'];
     } else {
-        $ins = $pdo->prepare("INSERT INTO attendances (user_id, date, check_in, check_out, status, hours_worked, note) VALUES (?, ?, ?, ?, ?, ?, ?)");
+        $ins = $pdo->prepare("INSERT INTO ems_attendances (user_id, date, check_in, check_out, status, hours_worked, note) VALUES (?, ?, ?, ?, ?, ?, ?)");
         $ins->execute([$userId, $date, $checkIn, $checkOut, $status, $hoursWorked, $note]);
         $recordId = $pdo->lastInsertId();
     }
@@ -1799,12 +1799,12 @@ if ($route === '/attendances/check-in' && $method === 'POST') {
     $date = date('Y-m-d');
 
     // Check if record exists for today
-    $stmt = $pdo->prepare("SELECT id, check_in FROM attendances WHERE user_id = ? AND date = ?");
+    $stmt = $pdo->prepare("SELECT id, check_in FROM ems_attendances WHERE user_id = ? AND date = ?");
     $stmt->execute([$userId, $date]);
     $existing = $stmt->fetch();
 
     if ($existing) {
-        $up = $pdo->prepare("UPDATE attendances SET check_out = ?, hours_worked = 8.0 WHERE id = ?");
+        $up = $pdo->prepare("UPDATE ems_attendances SET check_out = ?, hours_worked = 8.0 WHERE id = ?");
         $up->execute([$time, $existing['id']]);
         jsonResponse([
             'status' => 'success',
@@ -1812,7 +1812,7 @@ if ($route === '/attendances/check-in' && $method === 'POST') {
             'message' => "Điểm danh Check-Out ca làm thành công lúc {$time}!"
         ]);
     } else {
-        $ins = $pdo->prepare("INSERT INTO attendances (user_id, date, check_in, status, hours_worked) VALUES (?, ?, ?, 'on_time', 8.0)");
+        $ins = $pdo->prepare("INSERT INTO ems_attendances (user_id, date, check_in, status, hours_worked) VALUES (?, ?, ?, 'on_time', 8.0)");
         $ins->execute([$userId, $date, $time]);
         jsonResponse([
             'status' => 'success',
@@ -1827,7 +1827,7 @@ if ($route === '/attendances/check-in' && $method === 'POST') {
 // UC13: ATTENDANCE EXCEPTIONS (Xử lý giải trình đi muộn, đơn nghỉ phép, đổi ca)
 // ------------------------------------------------------------------------------
 if ($route === '/attendance-exceptions' && $method === 'GET') {
-    $sql = "SELECT ae.*, u.name as user_name, u.staff_code FROM attendance_exceptions ae JOIN users u ON ae.user_id = u.id ORDER BY ae.id DESC";
+    $sql = "SELECT ae.*, u.name as user_name, u.staff_code FROM ems_attendance_exceptions ae JOIN ems_users u ON ae.user_id = u.id ORDER BY ae.id DESC";
     $exceptions = $pdo->query($sql)->fetchAll();
 
     jsonResponse([
@@ -1845,7 +1845,7 @@ if ($route === '/attendance-exceptions' && $method === 'POST') {
     $targetDate = $body['target_date'] ?? date('Y-m-d');
     $proof = $body['proof_image'] ?? null;
 
-    $stmt = $pdo->prepare("INSERT INTO attendance_exceptions (user_id, type, type_title, reason, target_date, proof_image, status) VALUES (?, ?, ?, ?, ?, ?, 'pending')");
+    $stmt = $pdo->prepare("INSERT INTO ems_attendance_exceptions (user_id, type, type_title, reason, target_date, proof_image, status) VALUES (?, ?, ?, ?, ?, ?, 'pending')");
     $stmt->execute([$userId, $type, $typeTitle, $reason, $targetDate, $proof]);
 
     jsonResponse([
@@ -1862,7 +1862,7 @@ if (preg_match('#^/attendance-exceptions/([0-9]+)/action$#', $route, $matches) &
     $reviewer = $body['reviewer'] ?? 'Phạm Thu Hương (Manager)';
     $comment = $body['comment'] ?? ($action === 'approved' ? 'Chấp thuận đơn.' : 'Từ chối đơn.');
 
-    $stmt = $pdo->prepare("UPDATE attendance_exceptions SET status = ?, reviewed_by = ?, review_comment = ? WHERE id = ?");
+    $stmt = $pdo->prepare("UPDATE ems_attendance_exceptions SET status = ?, reviewed_by = ?, review_comment = ? WHERE id = ?");
     $stmt->execute([$action, $reviewer, $comment, $id]);
 
     jsonResponse([

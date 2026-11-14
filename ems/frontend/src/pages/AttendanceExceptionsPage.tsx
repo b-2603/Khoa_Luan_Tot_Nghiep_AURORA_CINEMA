@@ -2,7 +2,8 @@ import React, { useState, useEffect } from 'react';
 import { AttendanceException, User, Attendance } from '../types';
 import { 
   getAttendanceExceptions, updateAttendanceExceptionStatus, 
-  saveAttendanceException, getUsers, getAttendances, saveAttendance 
+  saveAttendanceException, getUsers, getAttendances, saveAttendance,
+  removeSingleWorkSchedule
 } from '../services/storage';
 import { 
   fetchAttendanceExceptions, handleExceptionActionApi, 
@@ -70,9 +71,12 @@ export const AttendanceExceptionsPage: React.FC<AttendanceExceptionsPageProps> =
     updateAttendanceExceptionStatus(id, status, reviewerName, comment);
     await handleExceptionActionApi(id, status, comment);
 
-    // TỰ ĐỘNG ĐỒNG BỘ SANG BẢNG CHẤM CÔNG (ATTENDANCE)
+    // TỰ ĐỘNG ĐỒNG BỘ SANG BẢNG CHẤM CÔNG (ATTENDANCE) VÀ LỊCH LÀM VIỆC
     const exc = exceptions.find(e => e.id === id);
     if (exc && status === 'approved') {
+      if (exc.type === 'leave_request' || exc.type === 'shift_swap') {
+        removeSingleWorkSchedule(exc.userId, exc.targetDate);
+      }
       const allAtts = getAttendances();
       const targetAtt = allAtts.find(a => 
         (a.userId === exc.userId || a.staffCode === exc.staffCode || a.userName === exc.userName) &&
@@ -82,7 +86,7 @@ export const AttendanceExceptionsPage: React.FC<AttendanceExceptionsPageProps> =
       if (targetAtt) {
         const updatedAtt: Attendance = {
           ...targetAtt,
-          note: `${targetAtt.note || ''} | [Quản lý ${reviewerName} đã duyệt giải trình: ${exc.reason}]`.trim(),
+          note: `${targetAtt.note || ''} | [Quản lý ${reviewerName} đã duyệt ${exc.typeTitle}: ${exc.reason}]`.trim(),
         };
         saveAttendance(updatedAtt);
         saveAttendanceApi(updatedAtt);
