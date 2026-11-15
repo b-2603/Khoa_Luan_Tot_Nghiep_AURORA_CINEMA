@@ -4,6 +4,8 @@ import AccountManagementPage, { type IdentityAccount, type IdentitySystem, type 
 import CustomerWorkspace, { CustomerProfileDrawer } from './components/CustomerWorkspace';
 import BookingHistoryWorkspace from './components/BookingHistoryWorkspace';
 import MarketingWorkspace, { MarketingPlanApproval } from './components/MarketingWorkspace';
+import PromotionCenterWorkspace from './components/PromotionCenterWorkspace';
+import TheaterPromotionWorkspace from './components/TheaterPromotionWorkspace';
 import NotificationCenter from './components/NotificationCenter';
 import ProductCatalogManagement from './components/ProductCatalogManagement';
 import AuditLogManagement from './components/AuditLogManagement';
@@ -13,6 +15,7 @@ import UserAccountModal, { type UserAccountForm } from './components/UserAccount
 import RbacManagement, { type PermissionAction, type PermissionActions, type RbacAccount, type RbacGrant, type RbacModule } from './components/RbacManagement';
 import CinemaMoviePlanWorkspace, { type CinemaPlanView } from './components/CinemaMoviePlanWorkspace';
 import MovieManagementWorkspace from './components/MovieManagementWorkspace';
+import AccountProfileModal, { type AccountProfile } from './components/AccountProfileModal';
 import './components/MarketingWorkspace.css';
 import './components/MarketingReviewHierarchy.css';
 import './components/MarketingWorkspace.layout.css';
@@ -26,7 +29,7 @@ import {
   Plus, Edit, Trash2, DollarSign, Thermometer, Volume2,
   ShieldAlert, UserCheck, Monitor, ScrollText, CreditCard, Search, RefreshCw,
   Tv, Clapperboard as ShowtimeIcon, MapPin, Clock, Target,
-  Layers, Send, CalendarCheck, Sparkles, Filter, Globe, CirclePause,
+  CalendarCheck, Sparkles, Globe, CirclePause,
   Play, WalletCards, KeyRound, LockKeyhole, CircleDollarSign, Phone, Activity, History, Printer, Megaphone
 } from 'lucide-react';
 
@@ -110,15 +113,15 @@ type NavItem = { id: string; name: string; icon: React.ElementType; children?: s
 // Never expose implementation keys (accounts, catalog, pos_devices, …) in the
 // interface. These are route identifiers only; users always see business names.
 const PAGE_TITLES: Record<string, string> = {
-  dashboard: 'Tổng quan hệ thống', accounts: 'Tài khoản & Phân quyền', cinemas: 'Hệ thống rạp', 'movie-management': 'Quản lý phim', movies: 'Danh sách phim',
-  movie_plan: 'Kế hoạch phim', schedules: 'Lịch chiếu', screens: 'Quản lý phòng chiếu', pricing: 'Chính sách giá',
+  dashboard: 'Tổng quan hệ thống', accounts: 'Tài khoản & Phân quyền', cinemas: 'Hệ thống rạp', movies: 'Danh sách phim',
+  theater_plans: 'Duyệt kế hoạch phim', theater_plan_approvals: 'Duyệt kế hoạch phim', movie_plan: 'Duyệt kế hoạch phim', schedules: 'Lịch chiếu', screens: 'Quản lý phòng chiếu', pricing: 'Chính sách giá',
   catalog: 'Danh mục dùng chung', promotions: 'Khuyến mãi & Ưu đãi', products: 'Quản lý hàng hóa', staff: 'Nhân viên & Ca làm việc',
   reports: 'Báo cáo vận hành', pos_devices: 'Thiết bị POS', audit_log: 'Nhật ký hệ thống', settings: 'Cấu hình hệ thống',
   transactions: 'Giao dịch', refunds: 'Hoàn tiền', showtimes: 'Lịch chiếu', shifts: 'Phiên làm việc', cinema_customers: 'Khách hàng', booking_history: 'Lịch sử đặt vé'
   , 'mkt-dashboard':'Tổng quan', 'mkt-movies':'Danh sách phim', 'mkt-plans':'Kế hoạch phim', 'mkt-campaigns':'Quảng bá phim',
   'mkt-promotions':'Chương trình khuyến mãi', 'mkt-vouchers':'Voucher', 'mkt-contents':'Nội dung Customer Website',
   'mkt-notifications':'Thông báo Marketing', 'mkt-segments':'Phân nhóm khách hàng', 'mkt-reports':'Báo cáo Marketing', 'mkt-account':'Thông tin cá nhân'
-  , marketing_approvals:'Duyệt kế hoạch Marketing'
+  , marketing_approvals:'Duyệt kế hoạch rạp'
 };
 
 function pageTitleFor(active: string, role?: TMSRole) {
@@ -138,12 +141,14 @@ function getRoleNavItems(role: TMSRole): NavItem[] {
       return [
         { id: 'dashboard', name: 'Tổng quan', icon: Home },
         { id: 'accounts', name: 'Tài khoản & Phân quyền', icon: Users, children: ['Danh sách tài khoản', 'Ma trận phân quyền'] },
+        { id: 'cinema_customers', name: 'Khách hàng', icon: UserRound },
         { id: 'cinemas', name: 'Hệ thống rạp', icon: Building2 },
-        { id: 'movie-management', name: 'Quản lý phim', icon: Film, children: ['Danh sách phim', 'Kế hoạch phim', 'Phân bổ phim cho rạp'] },
+        { id: 'movies', name: 'Danh sách phim', icon: Film },
+        { id: 'theater_plans', name: 'Kế hoạch rạp', icon: CalendarCheck, children: ['Duyệt kế hoạch phim'] },
         { id: 'schedules', name: 'Lịch chiếu', icon: CalendarDays },
         { id: 'pricing', name: 'Chính sách giá chung', icon: Tag },
         { id: 'catalog', name: 'Danh mục dùng chung', icon: Package },
-        { id: 'promotions', name: 'CTKM & Khuyến mãi', icon: Ticket, children: ['Duyệt kế hoạch CTKM', 'Quản lý CTKM hệ thống'] },
+        { id: 'promotions', name: 'CTKM & Khuyến mãi', icon: Ticket, children: ['Duyệt & quản lý CTKM'] },
         { id: 'reports', name: 'Báo cáo tổng hợp', icon: BarChart3 },
         { id: 'pos_devices', name: 'Thiết bị POS', icon: Monitor, children: ['Quản lý POS', 'Phê duyệt POS'] },
         { id: 'audit_log', name: 'Audit Log', icon: ScrollText },
@@ -156,7 +161,7 @@ function getRoleNavItems(role: TMSRole): NavItem[] {
         { id: 'schedules', name: 'Lịch chiếu', icon: CalendarDays },
         { id: 'screens', name: 'Phòng chiếu', icon: Building2 },
         { id: 'pricing', name: 'Áp dụng giá vé', icon: Tag },
-        { id: 'promotions', name: 'Voucher / CTKM', icon: Ticket, children: ['Voucher tại rạp', 'Tiếp nhận CTKM', 'Triển khai CTKM', 'Đề xuất điều chỉnh'] },
+        { id: 'promotions', name: 'Voucher / CTKM', icon: Ticket, children: ['Tiếp nhận & triển khai CTKM'] },
         { id: 'products', name: 'Hàng hóa', icon: Package },
         { id: 'cinema_customers', name: 'Khách hàng', icon: UserRound },
         { id: 'booking_history', name: 'Lịch sử đặt vé', icon: History },
@@ -207,8 +212,8 @@ const VIEW_RBAC_MODULE: Record<string, string> = {
   dashboard: 'dashboard', 'Tổng quan tài chính': 'dashboard',
   accounts: 'users', 'Danh sách tài khoản': 'users', 'Ma trận phân quyền': 'users',
   cinemas: 'screens', 'Hệ thống rạp': 'screens',
-  'movie-management': 'movies', movies: 'movies', 'Danh sách phim': 'movies', 'Kế hoạch phim': 'movies',
-  'Phân bổ phim cho rạp': 'movies', movie_plan: 'movies', 'Xem kế hoạch phim': 'movies', 'Kế hoạch đang hiệu lực': 'movies',
+  movies: 'movies', 'Danh sách phim': 'movies', theater_plans: 'movies', theater_plan_approvals: 'movies', 'Duyệt kế hoạch phim': 'movies', 'Duyệt kế hoạch': 'movies', 'Kế hoạch phim': 'movies',
+  movie_plan: 'movies', 'Xem kế hoạch phim': 'movies', 'Kế hoạch đang hiệu lực': 'movies',
   'Xác nhận kế hoạch': 'movies', 'Triển khai phim tại rạp': 'movies', 'Lịch sử kế hoạch': 'movies', marketing_approvals: 'marketing',
   schedules: 'schedules', showtimes: 'schedules',
   screens: 'screens',
@@ -216,8 +221,8 @@ const VIEW_RBAC_MODULE: Record<string, string> = {
   catalog: 'products', products: 'products',
   cinema_customers: 'customers',
   booking_history: 'booking_history',
-  promotions: 'vouchers', 'Duyệt kế hoạch CTKM': 'vouchers', 'Quản lý CTKM hệ thống': 'vouchers',
-  'Voucher tại rạp': 'vouchers', 'Tiếp nhận CTKM': 'vouchers', 'Triển khai CTKM': 'vouchers', 'Đề xuất điều chỉnh': 'vouchers',
+  promotions: 'vouchers', 'Duyệt kế hoạch CTKM': 'vouchers', 'Duyệt & quản lý CTKM': 'vouchers', 'Quản lý CTKM hệ thống': 'vouchers',
+  'Voucher tại rạp': 'vouchers', 'Tiếp nhận CTKM': 'vouchers', 'Triển khai CTKM': 'vouchers', 'Đề xuất điều chỉnh': 'vouchers', 'Tiếp nhận & triển khai CTKM': 'vouchers',
   staff: 'staff', shifts: 'staff', 'NV bán hàng': 'staff', 'Nhân viên rạp': 'staff', 'Phiên bán hàng': 'staff', 'Phiên làm việc': 'staff',
   reports: 'reports',
   pos_devices: 'pos_devices', 'Quản lý POS': 'pos_devices', 'Phê duyệt POS': 'pos_devices',
@@ -271,7 +276,7 @@ const allowedTmsViews = (role: TMSRole) => {
     (item.children || []).forEach(child => allowed.add(child));
   });
   const operationalViews: Record<TMSRole, string[]> = {
-    super_admin: ['screens', 'transactions', 'refunds', 'movies', 'marketing_approvals'],
+    super_admin: ['screens', 'transactions', 'refunds', 'movies', 'marketing_approvals', 'Duyệt kế hoạch CTKM', 'Quản lý CTKM hệ thống'],
     cinema_admin: ['screens', 'movie_plan', 'schedules'],
     supervisor: ['screens', 'showtimes', 'transactions', 'refunds'],
     accounting: ['transactions', 'refunds'],
@@ -330,12 +335,6 @@ interface PosSessionItem {
 interface PosSessionPolicy {
   timezone:string; server_now:string; business_date:string; force_close_time:string; reopen_time:string;
   can_open:boolean; message:string;
-}
-interface PosWorkScheduleItem {
-  id: number; theater_id: number; theater_name: string; user_id: number; employee_code: string; full_name: string; username: string;
-  role: string; user_status: string; work_date: string; start_time: string; end_time: string; sales_areas: string[];
-  counter: string; initial_cash: number; status: 'scheduled'|'confirmed'|'active'|'completed'|'cancelled';
-  linked_shift_id: number|null; shift_status?: string|null; notes?: string; created_by_name?: string; updated_by_name?: string;
 }
 const POS_SALES_AREAS = [
   { value:'box_ticket', label:'Box Ticket', description:'Bán vé, chọn ghế và tra cứu vé', icon:Ticket },
@@ -471,34 +470,6 @@ const EMPTY_MOVIE_FORM: MovieForm = {
   trailer_url: '',
   status: 'coming_soon'
 };
-
-export interface MoviePlan {
-  id: number;
-  plan_code?: string;
-  plan_name: string;
-  plan_month: number;
-  plan_year: number;
-  movie_id: number;
-  movie_title: string;
-  format: string;
-  expected_start_date: string;
-  expected_end_date: string;
-  target_revenue: number;
-  target_screenings_per_day: number;
-  priority_level: 'blockbuster' | 'high' | 'medium' | 'low';
-  status: 'draft' | 'published' | 'in_progress' | 'completed' | 'cancelled';
-  note?: string;
-  created_by?: string;
-  created_at?: string;
-  approved_by?: string;
-  approved_at?: string;
-  updated_by?: string;
-  updated_at?: string;
-  allocations?: MovieAllocation[];
-  allocated_count?: number;
-  total_theaters?: number;
-  confirmed_count?: number;
-}
 
 export interface MovieAllocation {
   id: number;
@@ -647,13 +618,12 @@ export default function App() {
   const [expanded, setExpanded] = useState('');
   const [sidebarOpen, setSidebarOpen] = useState(() => window.innerWidth > 760);
   const [userDropdownOpen, setUserDropdownOpen] = useState(false);
+  const [showAccountProfile, setShowAccountProfile] = useState(false);
   const [reportDate, setReportDate] = useState(() => localIsoDate());
 
   // DATA
   const [tmsUsers, setTmsUsers] = useState<TMSUser[]>([]);
-  const [customerUsers, setCustomerUsers] = useState<TMSUser[]>([]);
   const [accountsLoading, setAccountsLoading] = useState(false);
-  const [accountSummary, setAccountSummary] = useState({ total:0, active:0, locked:0, internal_total:0, internal_active:0, customer_total:0, customer_active:0, customer_points:0, admins:0 });
   const emptyIdentitySystem: IdentitySystemSummary = { label:'', total:0, active:0, restricted:0, role_count:0 };
   const [identityAccounts, setIdentityAccounts] = useState<IdentityAccount[]>([]);
   const [identitySystems, setIdentitySystems] = useState<Record<IdentitySystem, IdentitySystemSummary>>({ tms:{...emptyIdentitySystem,label:'TMS'}, pos:{...emptyIdentitySystem,label:'POS'}, ems:{...emptyIdentitySystem,label:'EMS'}, customer:{...emptyIdentitySystem,label:'Customer'} });
@@ -731,13 +701,6 @@ export default function App() {
   const [posSessionStatus, setPosSessionStatus] = useState('all');
   const [posSessionView, setPosSessionView] = useState<'today'|'history'>('today');
   const [posSessionPolicy, setPosSessionPolicy] = useState<PosSessionPolicy>({ timezone:'Asia/Ho_Chi_Minh', server_now:'', business_date:localIsoDate(), force_close_time:'00:00', reopen_time:'00:01', can_open:true, message:'Có thể cấp và mở phiên cho ngày nghiệp vụ hiện tại.' });
-  const [posWorkSchedules, setPosWorkSchedules] = useState<PosWorkScheduleItem[]>([]);
-  const [posWorkScheduleSummary, setPosWorkScheduleSummary] = useState({ total:0, scheduled:0, confirmed:0, active:0, completed:0, cancelled:0 });
-  const [posWorkScheduleLoading, setPosWorkScheduleLoading] = useState(false);
-  const [posWorkScheduleStatus, setPosWorkScheduleStatus] = useState('all');
-  const [showPosWorkScheduleModal, setShowPosWorkScheduleModal] = useState(false);
-  const [posWorkScheduleSaving, setPosWorkScheduleSaving] = useState(false);
-  const [posWorkScheduleForm, setPosWorkScheduleForm] = useState({ id:0, user_id:0, theater_id:0, work_date:localIsoDate(), start_time:'08:00', end_time:'16:00', sales_areas:['box_ticket'] as string[], counter:'QUAY-01', initial_cash:500000, notes:'' });
   const [showPosSessionModal, setShowPosSessionModal] = useState(false);
   const [posSessionSaving, setPosSessionSaving] = useState(false);
   const [posSessionForm, setPosSessionForm] = useState({ work_schedule_id:0, user_id:0, theater_id:0, initial_cash:500000, counter:'', sales_areas:['box_ticket'] as string[], notes:'' });
@@ -745,7 +708,6 @@ export default function App() {
   const [posCloseForm, setPosCloseForm] = useState({ cash_at_close:0, close_note:'' });
 
   // MOVIE PLANNING & ALLOCATION DATA (MYSQL AURORA_DB)
-  const [moviePlans, setMoviePlans] = useState<MoviePlan[]>([]);
   const [movieAllocations, setMovieAllocations] = useState<MovieAllocation[]>([]);
   const [moviesList, setMoviesList] = useState<MovieItem[]>([]);
   const [movieCatalogSearch, setMovieCatalogSearch] = useState('');
@@ -754,13 +716,6 @@ export default function App() {
   const [scheduleTheatersList, setScheduleTheatersList] = useState<ScheduleTheaterItem[]>([]);
   const [scheduleTheatersLoading, setScheduleTheatersLoading] = useState(false);
   const [theatersList, setTheatersList] = useState<TheaterItem[]>([]);
-  const [theatersLoading, setTheatersLoading] = useState(false);
-  const [theatersError, setTheatersError] = useState('');
-  const [planMonth, setPlanMonth] = useState<number>(10);
-  const [planYear, setPlanYear] = useState<number>(2026);
-  const [planSearch, setPlanSearch] = useState('');
-  const [planStatusFilter, setPlanStatusFilter] = useState('all');
-  const [selectedTheaterFilter, setSelectedTheaterFilter] = useState<number>(0);
   const [systemNotice, setSystemNotice] = useState<{ message: string; type: 'success' | 'error' | 'warning' } | null>(null);
   const [systemConfirm, setSystemConfirm] = useState<{ title?: string; message: string; actionLabel: string; onConfirm: () => void | Promise<void> } | null>(null);
 
@@ -784,37 +739,6 @@ export default function App() {
   const [refundForm, setRefundForm] = useState({ transaction_code: '', customer_name: '', amount: 190000, reason: '', payment_method: 'cash' });
 
   // MOVIE PLAN MODAL
-  const [showPlanModal, setShowPlanModal] = useState(false);
-  const [planForm, setPlanForm] = useState({
-    id: 0,
-    plan_code: '',
-    plan_name: 'Kế hoạch Phim Tháng 10/2026 - Mùa Halloween & Bom Tấn Cuối Năm',
-    plan_month: 10,
-    plan_year: 2026,
-    movie_id: 11,
-    movie_title: 'Venom: Kèo Cuối (The Last Dance)',
-    format: 'IMAX 3D / 2D Digital',
-    expected_start_date: '2026-10-01',
-    expected_end_date: '2026-10-31',
-    target_revenue: 950000000,
-    target_screenings_per_day: 8,
-    priority_level: 'blockbuster' as 'blockbuster' | 'high' | 'medium' | 'low',
-    status: 'draft' as 'draft' | 'published' | 'in_progress' | 'completed' | 'cancelled',
-    note: '',
-    created_by: '',
-    created_at: '',
-    approved_by: '',
-    approved_at: '',
-    updated_by: '',
-    updated_at: '',
-    selected_theaters: [1, 2, 3, 4, 5] as number[]
-  });
-
-  // ALLOCATION MODAL
-  const [showAllocationModal, setShowAllocationModal] = useState(false);
-  const [allocationTargetPlan, setAllocationTargetPlan] = useState<MoviePlan | null>(null);
-  const [allocSelectedTheaters, setAllocSelectedTheaters] = useState<number[]>([]);
-  const [allocMinScreenings, setAllocMinScreenings] = useState(6);
 
   // MOVIE MODAL
   const [showMovieModal, setShowMovieModal] = useState(false);
@@ -976,7 +900,6 @@ export default function App() {
     // vận hành rạp để tránh tạo cảnh báo 403 không liên quan.
     if (currentUser?.role !== 'super_admin') {
       setTmsUsers([]);
-      setCustomerUsers([]);
       setIdentityAccounts([]);
       setAccountsLoading(false);
       return;
@@ -992,10 +915,7 @@ export default function App() {
       setIdentitySystems(result.data.systems);
       setIdentitySummary(result.data.summary);
       const internal = allAccounts.filter(item => item.system === 'tms').map(item => ({ ...item, theater_name:item.scope_name, account_type:'internal' })) as unknown as TMSUser[];
-      const customers = allAccounts.filter(item => item.system === 'customer').map(item => ({ ...item, theater_name:item.scope_name, account_type:'customer' })) as unknown as TMSUser[];
       setTmsUsers(internal);
-      setCustomerUsers(customers);
-      setAccountSummary({ total:result.data.summary.total, active:result.data.summary.active, locked:result.data.summary.restricted, internal_total:internal.length, internal_active:internal.filter(item=>item.status==='active').length, customer_total:customers.length, customer_active:customers.filter(item=>item.status==='active').length, customer_points:customers.reduce((sum,item)=>sum+Number((item as any).points||0),0), admins:internal.filter(item=>item.status==='active'&&(item.role==='super_admin'||item.role==='cinema_admin')).length });
     } catch (error) { setSystemNotice({ message: error instanceof Error ? error.message : 'Không thể kết nối Aurora DB để tải tài khoản.', type: 'error' }); }
     finally { setAccountsLoading(false); }
   };
@@ -1093,17 +1013,6 @@ export default function App() {
       setCinemaScheduleBoardError(error instanceof Error ? error.message : 'Không thể tải bảng điều phối lịch chiếu.');
     } finally {
       if (requestId === cinemaBoardLoadSequence.current) setCinemaScheduleBoardLoading(false);
-    }
-  };
-
-  const loadMoviePlans = async (m = planMonth, y = planYear) => {
-    try {
-      const res = await fetch(`${API_BASE}?action=movie-plans&month=${m}&year=${y}`, { credentials: 'include', cache: 'no-store' });
-      const data = await res.json();
-      if (!res.ok || !data.success || !Array.isArray(data.data)) throw new Error(data.message || 'Không thể tải kế hoạch phim từ Aurora DB.');
-      setMoviePlans(data.data);
-    } catch (e) {
-      console.error('Error loading movie plans:', e);
     }
   };
 
@@ -1452,63 +1361,13 @@ export default function App() {
     } catch (error) { setPosCounters([]); setSystemNotice({ message:error instanceof Error ? error.message : 'Không thể tải quầy bán từ Aurora DB.', type:'error' }); }
   };
 
-  const loadPosWorkSchedules = async (date = posSessionDate, status = posWorkScheduleStatus) => {
-    if (!['cinema_admin','super_admin'].includes(currentUser?.role || '')) return;
-    setPosWorkScheduleLoading(true);
-    try {
-      const params=new URLSearchParams({action:'pos-work-schedules',date});
-      if(status!=='all')params.set('status',status);
-      const response=await fetch(`${API_BASE}?${params.toString()}`,{credentials:'include',cache:'no-store'});
-      const result=await response.json();
-      if(!response.ok||!result.success)throw new Error(result.message||'Không thể tải kế hoạch ca làm việc.');
-      setPosWorkSchedules(Array.isArray(result.data)?result.data:[]);
-      setPosWorkScheduleSummary(result.summary||{total:0,scheduled:0,confirmed:0,active:0,completed:0,cancelled:0});
-    }catch(error){setSystemNotice({message:error instanceof Error?error.message:'Không thể tải kế hoạch ca từ Aurora DB.',type:'error'});}
-    finally{setPosWorkScheduleLoading(false);}
-  };
-
-  const openPosWorkScheduleEditor=(schedule?:PosWorkScheduleItem)=>{
-    const first=posStaff.find(item=>item.status==='active');
-    setPosWorkScheduleForm(schedule?{
-      id:schedule.id,user_id:schedule.user_id,theater_id:schedule.theater_id,work_date:schedule.work_date,
-      start_time:schedule.start_time.slice(0,5),end_time:schedule.end_time.slice(0,5),sales_areas:schedule.sales_areas,
-      counter:schedule.counter,initial_cash:Number(schedule.initial_cash),notes:schedule.notes||''
-    }:{id:0,user_id:first?.id||0,theater_id:first?.theater_id||Number(currentUser?.theater_id||0),work_date:posSessionDate,start_time:'08:00',end_time:'16:00',sales_areas:['box_ticket'],counter:'QUAY-01',initial_cash:500000,notes:''});
-    setShowPosWorkScheduleModal(true);
-  };
-
-  const savePosWorkSchedule=async(event:FormEvent)=>{
-    event.preventDefault();setPosWorkScheduleSaving(true);
-    try{
-      const response=await fetch(`${API_BASE}?action=pos-work-schedules`,{method:posWorkScheduleForm.id?'PUT':'POST',credentials:'include',headers:{'Content-Type':'application/json'},body:JSON.stringify(posWorkScheduleForm)});
-      const result=await response.json();
-      if(!response.ok||!result.success)throw new Error(result.message||'Không thể lưu ca làm việc.');
-      setShowPosWorkScheduleModal(false);showSystemNotice(result.message);await loadPosWorkSchedules(posSessionDate,posWorkScheduleStatus);
-    }catch(error){setSystemNotice({message:error instanceof Error?error.message:'Không thể lưu ca làm việc.',type:'error'});}
-    finally{setPosWorkScheduleSaving(false);}
-  };
-
-  const cancelPosWorkSchedule=(schedule:PosWorkScheduleItem)=>requestSystemConfirmation(`Hủy ca ${schedule.start_time.slice(0,5)}–${schedule.end_time.slice(0,5)} của ${schedule.full_name}? Lịch sử phân công vẫn được giữ trong Aurora DB.`,async()=>{
-    try{
-      const response=await fetch(`${API_BASE}?action=pos-work-schedules&id=${schedule.id}`,{method:'DELETE',credentials:'include',headers:{'Content-Type':'application/json'},body:JSON.stringify({id:schedule.id,theater_id:schedule.theater_id})});
-      const result=await response.json();if(!response.ok||!result.success)throw new Error(result.message||'Không thể hủy ca làm việc.');
-      showSystemNotice(result.message);await loadPosWorkSchedules(posSessionDate,posWorkScheduleStatus);
-    }catch(error){setSystemNotice({message:error instanceof Error?error.message:'Không thể hủy ca làm việc.',type:'error'});}
-  },'Hủy ca','Xác nhận hủy ca làm việc');
-
-  const openSessionFromSchedule=(schedule:PosWorkScheduleItem)=>{
-    if(!posSessionPolicy.can_open){setSystemNotice({message:posSessionPolicy.message,type:'error'});return;}
-    setPosSessionForm({work_schedule_id:schedule.id,user_id:schedule.user_id,theater_id:schedule.theater_id,initial_cash:Number(schedule.initial_cash),counter:schedule.counter,sales_areas:schedule.sales_areas,notes:schedule.notes||''});
-    setShowPosSessionModal(true);
-  };
-
   const savePosSession = async (event: FormEvent) => {
     event.preventDefault(); setPosSessionSaving(true);
     try {
       const response = await fetch(`${API_BASE}?action=pos-sessions`, { method:'POST', credentials:'include', headers:{'Content-Type':'application/json'}, body:JSON.stringify({ operation:'open', confirm_open:true, ...posSessionForm }) });
       const result = await response.json();
       if (!response.ok || !result.success) throw new Error(result.message || 'Không thể mở phiên bán hàng.');
-      setShowPosSessionModal(false); showSystemNotice(result.message); await Promise.all([loadPosSessions(),loadPosStaff(),loadPosWorkSchedules()]);
+      setShowPosSessionModal(false); showSystemNotice(result.message); await Promise.all([loadPosSessions(),loadPosStaff()]);
     } catch (error) { setSystemNotice({ message:error instanceof Error?error.message:'Không thể mở phiên bán hàng.', type:'error' }); }
     finally { setPosSessionSaving(false); }
   };
@@ -1518,7 +1377,7 @@ export default function App() {
       const response = await fetch(`${API_BASE}?action=pos-sessions`, { method:'PUT', credentials:'include', headers:{'Content-Type':'application/json'}, body:JSON.stringify({ id:session.id, theater_id:session.theater_id, operation }) });
       const result = await response.json();
       if (!response.ok || !result.success) throw new Error(result.message || 'Không thể cập nhật phiên.');
-      showSystemNotice(result.message); await Promise.all([loadPosSessions(),loadPosStaff(),loadPosWorkSchedules()]);
+      showSystemNotice(result.message); await Promise.all([loadPosSessions(),loadPosStaff()]);
     } catch (error) { setSystemNotice({ message:error instanceof Error?error.message:'Không thể cập nhật phiên bán hàng.', type:'error' }); }
   };
 
@@ -1532,7 +1391,7 @@ export default function App() {
       const response = await fetch(`${API_BASE}?action=pos-sessions`, { method:'PUT', credentials:'include', headers:{'Content-Type':'application/json'}, body:JSON.stringify({ id:closingPosSession.id, theater_id:closingPosSession.theater_id, operation:'close', ...posCloseForm }) });
       const result = await response.json();
       if (!response.ok || !result.success) throw new Error(result.message || 'Không thể đóng phiên.');
-      setClosingPosSession(null); showSystemNotice(`${result.message} Chênh lệch: ${formatMoney(Number(result.data?.cash_difference||0))}.`); await Promise.all([loadPosSessions(),loadPosStaff(),loadPosWorkSchedules()]);
+      setClosingPosSession(null); showSystemNotice(`${result.message} Chênh lệch: ${formatMoney(Number(result.data?.cash_difference||0))}.`); await Promise.all([loadPosSessions(),loadPosStaff()]);
     } catch (error) { setSystemNotice({ message:error instanceof Error?error.message:'Không thể đóng phiên bán hàng.', type:'error' }); }
     finally { setPosSessionSaving(false); }
   };
@@ -1651,8 +1510,6 @@ export default function App() {
   };
 
   const loadTheaters = async (notifyOnError = false): Promise<TheaterItem[]> => {
-    setTheatersLoading(true);
-    setTheatersError('');
     try {
       const res = await fetch(`${API_BASE}?action=theaters`, { credentials: 'include', cache: 'no-store' });
       const data = await res.json();
@@ -1664,11 +1521,9 @@ export default function App() {
       console.error('Error loading theaters:', e);
       const message = e instanceof Error ? e.message : 'Không thể kết nối Aurora DB để tải danh sách cụm rạp.';
       setTheatersList([]);
-      setTheatersError(message);
       if (notifyOnError) setSystemNotice({ message, type: 'error' });
       return [];
     } finally {
-      setTheatersLoading(false);
     }
   };
 
@@ -1695,22 +1550,11 @@ export default function App() {
     void loadCinemaSystemOverview(theaterId, cinemaSystemDate);
   };
 
-  const openAllocationModal = async (plan: MoviePlan) => {
-    setAllocationTargetPlan(plan);
-    setAllocMinScreenings(plan.target_screenings_per_day);
-    setShowAllocationModal(true);
-    const allocatedIds = new Set((plan.allocations || []).map(allocation => Number(allocation.theater_id)));
-    setAllocSelectedTheaters(theatersList.map(theater => Number(theater.id)).filter(id => !allocatedIds.has(id)));
-    const theaters = await loadTheaters(true);
-    setAllocSelectedTheaters(theaters.map(theater => Number(theater.id)).filter(id => !allocatedIds.has(id)));
-  };
-
   useEffect(() => {
     if (isLoggedIn && currentUser) {
       void loadCurrentPermissions();
       if (currentUser.role === 'marketing_manager') return;
       if (currentUser.role === 'super_admin') { void loadUsers(); void loadRbacMatrix(); }
-      loadMoviePlans();
       loadMovieAllocations();
       loadMovies();
       if (currentUser.role === 'super_admin') loadScheduleTheaters();
@@ -1749,9 +1593,8 @@ export default function App() {
   useEffect(() => {
     if (!isLoggedIn || !['cinema_admin','super_admin','supervisor'].includes(currentUser?.role || '') || !['Phiên bán hàng','Phiên làm việc','shifts'].includes(active)) return;
     void loadPosSessions(posSessionDate,posSessionStatus,posSessionView);
-    if(currentUser?.role!=='supervisor')void loadPosWorkSchedules(posSessionDate,posWorkScheduleStatus);
     if (currentUser?.role!=='supervisor'&&!posStaff.length) void loadPosStaff('','active');
-  },[isLoggedIn,currentUser?.id,currentUser?.role,active,posSessionDate,posSessionStatus,posSessionView,posWorkScheduleStatus]);
+  },[isLoggedIn,currentUser?.id,currentUser?.role,active,posSessionDate,posSessionStatus,posSessionView]);
 
   // Keep an open management screen synchronized across the midnight boundary.
   // The server/database remains authoritative; this timer only refreshes UI.
@@ -1788,146 +1631,6 @@ export default function App() {
     setSelectedScheduleIds([]);
   }, [active, currentUser?.id]);
 
-  // Handle plan month change
-  const handleSelectPlanMonth = (m: number) => {
-    setPlanMonth(m);
-    loadMoviePlans(m, planYear);
-  };
-
-  // CRUD FOR MOVIE PLANS (Admin Tổng)
-  const handleSavePlan = async (e: FormEvent) => {
-    e.preventDefault();
-    if (currentUser?.role !== 'super_admin') {
-      alert('Chỉ Admin Tổng mới có đặc quyền lập kế hoạch phim!');
-      return;
-    }
-    if (planForm.status === 'published' && planForm.selected_theaters.length === 0) {
-      alert('Vui lòng chọn ít nhất một rạp trước khi ban hành kế hoạch.');
-      return;
-    }
-    try {
-      const url = planForm.id > 0 ? `${API_BASE}?action=movie-plans&id=${planForm.id}` : `${API_BASE}?action=movie-plans`;
-      const res = await fetch(url, {
-        method: 'POST',
-        credentials: 'include',
-        headers: { 'Content-Type': 'application/json', 'X-TMS-User': currentUser?.username || 'admin_tong' },
-        body: JSON.stringify({
-          ...planForm,
-          theaters: planForm.selected_theaters
-        })
-      });
-      const data = await res.json();
-      if (data.success) {
-        alert(planForm.status === 'published'
-          ? (planForm.id > 0 ? 'Đã cập nhật và ban hành kế hoạch phim!' : 'Đã ban hành kế hoạch phim và gửi đến các rạp đã chọn!')
-          : (planForm.id > 0 ? 'Đã cập nhật bản nháp kế hoạch phim!' : 'Đã lưu bản nháp kế hoạch phim!'));
-        setShowPlanModal(false);
-        loadMoviePlans(planForm.plan_month, planForm.plan_year);
-        loadMovieAllocations();
-      } else {
-        alert(data.message || 'Lỗi khi lưu kế hoạch phim');
-      }
-    } catch (err) {
-      alert('Lỗi kết nối cơ sở dữ liệu.');
-    }
-  };
-
-  const handleDeletePlan = async (id: number) => {
-    if (currentUser?.role !== 'super_admin') {
-      alert('Chỉ Admin Tổng mới có quyền xóa kế hoạch phim!');
-      return;
-    }
-    requestSystemConfirmation('Kế hoạch phim và các phân bổ rạp liên quan sẽ bị xóa. Hành động này không thể hoàn tác.', async () => {
-      try {
-      const res = await fetch(`${API_BASE}?action=movie-plans&id=${id}`, {
-        method: 'DELETE',
-        credentials: 'include',
-        headers: { 'X-TMS-User': currentUser?.username || 'admin_tong' }
-      });
-      const data = await res.json();
-      if (data.success) {
-        alert('Đã xóa kế hoạch phim!');
-        loadMoviePlans();
-        loadMovieAllocations();
-      } else {
-        alert(data.message);
-      }
-      } catch {
-        alert('Lỗi kết nối máy chủ.');
-      }
-    }, 'Xóa kế hoạch');
-  };
-
-  const handleUpdatePlanStatus = async (planId: number, newStatus: string) => {
-    if (currentUser?.role !== 'super_admin') return;
-    try {
-      const response = await fetch(`${API_BASE}?action=movie-plans&id=${planId}`, {
-        method: 'POST',
-        credentials: 'include',
-        headers: { 'Content-Type': 'application/json', 'X-TMS-User': currentUser?.username || 'admin_tong' },
-        body: JSON.stringify({ status: newStatus })
-      });
-      const result = await response.json();
-      if (!response.ok || !result.success) throw new Error(result.message || 'Không thể cập nhật trạng thái kế hoạch.');
-      loadMoviePlans();
-      loadMovieAllocations();
-    } catch (error) {
-      setSystemNotice({ message: error instanceof Error ? error.message : 'Không thể cập nhật trạng thái kế hoạch.', type: 'error' });
-      loadMoviePlans();
-    }
-  };
-
-  // ALLOCATION HANDLER (Admin Tổng phân bổ cho 5 rạp TPHCM)
-  const handleExecuteAllocation = async (e: FormEvent) => {
-    e.preventDefault();
-    if (!allocationTargetPlan) return;
-    if (allocationTargetPlan.status !== 'published') {
-      setSystemNotice({ message: 'Chỉ kế hoạch đã ban hành mới được phân bổ cho Admin Rạp.', type: 'warning' });
-      return;
-    }
-    if (!allocSelectedTheaters.length) {
-      setSystemNotice({ message: 'Vui lòng chọn ít nhất một cụm rạp để phân bổ.', type: 'warning' });
-      return;
-    }
-    const theaterIds = new Set(theatersList.map(theater => Number(theater.id)));
-    const validSelectedTheaters = allocSelectedTheaters.filter(id => theaterIds.has(Number(id)));
-    if (validSelectedTheaters.length !== allocSelectedTheaters.length) {
-      setSystemNotice({ message: 'Danh sách cụm rạp đã thay đổi. Vui lòng tải lại và chọn lại rạp từ Aurora DB.', type: 'warning' });
-      return;
-    }
-    try {
-      for (const tId of validSelectedTheaters) {
-        const theater = theatersList.find(t => Number(t.id) === Number(tId));
-        if (!theater) throw new Error('Cụm rạp được chọn không còn tồn tại trong Aurora DB.');
-        const response = await fetch(`${API_BASE}?action=movie-allocations`, {
-          method: 'POST',
-          credentials: 'include',
-          headers: { 'Content-Type': 'application/json', 'X-TMS-User': currentUser?.username || 'admin_tong' },
-          body: JSON.stringify({
-            plan_id: allocationTargetPlan.id,
-            movie_id: allocationTargetPlan.movie_id,
-            movie_title: allocationTargetPlan.movie_title,
-            theater_id: tId,
-            theater_name: theater.name,
-            min_screenings_per_day: allocMinScreenings,
-            preferred_screen_types: allocationTargetPlan.format || 'Standard / IMAX',
-            allocated_start_date: allocationTargetPlan.expected_start_date,
-            allocated_end_date: allocationTargetPlan.expected_end_date,
-            status: 'pending'
-          })
-        });
-        const result = await response.json();
-        if (!response.ok || !result.success) throw new Error(result.message || 'Không thể ghi phân bổ vào Aurora DB.');
-      }
-      setSystemNotice({ message: `Đã gửi kế hoạch phim đến ${validSelectedTheaters.length} cụm rạp. Admin Rạp có thể tiếp nhận và triển khai lịch chiếu.`, type: 'success' });
-      setShowAllocationModal(false);
-      loadMoviePlans();
-      loadMovieAllocations();
-    } catch (error) {
-      setSystemNotice({ message: error instanceof Error ? error.message : 'Không thể phân bổ phim cho rạp.', type: 'error' });
-    }
-  };
-
   // CONFIRM ALLOCATION (Admin Rạp bấm xác nhận)
   const handleConfirmAllocation = async (allocationId: number) => {
     try {
@@ -1941,7 +1644,6 @@ export default function App() {
       if (data.success) {
         alert('Admin Rạp đã xác nhận tiếp nhận kế hoạch phim thành công!');
         loadMovieAllocations();
-        loadMoviePlans();
         loadScheduleMovies();
       } else {
         alert(data.message);
@@ -2649,17 +2351,6 @@ export default function App() {
     } catch (error) { setSystemNotice({ message: error instanceof Error ? error.message : 'Không thể cập nhật trạng thái tài khoản.', type: 'error' }); }
   };
 
-  const toggleCustomerStatus = async (u: TMSUser) => {
-    if (currentUser?.role !== 'super_admin') { setSystemNotice({ message: 'Chỉ Admin Tổng mới có quyền thay đổi trạng thái customer.', type: 'warning' }); return; }
-    const status = u.status === 'active' ? 'locked' : 'active';
-    try {
-      const response = await fetch(`${API_BASE}?action=customer-account-status`, { method:'POST', credentials:'include', headers:{'Content-Type':'application/json'}, body:JSON.stringify({ id:u.id, status }) });
-      const result = await response.json();
-      if (!response.ok || !result.success) throw new Error(result.message || 'Không thể cập nhật trạng thái customer.');
-      showSystemNotice(result.message); await loadUsers();
-    } catch (error) { setSystemNotice({ message:error instanceof Error ? error.message : 'Không thể cập nhật trạng thái customer.', type:'error' }); }
-  };
-
   const toggleIdentityStatus = (account: IdentityAccount) => {
     if (currentUser?.role !== 'super_admin') { setSystemNotice({ message:'Chỉ Admin Tổng mới có quyền thay đổi trạng thái tài khoản.', type:'warning' }); return; }
     if (Number(account.manageable) !== 1) { setSystemNotice({ message:'Tài khoản này ở chế độ chỉ xem và được cố định tại hệ thống nguồn.', type:'warning' }); return; }
@@ -3201,12 +2892,14 @@ export default function App() {
       </section>
     );
 
-    if (role === 'super_admin' && (a === 'Kế hoạch phim' || a === 'marketing_approvals')) return <MarketingPlanApproval apiBase={API_BASE} notify={showSystemNotice} requestConfirm={requestSystemConfirmation}/>;
+    // Legacy deep links named "Kế hoạch phim" are deliberately redirected to
+    // the only valid source of truth: plans submitted by Marketing for review.
+    if (role === 'super_admin' && (a === 'theater_plans' || a === 'theater_plan_approvals' || a === 'Duyệt kế hoạch phim' || a === 'Duyệt kế hoạch' || a === 'Kế hoạch phim' || a === 'Phân bổ phim cho rạp' || a === 'marketing_approvals')) return <MarketingPlanApproval apiBase={API_BASE} notify={showSystemNotice} requestConfirm={requestSystemConfirmation}/>;
     if (role === 'marketing_manager') return <MarketingWorkspace active={a} user={currentUser!} apiBase={API_BASE} notify={showSystemNotice} requestConfirm={requestSystemConfirmation} onNavigate={setActive}/>;
 
     if (a === 'dashboard' || a === 'Tổng quan tài chính') return renderDashboard();
 
-    if (a === 'cinema_customers') return <CustomerWorkspace apiBase={API_BASE}/>;
+    if (a === 'cinema_customers') return <CustomerWorkspace apiBase={API_BASE} canManage={role === 'super_admin'}/>;
     if (a === 'booking_history') return <BookingHistoryWorkspace apiBase={API_BASE}/>;
 
     // ACCOUNTS & PERMISSIONS (super_admin only)
@@ -3423,524 +3116,6 @@ export default function App() {
           </section>}
         </>}
       </div>;
-    }
-
-    // ========================================================
-    // KẾ HOẠCH PHIM THEO THÁNG (USE CASE 6 - ADMIN TỔNG)
-    // ========================================================
-    if (a === 'Kế hoạch phim') {
-      const planningMonths = Array.from({ length: 12 }, (_, index) => index + 1);
-      const monthLabel = (month: number) => `Tháng ${String(month).padStart(2, '0')}`;
-      const monthPlans = moviePlans.filter(p => Number(p.plan_month) === planMonth && Number(p.plan_year) === planYear);
-      const filteredPlans = monthPlans.filter(p => {
-        const matchesQuery = !planSearch || p.movie_title.toLowerCase().includes(planSearch.toLowerCase()) || p.plan_name.toLowerCase().includes(planSearch.toLowerCase());
-        const matchesStatus = planStatusFilter === 'all' || p.status === planStatusFilter;
-        return matchesQuery && matchesStatus;
-      });
-
-      const totalTargetRev = monthPlans.reduce((sum, p) => sum + Number(p.target_revenue || 0), 0);
-      const totalDailyScreenings = monthPlans.reduce((sum, p) => sum + Number(p.target_screenings_per_day || 0), 0);
-      const fullyAllocatedCount = monthPlans.filter(p => (p.allocated_count || 0) >= (p.total_theaters || 5)).length;
-
-      return (
-        <div>
-          {/* Month Switcher Tabs */}
-          <div className="tms-tabs-bar tms-plan-month-tabs" style={{ marginBottom: 16 }} role="tablist" aria-label="Chọn tháng kế hoạch phim">
-            {planningMonths.map(m => (
-              <button
-                key={m}
-                className={`tms-tab-btn tms-plan-month-tab ${planMonth === m ? 'active' : ''}`}
-                onClick={() => handleSelectPlanMonth(m)}
-                role="tab"
-                aria-selected={planMonth === m}
-              >
-                <span>{monthLabel(m)}</span>
-              </button>
-            ))}
-          </div>
-
-          {/* Month KPI Summary Cards */}
-          <section className="stats-grid" style={{ marginBottom: 20 }}>
-            <div className="stat-card">
-              <div className="stat-icon blue"><Film size={24} /></div>
-              <div>
-                <span>Phim trong kế hoạch</span>
-                <strong>{monthPlans.length} Phim</strong>
-                <small>{monthLabel(planMonth)}</small>
-              </div>
-            </div>
-            <div className="stat-card">
-              <div className="stat-icon orange"><Target size={24} /></div>
-              <div>
-                <span>Mục tiêu doanh thu</span>
-                <strong>{totalTargetRev.toLocaleString('vi-VN')} đ</strong>
-                <small>Áp dụng cho 5 cụm rạp tại TP.HCM</small>
-              </div>
-            </div>
-            <div className="stat-card">
-              <div className="stat-icon green"><CalendarCheck size={24} /></div>
-              <div>
-                <span>Chỉ tiêu suất chiếu/ngày</span>
-                <strong>{totalDailyScreenings} Suất/ngày</strong>
-                <small>Tổng cộng các phim</small>
-              </div>
-            </div>
-            <div className="stat-card">
-              <div className="stat-icon purple"><Building2 size={24} /></div>
-              <div>
-                <span>Phủ 5 rạp TP.HCM</span>
-                <strong>{fullyAllocatedCount}/{monthPlans.length} Phim</strong>
-                <small>Đã phân bổ đủ 5 cụm rạp</small>
-              </div>
-            </div>
-          </section>
-
-          {/* Main Plans Card Table */}
-          <div className="tms-card-table">
-            <div className="tms-table-toolbar" style={{ flexWrap: 'wrap', gap: 12 }}>
-              <div style={{ display: 'flex', alignItems: 'center', gap: 10, flex: 1, minWidth: 260 }}>
-                <div className="tms-search-input" style={{ width: '100%', maxWidth: 320 }}>
-                  <Film size={16} color="#94a3b8" />
-                  <input
-                    placeholder="Tìm tên phim trong kế hoạch..."
-                    value={planSearch}
-                    onChange={e => setPlanSearch(e.target.value)}
-                  />
-                </div>
-                <select
-                  className="tms-form-select"
-                  style={{ width: 'auto', padding: '6px 12px', fontSize: '0.82rem' }}
-                  value={planStatusFilter}
-                  onChange={e => setPlanStatusFilter(e.target.value)}
-                >
-                  <option value="all">Tất cả trạng thái</option>
-                  <option value="draft">Nháp</option>
-                  <option value="published">Đã ban hành</option>
-                  <option value="in_progress">Đang triển khai</option>
-                  <option value="completed">Hoàn thành</option>
-                </select>
-              </div>
-              <div style={{ display: 'flex', gap: 8 }}>
-                <button
-                  className="tms-btn tms-btn-outline"
-                  onClick={() => setActive('Phân bổ phim cho rạp')}
-                >
-                  <Building2 size={16} />
-                  <span>Xem phân bổ cho rạp</span>
-                </button>
-                <button
-                  className="tms-btn tms-btn-primary"
-                  onClick={() => {
-                    const defaultMovie = moviesList[0] || { id: 1, title: 'Avatar: Dòng Chảy Của Nước', format: '3D IMAX' };
-                    setPlanForm({
-                      id: 0,
-                      plan_code: '',
-                      plan_name: `Kế hoạch Phim Tháng ${planMonth < 10 ? `0${planMonth}` : planMonth}/${planYear}`,
-                      plan_month: planMonth,
-                      plan_year: planYear,
-                      movie_id: defaultMovie.id,
-                      movie_title: defaultMovie.title,
-                      format: defaultMovie.format || '2D Digital',
-                      expected_start_date: `${planYear}-${planMonth < 10 ? `0${planMonth}` : planMonth}-01`,
-                      expected_end_date: `${planYear}-${planMonth < 10 ? `0${planMonth}` : planMonth}-28`,
-                      target_revenue: 500000000,
-                      target_screenings_per_day: 6,
-                      priority_level: 'high',
-                      status: 'draft',
-                      note: '',
-                      created_by: currentUser?.full_name || currentUser?.username || '',
-                      created_at: '',
-                      approved_by: '',
-                      approved_at: '',
-                      updated_by: '',
-                      updated_at: '',
-                      selected_theaters: [1, 2, 3, 4, 5]
-                    });
-                    setShowPlanModal(true);
-                  }}
-                >
-                  <Plus size={16} />
-                  <span>Lập kế hoạch phim</span>
-                </button>
-              </div>
-            </div>
-
-            <table className="tms-data-table">
-              <thead>
-                <tr>
-                  <th style={{ width: '22%' }}>Tên Phim & Định dạng</th>
-                  <th>Thời gian chiếu dự kiến</th>
-                  <th>Độ ưu tiên</th>
-                  <th>Chỉ tiêu suất</th>
-                  <th>Doanh thu mục tiêu</th>
-                  <th>Trạng thái KH</th>
-                  <th>Phân bổ 5 rạp TP.HCM</th>
-                  <th>Thao tác</th>
-                </tr>
-              </thead>
-              <tbody>
-                {filteredPlans.length === 0 ? (
-                  <tr>
-                    <td colSpan={8} style={{ textAlign: 'center', padding: '36px 16px', color: '#64748b' }}>
-                      <Film size={36} color="#cbd5e1" style={{ margin: '0 auto 8px', display: 'block' }} />
-                      Chưa có kế hoạch phim cho {monthLabel(planMonth)}. Bấm "<b>+ Lập kế hoạch phim mới</b>" để thêm phim vào kế hoạch tháng!
-                    </td>
-                  </tr>
-                ) : (
-                  filteredPlans.map(plan => {
-                    const priorityCfg = {
-                      blockbuster: { label: '🔥 Bom tấn', bg: '#fee2e2', color: '#991b1b', border: '#fca5a5' },
-                      high: { label: '⭐ Ưu tiên cao', bg: '#ffedd5', color: '#c2410c', border: '#fdba74' },
-                      medium: { label: '🔷 Tiêu chuẩn', bg: '#e0f2fe', color: '#0369a1', border: '#7dd3fc' },
-                      low: { label: '⚪ Thường', bg: '#f1f5f9', color: '#475569', border: '#cbd5e1' }
-                    }[plan.priority_level] || { label: plan.priority_level, bg: '#f1f5f9', color: '#475569', border: '#cbd5e1' };
-
-                    const statusCfg = {
-                      draft: { label: 'Nháp', bg: '#f1f5f9', color: '#475569' },
-                      published: { label: 'Đã ban hành', bg: '#e0e7ff', color: '#4338ca' },
-                      in_progress: { label: 'Đang triển khai', bg: '#dcfce7', color: '#15803d' },
-                      completed: { label: 'Hoàn tất', bg: '#f3e8ff', color: '#7e22ce' },
-                      cancelled: { label: 'Hủy', bg: '#fee2e2', color: '#b91c1c' }
-                    }[plan.status] || { label: plan.status, bg: '#f1f5f9', color: '#475569' };
-
-                    const allocCount = plan.allocated_count || (plan.allocations ? plan.allocations.length : 0);
-                    const isFullyAllocated = allocCount >= 5;
-
-                    return (
-                      <tr key={plan.id}>
-                        <td>
-                          <div style={{ fontWeight: 800, fontSize: '0.9rem', color: '#0d1b2e' }}>{plan.movie_title}</div>
-                          <div style={{ display: 'flex', gap: 6, marginTop: 4, alignItems: 'center' }}>
-                            <span style={{ fontSize: '0.72rem', background: '#eff6ff', color: '#1d4ed8', padding: '1px 6px', borderRadius: 4, fontWeight: 700 }}>
-                              {plan.format}
-                            </span>
-                            <span style={{ fontSize: '0.72rem', color: '#64748b' }}>{monthLabel(Number(plan.plan_month))}</span>
-                          </div>
-                        </td>
-                        <td>
-                          <div style={{ fontSize: '0.8rem', fontWeight: 600, color: '#334155' }}>
-                            {plan.expected_start_date}
-                          </div>
-                          <div style={{ fontSize: '0.72rem', color: '#64748b' }}>đến {plan.expected_end_date}</div>
-                        </td>
-                        <td>
-                          <span style={{
-                            fontSize: '0.73rem',
-                            fontWeight: 700,
-                            padding: '3px 8px',
-                            borderRadius: 6,
-                            background: priorityCfg.bg,
-                            color: priorityCfg.color,
-                            border: `1px solid ${priorityCfg.border}`,
-                            whiteSpace: 'nowrap'
-                          }}>
-                            {priorityCfg.label}
-                          </span>
-                        </td>
-                        <td>
-                          <span style={{ fontWeight: 700, color: '#2563eb' }}>{plan.target_screenings_per_day}</span>
-                          <span style={{ fontSize: '0.74rem', color: '#64748b' }}> suất/ngày</span>
-                        </td>
-                        <td>
-                          <div style={{ fontWeight: 800, color: '#d97706', fontSize: '0.88rem' }}>
-                            {Number(plan.target_revenue || 0).toLocaleString('vi-VN')} đ
-                          </div>
-                        </td>
-                        <td>
-                          <select
-                            style={{
-                              fontSize: '0.74rem',
-                              fontWeight: 700,
-                              padding: '3px 8px',
-                              borderRadius: 6,
-                              background: statusCfg.bg,
-                              color: statusCfg.color,
-                              border: 'none',
-                              cursor: 'pointer'
-                            }}
-                            value={plan.status}
-                            onChange={e => handleUpdatePlanStatus(plan.id, e.target.value)}
-                          >
-                            <option value={plan.status}>{statusCfg.label}</option>
-                            {plan.status === 'draft' && <><option value="published">Đã ban hành</option><option value="cancelled">Hủy</option></>}
-                            {plan.status === 'published' && <><option value="in_progress">Đang triển khai</option><option value="cancelled">Hủy</option></>}
-                            {plan.status === 'in_progress' && <><option value="completed">Hoàn tất</option><option value="cancelled">Hủy</option></>}
-                          </select>
-                        </td>
-                        <td>
-                          {plan.status === 'draft' ? (
-                            <div style={{ display: 'flex', flexDirection: 'column', gap: 3 }}>
-                              <span style={{ fontSize: '0.74rem', fontWeight: 700, color: '#64748b' }}>Chưa ban hành</span>
-                              <span style={{ fontSize: '0.69rem', color: '#94a3b8' }}>Chưa phân bổ cho rạp</span>
-                            </div>
-                          ) : <div style={{ display: 'flex', flexDirection: 'column', gap: 3 }}>
-                            <span style={{
-                              display: 'inline-flex',
-                              alignItems: 'center',
-                              gap: 4,
-                              fontSize: '0.74rem',
-                              fontWeight: 700,
-                              padding: '2px 8px',
-                              borderRadius: 4,
-                              background: isFullyAllocated ? '#ecfdf5' : '#fef3c7',
-                              color: isFullyAllocated ? '#065f46' : '#92400e'
-                            }}>
-                              <Building2 size={12} />
-                              {allocCount}/5 rạp TP.HCM
-                            </span>
-                            {plan.confirmed_count !== undefined && (
-                              <span style={{ fontSize: '0.69rem', color: '#64748b' }}>
-                                Đã xác nhận: {plan.confirmed_count}/{allocCount} rạp
-                              </span>
-                            )}
-                          </div>}
-                        </td>
-                        <td>
-                          <div style={{ display: 'inline-flex', gap: 6 }}>
-                            {plan.status === 'published' && <button
-                              className="tms-btn tms-btn-outline"
-                              style={{ padding: '4px 8px', fontSize: '0.73rem', color: '#2563eb' }}
-                              title="Phân bổ cho các cụm rạp TP.HCM"
-                              onClick={() => { void openAllocationModal(plan); }}
-                            >
-                              <Send size={13} />
-                              <span>Phân bổ</span>
-                            </button>}
-                            <button
-                              className="tms-btn tms-btn-outline"
-                              style={{ padding: '4px 7px' }}
-                              title="Sửa kế hoạch"
-                              onClick={() => {
-                                setPlanForm({
-                                  id: plan.id,
-                                  plan_code: plan.plan_code || `KH-${plan.plan_year}${String(plan.plan_month).padStart(2, '0')}-${plan.id}`,
-                                  plan_name: plan.plan_name,
-                                  plan_month: Number(plan.plan_month),
-                                  plan_year: Number(plan.plan_year),
-                                  movie_id: Number(plan.movie_id),
-                                  movie_title: plan.movie_title,
-                                  format: plan.format,
-                                  expected_start_date: plan.expected_start_date,
-                                  expected_end_date: plan.expected_end_date,
-                                  target_revenue: Number(plan.target_revenue),
-                                  target_screenings_per_day: Number(plan.target_screenings_per_day),
-                                  priority_level: plan.priority_level,
-                                  status: plan.status,
-                                  note: plan.note || '',
-                                  created_by: plan.created_by || '',
-                                  created_at: plan.created_at || '',
-                                  approved_by: plan.approved_by || '',
-                                  approved_at: plan.approved_at || '',
-                                  updated_by: plan.updated_by || '',
-                                  updated_at: plan.updated_at || '',
-                                  selected_theaters: plan.allocations ? plan.allocations.map(a => Number(a.theater_id)) : [1, 2, 3, 4, 5]
-                                });
-                                setShowPlanModal(true);
-                              }}
-                            >
-                              <Edit size={13} />
-                            </button>
-                            <button
-                              className="tms-btn tms-btn-outline"
-                              style={{ padding: '4px 7px', color: '#dc2626' }}
-                              title="Xóa kế hoạch"
-                              onClick={() => handleDeletePlan(plan.id)}
-                            >
-                              <Trash2 size={13} />
-                            </button>
-                          </div>
-                        </td>
-                      </tr>
-                    );
-                  })
-                )}
-              </tbody>
-            </table>
-          </div>
-        </div>
-      );
-    }
-
-    // ========================================================
-    // PHÂN BỔ PHIM CHO RẠP (USE CASE 7 - ADMIN TỔNG)
-    // ========================================================
-    if (a === 'Phân bổ phim cho rạp') {
-      const pendingAllocationCount = movieAllocations.filter(al => al.status === 'pending').length;
-      const filteredAllocations = movieAllocations.filter(al => {
-        const matchesTheater = selectedTheaterFilter === 0 || Number(al.theater_id) === selectedTheaterFilter;
-        return matchesTheater;
-      });
-
-      return (
-        <div>
-          <div style={{ padding: '12px 18px', background: '#f0fdf4', border: '1px solid #bbf7d0', borderRadius: 10, marginBottom: 16, display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
-            <div>
-              <b style={{ color: '#166534', fontSize: '0.9rem' }}>📍 Phân bổ phim cho 5 cụm rạp tại TP. Hồ Chí Minh</b>
-              <div style={{ fontSize: '0.8rem', color: '#15803d', marginTop: 2 }}>
-                Chuỗi rạp Aurora Cinema hoạt động tập trung tại TP.HCM (Aurora Q1, Q7, Landmark 81, Thủ Đức, Tân Bình). Admin Rạp sẽ nhận thông báo và xác nhận triển khai.
-              </div>
-            </div>
-            <button
-              className="tms-btn tms-btn-primary"
-              style={{ padding: '6px 14px', fontSize: '0.82rem' }}
-              onClick={() => setActive('Kế hoạch phim')}
-            >
-              <CalendarDays size={15} />
-              <span>Xem kế hoạch theo tháng</span>
-            </button>
-          </div>
-
-          <div className="tms-card-table">
-            <div className="tms-table-toolbar">
-              <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
-                <span style={{ fontSize: '0.84rem', fontWeight: 700, color: '#475569' }}>Lọc theo rạp:</span>
-                <select
-                  className="tms-form-select"
-                  style={{ width: 'auto', padding: '6px 12px', fontSize: '0.84rem' }}
-                  value={selectedTheaterFilter}
-                  onChange={e => setSelectedTheaterFilter(Number(e.target.value))}
-                >
-                  <option value={0}>Tất cả 5 cụm rạp TP.HCM ({movieAllocations.length} phân bổ)</option>
-                  {theatersList.map(t => (
-                    <option key={t.id} value={t.id}>{t.name} (TP.HCM)</option>
-                  ))}
-                </select>
-              </div>
-              <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
-                <div style={{ fontSize: '0.82rem', color: '#64748b' }}>
-                  Tổng cộng: <b>{filteredAllocations.length}</b> phân bổ phim
-                </div>
-                <button
-                  type="button"
-                  className="tms-btn tms-btn-outline"
-                  style={{ padding: '6px 11px', fontSize: '0.78rem', color: '#dc2626', borderColor: pendingAllocationCount ? '#fecaca' : '#e2e8f0' }}
-                  disabled={pendingAllocationCount === 0}
-                  title={pendingAllocationCount ? `Thu hồi ${pendingAllocationCount} phân bổ chưa được Admin Rạp tiếp nhận` : 'Không có phân bổ nào đang chờ tiếp nhận'}
-                  onClick={() => requestSystemConfirmation(
-                    `Bạn sắp thu hồi ${pendingAllocationCount} phân bổ chưa được Admin Rạp tiếp nhận. Dữ liệu này sẽ bị xóa khỏi Aurora DB; các phân bổ đã xác nhận sẽ không bị ảnh hưởng.`,
-                    async () => {
-                      const response = await fetch(`${API_BASE}?action=movie-allocations&bulk=pending`, {
-                        method: 'DELETE',
-                        credentials: 'include',
-                        headers: { 'X-TMS-User': currentUser?.username || 'admin_tong' }
-                      });
-                      const result = await response.json();
-                      if (!response.ok || !result.success) throw new Error(result.message || 'Không thể thu hồi các phân bổ chưa tiếp nhận.');
-                      loadMovieAllocations();
-                      loadMoviePlans();
-                      showSystemNotice(result.message || 'Đã thu hồi các phân bổ chưa tiếp nhận.');
-                    },
-                    'Xác nhận thu hồi',
-                    'Xác nhận thu hồi tất cả'
-                  )}
-                >
-                  <Trash2 size={13} />
-                  <span>Thu hồi tất cả chưa tiếp nhận ({pendingAllocationCount})</span>
-                </button>
-              </div>
-            </div>
-
-            <table className="tms-data-table">
-              <thead>
-                <tr>
-                  <th>Cụm Rạp (TP.HCM)</th>
-                  <th>Phim Được Phân Bổ</th>
-                  <th>Suất Tối Thiểu</th>
-                  <th>Phòng Chiếu Ưu Tiên</th>
-                  <th>Thời Gian Phân Bổ</th>
-                  <th>Trạng Thái Tiếp Nhận</th>
-                  <th>Xác Nhận Bởi</th>
-                  <th>Thao Tác</th>
-                </tr>
-              </thead>
-              <tbody>
-                {filteredAllocations.length === 0 ? (
-                  <tr>
-                    <td colSpan={8} style={{ textAlign: 'center', padding: '30px', color: '#64748b' }}>
-                      Chưa có phân bổ phim nào cho cụm rạp này.
-                    </td>
-                  </tr>
-                ) : (
-                  filteredAllocations.map(al => {
-                    const statusCfg = {
-                      pending: { label: 'Chờ rạp xác nhận', bg: '#fef3c7', color: '#92400e' },
-                      confirmed: { label: 'Đã xác nhận', bg: '#ecfdf5', color: '#065f46' },
-                      deploying: { label: 'Đang chiếu', bg: '#eff6ff', color: '#1d4ed8' },
-                      completed: { label: 'Đã hoàn thành', bg: '#f1f5f9', color: '#475569' },
-                      expired: { label: 'Đã hết hạn', bg: '#f1f5f9', color: '#64748b' },
-                      cancelled: { label: 'Đã hủy', bg: '#fef2f2', color: '#b91c1c' }
-                    }[al.status] || { label: al.status, bg: '#f1f5f9', color: '#475569' };
-
-                    return (
-                      <tr key={al.id}>
-                        <td>
-                          <div style={{ fontWeight: 800, color: '#0d1b2e', display: 'flex', alignItems: 'center', gap: 6 }}>
-                            <Building2 size={16} color="#2563eb" />
-                            {al.theater_name}
-                          </div>
-                          <span style={{ fontSize: '0.7rem', color: '#64748b', marginLeft: 22 }}>TP. Hồ Chí Minh</span>
-                        </td>
-                        <td>
-                          <div style={{ fontWeight: 700, fontSize: '0.86rem' }}>{al.movie_title}</div>
-                        </td>
-                        <td>
-                          <b style={{ color: '#2563eb' }}>{al.min_screenings_per_day}</b> suất/ngày
-                        </td>
-                        <td>
-                          <span style={{ fontSize: '0.74rem', background: '#f1f5f9', padding: '2px 7px', borderRadius: 4 }}>
-                            {al.preferred_screen_types}
-                          </span>
-                        </td>
-                        <td>
-                          <div style={{ fontSize: '0.78rem' }}>{al.allocated_start_date}</div>
-                          <div style={{ fontSize: '0.72rem', color: '#64748b' }}>đến {al.allocated_end_date}</div>
-                        </td>
-                        <td>
-                          <span style={{
-                            fontSize: '0.74rem',
-                            fontWeight: 700,
-                            padding: '3px 8px',
-                            borderRadius: 6,
-                            background: statusCfg.bg,
-                            color: statusCfg.color
-                          }}>
-                            {statusCfg.label}
-                          </span>
-                        </td>
-                        <td>
-                          {al.confirmed_by ? (
-                            <div>
-                              <div style={{ fontSize: '0.78rem', fontWeight: 600 }}>{al.confirmed_by}</div>
-                              <div style={{ fontSize: '0.7rem', color: '#64748b' }}>{al.confirmed_at}</div>
-                            </div>
-                          ) : (
-                            <span style={{ fontSize: '0.74rem', color: '#94a3b8', fontStyle: 'italic' }}>Chưa tiếp nhận</span>
-                          )}
-                        </td>
-                        <td>
-                          <button
-                            className="tms-btn tms-btn-outline"
-                            style={{ padding: '3px 8px', fontSize: '0.73rem', color: '#dc2626' }}
-                            onClick={() => requestSystemConfirmation('Phân bổ phim này sẽ bị thu hồi khỏi rạp đã chọn.', async () => {
-                              await fetch(`${API_BASE}?action=movie-allocations&id=${al.id}`, { method: 'DELETE', credentials: 'include', headers: { 'X-TMS-User': currentUser?.username || 'admin_tong' } });
-                              loadMovieAllocations();
-                              loadMoviePlans();
-                              showSystemNotice('Đã thu hồi phân bổ phim khỏi rạp.');
-                            }, 'Thu hồi phân bổ')}
-                          >
-                            <Trash2 size={12} />
-                            <span>Thu hồi</span>
-                          </button>
-                        </td>
-                      </tr>
-                    );
-                  })
-                )}
-              </tbody>
-            </table>
-          </div>
-        </div>
-      );
     }
 
     // ========================================================
@@ -4514,36 +3689,8 @@ export default function App() {
     );
 
     // PROMOTIONS & CTKM
-    if (a === 'promotions' || a === 'Duyệt kế hoạch CTKM' || a === 'Quản lý CTKM hệ thống' || a === 'Voucher / CTKM' || a === 'Voucher tại rạp' || a === 'Tiếp nhận CTKM' || a === 'Triển khai CTKM' || a === 'Đề xuất điều chỉnh') return (
-      <div className="tms-card-table">
-        <div className="tms-table-toolbar">
-          <div style={{fontWeight:700}}>{role==='super_admin'?'Quản lý CTKM cấp hệ thống':'Voucher & CTKM tại rạp'}</div>
-          {(role==='super_admin'||role==='cinema_admin')&&<button className="tms-btn tms-btn-primary" onClick={()=>alert(role==='super_admin'?'Tạo CTKM hệ thống mới':'Tạo voucher tại rạp')}><Plus size={16}/><span>{role==='super_admin'?'Tạo CTKM hệ thống':'Tạo voucher'}</span></button>}
-        </div>
-        <table className="tms-data-table">
-          <thead><tr><th>Mã</th><th>Tên CTKM</th><th>Loại</th><th>Giá trị</th><th>Hiệu lực</th><th>Cấp độ</th><th>Trạng thái</th><th>Thao tác</th></tr></thead>
-          <tbody>{[
-            {code:'AURORA10',name:'Giảm 10% cuối tuần',type:'%',val:'10%',valid:'01-30/09/2026',level:'Hệ thống',status:'Đang hoạt động'},
-            {code:'HAPPY50K',name:'Giảm 50K vé IMAX',type:'Cố định',val:'50.000 đ',valid:'20-30/09/2026',level:'Hệ thống',status:'Đang hoạt động'},
-            {code:'RAPVIP20',name:'VIP Rạp Tân Bình 20%',type:'%',val:'20%',valid:'01-30/09/2026',level:'Tại rạp',status:'Đang hoạt động'},
-          ].map((v,i)=>(
-            <tr key={i}>
-              <td><code style={{fontWeight:700}}>{v.code}</code></td>
-              <td style={{fontWeight:600}}>{v.name}</td><td>{v.type}</td>
-              <td style={{fontWeight:700,color:'#d97706'}}>{v.val}</td><td style={{fontSize:'0.8rem'}}>{v.valid}</td>
-              <td><span style={{fontSize:'0.73rem',fontWeight:700,padding:'2px 7px',borderRadius:4,background:v.level==='Hệ thống'?'#fef3c7':'#eff6ff',color:v.level==='Hệ thống'?'#92400e':'#1e40af'}}>{v.level==='Hệ thống'?'👑 Hệ thống':'🏢 Tại rạp'}</span></td>
-              <td><span style={{fontSize:'0.73rem',fontWeight:700,padding:'2px 7px',borderRadius:4,background:'#ecfdf5',color:'#065f46'}}>{v.status}</span></td>
-              <td>
-                {a==='Duyệt kế hoạch CTKM'&&<button className="tms-btn tms-btn-success" style={{padding:'4px 10px',fontSize:'0.73rem'}}><Check size={12}/> Duyệt</button>}
-                {a==='Triển khai CTKM'&&<button className="tms-btn tms-btn-primary" style={{padding:'4px 10px',fontSize:'0.73rem'}}>Triển khai</button>}
-                {a==='Đề xuất điều chỉnh'&&<button className="tms-btn tms-btn-outline" style={{padding:'4px 10px',fontSize:'0.73rem'}}>Đề xuất</button>}
-                {(a==='promotions'||a==='Quản lý CTKM hệ thống'||a==='Voucher tại rạp'||a==='Voucher / CTKM')&&<button className="tms-btn tms-btn-outline" style={{padding:'4px 8px'}}><Edit size={13}/></button>}
-              </td>
-            </tr>
-          ))}</tbody>
-        </table>
-      </div>
-    );
+    if (role === 'super_admin' && (a === 'promotions' || a === 'Duyệt kế hoạch CTKM' || a === 'Duyệt & quản lý CTKM' || a === 'Quản lý CTKM hệ thống')) return <PromotionCenterWorkspace apiBase={API_BASE} notify={showSystemNotice} requestConfirm={requestSystemConfirmation}/>;
+    if (role === 'cinema_admin' && (a === 'promotions' || a === 'Voucher / CTKM' || a === 'Voucher tại rạp' || a === 'Tiếp nhận CTKM' || a === 'Triển khai CTKM' || a === 'Đề xuất điều chỉnh' || a === 'Tiếp nhận & triển khai CTKM')) return <TheaterPromotionWorkspace apiBase={API_BASE} notify={showSystemNotice} requestConfirm={requestSystemConfirmation}/>;
 
     // PRODUCT MASTER DATA & THEATER DISTRIBUTION PLANS
     if (a === 'products' || a === 'Hàng hóa' || a === 'catalog' || a === 'Danh mục dùng chung') return <ProductCatalogManagement apiBase={API_BASE} role={role!} theaterName={currentUser?.theater_name} notify={showSystemNotice} requestConfirm={requestSystemConfirmation}/>;
@@ -4726,13 +3873,18 @@ export default function App() {
               </button>
 
               {userDropdownOpen && (
-                <div className="user-dropdown-menu" style={{ width: 270 }}>
+                <div className="user-dropdown-menu account-dropdown" style={{ width: 290 }}>
                   <div className="user-dropdown-header">
                     <div style={{ fontSize: '1.4rem', marginBottom: 4 }}>{rc.emoji}</div>
                     <b>{displayName}</b>
                     <div style={{ fontSize: '0.78rem', color: rc.color, fontWeight: 700, marginTop: 2 }}>{rc.name}</div>
                     <div style={{ fontSize: '0.74rem', color: '#64748b', marginTop: 1 }}>@{currentUser?.username}</div>
+                    {currentUser?.theater_name && <div className="account-dropdown-scope"><Building2 size={13}/><span>{currentUser.theater_name}</span></div>}
                   </div>
+
+                  <button type="button" className="user-dropdown-item profile" onClick={() => { setUserDropdownOpen(false); setShowAccountProfile(true); }}>
+                    <UserRound size={16}/><span><b>Xem hồ sơ tài khoản</b><small>Thông tin cá nhân và bảo mật</small></span>
+                  </button>
 
                   <button type="button" className="user-dropdown-item danger" onClick={handleLogout} style={{ marginTop: 4 }}>
                     <LogOut size={16} /><span>Đăng xuất tài khoản</span>
@@ -4757,6 +3909,13 @@ export default function App() {
           <footer>© 2026 Aurora Cinema • Theater Management System (TMS)<span>RBAC v2.0.0</span></footer>
         </div>
       </main>
+
+      <AccountProfileModal
+        open={showAccountProfile}
+        apiBase={API_BASE}
+        onClose={() => setShowAccountProfile(false)}
+        onUpdated={(profile: AccountProfile) => setCurrentUser(previous => previous ? { ...previous, full_name:profile.full_name, email:profile.email, phone:profile.phone, theater_name:profile.theater_name || previous.theater_name } : previous)}
+      />
 
       {/* MODAL: ADD/EDIT USER (super_admin only) */}
       {showUserModal && (
@@ -4792,280 +3951,6 @@ export default function App() {
               <div className="tms-modal-footer">
                 <button type="button" className="tms-btn tms-btn-outline" onClick={() => setShowRefundModal(false)}>Hủy</button>
                 <button type="submit" className="tms-btn tms-btn-primary">Gửi yêu cầu hoàn tiền</button>
-              </div>
-            </form>
-          </div>
-        </div>
-      )}
-
-      {/* MODAL: LẬP KẾ HOẠCH PHIM THEO THÁNG (super_admin) */}
-      {showPlanModal && (
-        <div className="tms-modal-overlay">
-          <div className="tms-modal-box tms-plan-modal">
-            <div className="tms-modal-header tms-plan-modal-header">
-              <div>
-                <div className="tms-plan-modal-kicker">KẾ HOẠCH PHÁT HÀNH · AURORA DB</div>
-                <div className="tms-modal-title">
-                  {planForm.id > 0 ? 'Chỉnh sửa kế hoạch phim' : 'Lập kế hoạch phim'}
-                </div>
-                <p>Thiết lập chỉ tiêu và phân bổ phim cho hệ thống rạp.</p>
-              </div>
-              <span className="tms-plan-month-chip">Tháng {String(planForm.plan_month).padStart(2, '0')}</span>
-              <button className="temp-btn" onClick={() => setShowPlanModal(false)}><X size={16} /></button>
-            </div>
-            <form onSubmit={handleSavePlan}>
-              <div className="tms-modal-body tms-plan-modal-body">
-                <section className="tms-plan-form-section">
-                  <div className="tms-plan-section-heading"><Film size={15} /> Thông tin phim</div>
-                  <div className="tms-form-group">
-                    <label className="tms-form-label">Chọn phim áp dụng <b>*</b></label>
-                    <select
-                      className="tms-form-select"
-                      value={planForm.movie_id}
-                      onChange={e => {
-                        const movieId = Number(e.target.value);
-                        const movie = moviesList.find(item => Number(item.id) === movieId);
-                        if (!movie) return;
-                        setPlanForm(previous => ({
-                          ...previous,
-                          movie_id: movieId,
-                          movie_title: movie.title,
-                          format: movie.format || '2D Digital'
-                        }));
-                      }}
-                      required
-                    >
-                      {moviesList.map(m => <option key={m.id} value={m.id}>{m.title}</option>)}
-                    </select>
-                  </div>
-                  <div className="tms-plan-movie-summary">
-                    <div><small>Mã phim</small><strong>{moviesList.find(m => Number(m.id) === Number(planForm.movie_id))?.movie_code || 'Tự động'}</strong></div>
-                    <div><small>Thời lượng</small><strong>{moviesList.find(m => Number(m.id) === Number(planForm.movie_id))?.duration_minutes || '-'} phút</strong></div>
-                    <div><small>Độ tuổi</small><strong>{moviesList.find(m => Number(m.id) === Number(planForm.movie_id))?.age_rating || '-'}</strong></div>
-                    <div className="tms-plan-movie-wide"><small>Thể loại</small><strong>{moviesList.find(m => Number(m.id) === Number(planForm.movie_id))?.genre || 'Chưa cập nhật'}</strong></div>
-                    <div className="tms-plan-movie-wide"><small>Định dạng</small><strong>{planForm.format || 'Chưa cập nhật'}</strong></div>
-                  </div>
-                </section>
-
-                <section className="tms-plan-form-section">
-                <div className="tms-plan-section-heading"><CalendarDays size={15} /> Thông tin kế hoạch</div>
-                <div className="tms-form-group">
-                  <label className="tms-form-label">Tên kế hoạch phát hành <b>*</b></label>
-                  <input
-                    className="tms-form-input"
-                    value={planForm.plan_name}
-                    onChange={e => setPlanForm({ ...planForm, plan_name: e.target.value })}
-                    placeholder="Ví dụ: Kế hoạch phát hành phim tháng 10"
-                    required
-                  />
-                </div>
-
-                <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12 }}>
-                  <div className="tms-form-group">
-                    <label className="tms-form-label">Tháng phát hành</label>
-                    <select
-                      className="tms-form-select"
-                      value={planForm.plan_month}
-                      onChange={e => setPlanForm({ ...planForm, plan_month: Number(e.target.value) })}
-                    >
-                      {Array.from({ length: 12 }, (_, index) => index + 1).map(m => (
-                        <option key={m} value={m}>Tháng {String(m).padStart(2, '0')}</option>
-                      ))}
-                    </select>
-                  </div>
-                  <div className="tms-form-group">
-                    <label className="tms-form-label">Độ ưu tiên khai thác</label>
-                    <select
-                      className="tms-form-select"
-                      value={planForm.priority_level}
-                      onChange={e => setPlanForm({ ...planForm, priority_level: e.target.value as any })}
-                    >
-                      <option value="blockbuster">Bom tấn · ưu tiên tối đa</option>
-                      <option value="high">Ưu tiên cao</option>
-                      <option value="medium">Tiêu chuẩn</option>
-                      <option value="low">Duy trì</option>
-                    </select>
-                  </div>
-                </div>
-
-                <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12 }}>
-                  <div className="tms-form-group">
-                    <label className="tms-form-label">Ngày khởi chiếu dự kiến <b>*</b></label>
-                    <VietnameseDateInput className="tms-form-input" value={planForm.expected_start_date} onChange={date => setPlanForm({ ...planForm, expected_start_date: date })} required ariaLabel="Ngày khởi chiếu dự kiến" />
-                  </div>
-                  <div className="tms-form-group">
-                    <label className="tms-form-label">Ngày kết thúc dự kiến <b>*</b></label>
-                    <VietnameseDateInput className="tms-form-input" value={planForm.expected_end_date} onChange={date => setPlanForm({ ...planForm, expected_end_date: date })} required ariaLabel="Ngày kết thúc dự kiến" />
-                  </div>
-                </div>
-
-                <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12 }}>
-                  <div className="tms-form-group">
-                    <label className="tms-form-label">Mục tiêu doanh thu <span>VNĐ</span></label>
-                    <input
-                      type="number"
-                      step={10000000}
-                      className="tms-form-input"
-                      value={planForm.target_revenue}
-                      onChange={e => setPlanForm({ ...planForm, target_revenue: Number(e.target.value) })}
-                    />
-                  </div>
-                  <div className="tms-form-group">
-                    <label className="tms-form-label">Chỉ tiêu suất chiếu/ngày</label>
-                    <input
-                      type="number"
-                      min={1}
-                      max={30}
-                      className="tms-form-input"
-                      value={planForm.target_screenings_per_day}
-                      onChange={e => setPlanForm({ ...planForm, target_screenings_per_day: Number(e.target.value) })}
-                    />
-                  </div>
-                </div>
-
-                <div className="tms-form-group">
-                  <label className="tms-form-label">Trạng thái kế hoạch</label>
-                  <select
-                    className="tms-form-select"
-                    value={planForm.status}
-                    onChange={e => setPlanForm({ ...planForm, status: e.target.value as any })}
-                  >
-                    <option value="draft">Nháp</option>
-                    <option value="published">Đã ban hành</option>
-                    {planForm.id > 0 && <><option value="in_progress">Đang triển khai</option><option value="completed">Hoàn tất</option><option value="cancelled">Hủy</option></>}
-                  </select>
-                </div>
-
-                <div className="tms-form-group">
-                  <label className="tms-form-label">Rạp nhận triển khai</label>
-                  {planForm.status === 'draft' && (
-                    <small className="tms-allocation-field-hint">Bản nháp chưa được gửi đến Admin Rạp. Chọn rạp ở đây chỉ để chuẩn bị; phân bổ chỉ được tạo khi kế hoạch chuyển sang “Đã ban hành”.</small>
-                  )}
-                  <div className="tms-plan-theater-grid">
-                    {theatersList.map(t => {
-                      const isChecked = planForm.selected_theaters.includes(Number(t.id));
-                      return (
-                        <label key={t.id} className="tms-plan-theater-option">
-                          <input
-                            type="checkbox"
-                            checked={isChecked}
-                            onChange={e => {
-                              const tId = Number(t.id);
-                              if (e.target.checked) {
-                                setPlanForm({ ...planForm, selected_theaters: [...planForm.selected_theaters, tId] });
-                              } else {
-                                setPlanForm({ ...planForm, selected_theaters: planForm.selected_theaters.filter(x => x !== tId) });
-                              }
-                            }}
-                          />
-                          <span>{t.name}</span>
-                        </label>
-                      );
-                    })}
-                  </div>
-                </div>
-
-                <div className="tms-form-group">
-                  <label className="tms-form-label">Ghi chú định hướng phát hành</label>
-                  <textarea
-                    className="tms-form-input"
-                    rows={2}
-                    value={planForm.note}
-                    onChange={e => setPlanForm({ ...planForm, note: e.target.value })}
-                    placeholder="vd: Ưu tiên phòng chiếu Laser IMAX và khung giờ vàng cuối tuần..."
-                  />
-                </div>
-
-                </section>
-
-                <section className="tms-plan-form-section tms-plan-audit-section">
-                  <div className="tms-plan-section-heading">Thông tin quản trị</div>
-                  <div className="tms-plan-audit-grid">
-                    <div><small>Mã kế hoạch</small><strong>{planForm.plan_code || (planForm.id > 0 ? `KH-${planForm.plan_year}${String(planForm.plan_month).padStart(2, '0')}-${planForm.id}` : 'Tự động khi lưu')}</strong></div>
-                    <div><small>Người lập kế hoạch</small><strong>{planForm.created_by || currentUser?.full_name || currentUser?.username || 'Tự động'}</strong></div>
-                    <div><small>Ngày lập</small><strong>{planForm.created_at || 'Tự động khi lưu'}</strong></div>
-                    <div><small>Người ban hành</small><strong>{planForm.approved_by || (planForm.status === 'published' ? currentUser?.full_name || currentUser?.username || 'Admin Tổng' : 'Chưa ban hành')}</strong></div>
-                    <div><small>Ngày ban hành</small><strong>{planForm.approved_at || (planForm.status === 'published' ? 'Vừa cập nhật' : 'Chưa ban hành')}</strong></div>
-                    <div><small>Người cập nhật / Ngày cập nhật</small><strong>{planForm.updated_by ? `${planForm.updated_by} / ${planForm.updated_at || '-'}` : 'Chưa cập nhật'}</strong></div>
-                  </div>
-                </section>
-              </div>
-              <div className="tms-modal-footer tms-plan-modal-footer">
-                <button type="button" className="tms-btn tms-btn-outline" onClick={() => setShowPlanModal(false)}>Hủy bỏ</button>
-                <button type="submit" className="tms-btn tms-btn-primary">
-                  {planForm.status === 'published' ? (planForm.id > 0 ? 'Cập nhật & ban hành' : 'Ban hành & gửi đến rạp') : (planForm.id > 0 ? 'Lưu bản nháp' : 'Lưu bản nháp')}
-                </button>
-              </div>
-            </form>
-          </div>
-        </div>
-      )}
-
-      {/* MODAL: PHÂN BỔ PHIM CHO 5 RẠP TP.HCM */}
-      {showAllocationModal && allocationTargetPlan && (
-        <div className="tms-modal-overlay">
-          <div className="tms-modal-box tms-allocation-modal">
-            <div className="tms-modal-header tms-allocation-modal-header">
-              <div>
-                <div className="tms-allocation-modal-kicker">ĐIỀU PHỐI PHIM · AURORA DB</div>
-                <div className="tms-modal-title">Phân bổ phim cho cụm rạp</div>
-                <p>Chọn rạp tiếp nhận và thiết lập chỉ tiêu khai thác tối thiểu.</p>
-              </div>
-              <button className="temp-btn" onClick={() => setShowAllocationModal(false)}><X size={16} /></button>
-            </div>
-            <form onSubmit={handleExecuteAllocation}>
-              <div className="tms-modal-body tms-allocation-modal-body">
-                <section className="tms-allocation-movie-card">
-                  <div className="tms-allocation-card-eyebrow"><Film size={14} /> Phim được phân bổ</div>
-                  <h3>{allocationTargetPlan.movie_title}</h3>
-                  <div className="tms-allocation-movie-meta">
-                    <span><b>Định dạng</b>{allocationTargetPlan.format || 'Chưa cập nhật'}</span>
-                    <span><b>Thời gian</b>{allocationTargetPlan.expected_start_date} — {allocationTargetPlan.expected_end_date}</span>
-                  </div>
-                </section>
-
-                <section className="tms-allocation-form-section">
-                  <div className="tms-allocation-section-heading"><Building2 size={15} /> Cụm rạp tiếp nhận <span>{allocSelectedTheaters.length}/{theatersList.length} đã chọn</span></div>
-                  <div className="tms-allocation-theater-list">
-                    {theatersLoading && <div className="tms-allocation-theater-state"><RefreshCw size={17} /> Đang tải cụm rạp từ Aurora DB…</div>}
-                    {!theatersLoading && theatersError && <div className="tms-allocation-theater-state error"><AlertTriangle size={17} /><span>{theatersError}</span><button type="button" onClick={() => { void openAllocationModal(allocationTargetPlan); }}>Thử lại</button></div>}
-                    {!theatersLoading && !theatersError && theatersList.length === 0 && <div className="tms-allocation-theater-state"><Building2 size={17} /> Chưa có cụm rạp nào trong Aurora DB.</div>}
-                    {theatersList.map(t => {
-                      const isChecked = allocSelectedTheaters.includes(Number(t.id));
-                      return (
-                        <label key={t.id} className={`tms-allocation-theater-option${isChecked ? ' selected' : ''}`}>
-                          <input
-                            type="checkbox"
-                            checked={isChecked}
-                            onChange={e => {
-                              const tId = Number(t.id);
-                              if (e.target.checked) setAllocSelectedTheaters([...allocSelectedTheaters, tId]);
-                              else setAllocSelectedTheaters(allocSelectedTheaters.filter(x => x !== tId));
-                            }}
-                          />
-                          <Building2 size={16} />
-                          <span><b>{t.name}</b><small>{t.address || 'TP. Hồ Chí Minh'}</small></span>
-                        </label>
-                      );
-                    })}
-                  </div>
-                </section>
-
-                <section className="tms-allocation-form-section">
-                  <div className="tms-allocation-section-heading"><Target size={15} /> Chỉ tiêu khai thác</div>
-                  <div className="tms-form-group">
-                    <label className="tms-form-label">Số suất chiếu tối thiểu mỗi ngày tại mỗi rạp <b>*</b></label>
-                    <div className="tms-allocation-number-field"><input type="number" min={1} max={25} className="tms-form-input" value={allocMinScreenings} onChange={e => setAllocMinScreenings(Number(e.target.value))} required /><span>suất/ngày</span></div>
-                    <small className="tms-allocation-field-hint">Chỉ tiêu này sẽ được lưu cùng từng phân bổ và gửi đến Admin Rạp để xác nhận.</small>
-                  </div>
-                </section>
-              </div>
-              <div className="tms-modal-footer tms-allocation-modal-footer">
-                <button type="button" className="tms-btn tms-btn-outline" onClick={() => setShowAllocationModal(false)}>Hủy</button>
-                <button type="submit" disabled={theatersLoading || Boolean(theatersError) || allocSelectedTheaters.length === 0} className="tms-btn tms-btn-primary">
-                  <Send size={15} />
-                  <span>Ghi phân bổ cho {allocSelectedTheaters.length} cụm rạp</span>
-                </button>
               </div>
             </form>
           </div>

@@ -1,29 +1,27 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { Attendance, User, AttendanceException, WorkSchedule } from '../types';
 import { 
-  getAttendances, saveAttendance, deleteAttendance, getUsers, updateUser, 
-  getAttendanceExceptions, saveAttendanceException, updateAttendanceExceptionStatus,
-  getWorkSchedules, saveWorkSchedules 
+  getAttendances, saveAttendance, deleteAttendance, getUsers, getAttendanceExceptions, saveAttendanceException, updateAttendanceExceptionStatus,
+  getWorkSchedules
 } from '../services/storage';
 import { 
-  fetchAttendances, fetchEmployees, updateEmployee, 
-  saveAttendanceApi, fetchAttendanceExceptions, submitAttendanceExceptionApi, 
+  fetchAttendances, fetchEmployees, saveAttendanceApi, fetchAttendanceExceptions, submitAttendanceExceptionApi,
   handleExceptionActionApi, fetchWorkSchedules 
 } from '../services/apiClient';
-import { getTodayDateString, formatDateDMY, formatDateTimeDMY } from '../utils/dateUtils';
+import { getTodayDateString, formatDateDMY } from '../utils/dateUtils';
 import { ProofPhotoCapture } from '../components/ProofPhotoCapture';
 import { 
   detectCurrentNetwork, getAuthorizedWifiConfig, setAuthorizedWifiConfig, 
   extractFaceFromVideo, compareFaces, getEnrolledFace, saveEnrolledFace, 
-  removeEnrolledFace, startWebcamStream, getAvailableCameras, detectFaceInRealtime,
+  startWebcamStream, getAvailableCameras, detectFaceInRealtime,
   isIpInSameWifi, FaceFeatures, NetworkConfig 
 } from '../services/biometrics';
 import { 
   Clock, CheckCircle2, AlertTriangle, AlertCircle, Search, Filter, Plus, Trash2, 
-  UserCheck, LogIn, LogOut, Calendar, User as UserIcon, X, Sparkles, Building2,
-  MapPin, Wifi, Camera, ShieldCheck, RefreshCw, Radio, Eye, Check, XCircle,
-  Scan, Settings, UserPlus, FileText, Send, ArrowRight, Lock, CheckCheck,
-  ChevronRight, CalendarDays
+  UserCheck, LogIn, LogOut, X, Building2,
+  MapPin, Wifi, Camera, ShieldCheck, RefreshCw, Eye, Check, XCircle,
+  Scan, Settings, FileText, Send, CheckCheck,
+  CalendarDays
 } from 'lucide-react';
 
 export const SUGGESTED_LATE_REASONS = [
@@ -196,15 +194,11 @@ export const resolveBranch = (user: User, schedule?: WorkSchedule, attendance?: 
 
 interface AttendancePageProps {
   currentUser?: User | null;
-  onUpdateUser?: (user: User) => void;
-  onNavigateTab?: (tab: any) => void;
   initialSubTab?: 'monitor' | 'exceptions' | 'punch';
 }
 
 export const AttendancePage: React.FC<AttendancePageProps> = ({ 
   currentUser, 
-  onUpdateUser, 
-  onNavigateTab,
   initialSubTab 
 }) => {
   const isManager = currentUser?.role === 'manager';
@@ -248,12 +242,6 @@ export const AttendancePage: React.FC<AttendancePageProps> = ({
   const [excType, setExcType] = useState<'late_justification' | 'leave_request' | 'shift_swap'>('late_justification');
   const [excReason, setExcReason] = useState('');
   const [excProofImage, setExcProofImage] = useState<string | undefined>(undefined);
-
-  // Quick exception submission modal state from Tab 1
-  const [quickExceptionModalOpen, setQuickExceptionModalOpen] = useState(false);
-  const [targetLateRecord, setTargetLateRecord] = useState<Attendance | null>(null);
-  const [quickReason, setQuickReason] = useState('');
-  const [quickProofImage, setQuickProofImage] = useState<string | undefined>(undefined);
 
   // Toast notification
   const [toast, setToast] = useState<{ message: string; type: 'success' | 'error' | 'info' } | null>(null);
@@ -317,10 +305,9 @@ export const AttendancePage: React.FC<AttendancePageProps> = ({
 
   // Real Face Recognition State
   const [enrolledFace, setEnrolledFace] = useState<FaceFeatures | null>(null);
-  const [isFaceScanning, setIsFaceScanning] = useState(false);
   const [lastScanResult, setLastScanResult] = useState<{ similarity: number; isMatch: boolean; reason: string } | null>(null);
   const [cameraError, setCameraError] = useState(false);
-  const [cameraErrorMessage, setCameraErrorMessage] = useState('');
+  const [, setCameraErrorMessage] = useState('');
   const [cameraReady, setCameraReady] = useState(false);
   const [realtimeFaceTrack, setRealtimeFaceTrack] = useState<{ 
     hasFace: boolean; 
@@ -330,8 +317,8 @@ export const AttendancePage: React.FC<AttendancePageProps> = ({
   }>({ hasFace: false, confidence: 0 });
   const [isAutoPunching, setIsAutoPunching] = useState(false);
   const autoPunchLockRef = useRef(false);
-  const [activeCameraName, setActiveCameraName] = useState<string>('');
-  const [availableCameras, setAvailableCameras] = useState<MediaDeviceInfo[]>([]);
+  const [, setActiveCameraName] = useState<string>('');
+  const [, setAvailableCameras] = useState<MediaDeviceInfo[]>([]);
   const [selectedCameraId, setSelectedCameraId] = useState<string>('');
 
   const videoRef = useRef<HTMLVideoElement | null>(null);
@@ -682,48 +669,6 @@ export const AttendancePage: React.FC<AttendancePageProps> = ({
     await saveAttendanceApi(updatedAtt);
     setAttendances(getAttendances());
     showToast(`✓ Đã duyệt trễ và miễn trừ vi phạm cho nhân sự ${att.userName}!`, 'success');
-  };
-
-  // Nộp đơn giải trình nhanh cho ca đi muộn (Nhân viên)
-  const handleOpenQuickException = (att: Attendance) => {
-    setTargetLateRecord(att);
-    setQuickReason('');
-    setQuickProofImage(undefined);
-    setQuickExceptionModalOpen(true);
-  };
-
-  const handleQuickSubmitException = async (e: React.FormEvent) => {
-    e.preventDefault();
-    if (!targetLateRecord || !quickReason.trim()) return;
-
-    const now = new Date();
-    const hh = String(now.getHours()).padStart(2, '0');
-    const mm = String(now.getMinutes()).padStart(2, '0');
-    const dd = String(now.getDate()).padStart(2, '0');
-    const month = String(now.getMonth() + 1).padStart(2, '0');
-    const yyyy = now.getFullYear();
-
-    const newExc = {
-      attendanceId: targetLateRecord.id,
-      userId: targetLateRecord.userId,
-      userName: targetLateRecord.userName,
-      staffCode: targetLateRecord.staffCode,
-      type: 'late_justification' as const,
-      typeTitle: 'Giải trình Đi Muộn',
-      reason: quickReason.trim(),
-      targetDate: targetLateRecord.date,
-      proofImage: quickProofImage,
-      status: 'pending' as const,
-      submittedAt: `${dd}/${month}/${yyyy} ${hh}:${mm}`,
-    };
-
-    saveAttendanceException(newExc);
-    await submitAttendanceExceptionApi(newExc);
-    setExceptions(getAttendanceExceptions());
-    setQuickExceptionModalOpen(false);
-    setQuickReason('');
-    setQuickProofImage(undefined);
-    showToast('Đã gửi đơn giải trình thành công tới Quản lý rạp! Đơn đang chờ duyệt.', 'success');
   };
 
   // Nộp đơn ngoại lệ từ Tab 2

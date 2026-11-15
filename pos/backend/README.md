@@ -62,6 +62,8 @@ DB_PASSWORD=
 - `POST ?action=logout`
 - `GET ?action=dashboard`
 - `POST ?action=close_shift` (`cash_at_close`)
+- `GET ?action=pos_promotions` — trả các nút CTKM đang được Admin Rạp bật cho đúng rạp và còn hiệu lực.
+- `POST ?action=sales_order` / `POST ?action=product_order` — nhận thêm `promotion_deployment_id`; backend kiểm tra lại phạm vi, đối tượng, giá trị đơn tối thiểu, giới hạn lượt dùng và tự tính số tiền giảm.
 
 ## Bước chạy
 

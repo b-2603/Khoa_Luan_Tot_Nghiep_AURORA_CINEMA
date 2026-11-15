@@ -5,7 +5,7 @@ import { fetchQuizzes, submitQuizAttemptApi, saveCertificateApi } from '../servi
 import { 
   FileCheck, Clock, Award, CheckCircle2, XCircle, Search, BookOpen, 
   ArrowRight, RotateCcw, AlertCircle, Eye, Check, ChevronRight, ChevronLeft, 
-  HelpCircle, Sparkles, Filter, Lock, Calendar, ShieldCheck, Maximize, Minimize, ShieldAlert
+  Sparkles, Filter, Lock, Maximize, ShieldAlert
 } from 'lucide-react';
 import confetti from 'canvas-confetti';
 
@@ -67,7 +67,7 @@ export const QuizzesPage: React.FC<QuizzesPageProps> = ({
       if (document.fullscreenElement) {
         document.exitFullscreen().catch(() => {});
       }
-    } catch (e) {}
+    } catch  {}
 
     const defaultMsg = 'BÀI THI BỊ ĐÌNH CHỈ & ĐÁNH RỚT (0 ĐIỂM): Bạn đã vi phạm quy chế thi do rời màn hình / chuyển tab 3 lần. Toàn bộ kết quả bị hủy. Nhân viên bắt buộc phải thi lại từ đầu!';
 
@@ -238,7 +238,7 @@ export const QuizzesPage: React.FC<QuizzesPageProps> = ({
       if (document.documentElement.requestFullscreen) {
         document.documentElement.requestFullscreen().catch(() => {});
       }
-    } catch (e) {}
+    } catch  {}
   };
 
   // Re-request fullscreen if accidentally exited
@@ -247,7 +247,7 @@ export const QuizzesPage: React.FC<QuizzesPageProps> = ({
       if (document.documentElement.requestFullscreen) {
         document.documentElement.requestFullscreen().catch(() => {});
       }
-    } catch (e) {}
+    } catch  {}
   };
 
   const handleSelectAnswer = (qId: string, optionIdx: number) => {
@@ -269,7 +269,7 @@ export const QuizzesPage: React.FC<QuizzesPageProps> = ({
       if (document.fullscreenElement) {
         document.exitFullscreen().catch(() => {});
       }
-    } catch (e) {}
+    } catch  {}
 
     const currentAns = answersRef.current;
     let correctCount = 0;

@@ -476,24 +476,11 @@ function RevenueReport({ data, daily }: { data: ReportsData; daily: Row[] }) {
   </div>;
 }
 
-function MoviesReport({ rows }: { rows: Row[] }) {
-  return <section className="reports-panel"><PanelHeader title="Báo cáo phim và bán vé" subtitle="Doanh thu vé, suất chiếu và hiệu quả sử dụng ghế" icon={Film}/>{rows.length ? <div className="reports-table-wrap"><table className="reports-table"><thead><tr><th>#</th><th>Phim</th><th>Suất chiếu</th><th>Vé bán</th><th>Doanh thu vé</th><th>Tỷ lệ lấp đầy</th></tr></thead><tbody>{rows.map((row, index) => <tr key={row.id}><td><span className={`reports-rank rank-${index + 1}`}>{index + 1}</span></td><td><div className="reports-movie-cell">{row.poster_url ? <img src={row.poster_url} alt=""/> : <span><Film/></span>}<div><b>{row.title}</b><small>{row.genre || 'Chưa phân loại'}</small></div></div></td><td>{number(row.showtime_count)}</td><td><b>{number(row.tickets_sold)}</b></td><td><strong>{money(row.ticket_revenue)}</strong></td><td><Progress value={Number(row.occupancy_rate)} label={`${Number(row.occupancy_rate).toLocaleString('vi-VN')}%`}/></td></tr>)}</tbody></table></div> : <EmptyReport icon={Film} text="Chưa có suất chiếu trong khoảng thời gian này."/>}</section>;
-}
-
-function ProductsReport({ rows }: { rows: Row[] }) {
-  return <section className="reports-panel"><PanelHeader title="Báo cáo F&B và hàng hóa" subtitle="Sản lượng, doanh thu và mức đóng góp theo sản phẩm" icon={ShoppingBasket}/>{rows.length ? <div className="reports-table-wrap"><table className="reports-table"><thead><tr><th>#</th><th>Mã hàng</th><th>Sản phẩm</th><th>Nhóm</th><th>Số đơn</th><th>Số lượng</th><th>Giá bán TB</th><th>Doanh thu</th></tr></thead><tbody>{rows.map((row, index) => <tr key={`${row.item_type}-${row.item_code}`}><td><span className={`reports-rank rank-${index + 1}`}>{index + 1}</span></td><td><code>{row.item_code}</code></td><td><b>{row.item_name}</b></td><td><span className="reports-type-badge"><Package/>{row.item_type === 'COMBO' ? 'F&B / Combo' : 'Hàng hóa'}</span></td><td>{number(row.order_count)}</td><td><b>{number(row.quantity)}</b></td><td>{money(row.average_price)}</td><td><strong>{money(row.revenue)}</strong></td></tr>)}</tbody></table></div> : <EmptyReport icon={ShoppingBasket} text="Chưa phát sinh doanh thu F&B hoặc hàng hóa trong kỳ."/>}</section>;
-}
-
 function PaymentsReport({ data }: { data: ReportsData }) {
   return <div className="reports-two-columns">
     <section className="reports-panel"><PanelHeader title="Phương thức thanh toán" subtitle="Giá trị giao dịch đã thanh toán" icon={CreditCard}/><Distribution rows={data.payment_methods} label={row => paymentLabel(row.payment_method)}/></section>
     <section className="reports-panel"><PanelHeader title="Kênh bán hàng" subtitle="Cơ cấu doanh thu POS, Website và đối tác" icon={WalletCards}/><Distribution rows={data.channels} label={row => channelLabel(row.channel)}/></section>
   </div>;
-}
-
-function TheatersReport({ rows }: { rows: Row[] }) {
-  const max = Math.max(1, ...rows.map(row => Number(row.net_revenue || 0)));
-  return <section className="reports-panel"><PanelHeader title="So sánh hiệu suất rạp" subtitle="Doanh thu, vé bán, suất chiếu và tỷ lệ lấp đầy" icon={Building2}/>{rows.length ? <div className="reports-table-wrap"><table className="reports-table theater-table"><thead><tr><th>Rạp</th><th>Doanh thu</th><th>Tỷ trọng</th><th>Vé bán</th><th>Suất chiếu</th><th>Lấp đầy</th></tr></thead><tbody>{rows.map(row => <tr key={row.id}><td><div className="reports-theater-name"><span><Building2/></span><div><b>{row.name}</b><small>{row.city}</small></div></div></td><td><strong>{money(row.net_revenue)}</strong></td><td><Progress value={Number(row.net_revenue) * 100 / max} label={`${(Number(row.net_revenue) * 100 / max).toFixed(0)}%`}/></td><td>{number(row.tickets_sold)}</td><td>{number(row.showtime_count)}</td><td><Progress value={Number(row.occupancy_rate)} label={`${Number(row.occupancy_rate).toLocaleString('vi-VN')}%`}/></td></tr>)}</tbody></table></div> : <EmptyReport icon={Building2} text="Chưa có dữ liệu rạp trong phạm vi được chọn."/>}</section>;
 }
 
 function PanelHeader({ title, subtitle, icon: Icon }: { title: string; subtitle?: string; icon: any }) { return <header className="reports-panel-header"><span><Icon/></span><div><h2>{title}</h2>{subtitle ? <p>{subtitle}</p> : null}</div></header>; }

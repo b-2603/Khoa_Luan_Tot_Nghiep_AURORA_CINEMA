@@ -101,7 +101,7 @@ export async function detectCurrentNetwork(): Promise<{ ip: string; isOnline: bo
         };
       }
     }
-  } catch (e) {
+  } catch  {
   }
 
   try {
@@ -116,7 +116,7 @@ export async function detectCurrentNetwork(): Promise<{ ip: string; isOnline: bo
         };
       }
     }
-  } catch (e) {
+  } catch  {
   }
 
   return {
@@ -145,7 +145,7 @@ export function getAuthorizedWifiConfig(): NetworkConfig {
       }
       return parsed;
     }
-  } catch (e) { }
+  } catch  { }
 
   return {
     authorizedIp: '10.179.243.65',
@@ -253,7 +253,7 @@ export async function startWebcamStream(
 
       try {
         await videoElement.play();
-      } catch (playErr) {
+      } catch  {
         setTimeout(() => videoElement.play().catch(() => { }), 100);
       }
 
@@ -456,7 +456,7 @@ export function getEnrolledFace(userId: string): FaceFeatures | null {
     const key = `${STORAGE_KEYS.FACE_PREFIX}${userId}`;
     const data = localStorage.getItem(key);
     return data ? JSON.parse(data) : null;
-  } catch (e) {
+  } catch  {
     return null;
   }
 }

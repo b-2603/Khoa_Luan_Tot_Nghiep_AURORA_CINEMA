@@ -5,9 +5,9 @@ import { fetchCourses, fetchQuizzes } from '../services/apiClient';
 import { generateAiQuizFromTopic } from '../services/openai';
 import { 
   Sparkles, CheckCircle2, RefreshCw, Trash2, BookOpen, Plus, Search, 
-  Filter, Eye, Edit3, Clock, Award, Star, Video, FileText, ChevronRight, 
-  X, Check, AlertCircle, HelpCircle, Layers, GraduationCap, Film,
-  UserCheck, ExternalLink, Bookmark, ShieldAlert, ArrowRight, Play
+  Eye, Edit3, Clock, Award,
+  X, Check, HelpCircle, Layers, GraduationCap, Film,
+  Play
 } from 'lucide-react';
 
 export const CINEMA_DEPARTMENTS = [

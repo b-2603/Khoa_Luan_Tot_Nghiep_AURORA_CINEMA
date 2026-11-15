@@ -1,19 +1,17 @@
 import React from 'react';
 import { User } from '../types';
-import { Film, Bot, LogOut } from 'lucide-react';
+import { LogOut } from 'lucide-react';
 import { logoutUser } from '../services/storage';
 
 interface NavbarProps {
   currentUser: User;
   onUserChange: (user: User | null) => void;
-  onOpenAiAssistant: () => void;
   onOpenAiKeyClick?: () => void;
 }
 
 export const Navbar: React.FC<NavbarProps> = ({
   currentUser,
   onUserChange,
-  onOpenAiAssistant,
 }) => {
 
   const handleLogout = () => {

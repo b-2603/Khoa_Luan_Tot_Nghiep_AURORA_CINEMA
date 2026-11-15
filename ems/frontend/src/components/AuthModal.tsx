@@ -1,7 +1,7 @@
 import React, { useState } from 'react';
 import { User, Department, Role } from '../types';
 import { getUsers, addUser, setCurrentUser } from '../services/storage';
-import { X, UserPlus, LogIn, Mail, Lock, User as UserIcon, Phone, Building, CheckCircle2 } from 'lucide-react';
+import { X, User as UserIcon, CheckCircle2 } from 'lucide-react';
 
 interface AuthModalProps {
   isOpen: boolean;
@@ -14,7 +14,7 @@ export const AuthModal: React.FC<AuthModalProps> = ({ isOpen, onClose, onLoginSu
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [name, setName] = useState('');
-  const [phone, setPhone] = useState('');
+  const [phone] = useState('');
   const [department, setDepartment] = useState<Department>('Vé & Chăm sóc Khách hàng');
   const [role, setRole] = useState<Role>('staff');
   const [errorMsg, setErrorMsg] = useState('');
@@ -76,7 +76,6 @@ export const AuthModal: React.FC<AuthModalProps> = ({ isOpen, onClose, onLoginSu
   };
 
   const handleGoogleLogin = () => {
-    const googleUser = users.find(u => u.email.includes('minh')) || users[0];
     const created: User = {
       id: `usr-google-${Date.now()}`,
       staffCode: '0908888888',

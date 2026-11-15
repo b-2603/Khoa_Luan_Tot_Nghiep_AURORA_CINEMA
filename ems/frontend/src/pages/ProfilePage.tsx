@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { User } from '../types';
-import { Mail, Phone, Calendar, Shield, Award, Star, Camera, ShieldCheck, CheckCircle2, AlertTriangle, RefreshCw, Trash2, X, Sparkles, Upload, Image, Link as LinkIcon, Check, Lock, Key, Maximize2, Crop, ZoomIn } from 'lucide-react';
+import { Mail, Phone, Calendar, Shield, Award, Star, Camera, ShieldCheck, CheckCircle2, AlertTriangle, RefreshCw, Trash2, X, Sparkles, Upload, Image, Check, Lock, Key, Maximize2, Crop } from 'lucide-react';
 import { getCertificates, updateUser } from '../services/storage';
 import { updateEmployee } from '../services/apiClient';
 import { changePasswordApi } from '../services/authApi';
@@ -109,7 +109,7 @@ export const ProfilePage: React.FC<ProfilePageProps> = ({ currentUser, onUpdateU
       } else {
         setPassErrorMsg(res.message);
       }
-    } catch (err) {
+    } catch  {
       setPassErrorMsg('Có lỗi xảy ra khi đổi mật khẩu.');
     } finally {
       setPassLoading(false);

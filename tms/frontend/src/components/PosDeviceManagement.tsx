@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import {
-  Activity, AlertTriangle, Building2, Check, CheckCircle2, ChevronRight, CircleOff,
+  Activity, AlertTriangle, Building2, Check, CheckCircle2, CircleOff,
   Clock3, Copy, Database, Edit3, Eye, KeyRound, Laptop, MapPin, Monitor, MoreHorizontal,
   Network, Plus, RefreshCw, Search, Server, ShieldCheck, ShieldX, Store, Wrench, X, XCircle
 } from 'lucide-react';
@@ -91,4 +91,3 @@ function ConnectionBadge({value}:{value:string}){return <span className={`posdev
 function ApprovalBadge({value}:{value:string}){return <span className={`posdev-approval-badge ${value}`}>{value==='approved'?<CheckCircle2/>:value==='rejected'?<XCircle/>:<Clock3/>}{approvalLabels[value]||value}</span>}
 function Loading(){return <div className="posdev-loading"><RefreshCw className="spin"/><b>Đang tải thiết bị POS</b><span>Đồng bộ dữ liệu từ aurora_db…</span></div>}
 function Empty({title,text}:{title:string;text:string}){return <div className="posdev-empty"><Monitor/><b>{title}</b><span>{text}</span></div>}
-

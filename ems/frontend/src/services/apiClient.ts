@@ -4,7 +4,7 @@
  * Tự động đồng bộ với LocalStorage khi Offline để đảm bảo 100% trải nghiệm mượt mà
  */
 
-import { User, Course, Quiz, QuizAttempt, Certificate, Shift, ShiftRegistration, WorkSchedule, Attendance, AttendanceException } from '../types';
+import { User, Course, Quiz, Certificate, Shift, ShiftRegistration, WorkSchedule, Attendance, AttendanceException } from '../types';
 import * as storage from './storage';
 
 export const API_BASE_URL = 'http://localhost:8000/api/v1';
@@ -20,7 +20,7 @@ export async function checkBackendHealth(): Promise<{ connected: boolean; messag
       message: 'Kết nối thành công CSDL MySQL (aurora_ems:3306)',
       data
     };
-  } catch (e) {
+  } catch  {
     return {
       connected: false,
       message: 'Backend Offline - Đang sử dụng chế độ bộ nhớ cục bộ an toàn'
@@ -58,7 +58,7 @@ export async function fetchEmployees(search = '', dept = 'all'): Promise<User[]>
         return mappedUsers;
       }
     }
-  } catch (err) {
+  } catch  {
     console.warn('[API Client] Backend offline, using storage cache for Employees');
   }
   return storage.getUsers();
@@ -83,7 +83,7 @@ export async function createEmployee(user: Omit<User, 'id'>): Promise<User> {
       }),
       signal: AbortSignal.timeout(3000)
     });
-  } catch (e) {
+  } catch  {
     console.warn('[API Client] Saved to local storage, backend sync pending.');
   }
 
@@ -132,7 +132,7 @@ export async function updateEmployee(id: string, updates: Partial<User>): Promis
         return fresh;
       }
     }
-  } catch (e) {
+  } catch  {
     console.warn('[API Client] Updated locally, backend sync pending.');
   }
 
@@ -151,7 +151,7 @@ export async function deleteEmployee(id: string): Promise<boolean> {
       signal: AbortSignal.timeout(3000)
     });
     return res.ok || deletedLocal;
-  } catch (e) {
+  } catch  {
     console.warn('[API Client] Deleted from local storage, backend sync pending.');
   }
 
@@ -193,7 +193,7 @@ export async function fetchCourses(): Promise<Course[]> {
         return mappedCourses;
       }
     }
-  } catch (err) {
+  } catch  {
     console.warn('[API Client] Using storage cache for Courses');
   }
   return storage.getCourses();
@@ -226,7 +226,7 @@ export async function fetchQuizzes(): Promise<Quiz[]> {
         return mappedQuizzes;
       }
     }
-  } catch (err) {
+  } catch  {
     console.warn('[API Client] Using storage cache for Quizzes');
   }
   return storage.getQuizzes();
@@ -262,7 +262,7 @@ export async function submitQuizAttemptApi(
         certificateCode: json.certificate_code
       };
     }
-  } catch (e) {
+  } catch  {
     console.warn('[API Client] Offline submission calculation');
   }
 
@@ -294,7 +294,7 @@ export async function saveCertificateApi(cert: Certificate): Promise<boolean> {
       signal: AbortSignal.timeout(3000)
     });
     return res.ok;
-  } catch (e) {
+  } catch  {
     console.warn('[API Client] Offline certificate sync fallback');
     return false;
   }
@@ -344,7 +344,7 @@ export async function fetchCertificates(userId?: string): Promise<Certificate[]>
         return finalCerts;
       }
     }
-  } catch (e) {
+  } catch  {
     console.warn('[API Client] Using storage cache for Certificates');
   }
   return storage.getCertificates();
@@ -367,7 +367,7 @@ export async function fetchShifts(): Promise<Shift[]> {
         }));
       }
     }
-  } catch (e) {}
+  } catch  {}
   return [
     { id: 'shift-1', name: 'Ca Sáng (08:00 - 16:00)', startTime: '08:00', endTime: '16:00', code: 'SH1', color: '#06b6d4' },
     { id: 'shift-2', name: 'Ca Chiều (15:30 - 23:00)', startTime: '15:30', endTime: '23:00', code: 'SH2', color: '#f59e0b' },
@@ -423,7 +423,7 @@ export async function fetchShiftRegistrations(userId?: string, date?: string): P
         return mergedList;
       }
     }
-  } catch (e) {
+  } catch  {
     console.warn('[API Client] Using storage cache for Shift Registrations');
   }
   return storage.getShiftRegistrations();
@@ -447,7 +447,7 @@ export async function registerShiftPreference(userId: string, shiftId: string, d
       signal: AbortSignal.timeout(3000)
     });
     return res.ok;
-  } catch (e) {
+  } catch  {
     return false;
   }
 }
@@ -470,7 +470,7 @@ export async function cancelShiftRegistration(userId: string, shiftId: string, d
       signal: AbortSignal.timeout(3000)
     });
     return res.ok;
-  } catch (e) {
+  } catch  {
     return false;
   }
 }
@@ -520,7 +520,7 @@ export async function fetchWorkSchedules(date?: string): Promise<WorkSchedule[]>
         return mergedSchedules;
       }
     }
-  } catch (e) {
+  } catch  {
     console.warn('[API Client] Using storage cache for Schedules');
   }
   return storage.syncApprovedRegistrationsToSchedules();
@@ -624,7 +624,7 @@ export async function publishWorkSchedules(schedules: WorkSchedule[], date: stri
       signal: AbortSignal.timeout(3000)
     });
     return res.ok;
-  } catch (e) {
+  } catch  {
     return false;
   }
 }
@@ -641,7 +641,7 @@ export async function approveShiftRegistration(regId: string, location?: string)
     });
     const json = await res.json();
     return { success: res.ok, message: json.message || 'Đã duyệt ca' };
-  } catch (e) {
+  } catch  {
     return { success: false, message: 'Lỗi kết nối máy chủ' };
   }
 }
@@ -658,7 +658,7 @@ export async function rejectShiftRegistration(regId: string, reason?: string): P
     });
     const json = await res.json();
     return { success: res.ok, message: json.message || 'Đã từ chối ca' };
-  } catch (e) {
+  } catch  {
     return { success: false, message: 'Lỗi kết nối máy chủ' };
   }
 }
@@ -674,7 +674,7 @@ export async function approveAllShiftRegistrations(date?: string): Promise<{ suc
     });
     const json = await res.json();
     return { success: res.ok, message: json.message || 'Đã duyệt toàn bộ ca' };
-  } catch (e) {
+  } catch  {
     return { success: false, message: 'Lỗi kết nối máy chủ' };
   }
 }
@@ -698,7 +698,7 @@ export async function saveAttendanceApi(att: Attendance): Promise<boolean> {
       signal: AbortSignal.timeout(3000)
     });
     return res.ok;
-  } catch (e) {
+  } catch  {
     return false;
   }
 }
@@ -719,7 +719,7 @@ export async function submitAttendanceExceptionApi(exc: Omit<AttendanceException
       signal: AbortSignal.timeout(3000)
     });
     return res.ok;
-  } catch (e) {
+  } catch  {
     return false;
   }
 }
@@ -776,7 +776,7 @@ export async function fetchAttendances(): Promise<Attendance[]> {
         return merged;
       }
     }
-  } catch (e) {
+  } catch  {
     console.warn('[API Client] Using storage cache for Attendances');
   }
   return storage.getAttendances();
@@ -824,7 +824,7 @@ export async function fetchAttendanceExceptions(): Promise<AttendanceException[]
         return merged;
       }
     }
-  } catch (e) {
+  } catch  {
     console.warn('[API Client] Using storage cache for Attendance Exceptions');
   }
   return storage.getAttendanceExceptions();
@@ -840,7 +840,7 @@ export async function handleExceptionActionApi(id: string, action: 'approved' | 
       signal: AbortSignal.timeout(3000)
     });
     return res.ok;
-  } catch (e) {
+  } catch  {
     return false;
   }
 }

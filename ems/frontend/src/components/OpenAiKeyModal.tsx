@@ -1,5 +1,5 @@
 import React, { useState } from 'react';
-import { X, Key, CheckCircle, Info } from 'lucide-react';
+import { X, Key, CheckCircle } from 'lucide-react';
 import { getStoredApiKey, setStoredApiKey } from '../services/openai';
 
 interface OpenAiKeyModalProps {

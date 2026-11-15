@@ -1,10 +1,9 @@
 import React, { useState, useRef, useEffect } from 'react';
 import { 
-  X, Bot, Send, Sparkles, User, RefreshCw, Key, 
-  Volume2, VolumeX, Copy, Check, ArrowRight,
-  Film, Popcorn, ShieldAlert, Activity,
-  HelpCircle, ChevronRight, Zap, Database, Terminal,
-  Clock, AlertTriangle, Minimize2
+  X, Send, Sparkles, User, RefreshCw, Key,
+  Volume2, VolumeX, Copy, Check, ShieldAlert, Activity,
+  Zap, Terminal,
+  Clock, Minimize2
 } from 'lucide-react';
 import { 
   askCinemaAiAssistant, 
@@ -23,7 +22,6 @@ interface AiAssistantModalProps {
   userRole: string;
   userId?: string | number;
   userName?: string;
-  onNavigateTab?: (tab: string) => void;
 }
 
 type PersonaType = 'general' | 'concession' | 'boxoffice' | 'projection' | 'hr';
@@ -48,12 +46,11 @@ export const AiAssistantModal: React.FC<AiAssistantModalProps> = ({
   onOpenKeyModal,
   userRole,
   userId,
-  userName,
-  onNavigateTab
+  userName
 }) => {
   const [query, setQuery] = useState('');
   const [loading, setLoading] = useState(false);
-  const [persona, setPersona] = useState<PersonaType>('general');
+  const [persona] = useState<PersonaType>('general');
   const [copiedId, setCopiedId] = useState<string | null>(null);
   const [isSpeakingId, setIsSpeakingId] = useState<string | null>(null);
   const [conversationId, setConversationId] = useState<number | null>(null);

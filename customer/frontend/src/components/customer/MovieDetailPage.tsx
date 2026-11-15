@@ -5,13 +5,12 @@ type Props = {
   movie: any;
   theaters: any[];
   theater: string;
-  showtimes: any[];
   date: string;
   onBack: () => void;
   onBook: (showtime: any, theater: string) => void;
 };
 
-export default function MovieDetailPage({ movie, theaters, theater, showtimes, date, onBack, onBook }: Props) {
+export default function MovieDetailPage({ movie, theaters, theater, date, onBack, onBook }: Props) {
   const trailerUrl = String(movie.trailerUrl || '').trim();
   const trailerId = trailerUrl && (trailerUrl.match(/[?&]v=([^&]+)/) || trailerUrl.match(/youtu\.be\/([^?]+)/) || trailerUrl.match(/youtube\.com\/embed\/([^?&/]+)/));
   const isDirectTrailer = /\.(mp4|webm|mov)(?:[?#].*)?$/i.test(trailerUrl);

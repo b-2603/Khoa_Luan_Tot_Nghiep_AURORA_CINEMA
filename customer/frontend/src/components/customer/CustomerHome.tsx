@@ -23,7 +23,6 @@ type CustomerHomeProps = {
   onBook: (movie: any, showtime: any, theaterName: string) => void;
   onOpenSchedule: () => void;
   onOpenMovies: () => void;
-  onOpenPrices: () => void;
   onOpenOffers: () => void;
   onOpenAccount: () => void;
   onRegister: () => void;
@@ -62,7 +61,7 @@ function ratingClass(value: unknown) {
 export default function CustomerHome({
   language, user, movies, promotions, theaters, selectedTheaterId, selectedTheaterName,
   onSelectTheater, onOpenMovie, onWatchTrailer, onBook, onOpenSchedule, onOpenMovies,
-  onOpenPrices, onOpenAccount, onRegister,
+  onOpenAccount, onRegister,
   onOpenOffers,
 }: CustomerHomeProps) {
   const t = (vi: string, en: string) => language === 'en' ? en : vi;

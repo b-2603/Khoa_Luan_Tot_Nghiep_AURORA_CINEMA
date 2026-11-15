@@ -444,14 +444,18 @@ button {
    2. DASHBOARD VIEW & SIDEBAR / TOPBAR
    ======================================================== */
 .app-shell { display: flex; min-height: 100vh; }
-.sidebar { width: 248px; position: fixed; inset: 0 auto 0 0; z-index: 30; display: flex; flex-direction: column; padding: 16px 16px 22px; color: #dce6f7; background: linear-gradient(180deg, #0d1b2e 0%, #0d1b2e 56%, #0d1b2e 100%); border-right: 1px solid rgba(255,255,255,.08); box-shadow: 10px 0 28px rgba(13,27,46,.08); transition: transform .24s ease, box-shadow .24s ease; }
+.sidebar { width: 248px; position: fixed; inset: 0 auto 0 0; z-index: 30; display: flex; flex-direction: column; overflow: hidden; padding: 16px 16px 22px; color: #dce6f7; background: linear-gradient(180deg, #0d1b2e 0%, #0d1b2e 56%, #0d1b2e 100%); border-right: 1px solid rgba(255,255,255,.08); box-shadow: 10px 0 28px rgba(13,27,46,.08); transition: transform .24s ease, box-shadow .24s ease; }
 .sidebar-brand { display: flex; align-items: center; gap: 10px; height: 58px; padding: 4px 8px; border: 1px solid rgba(255,255,255,.7); border-radius: 14px; background: rgba(255,255,255,.96); box-shadow: 0 8px 24px rgba(13,27,46,.16); }
 .logo-image { width: 196px; height: 48px; background: url('/aurora-logo.svg') center / contain no-repeat; }
 .close-sidebar { display: none; }
 .system-title { margin: 22px 4px 17px; }
 .system-title b { display: block; font: 700 21px 'Inter', 'Segoe UI', Arial, sans-serif; color: #f8fbff; }
 .system-title span { display: block; color: #9fb1cc; font-size: 11px; margin-top: 3px; }
-nav { flex: 1; }
+.sidebar nav { flex: 1 1 auto; min-height: 0; overflow-x: hidden; overflow-y: auto; overscroll-behavior: contain; padding: 1px 3px 4px 0; scrollbar-width: thin; scrollbar-color: rgba(180,199,226,.48) transparent; }
+.sidebar nav::-webkit-scrollbar { width: 7px; }
+.sidebar nav::-webkit-scrollbar-track { background: transparent; }
+.sidebar nav::-webkit-scrollbar-thumb { border: 2px solid transparent; border-radius: 99px; background: rgba(180,199,226,.48); background-clip: padding-box; }
+.sidebar nav::-webkit-scrollbar-thumb:hover { background: rgba(244,192,74,.9); background-clip: padding-box; }
 nav button { width: 100%; display: flex; align-items: center; gap: 13px; padding: 10px 11px; margin: 2px 0; color: #d4def0; background: transparent; border: 1px solid transparent; border-radius: 8px; text-align: left; font-size: 14px; transition: color .16s ease, background .16s ease, border-color .16s ease, transform .16s ease; }
 nav button:hover { color: #fff; background: rgba(255,255,255,.09); border-color: rgba(255,255,255,.08); }
 nav button.nav-active { color: #0d1b2e; background: linear-gradient(105deg, #f4c04a, #f4c04a); border-color: #f4c04a; box-shadow: 0 7px 18px rgba(244,192,74,.25); font-weight: 700; }
@@ -491,6 +495,7 @@ nav button.nav-active { color: #0d1b2e; background: linear-gradient(105deg, #f4c
 .user-dropdown-item:hover { background: #f8fafc; color: #1e62d6; }
 .user-dropdown-item.danger { color: #dc2626; }
 .user-dropdown-item.danger:hover { background: #fef2f2; color: #b91c1c; }
+.account-dropdown .account-dropdown-scope{display:flex;align-items:center;gap:5px;margin-top:8px;padding:7px 9px;border-radius:8px;background:#f5f8fc;color:#52647c;font-size:.68rem;font-weight:700}.account-dropdown .account-dropdown-scope svg{flex:0 0 auto;color:#3975d2}.account-dropdown .user-dropdown-item.profile{align-items:flex-start;padding-top:10px;padding-bottom:10px}.account-dropdown .user-dropdown-item.profile>svg{margin-top:2px}.account-dropdown .user-dropdown-item.profile>span{display:flex;flex-direction:column;gap:2px}.account-dropdown .user-dropdown-item.profile b{font-size:.73rem}.account-dropdown .user-dropdown-item.profile small{color:#8290a2;font-size:.61rem}.account-dropdown .user-dropdown-item.profile:hover small{color:#5d78a0}
 
 .content { padding: 22px; max-width: 1440px; margin: auto; }
 .heading { display: flex; align-items: flex-end; justify-content: space-between; margin: 0 4px 19px; }

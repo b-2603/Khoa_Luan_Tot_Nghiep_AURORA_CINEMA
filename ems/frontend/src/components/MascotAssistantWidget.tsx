@@ -1,9 +1,8 @@
 import React, { useState, useRef, useEffect, useCallback } from 'react';
 import { 
-  X, Maximize2, Send, Sparkles, User, RefreshCw, 
-  ChevronRight, Zap, Volume2, VolumeX, Copy, Check 
+  X, Maximize2, Send, Sparkles, User, ChevronRight
 } from 'lucide-react';
-import { useCinemaAiChat, PersonaType, ChatMessage } from '../hooks/useCinemaAiChat';
+import { useCinemaAiChat } from '../hooks/useCinemaAiChat';
 import { AiMessageRenderer } from './AiMessageRenderer';
 import { AiAssistantModal } from './AiAssistantModal';
 
@@ -11,7 +10,6 @@ interface MascotAssistantWidgetProps {
   userRole: string;
   userId?: string | number;
   userName?: string;
-  onNavigateTab?: (tab: string) => void;
   isFullModalOpen: boolean;
   onToggleFullModal: (open: boolean) => void;
   onOpenKeyModal?: () => void;
@@ -21,7 +19,6 @@ export const MascotAssistantWidget: React.FC<MascotAssistantWidgetProps> = ({
   userRole,
   userId,
   userName,
-  onNavigateTab,
   isFullModalOpen,
   onToggleFullModal,
   onOpenKeyModal,
@@ -33,12 +30,7 @@ export const MascotAssistantWidget: React.FC<MascotAssistantWidgetProps> = ({
     setQuery, 
     loading, 
     messages, 
-    sendMessage, 
-    copiedId, 
-    handleCopy, 
-    isSpeakingId, 
-    handleSpeak, 
-    handleResetChat 
+    sendMessage
   } = chat;
 
   // Mascot Position & Dragging State
@@ -51,7 +43,7 @@ export const MascotAssistantWidget: React.FC<MascotAssistantWidgetProps> = ({
           return parsed;
         }
       }
-    } catch (e) {
+    } catch  {
       // Fallback
     }
     // Default bottom-right corner
@@ -493,7 +485,6 @@ export const MascotAssistantWidget: React.FC<MascotAssistantWidgetProps> = ({
         userRole={userRole}
         userId={userId}
         userName={userName}
-        onNavigateTab={onNavigateTab}
       />
     </>
   );

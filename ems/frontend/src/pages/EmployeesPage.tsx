@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useRef } from 'react';
-import { User, Department, Role } from '../types';
+import { User, Department } from '../types';
 import { getUsers } from '../services/storage';
 import { fetchEmployees, createEmployee, updateEmployee, deleteEmployee } from '../services/apiClient';
 import { 
@@ -8,10 +8,9 @@ import {
   FaceFeatures 
 } from '../services/biometrics';
 import { 
-  Search, Filter, Eye, X, Star, UserPlus, 
+  Search, Eye, X, Star, UserPlus,
   Edit3, Trash2, CheckCircle2, AlertTriangle, 
-  Phone, Mail, Shield, Building, Award, UserCheck, 
-  UserX, RefreshCw, Camera, Sparkles, Check
+  RefreshCw, Camera, Sparkles, Check
 } from 'lucide-react';
 
 // 4 Nghiệp vụ chuẩn cho nhân viên chi nhánh rạp Aurora Cinema
@@ -66,7 +65,7 @@ export const EmployeesPage: React.FC<EmployeesPageProps> = ({ initialAddModal })
   const [activeFaceCameraName, setActiveFaceCameraName] = useState('');
   const [availableFaceCameras, setAvailableFaceCameras] = useState<MediaDeviceInfo[]>([]);
   const [selectedFaceCameraId, setSelectedFaceCameraId] = useState<string>('');
-  const [faceVersion, setFaceVersion] = useState(0);
+  const [, setFaceVersion] = useState(0);
 
   const faceVideoRef = useRef<HTMLVideoElement | null>(null);
   const faceMediaStreamRef = useRef<MediaStream | null>(null);

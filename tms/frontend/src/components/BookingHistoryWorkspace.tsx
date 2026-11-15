@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from 'react';
-import { Armchair, CalendarDays, CheckCircle2, ChevronRight, CircleDollarSign, Clock3, CreditCard, Film, History, Mail, MapPin, Phone, Receipt, RefreshCw, Search, Ticket, UserRound, X, XCircle } from 'lucide-react';
+import { Armchair, CalendarDays, CheckCircle2, ChevronRight, CircleDollarSign, Clock3, Film, History, Mail, MapPin, Phone, Receipt, RefreshCw, Search, Ticket, UserRound, X, XCircle } from 'lucide-react';
 import './BookingHistoryWorkspace.css';
 
 type Timeline='today'|'upcoming'|'past'|'all';

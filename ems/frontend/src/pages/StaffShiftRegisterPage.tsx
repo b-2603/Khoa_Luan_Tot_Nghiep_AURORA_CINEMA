@@ -4,14 +4,11 @@ import { INITIAL_SHIFTS } from '../services/mockData';
 import { getShiftRegistrations, saveShiftRegistration, deleteShiftRegistration, getShiftReminders, dismissShiftReminder, ShiftReminder } from '../services/storage';
 import { fetchShiftRegistrations, registerShiftPreference, cancelShiftRegistration, fetchShifts } from '../services/apiClient';
 import { 
-  CalendarPlus, 
   CheckCircle2, 
   Clock, 
   Calendar, 
   Check, 
   AlertCircle, 
-  Trash2, 
-  Sparkles, 
   ArrowRight, 
   ShieldCheck,
   Lock,
@@ -29,7 +26,7 @@ interface StaffShiftRegisterPageProps {
 export const StaffShiftRegisterPage: React.FC<StaffShiftRegisterPageProps> = ({ currentUser, onNavigateToSchedule }) => {
   const [registrations, setRegistrations] = useState<ShiftRegistration[]>([]);
   const [shifts, setShifts] = useState<Shift[]>(INITIAL_SHIFTS);
-  const [isLoading, setIsLoading] = useState<boolean>(true);
+  const [, setIsLoading] = useState<boolean>(true);
   const [actionMessage, setActionMessage] = useState<{ type: 'success' | 'info' | 'error'; text: string } | null>(null);
   const [myReminders, setMyReminders] = useState<ShiftReminder[]>(() => getShiftReminders(currentUser.id));
 

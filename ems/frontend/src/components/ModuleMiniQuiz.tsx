@@ -10,7 +10,6 @@ import {
   ArrowLeft, 
   Sparkles, 
   FileQuestion, 
-  Check, 
   X,
   Award,
   BookOpen

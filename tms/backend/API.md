@@ -92,6 +92,23 @@ Khi được duyệt, kế hoạch chuyển sang `published` và tạo bản ghi
 
 Hồ sơ phim do Marketing tạo được lưu trong `movies` với `status = 'draft'` và `marketing_owner_id`. Phim chỉ chuyển sang `coming_soon` khi kế hoạch đã được Admin Tổng duyệt và Marketing thực hiện thao tác `publish-movie`.
 
+## Trung tâm CTKM Admin Tổng
+
+- Trong TMS Admin Tổng, duyệt và quản lý CTKM được gộp trong mục “CTKM & Khuyến mãi”, gồm tab “Duyệt kế hoạch” và “Quản lý CTKM hệ thống”. “Kế hoạch rạp” chỉ dành cho kế hoạch phim.
+- `GET ?action=marketing-promotions&approval_status=pending_approval` — đọc hàng đợi và thống kê trực tiếp từ `aurora_db.marketing_promotions`; `q` tìm mã/tên/mô tả. Thông tin người lập lấy từ `users`, thông tin phát hành/lượt dùng từ `vouchers`; response có `meta.source = aurora_db`.
+- `PUT ?action=marketing-promotions` với body `{ "id": 1, "operation": "review", "decision": "approved|revision_requested", "note": "..." }` — chỉ Admin Tổng được quyết định hồ sơ đang chờ duyệt. Yêu cầu chỉnh sửa bắt buộc có `note`. Cập nhật trạng thái và ghi lịch sử vào `marketing_promotions` cùng `marketing_promotion_history` trong một transaction; lỗi database trả HTTP `500`, hồ sơ đã được xử lý đồng thời trả HTTP `409`.
+- Migration idempotent tạo các cột trạng thái, người gửi/người duyệt, phản hồi và bảng lịch sử trong `aurora_db` là `database/apply_promotion_workflow.php`.
+
+## Chương trình khuyến mãi và triển khai POS
+
+- `GET|POST|PUT|DELETE ?action=marketing-promotions` — Marketing lập kế hoạch, gửi duyệt, thu hồi, phát hành hoặc tạm dừng; Admin Tổng dùng `operation=review` để duyệt/yêu cầu sửa.
+- Khi Marketing dùng `operation=publish`, backend tạo/cập nhật `vouchers`, hiển thị chương trình trên Customer và tạo một `promotion_theater_deployments` trạng thái `pending` cho từng rạp.
+- `GET ?action=theater-promotions` — Admin Rạp đọc các kế hoạch được gửi đúng `theater_id` của tài khoản.
+- `PUT ?action=theater-promotions` — hỗ trợ `operation=receive|save_button|activate|pause`. `save_button` nhận `pos_button_label`, `pos_button_color`, `pos_button_icon`, `applies_to=all|ticket|combo` và `pos_sort_order`.
+- POS chỉ nhận nút khi kế hoạch đang phát hành, voucher còn hiệu lực và Admin Rạp đã bật `pos_enabled`. Mỗi lượt áp dụng được ghi vào `orders.voucher_code`, `orders.promotion_discount_amount`, bộ đếm voucher và bộ đếm triển khai tại rạp trong cùng transaction.
+
+Migration idempotent: `database/apply_promotion_workflow.php`.
+
 ## Danh mục hàng hóa dùng chung
 
 - `GET ?action=product-catalog-workflow` — đọc hàng hóa và các nhóm sản phẩm trực tiếp từ `aurora_db`.

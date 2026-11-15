@@ -242,6 +242,29 @@ class MarketingController
                 created_at DATETIME NOT NULL,
                 resolved_at DATETIME NULL,
                 KEY idx_mkt_plan_review (plan_id,review_round,status)
+            ) ENGINE=InnoDB DEFAULT CHARSET=utf8 COLLATE=utf8_unicode_ci",
+            "CREATE TABLE IF NOT EXISTS marketing_promotion_history (
+                id BIGINT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
+                promotion_id BIGINT UNSIGNED NOT NULL,
+                action_name VARCHAR(40) NOT NULL,
+                from_status VARCHAR(30) NULL,
+                to_status VARCHAR(30) NOT NULL,
+                actor_id BIGINT UNSIGNED NULL,
+                actor_name VARCHAR(120) NOT NULL,
+                actor_role VARCHAR(40) NOT NULL,
+                note TEXT NULL,
+                created_at DATETIME NOT NULL,
+                KEY idx_mkt_promotion_history (promotion_id,created_at)
+            ) ENGINE=InnoDB DEFAULT CHARSET=utf8 COLLATE=utf8_unicode_ci",
+            "CREATE TABLE IF NOT EXISTS promotion_theater_deployments (
+                id BIGINT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
+                promotion_id BIGINT UNSIGNED NOT NULL,voucher_id BIGINT UNSIGNED NOT NULL,theater_id BIGINT UNSIGNED NOT NULL,
+                status VARCHAR(30) NOT NULL DEFAULT 'pending',received_by BIGINT UNSIGNED NULL,received_by_name VARCHAR(120) NULL,received_at DATETIME NULL,
+                pos_button_label VARCHAR(50) NULL,pos_button_color VARCHAR(20) NOT NULL DEFAULT '#D99A1B',pos_button_icon VARCHAR(30) NOT NULL DEFAULT 'gift',
+                pos_sort_order INT NOT NULL DEFAULT 0,applies_to VARCHAR(20) NOT NULL DEFAULT 'all',pos_enabled TINYINT(1) NOT NULL DEFAULT 0,
+                configured_by BIGINT UNSIGNED NULL,configured_by_name VARCHAR(120) NULL,configured_at DATETIME NULL,
+                redemption_count INT UNSIGNED NOT NULL DEFAULT 0,last_redeemed_at DATETIME NULL,created_at DATETIME NOT NULL,updated_at DATETIME NULL,
+                UNIQUE KEY uq_promotion_theater (promotion_id,theater_id),KEY idx_promotion_deployment_theater (theater_id,status,pos_enabled),KEY idx_promotion_deployment_voucher (voucher_id)
             ) ENGINE=InnoDB DEFAULT CHARSET=utf8 COLLATE=utf8_unicode_ci"
         );
         foreach ($queries as $query) {
@@ -280,6 +303,85 @@ class MarketingController
                 jsonResponse(array('success'=>false,'message'=>'Không thể nâng cấp dữ liệu phản hồi phê duyệt: '.$this->db->error),500);
             }
         }
+        $campaignColumns = array(
+            'movie_id' => 'BIGINT UNSIGNED NULL',
+            'target_audience' => "VARCHAR(180) NOT NULL DEFAULT 'Khách hàng Aurora Cinema'",
+            'description' => 'TEXT NULL',
+            'expected_reach' => 'INT UNSIGNED NOT NULL DEFAULT 0',
+            'actual_reach' => 'INT UNSIGNED NOT NULL DEFAULT 0',
+            'impressions' => 'INT UNSIGNED NOT NULL DEFAULT 0',
+            'clicks' => 'INT UNSIGNED NOT NULL DEFAULT 0',
+            'conversions' => 'INT UNSIGNED NOT NULL DEFAULT 0',
+            'spent_budget' => 'DECIMAL(14,2) NOT NULL DEFAULT 0'
+        );
+        foreach ($campaignColumns as $column => $definition) {
+            if (!$this->columnExists('marketing_campaigns', $column) && !$this->db->query("ALTER TABLE marketing_campaigns ADD COLUMN `{$column}` {$definition}")) {
+                jsonResponse(array('success'=>false,'message'=>'Không thể nâng cấp dữ liệu chiến dịch Marketing: '.$this->db->error),500);
+            }
+        }
+        $promotionColumns = array(
+            'description' => 'VARCHAR(255) NULL',
+            'details' => 'TEXT NULL',
+            'terms_text' => 'TEXT NULL',
+            'category' => "VARCHAR(30) NOT NULL DEFAULT 'ticket'",
+            'audience' => "VARCHAR(30) NOT NULL DEFAULT 'all'",
+            'badge_text' => 'VARCHAR(60) NULL',
+            'theme_color' => "VARCHAR(20) NOT NULL DEFAULT '#D99A1B'",
+            'image_url' => 'VARCHAR(500) NULL',
+            'min_order_amount' => 'DECIMAL(12,2) NOT NULL DEFAULT 0',
+            'max_discount' => 'DECIMAL(12,2) NOT NULL DEFAULT 0',
+            'usage_limit' => 'INT UNSIGNED NOT NULL DEFAULT 0',
+            'is_featured' => 'TINYINT(1) NOT NULL DEFAULT 0',
+            'publication_status' => "VARCHAR(30) NOT NULL DEFAULT 'draft'",
+            'submitted_by' => 'VARCHAR(120) NULL',
+            'submitted_at' => 'DATETIME NULL',
+            'reviewed_by' => 'VARCHAR(120) NULL',
+            'reviewed_at' => 'DATETIME NULL',
+            'review_note' => 'TEXT NULL',
+            'published_by' => 'VARCHAR(120) NULL',
+            'published_at' => 'DATETIME NULL',
+            'voucher_id' => 'BIGINT UNSIGNED NULL',
+            'benefit_type' => "VARCHAR(30) NOT NULL DEFAULT 'percent'",
+            'benefit_title' => 'VARCHAR(150) NULL',
+            'benefit_description' => 'TEXT NULL',
+            'gift_product_id' => 'BIGINT UNSIGNED NULL',
+            'gift_quantity' => 'INT UNSIGNED NOT NULL DEFAULT 0',
+            'buy_quantity' => 'INT UNSIGNED NOT NULL DEFAULT 0',
+            'get_quantity' => 'INT UNSIGNED NOT NULL DEFAULT 0',
+            'application_scope' => "VARCHAR(20) NOT NULL DEFAULT 'order'",
+            'redemption_instructions' => 'TEXT NULL'
+        );
+        foreach ($promotionColumns as $column => $definition) {
+            if (!$this->columnExists('marketing_promotions', $column) && !$this->db->query("ALTER TABLE marketing_promotions ADD COLUMN `{$column}` {$definition}")) {
+                jsonResponse(array('success'=>false,'message'=>'Không thể nâng cấp quy trình khuyến mãi: '.$this->db->error),500);
+            }
+        }
+        $approvalType = strtolower((string)$this->scalar("SELECT COLUMN_TYPE FROM information_schema.COLUMNS WHERE TABLE_SCHEMA=DATABASE() AND TABLE_NAME='marketing_promotions' AND COLUMN_NAME='approval_status'"));
+        if (strpos($approvalType, 'enum(') === 0 && !$this->db->query("ALTER TABLE marketing_promotions MODIFY approval_status VARCHAR(30) NOT NULL DEFAULT 'draft'")) {
+            jsonResponse(array('success'=>false,'message'=>'Không thể mở rộng trạng thái duyệt khuyến mãi: '.$this->db->error),500);
+        }
+        $promotionDiscountType = strtolower((string)$this->scalar("SELECT COLUMN_TYPE FROM information_schema.COLUMNS WHERE TABLE_SCHEMA=DATABASE() AND TABLE_NAME='marketing_promotions' AND COLUMN_NAME='discount_type'"));
+        if(strpos($promotionDiscountType,'enum(')===0&&!$this->db->query("ALTER TABLE marketing_promotions MODIFY discount_type VARCHAR(30) NOT NULL DEFAULT 'percent'"))jsonResponse(array('success'=>false,'message'=>'Không thể mở rộng loại quyền lợi CTKM: '.$this->db->error),500);
+        $this->db->query("UPDATE marketing_promotions SET approval_status='pending_approval' WHERE approval_status='pending'");
+        $voucherColumns = array(
+            'short_description' => 'VARCHAR(255) NULL', 'details' => 'TEXT NULL', 'terms_text' => 'TEXT NULL',
+            'category' => "VARCHAR(30) NOT NULL DEFAULT 'ticket'", 'audience' => "VARCHAR(30) NOT NULL DEFAULT 'all'",
+            'badge_text' => 'VARCHAR(60) NULL', 'theme_color' => "VARCHAR(20) NOT NULL DEFAULT '#D99A1B'",
+            'image_url' => 'VARCHAR(500) NULL', 'min_order_amount' => 'DECIMAL(12,2) NOT NULL DEFAULT 0',
+            'max_discount' => 'DECIMAL(12,2) NOT NULL DEFAULT 0', 'is_featured' => 'TINYINT(1) NOT NULL DEFAULT 0',
+            'sort_order' => 'INT NOT NULL DEFAULT 0', 'source_promotion_id' => 'BIGINT UNSIGNED NULL',
+            'benefit_type' => "VARCHAR(30) NOT NULL DEFAULT 'percent'",'benefit_title'=>'VARCHAR(150) NULL','benefit_description'=>'TEXT NULL',
+            'gift_product_id'=>'BIGINT UNSIGNED NULL','gift_quantity'=>'INT UNSIGNED NOT NULL DEFAULT 0','buy_quantity'=>'INT UNSIGNED NOT NULL DEFAULT 0',
+            'get_quantity'=>'INT UNSIGNED NOT NULL DEFAULT 0','application_scope'=>"VARCHAR(20) NOT NULL DEFAULT 'order'",'redemption_instructions'=>'TEXT NULL'
+        );
+        foreach ($voucherColumns as $column => $definition) {
+            if (!$this->columnExists('vouchers', $column) && !$this->db->query("ALTER TABLE vouchers ADD COLUMN `{$column}` {$definition}")) {
+                jsonResponse(array('success'=>false,'message'=>'Không thể đồng bộ schema ưu đãi Customer: '.$this->db->error),500);
+            }
+        }
+        $voucherDiscountType=strtolower((string)$this->scalar("SELECT COLUMN_TYPE FROM information_schema.COLUMNS WHERE TABLE_SCHEMA=DATABASE() AND TABLE_NAME='vouchers' AND COLUMN_NAME='discount_type'"));
+        if(strpos($voucherDiscountType,'enum(')===0&&!$this->db->query("ALTER TABLE vouchers MODIFY discount_type VARCHAR(30) NOT NULL DEFAULT 'percent'"))jsonResponse(array('success'=>false,'message'=>'Không thể mở rộng loại quyền lợi voucher: '.$this->db->error),500);
+        if(!$this->db->query("CREATE TABLE IF NOT EXISTS promotion_media_assets (id BIGINT UNSIGNED AUTO_INCREMENT PRIMARY KEY,promotion_id BIGINT UNSIGNED NULL,file_name VARCHAR(180) NOT NULL,original_name VARCHAR(255) NOT NULL,mime_type VARCHAR(80) NOT NULL,file_size INT UNSIGNED NOT NULL,public_url VARCHAR(500) NOT NULL,uploaded_by BIGINT UNSIGNED NULL,created_at DATETIME NOT NULL,KEY idx_promotion_media_promotion(promotion_id),KEY idx_promotion_media_uploader(uploaded_by,created_at)) ENGINE=InnoDB DEFAULT CHARSET=utf8 COLLATE=utf8_unicode_ci"))jsonResponse(array('success'=>false,'message'=>'Không thể chuẩn bị thư viện ảnh CTKM: '.$this->db->error),500);
         if (!$this->columnExists('movies', 'marketing_owner_id') && !$this->db->query("ALTER TABLE movies ADD COLUMN marketing_owner_id BIGINT UNSIGNED NULL")) {
             jsonResponse(array('success'=>false,'message'=>'Không thể bổ sung quyền sở hữu hồ sơ phim Marketing: '.$this->db->error),500);
         }
@@ -345,7 +447,7 @@ class MarketingController
         }
         if ((int)$this->scalar('SELECT COUNT(*) FROM marketing_promotions') === 0) {
             $this->db->query("INSERT INTO marketing_promotions (promotion_code,name,discount_type,discount_value,start_date,end_date,approval_status,status,created_at) VALUES
-                ('CTKM-WEEKEND','Cuối tuần rực rỡ','percent',10,CURDATE(),DATE_ADD(CURDATE(), INTERVAL 30 DAY),'pending','inactive',NOW())");
+                ('CTKM-WEEKEND','Cuối tuần rực rỡ','percent',10,CURDATE(),DATE_ADD(CURDATE(), INTERVAL 30 DAY),'pending_approval','inactive',NOW())");
         }
         if ((int)$this->scalar('SELECT COUNT(*) FROM marketing_vouchers') === 0) {
             $this->db->query("INSERT INTO marketing_vouchers (voucher_code,name,discount_type,discount_value,quantity,used_count,start_date,end_date,status,created_at) VALUES
@@ -375,6 +477,8 @@ class MarketingController
         if ($resource === 'movies') return $this->movieCatalog();
         if ($resource === 'movie-plans') return $this->moviePlans();
         if ($resource === 'plan-approvals') return $this->planApprovals();
+        if ($resource === 'campaigns') return $this->campaigns();
+        if ($resource === 'promotions') return $this->promotions();
 
         $definitions = $this->resourceDefinitions();
         if (!isset($definitions[$resource])) jsonResponse(array('success' => false, 'message' => 'Phân hệ Marketing không tồn tại.'), 404);
@@ -387,13 +491,306 @@ class MarketingController
     private function resourceDefinitions()
     {
         return array(
-            'campaigns' => array('table'=>'marketing_campaigns','code'=>'campaign_code','required'=>'name','fields'=>array('campaign_code','name','objective','channel','budget','start_date','end_date','status')),
             'promotions' => array('table'=>'marketing_promotions','code'=>'promotion_code','required'=>'name','fields'=>array('promotion_code','name','discount_type','discount_value','start_date','end_date','approval_status','status')),
             'vouchers' => array('table'=>'marketing_vouchers','code'=>'voucher_code','required'=>'name','fields'=>array('voucher_code','name','discount_type','discount_value','quantity','start_date','end_date','status')),
             'contents' => array('table'=>'marketing_contents','code'=>'','required'=>'title','fields'=>array('title','content_type','placement','summary','media_url','publish_at','status')),
             'notifications' => array('table'=>'marketing_notifications','code'=>'','required'=>'title','fields'=>array('title','channel','audience','message','scheduled_at','status')),
             'segments' => array('table'=>'marketing_customer_segments','code'=>'','required'=>'name','fields'=>array('name','description','criteria_json','estimated_size','status'))
         );
+    }
+
+    private function campaigns()
+    {
+        global $requestMethod;
+        $user = requireAdmin();
+        $actorId = (int)$user['id'];
+        if ($requestMethod === 'GET') {
+            $where = array('1=1');
+            $status = isset($_GET['status']) ? trim((string)$_GET['status']) : 'all';
+            $allowed = array('draft','planned','running','paused','completed');
+            if (in_array($status,$allowed,true)) $where[] = "c.status='".$this->db->real_escape_string($status)."'";
+            if (!empty($_GET['q'])) {
+                $q=$this->db->real_escape_string(trim((string)$_GET['q']));
+                $where[]="(c.campaign_code LIKE '%{$q}%' OR c.name LIKE '%{$q}%' OR c.objective LIKE '%{$q}%' OR m.title LIKE '%{$q}%')";
+            }
+            $rows=$this->rows("SELECT c.*,m.title movie_title,m.poster_url movie_poster,u.full_name owner_name,
+                CASE WHEN c.impressions>0 THEN ROUND(c.clicks*100/c.impressions,2) ELSE 0 END ctr,
+                CASE WHEN c.clicks>0 THEN ROUND(c.conversions*100/c.clicks,2) ELSE 0 END conversion_rate
+                FROM marketing_campaigns c LEFT JOIN movies m ON m.id=c.movie_id LEFT JOIN users u ON u.id=c.owner_id
+                WHERE ".implode(' AND ',$where)." ORDER BY FIELD(c.status,'running','planned','paused','draft','completed'),c.start_date DESC,c.id DESC");
+            $summary=array(
+                'total'=>(int)$this->scalar('SELECT COUNT(*) FROM marketing_campaigns'),
+                'running'=>(int)$this->scalar("SELECT COUNT(*) FROM marketing_campaigns WHERE status='running'"),
+                'planned'=>(int)$this->scalar("SELECT COUNT(*) FROM marketing_campaigns WHERE status='planned'"),
+                'draft'=>(int)$this->scalar("SELECT COUNT(*) FROM marketing_campaigns WHERE status='draft'"),
+                'paused'=>(int)$this->scalar("SELECT COUNT(*) FROM marketing_campaigns WHERE status='paused'"),
+                'completed'=>(int)$this->scalar("SELECT COUNT(*) FROM marketing_campaigns WHERE status='completed'"),
+                'budget'=>(float)$this->scalar('SELECT COALESCE(SUM(budget),0) FROM marketing_campaigns'),
+                'spent'=>(float)$this->scalar('SELECT COALESCE(SUM(spent_budget),0) FROM marketing_campaigns'),
+                'reach'=>(int)$this->scalar('SELECT COALESCE(SUM(actual_reach),0) FROM marketing_campaigns')
+            );
+            $movies=$this->rows("SELECT id,title,movie_code,poster_url,status FROM movies WHERE status IN ('now_showing','coming_soon','NOW_SHOWING','COMING_SOON','special_showing') ORDER BY release_date DESC,title");
+            jsonResponse(array('success'=>true,'data'=>$rows,'meta'=>array('summary'=>$summary,'movies'=>$movies,'source'=>'aurora_db')));
+        }
+        if ($requestMethod === 'DELETE') {
+            $id=isset($_GET['id'])?(int)$_GET['id']:0;
+            $row=$this->rows("SELECT id,name,status,owner_id FROM marketing_campaigns WHERE id={$id} LIMIT 1");
+            if (!$row) jsonResponse(array('success'=>false,'message'=>'Không tìm thấy chiến dịch.'),404);
+            if ($row[0]['status']!=='draft') jsonResponse(array('success'=>false,'message'=>'Chỉ được xóa chiến dịch đang ở trạng thái Bản nháp.'),422);
+            if (!$this->db->query("DELETE FROM marketing_campaigns WHERE id={$id} LIMIT 1")) jsonResponse(array('success'=>false,'message'=>'Không thể xóa chiến dịch: '.$this->db->error),500);
+            writeTmsAuditLog($this->db,'MARKETING_CAMPAIGN_DELETED','Đã xóa bản nháp chiến dịch '.$row[0]['name'].'.',array('user_id'=>$actorId,'username'=>$user['username'],'role'=>$user['role'],'module'=>'marketing','entity_type'=>'marketing_campaign','entity_id'=>$id,'severity'=>'warning','status_code'=>200));
+            jsonResponse(array('success'=>true,'message'=>'Đã xóa bản nháp chiến dịch khỏi aurora_db.'));
+        }
+        if ($requestMethod !== 'POST' && $requestMethod !== 'PUT') jsonResponse(array('success'=>false,'message'=>'Phương thức không được hỗ trợ.'),405);
+        $input=requestJson();$id=isset($input['id'])?(int)$input['id']:0;
+        $name=isset($input['name'])?trim((string)$input['name']):'';
+        $code=isset($input['campaign_code'])?strtoupper(trim((string)$input['campaign_code'])):'';
+        $objective=isset($input['objective'])?trim((string)$input['objective']):'';
+        $description=isset($input['description'])?trim((string)$input['description']):'';
+        $channel=isset($input['channel'])?trim((string)$input['channel']):'';
+        $audience=isset($input['target_audience'])?trim((string)$input['target_audience']):'';
+        $movieId=isset($input['movie_id'])?(int)$input['movie_id']:0;
+        $budget=isset($input['budget'])?max(0,(float)$input['budget']):0;
+        $spent=isset($input['spent_budget'])?max(0,(float)$input['spent_budget']):0;
+        $expected=isset($input['expected_reach'])?max(0,(int)$input['expected_reach']):0;
+        $actual=isset($input['actual_reach'])?max(0,(int)$input['actual_reach']):0;
+        $impressions=isset($input['impressions'])?max(0,(int)$input['impressions']):0;
+        $clicks=isset($input['clicks'])?max(0,(int)$input['clicks']):0;
+        $conversions=isset($input['conversions'])?max(0,(int)$input['conversions']):0;
+        $start=isset($input['start_date'])?trim((string)$input['start_date']):'';$end=isset($input['end_date'])?trim((string)$input['end_date']):'';
+        $status=isset($input['status'])?trim((string)$input['status']):'draft';$statuses=array('draft','planned','running','paused','completed');
+        if ($name===''||strlen($name)>180) jsonResponse(array('success'=>false,'message'=>'Vui lòng nhập tên chiến dịch hợp lệ.'),422);
+        if ($code!==''&&!preg_match('/^[A-Z0-9_-]{3,40}$/',$code)) jsonResponse(array('success'=>false,'message'=>'Mã chiến dịch chỉ gồm chữ in hoa, số, gạch ngang hoặc gạch dưới.'),422);
+        if ($objective===''||$channel===''||$audience==='') jsonResponse(array('success'=>false,'message'=>'Vui lòng nhập mục tiêu, kênh triển khai và đối tượng mục tiêu.'),422);
+        if (!preg_match('/^\d{4}-\d{2}-\d{2}$/',$start)||!preg_match('/^\d{4}-\d{2}-\d{2}$/',$end)||$end<$start) jsonResponse(array('success'=>false,'message'=>'Thời gian chiến dịch không hợp lệ.'),422);
+        if (!in_array($status,$statuses,true)) jsonResponse(array('success'=>false,'message'=>'Trạng thái chiến dịch không hợp lệ.'),422);
+        if ($spent>$budget) jsonResponse(array('success'=>false,'message'=>'Chi phí thực tế không được vượt ngân sách chiến dịch.'),422);
+        if ($clicks>$impressions) jsonResponse(array('success'=>false,'message'=>'Lượt nhấp không được lớn hơn lượt hiển thị.'),422);
+        if ($conversions>$clicks) jsonResponse(array('success'=>false,'message'=>'Lượt chuyển đổi không được lớn hơn lượt nhấp.'),422);
+        if ($movieId>0&&(int)$this->scalar("SELECT COUNT(*) FROM movies WHERE id={$movieId}")!==1) jsonResponse(array('success'=>false,'message'=>'Phim được chọn không tồn tại trong aurora_db.'),422);
+        if ($code==='') $code='MKT-'.date('Ym').'-'.strtoupper(substr(sha1(uniqid((string)mt_rand(),true)),0,6));
+        $fields=array('campaign_code'=>$code,'name'=>$name,'objective'=>$objective,'description'=>$description,'channel'=>$channel,'target_audience'=>$audience,'movie_id'=>$movieId>0?$movieId:null,'budget'=>$budget,'spent_budget'=>$spent,'expected_reach'=>$expected,'actual_reach'=>$actual,'impressions'=>$impressions,'clicks'=>$clicks,'conversions'=>$conversions,'start_date'=>$start,'end_date'=>$end,'status'=>$status);
+        $sets=array();foreach($fields as $key=>$value)$sets[]="`{$key}`=".($value===null?'NULL':"'".$this->db->real_escape_string((string)$value)."'");
+        if ($id>0) {
+            if ((int)$this->scalar("SELECT COUNT(*) FROM marketing_campaigns WHERE id={$id}")!==1) jsonResponse(array('success'=>false,'message'=>'Không tìm thấy chiến dịch cần cập nhật.'),404);
+            $sql="UPDATE marketing_campaigns SET ".implode(',',$sets).",updated_at=NOW() WHERE id={$id}";
+        } else $sql="INSERT INTO marketing_campaigns SET ".implode(',',$sets).",owner_id={$actorId},created_at=NOW(),updated_at=NOW()";
+        if (!$this->db->query($sql)) {
+            if ((int)$this->db->errno===1062) jsonResponse(array('success'=>false,'message'=>'Mã chiến dịch đã tồn tại. Vui lòng chọn mã khác.'),422);
+            jsonResponse(array('success'=>false,'message'=>'Không thể lưu chiến dịch vào aurora_db: '.$this->db->error),500);
+        }
+        $savedId=$id>0?$id:(int)$this->db->insert_id;
+        writeTmsAuditLog($this->db,$id>0?'MARKETING_CAMPAIGN_UPDATED':'MARKETING_CAMPAIGN_CREATED',($id>0?'Cập nhật':'Tạo').' chiến dịch '.$name.'.',array('user_id'=>$actorId,'username'=>$user['username'],'role'=>$user['role'],'module'=>'marketing','entity_type'=>'marketing_campaign','entity_id'=>$savedId,'severity'=>'success','status_code'=>200,'metadata'=>array('status'=>$status,'budget'=>$budget)));
+        jsonResponse(array('success'=>true,'message'=>$id>0?'Đã cập nhật chiến dịch trong aurora_db.':'Đã tạo chiến dịch mới trong aurora_db.','data'=>array('id'=>$savedId)), $id>0?200:201);
+    }
+
+    private function logPromotionHistory($promotionId, $action, $from, $to, $user, $note)
+    {
+        $actorId=(int)$user['id'];
+        $actorName=$this->db->real_escape_string((string)$user['full_name']);
+        $actorRole=$this->db->real_escape_string(AdminController::normalizeRole($user['role']));
+        $actionEsc=$this->db->real_escape_string($action);
+        $fromSql=$from===null?'NULL':"'".$this->db->real_escape_string($from)."'";
+        $toEsc=$this->db->real_escape_string($to);
+        $noteEsc=$this->db->real_escape_string((string)$note);
+        if(!$this->db->query("INSERT INTO marketing_promotion_history (promotion_id,action_name,from_status,to_status,actor_id,actor_name,actor_role,note,created_at) VALUES ({$promotionId},'{$actionEsc}',{$fromSql},'{$toEsc}',{$actorId},'{$actorName}','{$actorRole}','{$noteEsc}',NOW())")) {
+            throw new Exception('Không thể ghi lịch sử chương trình khuyến mãi: '.$this->db->error);
+        }
+    }
+
+    private function promotions()
+    {
+        global $requestMethod;
+        $user=requireAdmin();
+        $role=AdminController::normalizeRole($user['role']);
+        $actorId=(int)$user['id'];
+        $isAdmin=$role==='super_admin';
+        $scope=$isAdmin?'1=1':'p.created_by='.$actorId;
+
+        if($requestMethod==='GET') {
+            $where=array($scope);
+            if(!empty($_GET['approval_status'])&&in_array($_GET['approval_status'],array('draft','pending_approval','approved','revision_requested'),true)) {
+                $where[]="p.approval_status='".$this->db->real_escape_string($_GET['approval_status'])."'";
+            }
+            if(!empty($_GET['publication_status'])&&in_array($_GET['publication_status'],array('draft','published','paused','expired'),true)) {
+                $where[]="p.publication_status='".$this->db->real_escape_string($_GET['publication_status'])."'";
+            }
+            if(!empty($_GET['q'])) {
+                $q=$this->db->real_escape_string(trim((string)$_GET['q']));
+                $where[]="(p.promotion_code LIKE '%{$q}%' OR p.name LIKE '%{$q}%' OR p.description LIKE '%{$q}%')";
+            }
+            $rows=$this->rows("SELECT p.*,creator.full_name creator_name,v.used_count voucher_used_count,v.status voucher_status,gift.name gift_product_name,gift.sku gift_product_sku,gift.unit gift_product_unit,gift.image_url gift_product_image
+                FROM marketing_promotions p
+                LEFT JOIN users creator ON creator.id=p.created_by
+                LEFT JOIN vouchers v ON v.id=p.voucher_id
+                LEFT JOIN products gift ON gift.id=p.gift_product_id
+                WHERE ".implode(' AND ',$where)."
+                ORDER BY FIELD(p.approval_status,'pending_approval','revision_requested','draft','approved'),p.updated_at DESC,p.id DESC");
+            $summaryWhere=$scope;
+            $summary=array(
+                'total'=>(int)$this->scalar("SELECT COUNT(*) FROM marketing_promotions p WHERE {$summaryWhere}"),
+                'draft'=>(int)$this->scalar("SELECT COUNT(*) FROM marketing_promotions p WHERE {$summaryWhere} AND p.approval_status='draft'"),
+                'pending'=>(int)$this->scalar("SELECT COUNT(*) FROM marketing_promotions p WHERE {$summaryWhere} AND p.approval_status='pending_approval'"),
+                'approved'=>(int)$this->scalar("SELECT COUNT(*) FROM marketing_promotions p WHERE {$summaryWhere} AND p.approval_status='approved'"),
+                'revision'=>(int)$this->scalar("SELECT COUNT(*) FROM marketing_promotions p WHERE {$summaryWhere} AND p.approval_status='revision_requested'"),
+                'published'=>(int)$this->scalar("SELECT COUNT(*) FROM marketing_promotions p WHERE {$summaryWhere} AND p.publication_status='published'")
+            );
+            $history=array();
+            if(!empty($_GET['id'])) {
+                $id=(int)$_GET['id'];
+                $allowed=(int)$this->scalar("SELECT COUNT(*) FROM marketing_promotions p WHERE p.id={$id} AND {$scope}");
+                if(!$allowed) jsonResponse(array('success'=>false,'message'=>'Không tìm thấy kế hoạch khuyến mãi.'),404);
+                $history=$this->rows("SELECT action_name,from_status,to_status,actor_name,actor_role,note,created_at FROM marketing_promotion_history WHERE promotion_id={$id} ORDER BY id DESC");
+            }
+            $giftProducts=$this->rows("SELECT id,sku,name,category,unit,image_url,status FROM products WHERE status='active' ORDER BY category,name");
+            jsonResponse(array('success'=>true,'data'=>$rows,'meta'=>array('summary'=>$summary,'history'=>$history,'role'=>$role,'source'=>'aurora_db','gift_products'=>$giftProducts)));
+        }
+
+        $input=requestJson();
+        $operation=isset($input['operation'])?trim((string)$input['operation']):(isset($_GET['operation'])?trim((string)$_GET['operation']):'save');
+        $id=isset($input['id'])?(int)$input['id']:(isset($_GET['id'])?(int)$_GET['id']:0);
+
+        if($requestMethod==='DELETE') {
+            if($isAdmin) jsonResponse(array('success'=>false,'message'=>'Admin Tổng không xóa hồ sơ Marketing trong quy trình phê duyệt.'),403);
+            $row=$this->rows("SELECT id,name,approval_status,created_by FROM marketing_promotions WHERE id={$id} LIMIT 1");
+            if(!$row||(int)$row[0]['created_by']!==$actorId) jsonResponse(array('success'=>false,'message'=>'Không tìm thấy kế hoạch của bạn.'),404);
+            if(!in_array($row[0]['approval_status'],array('draft','revision_requested'),true)) jsonResponse(array('success'=>false,'message'=>'Chỉ được xóa hồ sơ nháp hoặc đang yêu cầu chỉnh sửa.'),409);
+            if(!$this->db->query("DELETE FROM marketing_promotions WHERE id={$id} LIMIT 1")) jsonResponse(array('success'=>false,'message'=>'Không thể xóa hồ sơ: '.$this->db->error),500);
+            jsonResponse(array('success'=>true,'message'=>'Đã xóa kế hoạch khuyến mãi khỏi aurora_db.'));
+        }
+        if(!in_array($requestMethod,array('POST','PUT'),true)) jsonResponse(array('success'=>false,'message'=>'Phương thức không được hỗ trợ.'),405);
+
+        if(in_array($operation,array('submit','withdraw'),true)) {
+            if($isAdmin) jsonResponse(array('success'=>false,'message'=>'Thao tác này dành cho Marketing.'),403);
+            $rows=$this->rows("SELECT id,name,approval_status,created_by FROM marketing_promotions WHERE id={$id} LIMIT 1");
+            if(!$rows||(int)$rows[0]['created_by']!==$actorId) jsonResponse(array('success'=>false,'message'=>'Hồ sơ không tồn tại hoặc không thuộc quyền của bạn.'),404);
+            $from=$rows[0]['approval_status'];
+            if($operation==='submit') {
+                if(!in_array($from,array('draft','revision_requested'),true)) jsonResponse(array('success'=>false,'message'=>'Hồ sơ hiện không thể gửi duyệt.'),409);
+                $actor=$this->db->real_escape_string($user['full_name']);
+                $this->db->query('START TRANSACTION');
+                try {
+                    if(!$this->db->query("UPDATE marketing_promotions SET approval_status='pending_approval',submitted_by='{$actor}',submitted_at=NOW(),review_note=NULL,updated_at=NOW() WHERE id={$id}")) throw new Exception($this->db->error);
+                    $this->logPromotionHistory($id,'submitted',$from,'pending_approval',$user,'Gửi kế hoạch đến Admin Tổng phê duyệt.');
+                    $this->db->commit();
+                } catch(Exception $e) {$this->db->rollback();jsonResponse(array('success'=>false,'message'=>'Không thể gửi duyệt: '.$e->getMessage()),500);}
+                jsonResponse(array('success'=>true,'message'=>'Đã gửi kế hoạch khuyến mãi đến Admin Tổng.'));
+            }
+            if($from!=='pending_approval') jsonResponse(array('success'=>false,'message'=>'Chỉ thu hồi được hồ sơ đang chờ duyệt.'),409);
+            $this->db->query('START TRANSACTION');
+            try {
+                if(!$this->db->query("UPDATE marketing_promotions SET approval_status='draft',submitted_by=NULL,submitted_at=NULL,updated_at=NOW() WHERE id={$id}")) throw new Exception($this->db->error);
+                $this->logPromotionHistory($id,'withdrawn',$from,'draft',$user,'Marketing thu hồi kế hoạch.');
+                $this->db->commit();
+            } catch(Exception $e) {$this->db->rollback();jsonResponse(array('success'=>false,'message'=>'Không thể thu hồi: '.$e->getMessage()),500);}
+            jsonResponse(array('success'=>true,'message'=>'Đã thu hồi kế hoạch về bản nháp.'));
+        }
+
+        if($operation==='review') {
+            if(!$isAdmin) jsonResponse(array('success'=>false,'message'=>'Chỉ Admin Tổng được phê duyệt kế hoạch khuyến mãi.'),403);
+            $decision=isset($input['decision'])?trim((string)$input['decision']):'';
+            $note=isset($input['note'])?trim((string)$input['note']):'';
+            if(!in_array($decision,array('approved','revision_requested'),true)) jsonResponse(array('success'=>false,'message'=>'Quyết định phê duyệt không hợp lệ.'),422);
+            if($decision==='revision_requested'&&$note==='') jsonResponse(array('success'=>false,'message'=>'Vui lòng ghi rõ nội dung Marketing cần chỉnh sửa.'),422);
+            $rows=$this->rows("SELECT id,name,approval_status FROM marketing_promotions WHERE id={$id} LIMIT 1");
+            if(!$rows) jsonResponse(array('success'=>false,'message'=>'Không tìm thấy hồ sơ.'),404);
+            if($rows[0]['approval_status']!=='pending_approval') jsonResponse(array('success'=>false,'message'=>'Hồ sơ không còn ở trạng thái chờ duyệt.'),409);
+            $actor=$this->db->real_escape_string($user['full_name']);$noteEsc=$this->db->real_escape_string($note);
+            if(!$this->db->query('START TRANSACTION')) jsonResponse(array('success'=>false,'message'=>'Không thể bắt đầu giao dịch phê duyệt trong aurora_db: '.$this->db->error),500);
+            try {
+                if(!$this->db->query("UPDATE marketing_promotions SET approval_status='{$decision}',reviewed_by='{$actor}',reviewed_at=NOW(),review_note='{$noteEsc}',updated_at=NOW() WHERE id={$id} AND approval_status='pending_approval'")) throw new Exception('database:'.$this->db->error);
+                if($this->db->affected_rows!==1) {
+                    $this->db->rollback();
+                    jsonResponse(array('success'=>false,'message'=>'Hồ sơ vừa được xử lý ở một phiên khác. Vui lòng tải lại hàng đợi.'),409);
+                }
+                $this->logPromotionHistory($id,$decision==='approved'?'approved':'revision_requested','pending_approval',$decision,$user,$note);
+                if(!$this->db->commit()) throw new Exception('commit:'.$this->db->error);
+            } catch(Exception $e) {
+                $this->db->rollback();
+                $detail=$e->getMessage();
+                if(strpos($detail,'database:')===0) $detail=substr($detail,9);
+                else if(strpos($detail,'commit:')===0) $detail=substr($detail,7);
+                jsonResponse(array('success'=>false,'message'=>'Không thể lưu quyết định và lịch sử trong aurora_db: '.$detail),500);
+            }
+            jsonResponse(array('success'=>true,'message'=>$decision==='approved'?'Đã phê duyệt. Marketing có thể phát hành chương trình.':'Đã gửi yêu cầu chỉnh sửa cho Marketing.'));
+        }
+
+        if(in_array($operation,array('publish','pause'),true)) {
+            if($isAdmin) jsonResponse(array('success'=>false,'message'=>'Việc phát hành thuộc bộ phận Marketing sau khi được duyệt.'),403);
+            $rows=$this->rows("SELECT * FROM marketing_promotions WHERE id={$id} AND created_by={$actorId} LIMIT 1");
+            if(!$rows) jsonResponse(array('success'=>false,'message'=>'Không tìm thấy chương trình của bạn.'),404);
+            $p=$rows[0];
+            if($p['approval_status']!=='approved') jsonResponse(array('success'=>false,'message'=>'Chỉ được tạo chương trình sau khi Admin Tổng phê duyệt kế hoạch.'),403);
+            if($operation==='pause') {
+                $this->db->query('START TRANSACTION');
+                try {
+                    if(!empty($p['voucher_id'])&&!$this->db->query("UPDATE vouchers SET status='inactive',updated_at=NOW() WHERE id=".(int)$p['voucher_id'])) throw new Exception($this->db->error);
+                    if(!$this->db->query("UPDATE marketing_promotions SET publication_status='paused',status='inactive',updated_at=NOW() WHERE id={$id}")) throw new Exception($this->db->error);
+                    if(!$this->db->query("UPDATE promotion_theater_deployments SET status='paused',pos_enabled=0,updated_at=NOW() WHERE promotion_id={$id}")) throw new Exception($this->db->error);
+                    $this->logPromotionHistory($id,'paused','published','paused',$user,'Tạm dừng hiển thị trên Customer.');
+                    $this->db->commit();
+                } catch(Exception $e) {$this->db->rollback();jsonResponse(array('success'=>false,'message'=>'Không thể tạm dừng: '.$e->getMessage()),500);}
+                jsonResponse(array('success'=>true,'message'=>'Đã tạm dừng chương trình trên trang Customer.'));
+            }
+            $map=array('promotion_code'=>'code','name'=>'name','description'=>'short_description','details'=>'details','terms_text'=>'terms_text','category'=>'category','audience'=>'audience','badge_text'=>'badge_text','theme_color'=>'theme_color','image_url'=>'image_url','discount_type'=>'discount_type','benefit_type'=>'benefit_type','benefit_title'=>'benefit_title','benefit_description'=>'benefit_description','gift_product_id'=>'gift_product_id','gift_quantity'=>'gift_quantity','buy_quantity'=>'buy_quantity','get_quantity'=>'get_quantity','application_scope'=>'application_scope','redemption_instructions'=>'redemption_instructions','discount_value'=>'discount_value','min_order_amount'=>'min_order_amount','max_discount'=>'max_discount','usage_limit'=>'usage_limit','is_featured'=>'is_featured');
+            $voucher=array();foreach($map as $source=>$target)$voucher[$target]=$p[$source];
+            $voucher['starts_at']=$p['start_date'].' 00:00:00';$voucher['ends_at']=$p['end_date'].' 23:59:59';
+            $columns=array();$values=array();$updates=array();foreach($voucher as $column=>$value){$columns[]="`{$column}`";$values[]="'".$this->db->real_escape_string((string)$value)."'";$updates[]="`{$column}`=VALUES(`{$column}`)";}
+            $columns[]='status';$values[]="'active'";$updates[]="status='active'";$columns[]='source_promotion_id';$values[]=(string)$id;$updates[]='source_promotion_id=VALUES(source_promotion_id)';
+            $this->db->query('START TRANSACTION');
+            try {
+                $sql="INSERT INTO vouchers (".implode(',',$columns).",created_at,updated_at) VALUES (".implode(',',$values).",NOW(),NOW()) ON DUPLICATE KEY UPDATE ".implode(',',$updates).",updated_at=NOW()";
+                if(!$this->db->query($sql)) throw new Exception($this->db->error);
+                $voucherId=(int)$this->scalar("SELECT id FROM vouchers WHERE code='".$this->db->real_escape_string($p['promotion_code'])."' LIMIT 1");
+                $actor=$this->db->real_escape_string($user['full_name']);
+                if(!$this->db->query("UPDATE marketing_promotions SET publication_status='published',status='active',voucher_id={$voucherId},published_by='{$actor}',published_at=NOW(),updated_at=NOW() WHERE id={$id}")) throw new Exception($this->db->error);
+                if(!$this->db->query("INSERT INTO promotion_theater_deployments (promotion_id,voucher_id,theater_id,status,pos_button_color,created_at,updated_at)
+                    SELECT {$id},{$voucherId},t.id,'pending','".$this->db->real_escape_string($p['theme_color'])."',NOW(),NOW() FROM theaters t
+                    ON DUPLICATE KEY UPDATE voucher_id=VALUES(voucher_id),updated_at=NOW()")) throw new Exception($this->db->error);
+                $this->logPromotionHistory($id,'published',$p['publication_status'],'published',$user,'Phát hành chương trình lên Customer Website.');
+                $this->db->commit();
+            } catch(Exception $e) {$this->db->rollback();jsonResponse(array('success'=>false,'message'=>'Không thể phát hành: '.$e->getMessage()),500);}
+            jsonResponse(array('success'=>true,'message'=>'Đã tạo chương trình và hiển thị trên trang Customer.','data'=>array('voucher_id'=>$voucherId)));
+        }
+
+        if($operation!=='save') jsonResponse(array('success'=>false,'message'=>'Thao tác khuyến mãi không hợp lệ.'),422);
+        if($isAdmin) jsonResponse(array('success'=>false,'message'=>'Admin Tổng chỉ xem và phê duyệt; Marketing là đơn vị lập kế hoạch.'),403);
+        $existing=null;
+        if($id>0){$found=$this->rows("SELECT * FROM marketing_promotions WHERE id={$id} AND created_by={$actorId} LIMIT 1");if(!$found)jsonResponse(array('success'=>false,'message'=>'Không tìm thấy hồ sơ của bạn.'),404);$existing=$found[0];if(!in_array($existing['approval_status'],array('draft','revision_requested'),true))jsonResponse(array('success'=>false,'message'=>'Chỉ hồ sơ nháp hoặc bị yêu cầu sửa mới được cập nhật.'),409);}
+        $name=isset($input['name'])?trim((string)$input['name']):'';$code=isset($input['promotion_code'])?strtoupper(trim((string)$input['promotion_code'])):'';
+        $description=isset($input['description'])?trim((string)$input['description']):'';$details=isset($input['details'])?trim((string)$input['details']):'';$terms=isset($input['terms_text'])?trim((string)$input['terms_text']):'';
+        $benefitType=isset($input['benefit_type'])?trim((string)$input['benefit_type']):(isset($input['discount_type'])?trim((string)$input['discount_type']):'percent');
+        $allowedBenefitTypes=array('percent','amount','gift_product','buy_x_get_y','free_ticket','membership_bonus','other');
+        if(!in_array($benefitType,$allowedBenefitTypes,true))jsonResponse(array('success'=>false,'message'=>'Loại quyền lợi chương trình không hợp lệ.'),422);
+        $discountType=$benefitType;$discountValue=isset($input['discount_value'])?max(0,(float)$input['discount_value']):0;
+        $benefitTitle=isset($input['benefit_title'])?trim((string)$input['benefit_title']):'';$benefitDescription=isset($input['benefit_description'])?trim((string)$input['benefit_description']):'';
+        $giftProductId=isset($input['gift_product_id'])?(int)$input['gift_product_id']:0;$giftQuantity=isset($input['gift_quantity'])?max(0,(int)$input['gift_quantity']):0;$buyQuantity=isset($input['buy_quantity'])?max(0,(int)$input['buy_quantity']):0;$getQuantity=isset($input['get_quantity'])?max(0,(int)$input['get_quantity']):0;
+        $applicationScope=isset($input['application_scope'])?trim((string)$input['application_scope']):'order';if(!in_array($applicationScope,array('order','ticket','combo','product','membership'),true))$applicationScope='order';
+        $redemptionInstructions=isset($input['redemption_instructions'])?trim((string)$input['redemption_instructions']):'';
+        $start=isset($input['start_date'])?trim((string)$input['start_date']):'';$end=isset($input['end_date'])?trim((string)$input['end_date']):'';
+        if($name===''||strlen($name)>150)jsonResponse(array('success'=>false,'message'=>'Vui lòng nhập tên chương trình hợp lệ (tối đa 150 ký tự).'),422);
+        if($code==='' )$code='CTKM-'.date('Ym').'-'.strtoupper(substr(sha1(uniqid((string)mt_rand(),true)),0,5));
+        if(!preg_match('/^[A-Z0-9_-]{3,40}$/',$code))jsonResponse(array('success'=>false,'message'=>'Mã CTKM chỉ gồm chữ in hoa, số, gạch ngang hoặc gạch dưới.'),422);
+        if(in_array($benefitType,array('percent','amount'),true)&&($discountValue<=0||($benefitType==='percent'&&$discountValue>100)))jsonResponse(array('success'=>false,'message'=>'Giá trị giảm giá không hợp lệ.'),422);
+        if($benefitTitle===''||strlen($benefitTitle)>150)jsonResponse(array('success'=>false,'message'=>'Vui lòng nhập tên quyền lợi rõ ràng (tối đa 150 ký tự).'),422);
+        if(in_array($benefitType,array('gift_product','buy_x_get_y'),true)){
+            if($giftProductId<1||(int)$this->scalar("SELECT COUNT(*) FROM products WHERE id={$giftProductId} AND status='active'")!==1)jsonResponse(array('success'=>false,'message'=>'Vui lòng chọn sản phẩm hoặc combo quà tặng đang hoạt động.'),422);
+            if($giftQuantity<1)$giftQuantity=1;if($benefitType==='buy_x_get_y'&&($buyQuantity<1||$getQuantity<1))jsonResponse(array('success'=>false,'message'=>'Chương trình mua X tặng Y cần số lượng mua và số lượng tặng lớn hơn 0.'),422);
+        }else{$giftProductId=0;$giftQuantity=0;$buyQuantity=0;$getQuantity=0;}
+        if(!preg_match('/^\d{4}-\d{2}-\d{2}$/',$start)||!preg_match('/^\d{4}-\d{2}-\d{2}$/',$end)||$end<$start)jsonResponse(array('success'=>false,'message'=>'Thời gian áp dụng không hợp lệ.'),422);
+        if($description===''||$terms==='')jsonResponse(array('success'=>false,'message'=>'Vui lòng nhập mô tả và điều kiện áp dụng.'),422);
+        $allowedCategories=array('ticket','combo','member','event');$category=isset($input['category'])&&in_array($input['category'],$allowedCategories,true)?$input['category']:'ticket';
+        $allowedAudiences=array('all','member','silver','gold','platinum');$audience=isset($input['audience'])&&in_array($input['audience'],$allowedAudiences,true)?$input['audience']:'all';
+        $fields=array('promotion_code'=>$code,'name'=>$name,'description'=>$description,'details'=>$details,'terms_text'=>$terms,'category'=>$category,'audience'=>$audience,'badge_text'=>isset($input['badge_text'])?trim((string)$input['badge_text']):'','theme_color'=>isset($input['theme_color'])?trim((string)$input['theme_color']):'#D99A1B','image_url'=>isset($input['image_url'])?trim((string)$input['image_url']):'','discount_type'=>$discountType,'benefit_type'=>$benefitType,'benefit_title'=>$benefitTitle,'benefit_description'=>$benefitDescription,'gift_product_id'=>$giftProductId>0?$giftProductId:null,'gift_quantity'=>$giftQuantity,'buy_quantity'=>$buyQuantity,'get_quantity'=>$getQuantity,'application_scope'=>$applicationScope,'redemption_instructions'=>$redemptionInstructions,'discount_value'=>$discountValue,'min_order_amount'=>isset($input['min_order_amount'])?max(0,(float)$input['min_order_amount']):0,'max_discount'=>in_array($benefitType,array('percent','amount'),true)&&isset($input['max_discount'])?max(0,(float)$input['max_discount']):0,'start_date'=>$start,'end_date'=>$end,'usage_limit'=>isset($input['usage_limit'])?max(0,(int)$input['usage_limit']):0,'is_featured'=>!empty($input['is_featured'])?1:0);
+        $sets=array();foreach($fields as $key=>$value)$sets[]="`{$key}`='".$this->db->real_escape_string((string)$value)."'";
+        $this->db->query('START TRANSACTION');
+        try {
+            if($id>0){if(!$this->db->query("UPDATE marketing_promotions SET ".implode(',',$sets).",approval_status='draft',review_note=NULL,updated_at=NOW() WHERE id={$id}"))throw new Exception($this->db->error);$savedId=$id;$this->logPromotionHistory($id,'updated',$existing['approval_status'],'draft',$user,'Marketing cập nhật kế hoạch.');}
+            else {if(!$this->db->query("INSERT INTO marketing_promotions SET ".implode(',',$sets).",approval_status='draft',publication_status='draft',status='inactive',created_by={$actorId},created_at=NOW(),updated_at=NOW()"))throw new Exception($this->db->error);$savedId=(int)$this->db->insert_id;$this->logPromotionHistory($savedId,'created',null,'draft',$user,'Tạo bản nháp kế hoạch khuyến mãi.');}
+            if(!empty($fields['image_url'])){$imageEsc=$this->db->real_escape_string($fields['image_url']);$this->db->query("UPDATE promotion_media_assets SET promotion_id={$savedId} WHERE public_url='{$imageEsc}' AND uploaded_by={$actorId}");}
+            $this->db->commit();
+        } catch(Exception $e){$this->db->rollback();$message=(int)$this->db->errno===1062?'Mã CTKM đã tồn tại.':$e->getMessage();jsonResponse(array('success'=>false,'message'=>'Không thể lưu kế hoạch: '.$message),422);}
+        jsonResponse(array('success'=>true,'message'=>$id>0?'Đã cập nhật bản nháp trong aurora_db.':'Đã tạo bản nháp kế hoạch khuyến mãi.','data'=>array('id'=>$savedId)),$id>0?200:201);
     }
 
     private function listResource($definition)
@@ -615,6 +1012,8 @@ class MarketingController
         if (!empty($_GET['year'])) $where .= ' AND mp.plan_year='.(int)$_GET['year'];
         $data = $this->rows("SELECT mp.*,m.movie_code,m.poster_url,m.banner_url,m.trailer_url,m.release_date,m.expected_end_date AS movie_expected_end_date,m.genre,m.original_title,m.duration_minutes,m.age_rating,m.director,m.cast,m.writer,m.producer,m.production_country,m.production_year,m.description,m.plot_details,m.distributor,m.original_language,m.localization_versions,m.marketing_owner_id AS movie_marketing_owner_id,m.status AS movie_catalog_status,
             (SELECT COUNT(*) FROM movie_allocations ma WHERE ma.plan_id=mp.id) allocation_count,
+            (SELECT COUNT(*) FROM movie_allocations ma WHERE ma.plan_id=mp.id AND ma.status='pending') allocation_pending_count,
+            (SELECT COUNT(*) FROM movie_allocations ma WHERE ma.plan_id=mp.id AND ma.status IN ('confirmed','deploying','active')) allocation_received_count,
             (SELECT GROUP_CONCAT(t.name ORDER BY t.name SEPARATOR ', ') FROM theaters t WHERE FIND_IN_SET(t.id,REPLACE(mp.planned_theater_ids,' ',''))) theater_names
             FROM movie_plans mp LEFT JOIN movies m ON m.id=mp.movie_id WHERE {$where}
             ORDER BY CASE mp.approval_status WHEN 'pending_approval' THEN 0 WHEN 'revision_requested' THEN 1 WHEN 'draft' THEN 2 ELSE 3 END,mp.updated_at DESC,mp.id DESC");
@@ -802,7 +1201,7 @@ class MarketingController
     private function reviewMoviePlan()
     {
         $user=requireAdmin();if(AdminController::normalizeRole($user['role'])!=='super_admin')jsonResponse(array('success'=>false,'message'=>'Chỉ Admin Tổng được phê duyệt.'),403);
-        $input=requestJson();$id=isset($input['id'])?(int)$input['id']:0;$decision=isset($input['decision'])?trim($input['decision']):'';$note=isset($input['note'])?trim($input['note']):'';$rawReviewItems=isset($input['review_items'])&&is_array($input['review_items'])?$input['review_items']:array();$reviewItems=array();
+        $input=requestJson();$id=isset($input['id'])?(int)$input['id']:0;$decision=isset($input['decision'])?trim($input['decision']):'';$note=isset($input['note'])?trim($input['note']):'';$rawReviewItems=isset($input['review_items'])&&is_array($input['review_items'])?$input['review_items']:array();$requestedTheaterIds=isset($input['theater_ids'])&&is_array($input['theater_ids'])?array_values(array_unique(array_filter(array_map('intval',$input['theater_ids'])))):array();$reviewItems=array();
         $reviewTaxonomy=array(
             'movie'=>array('label'=>'Thông tin phim','fields'=>array('title'=>'Tên phim','original_title'=>'Tên phim gốc','genre'=>'Thể loại','age_rating'=>'Phân loại độ tuổi','duration'=>'Thời lượng','director'=>'Đạo diễn','cast'=>'Diễn viên','production_country'=>'Quốc gia sản xuất','description'=>'Tóm tắt nội dung')),
             'release'=>array('label'=>'Phát hành và phiên bản','fields'=>array('format'=>'Định dạng chiếu','language'=>'Ngôn ngữ âm thanh','subtitles'=>'Phụ đề / lồng tiếng','distributor'=>'Nhà phát hành','release_date'=>'Ngày khởi chiếu','end_date'=>'Ngày kết thúc dự kiến','rights'=>'Quyền phát hành','classification'=>'Kiểm tra phân loại','poster'=>'Poster','banner'=>'Banner','trailer'=>'Trailer')),
@@ -830,16 +1229,18 @@ class MarketingController
             if($plan['expected_end_date']<$databaseDate){
                 jsonResponse(array('success'=>false,'message'=>'Không thể duyệt kế hoạch đã hết hạn ngày '.date('d/m/Y',strtotime($plan['expected_end_date'])).'. Hãy yêu cầu Marketing cập nhật thời gian triển khai trước khi duyệt.'),422);
             }
-            $plannedTheaterIds=array_values(array_unique(array_filter(array_map('intval',explode(',',(string)$plan['planned_theater_ids'])))));
+            $plannedTheaterIds=$requestedTheaterIds;
             if(!$plannedTheaterIds)jsonResponse(array('success'=>false,'message'=>'Không thể duyệt: kế hoạch chưa chọn rạp triển khai.'),422);
             $validTheaterCount=(int)$this->scalar('SELECT COUNT(*) FROM theaters WHERE id IN ('.implode(',',$plannedTheaterIds).')');
             if($validTheaterCount!==count($plannedTheaterIds))jsonResponse(array('success'=>false,'message'=>'Không thể duyệt: danh sách rạp đề xuất có dữ liệu không còn tồn tại trong aurora_db.'),422);
         }
         $actor=$this->db->real_escape_string($user['full_name']);$noteEsc=$this->db->real_escape_string($note);$status=$decision==='approved'?'published':'draft';
+        if($decision==='approved')$plan['planned_theater_ids']=implode(',',$plannedTheaterIds);
         if(!$this->db->query('START TRANSACTION'))jsonResponse(array('success'=>false,'message'=>'Không thể bắt đầu phê duyệt kế hoạch trong aurora_db: '.$this->db->error),500);
         // Giữ giá trị rỗng tương thích cả schema cũ (NOT NULL) và schema mới (NULL).
         $approvedBy=$decision==='approved'?"'{$actor}'":"''";$approvedAt=$decision==='approved'?'NOW()':"'1970-01-01 00:00:00'";
-        if(!$this->db->query("UPDATE movie_plans SET approval_status='{$decision}',status='{$status}',reviewed_by='{$actor}',reviewed_at=NOW(),approval_note='{$noteEsc}',approved_by={$approvedBy},approved_at={$approvedAt},updated_by='{$actor}',updated_at=NOW() WHERE id={$id} AND approval_status='pending_approval'")||$this->db->affected_rows!==1){$error=$this->db->error;$this->db->query('ROLLBACK');jsonResponse(array('success'=>false,'message'=>$error!==''?'Không thể lưu quyết định: '.$error:'Kế hoạch vừa được xử lý ở một phiên khác. Vui lòng tải lại dữ liệu.'),409);}
+        $theaterScope=$decision==='approved'?",planned_theater_ids='".$this->db->real_escape_string($plan['planned_theater_ids'])."'":'';
+        if(!$this->db->query("UPDATE movie_plans SET approval_status='{$decision}',status='{$status}',reviewed_by='{$actor}',reviewed_at=NOW(),approval_note='{$noteEsc}',approved_by={$approvedBy},approved_at={$approvedAt}{$theaterScope},updated_by='{$actor}',updated_at=NOW() WHERE id={$id} AND approval_status='pending_approval'")||$this->db->affected_rows!==1){$error=$this->db->error;$this->db->query('ROLLBACK');jsonResponse(array('success'=>false,'message'=>$error!==''?'Không thể lưu quyết định: '.$error:'Kế hoạch vừa được xử lý ở một phiên khác. Vui lòng tải lại dữ liệu.'),409);}
         if($decision==='revision_requested'){
             $round=(int)$this->scalar("SELECT COALESCE(MAX(review_round),0)+1 FROM marketing_movie_plan_review_items WHERE plan_id={$id}");
             foreach($reviewItems as $item){
@@ -902,7 +1303,7 @@ class MarketingController
             'campaigns_completed'=>(int)$this->scalar("SELECT COUNT(*) FROM marketing_campaigns WHERE status='completed'"),
             'budget_total'=>(float)$this->scalar('SELECT COALESCE(SUM(budget),0) FROM marketing_campaigns'),
             'budget_active'=>(float)$this->scalar("SELECT COALESCE(SUM(budget),0) FROM marketing_campaigns WHERE status IN ('planned','running')"),
-            'promotions_pending'=>(int)$this->scalar("SELECT COUNT(*) FROM marketing_promotions WHERE approval_status='pending'"),
+            'promotions_pending'=>(int)$this->scalar("SELECT COUNT(*) FROM marketing_promotions WHERE approval_status='pending_approval'"),
             'promotions_active'=>(int)$this->scalar("SELECT COUNT(*) FROM marketing_promotions WHERE status='active'"),
             'active_vouchers'=>(int)$this->scalar("SELECT COUNT(*) FROM marketing_vouchers WHERE status='active'"),
             'voucher_quantity'=>(int)$this->scalar('SELECT COALESCE(SUM(quantity),0) FROM marketing_vouchers'),

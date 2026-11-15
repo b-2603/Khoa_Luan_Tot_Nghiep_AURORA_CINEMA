@@ -1,0 +1,123 @@
+USE aurora_db;
+
+ALTER TABLE marketing_promotions MODIFY approval_status VARCHAR(30) NOT NULL DEFAULT 'draft';
+ALTER TABLE marketing_promotions MODIFY discount_type VARCHAR(30) NOT NULL DEFAULT 'percent';
+
+ALTER TABLE marketing_promotions
+  ADD COLUMN IF NOT EXISTS description VARCHAR(255) NULL,
+  ADD COLUMN IF NOT EXISTS details TEXT NULL,
+  ADD COLUMN IF NOT EXISTS terms_text TEXT NULL,
+  ADD COLUMN IF NOT EXISTS category VARCHAR(30) NOT NULL DEFAULT 'ticket',
+  ADD COLUMN IF NOT EXISTS audience VARCHAR(30) NOT NULL DEFAULT 'all',
+  ADD COLUMN IF NOT EXISTS badge_text VARCHAR(60) NULL,
+  ADD COLUMN IF NOT EXISTS theme_color VARCHAR(20) NOT NULL DEFAULT '#D99A1B',
+  ADD COLUMN IF NOT EXISTS image_url VARCHAR(500) NULL,
+  ADD COLUMN IF NOT EXISTS min_order_amount DECIMAL(12,2) NOT NULL DEFAULT 0,
+  ADD COLUMN IF NOT EXISTS max_discount DECIMAL(12,2) NOT NULL DEFAULT 0,
+  ADD COLUMN IF NOT EXISTS usage_limit INT UNSIGNED NOT NULL DEFAULT 0,
+  ADD COLUMN IF NOT EXISTS is_featured TINYINT(1) NOT NULL DEFAULT 0,
+  ADD COLUMN IF NOT EXISTS publication_status VARCHAR(30) NOT NULL DEFAULT 'draft',
+  ADD COLUMN IF NOT EXISTS submitted_by VARCHAR(120) NULL,
+  ADD COLUMN IF NOT EXISTS submitted_at DATETIME NULL,
+  ADD COLUMN IF NOT EXISTS reviewed_by VARCHAR(120) NULL,
+  ADD COLUMN IF NOT EXISTS reviewed_at DATETIME NULL,
+  ADD COLUMN IF NOT EXISTS review_note TEXT NULL,
+  ADD COLUMN IF NOT EXISTS published_by VARCHAR(120) NULL,
+  ADD COLUMN IF NOT EXISTS published_at DATETIME NULL,
+  ADD COLUMN IF NOT EXISTS voucher_id BIGINT UNSIGNED NULL,
+  ADD COLUMN IF NOT EXISTS benefit_type VARCHAR(30) NOT NULL DEFAULT 'percent',
+  ADD COLUMN IF NOT EXISTS benefit_title VARCHAR(150) NULL,
+  ADD COLUMN IF NOT EXISTS benefit_description TEXT NULL,
+  ADD COLUMN IF NOT EXISTS gift_product_id BIGINT UNSIGNED NULL,
+  ADD COLUMN IF NOT EXISTS gift_quantity INT UNSIGNED NOT NULL DEFAULT 0,
+  ADD COLUMN IF NOT EXISTS buy_quantity INT UNSIGNED NOT NULL DEFAULT 0,
+  ADD COLUMN IF NOT EXISTS get_quantity INT UNSIGNED NOT NULL DEFAULT 0,
+  ADD COLUMN IF NOT EXISTS application_scope VARCHAR(20) NOT NULL DEFAULT 'order',
+  ADD COLUMN IF NOT EXISTS redemption_instructions TEXT NULL;
+
+UPDATE marketing_promotions SET approval_status='pending_approval' WHERE approval_status='pending';
+
+CREATE TABLE IF NOT EXISTS marketing_promotion_history (
+  id BIGINT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
+  promotion_id BIGINT UNSIGNED NOT NULL,
+  action_name VARCHAR(40) NOT NULL,
+  from_status VARCHAR(30) NULL,
+  to_status VARCHAR(30) NOT NULL,
+  actor_id BIGINT UNSIGNED NULL,
+  actor_name VARCHAR(120) NOT NULL,
+  actor_role VARCHAR(40) NOT NULL,
+  note TEXT NULL,
+  created_at DATETIME NOT NULL,
+  KEY idx_mkt_promotion_history (promotion_id,created_at)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8 COLLATE=utf8_unicode_ci;
+
+CREATE TABLE IF NOT EXISTS promotion_media_assets (
+  id BIGINT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
+  promotion_id BIGINT UNSIGNED NULL,
+  file_name VARCHAR(180) NOT NULL,
+  original_name VARCHAR(255) NOT NULL,
+  mime_type VARCHAR(80) NOT NULL,
+  file_size INT UNSIGNED NOT NULL,
+  public_url VARCHAR(500) NOT NULL,
+  uploaded_by BIGINT UNSIGNED NULL,
+  created_at DATETIME NOT NULL,
+  KEY idx_promotion_media_promotion (promotion_id),
+  KEY idx_promotion_media_uploader (uploaded_by,created_at)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8 COLLATE=utf8_unicode_ci;
+
+CREATE TABLE IF NOT EXISTS promotion_theater_deployments (
+  id BIGINT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
+  promotion_id BIGINT UNSIGNED NOT NULL,
+  voucher_id BIGINT UNSIGNED NOT NULL,
+  theater_id BIGINT UNSIGNED NOT NULL,
+  status VARCHAR(30) NOT NULL DEFAULT 'pending',
+  received_by BIGINT UNSIGNED NULL,
+  received_by_name VARCHAR(120) NULL,
+  received_at DATETIME NULL,
+  pos_button_label VARCHAR(50) NULL,
+  pos_button_color VARCHAR(20) NOT NULL DEFAULT '#D99A1B',
+  pos_button_icon VARCHAR(30) NOT NULL DEFAULT 'gift',
+  pos_sort_order INT NOT NULL DEFAULT 0,
+  applies_to VARCHAR(20) NOT NULL DEFAULT 'all',
+  pos_enabled TINYINT(1) NOT NULL DEFAULT 0,
+  configured_by BIGINT UNSIGNED NULL,
+  configured_by_name VARCHAR(120) NULL,
+  configured_at DATETIME NULL,
+  redemption_count INT UNSIGNED NOT NULL DEFAULT 0,
+  last_redeemed_at DATETIME NULL,
+  created_at DATETIME NOT NULL,
+  updated_at DATETIME NULL,
+  UNIQUE KEY uq_promotion_theater (promotion_id,theater_id),
+  KEY idx_promotion_deployment_theater (theater_id,status,pos_enabled),
+  KEY idx_promotion_deployment_voucher (voucher_id)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8 COLLATE=utf8_unicode_ci;
+
+ALTER TABLE orders
+  ADD COLUMN IF NOT EXISTS promotion_deployment_id BIGINT UNSIGNED NULL,
+  ADD COLUMN IF NOT EXISTS voucher_code VARCHAR(40) NULL,
+  ADD COLUMN IF NOT EXISTS promotion_discount_amount DECIMAL(12,2) NOT NULL DEFAULT 0;
+
+ALTER TABLE vouchers
+  MODIFY discount_type VARCHAR(30) NOT NULL DEFAULT 'percent',
+  ADD COLUMN IF NOT EXISTS short_description VARCHAR(255) NULL,
+  ADD COLUMN IF NOT EXISTS details TEXT NULL,
+  ADD COLUMN IF NOT EXISTS terms_text TEXT NULL,
+  ADD COLUMN IF NOT EXISTS category VARCHAR(30) NOT NULL DEFAULT 'ticket',
+  ADD COLUMN IF NOT EXISTS audience VARCHAR(30) NOT NULL DEFAULT 'all',
+  ADD COLUMN IF NOT EXISTS badge_text VARCHAR(60) NULL,
+  ADD COLUMN IF NOT EXISTS theme_color VARCHAR(20) NOT NULL DEFAULT '#D99A1B',
+  ADD COLUMN IF NOT EXISTS image_url VARCHAR(500) NULL,
+  ADD COLUMN IF NOT EXISTS min_order_amount DECIMAL(12,2) NOT NULL DEFAULT 0,
+  ADD COLUMN IF NOT EXISTS max_discount DECIMAL(12,2) NOT NULL DEFAULT 0,
+  ADD COLUMN IF NOT EXISTS is_featured TINYINT(1) NOT NULL DEFAULT 0,
+  ADD COLUMN IF NOT EXISTS sort_order INT NOT NULL DEFAULT 0,
+  ADD COLUMN IF NOT EXISTS source_promotion_id BIGINT UNSIGNED NULL,
+  ADD COLUMN IF NOT EXISTS benefit_type VARCHAR(30) NOT NULL DEFAULT 'percent',
+  ADD COLUMN IF NOT EXISTS benefit_title VARCHAR(150) NULL,
+  ADD COLUMN IF NOT EXISTS benefit_description TEXT NULL,
+  ADD COLUMN IF NOT EXISTS gift_product_id BIGINT UNSIGNED NULL,
+  ADD COLUMN IF NOT EXISTS gift_quantity INT UNSIGNED NOT NULL DEFAULT 0,
+  ADD COLUMN IF NOT EXISTS buy_quantity INT UNSIGNED NOT NULL DEFAULT 0,
+  ADD COLUMN IF NOT EXISTS get_quantity INT UNSIGNED NOT NULL DEFAULT 0,
+  ADD COLUMN IF NOT EXISTS application_scope VARCHAR(20) NOT NULL DEFAULT 'order',
+  ADD COLUMN IF NOT EXISTS redemption_instructions TEXT NULL;

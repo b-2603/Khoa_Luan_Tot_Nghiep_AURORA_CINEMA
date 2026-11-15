@@ -224,23 +224,15 @@ Danh sách nguyện vọng đã đăng ký: ${JSON.stringify(dayRegs)}`
   // Thuật toán AI Tối Ưu Hóa Tự Động (Built-in Rule-based AI Engine)
   await new Promise(r => setTimeout(r, 800));
 
-  const shiftOptions = [
-    { id: 'shift-1', name: 'Ca Sáng (08:00 - 16:00)', loc: 'Cụm Rạp 1 - Quầy Vé Box Office' },
-    { id: 'shift-2', name: 'Ca Chiều (15:30 - 23:00)', loc: 'Cụm Rạp 1 - Quầy Bắp Nước Popcorn' },
-    { id: 'shift-3', name: 'Ca Đêm (22:00 - 02:00)', loc: 'Phòng Chiếu 1-4 & Kiểm Soát Vé' }
-  ];
-
   // Đếm tải ca để cân bằng cho nhân sự chưa đăng ký
   const loadCounts: Record<string, number> = { 'shift-1': 0, 'shift-2': 0, 'shift-3': 0 };
 
-  return staffList.map((staff, index) => {
+  return staffList.map((staff) => {
     const registeredShiftId = regMap.get(staff.id);
     let chosenId = registeredShiftId;
-    let isMatched = false;
     let reason = '';
 
     if (chosenId && shiftInfo[chosenId]) {
-      isMatched = true;
       reason = `Khớp 100% nguyện vọng đã đăng ký của nhân viên (${shiftInfo[chosenId].name})`;
     } else {
       // Phân vào ca có ít nhân sự nhất

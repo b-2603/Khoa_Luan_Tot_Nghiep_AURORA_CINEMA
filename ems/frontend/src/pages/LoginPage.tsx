@@ -39,7 +39,7 @@ export const LoginPage: React.FC<LoginPageProps> = ({ onLoginSuccess }) => {
       } else {
         setErrorMsg(res.message);
       }
-    } catch (err) {
+    } catch  {
       setErrorMsg('Đã có lỗi xảy ra khi xác thực tài khoản. Vui lòng thử lại.');
     } finally {
       setLoading(false);

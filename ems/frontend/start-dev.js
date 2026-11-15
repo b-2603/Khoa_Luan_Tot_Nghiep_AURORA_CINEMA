@@ -24,10 +24,8 @@ function log(tag, message, color = colors.cyan) {
 function isPortOpen(port, host = '127.0.0.1', timeout = 500) {
   return new Promise((resolve) => {
     const socket = new net.Socket();
-    let status = false;
     socket.setTimeout(timeout);
     socket.once('connect', () => {
-      status = true;
       socket.destroy();
       resolve(true);
     });

@@ -65,7 +65,7 @@ export async function registerUserApi(payload: RegisterPayload): Promise<AuthRes
         };
       }
     }
-  } catch (e) {
+  } catch  {
     console.warn('[AuthApi] Backend offline, registering into local storage fallback');
   }
 
@@ -170,7 +170,7 @@ export async function loginUserApi(payload: LoginPayload): Promise<AuthResponse>
       const err = await res.json().catch(() => ({ message: 'Lỗi đăng nhập' }));
       return { success: false, message: err.message || 'Mật khẩu hoặc thông tin đăng nhập không đúng' };
     }
-  } catch (e) {
+  } catch  {
     console.warn('[AuthApi] Backend offline, falling back to local storage auth');
   }
 
@@ -247,7 +247,7 @@ export async function changePasswordApi(
       const err = await res.json().catch(() => ({ message: 'Lỗi đổi mật khẩu' }));
       return { success: false, message: err.message || 'Mật khẩu hiện tại không chính xác' };
     }
-  } catch (e) {
+  } catch  {
     // 2. Fallback offline
     const savedCustomPass = localStorage.getItem(`aurora_ems_pass_${userId}`);
     const isCurrentValid = savedCustomPass

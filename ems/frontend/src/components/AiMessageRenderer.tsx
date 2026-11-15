@@ -1,7 +1,7 @@
 import React from 'react';
 import { 
-  Sparkles, AlertTriangle, Lightbulb, CheckCircle2, 
-  XCircle, Lock, ShieldAlert, ArrowRight, Table as TableIcon
+  AlertTriangle, Lightbulb, CheckCircle2,
+  XCircle, Lock, ArrowRight
 } from 'lucide-react';
 
 interface AiMessageRendererProps {
@@ -178,7 +178,6 @@ export const AiMessageRenderer: React.FC<AiMessageRendererProps> = ({ content, i
 
     // 4. Alert Callouts: lines starting with 💡, ⚠️, ❌, ✅, 🔒, ⛔
     if (line.startsWith('💡') || line.startsWith('⚠️') || line.startsWith('❌') || line.startsWith('✅') || line.startsWith('🔒') || line.startsWith('⛔')) {
-      const iconChar = line.slice(0, 2);
       const textWithoutIcon = line.slice(2).trim();
 
       let borderStyle = 'border-indigo-500/30 bg-indigo-950/30 text-indigo-200';

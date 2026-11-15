@@ -21,7 +21,7 @@ function getItem<T>(key: string, defaultVal: T): T {
   try {
     const item = localStorage.getItem(key);
     return item ? JSON.parse(item) : defaultVal;
-  } catch (e) {
+  } catch  {
     return defaultVal;
   }
 }

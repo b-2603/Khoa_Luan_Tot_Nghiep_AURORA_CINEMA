@@ -1087,7 +1087,6 @@ export default function App() {
           movie={detailMovie}
           theaters={theatersList}
           theater={selectedTheater}
-          showtimes={showtimesList.filter((showtime: any) => showtime.movie_id === detailMovie.id)}
           date={scheduleDate}
           onBack={() => setDetailMovie(null)}
           onBook={(showtime, theaterName) => {
@@ -1169,7 +1168,6 @@ export default function App() {
           onBook={(movie, showtime, theaterName) => requestBooking(movie, showtime, theaterName)}
           onOpenSchedule={handleGoSchedule}
           onOpenMovies={handleGoMovies}
-          onOpenPrices={handleGoTicketPrices}
           onOpenOffers={handleGoOffers}
           onOpenAccount={() => openAccountTab('member')}
           onRegister={() => setAuthMode('register')}

@@ -18,7 +18,6 @@ export const ProofPhotoCapture: React.FC<ProofPhotoCaptureProps> = ({
   const [isViewingZoom, setIsViewingZoom] = useState(false);
   const [availableCameras, setAvailableCameras] = useState<MediaDeviceInfo[]>([]);
   const [selectedCameraId, setSelectedCameraId] = useState<string>('');
-  const [activeCameraName, setActiveCameraName] = useState<string>('');
 
   const videoRef = useRef<HTMLVideoElement | null>(null);
   const streamRef = useRef<MediaStream | null>(null);
@@ -57,7 +56,6 @@ export const ProofPhotoCapture: React.FC<ProofPhotoCaptureProps> = ({
 
     if (result.stream) {
       streamRef.current = result.stream;
-      setActiveCameraName(result.activeCameraName || 'Webcam máy tính');
       setCameraError(null);
 
       // Cập nhật danh sách camera để người dùng có thể đổi nếu cần

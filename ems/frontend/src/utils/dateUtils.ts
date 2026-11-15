@@ -96,7 +96,7 @@ export function formatFriendlyDate(dateStr: string): string {
       const dayNames = ['Chủ Nhật', 'Thứ Hai', 'Thứ Ba', 'Thứ Tư', 'Thứ Năm', 'Thứ Sáu', 'Thứ Bảy'];
       return `${dayNames[d.getDay()]} (${parts[2]}/${parts[1]}/${parts[0]})`;
     }
-  } catch (e) {}
+  } catch  {}
 
   return formatDateDMY(dateStr);
 }

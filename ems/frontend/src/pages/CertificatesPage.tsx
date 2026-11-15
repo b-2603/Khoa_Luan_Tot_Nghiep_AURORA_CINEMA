@@ -3,8 +3,7 @@ import { User, Certificate } from '../types';
 import { getCertificates } from '../services/storage';
 import { fetchCertificates } from '../services/apiClient';
 import { 
-  Award, ShieldCheck, QrCode, X, CheckCircle2, 
-  Sparkles, Medal, Star, Copy, Check, ExternalLink, Calendar,
+  Award, ShieldCheck, X, Sparkles, Medal, Star, Copy, Check, Calendar,
   GraduationCap, Download
 } from 'lucide-react';
 // @ts-ignore
@@ -82,7 +81,7 @@ export const CertificatesPage: React.FC<CertificatesPageProps> = ({ currentUser 
           setIsExporting(false);
           window.print();
         });
-    } catch (err) {
+    } catch  {
       setIsExporting(false);
       window.print();
     }

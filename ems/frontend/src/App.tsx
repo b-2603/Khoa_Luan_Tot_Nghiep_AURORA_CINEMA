@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import { useState } from 'react';
 import { User } from './types';
 import { getCurrentUser } from './services/storage';
 import { Navbar } from './components/Navbar';
@@ -11,7 +11,6 @@ import { LoginPage } from './pages/LoginPage';
 import { DashboardPage } from './pages/DashboardPage';
 import { ProfilePage } from './pages/ProfilePage';
 import { EmployeesPage } from './pages/EmployeesPage';
-import { CreateEmployeePage } from './pages/CreateEmployeePage';
 import { CoursesPage } from './pages/CoursesPage';
 import { QuizzesPage } from './pages/QuizzesPage';
 import { CertificatesPage } from './pages/CertificatesPage';
@@ -20,7 +19,6 @@ import { StaffShiftRegisterPage } from './pages/StaffShiftRegisterPage';
 import { StaffShiftViewPage } from './pages/StaffShiftViewPage';
 import { ManagerShiftSchedulerPage } from './pages/ManagerShiftSchedulerPage';
 import { AttendancePage } from './pages/AttendancePage';
-import { AttendanceExceptionsPage } from './pages/AttendanceExceptionsPage';
 import { InternalChatPage } from './pages/InternalChatPage';
 
 export function App() {
@@ -48,7 +46,6 @@ export function App() {
         currentUser={currentUser}
         onUserChange={handleUserChange}
         onOpenAiKeyClick={() => setIsOpenAiKeyModalOpen(true)}
-        onOpenAiAssistant={() => setIsAiAssistantOpen(true)}
       />
 
       {/* Main Workspace Layout */}
@@ -91,15 +88,11 @@ export function App() {
           {activeTab === 'attendance' && (
             <AttendancePage 
               currentUser={currentUser} 
-              onUpdateUser={setCurrentUser} 
-              onNavigateTab={setActiveTab} 
             />
           )}
           {activeTab === 'attendance-exceptions' && (
             <AttendancePage 
               currentUser={currentUser} 
-              onUpdateUser={setCurrentUser} 
-              onNavigateTab={setActiveTab} 
               initialSubTab="exceptions"
             />
           )}
@@ -131,55 +124,6 @@ export function App() {
         userRole={currentUser.role}
         userId={currentUser.id}
         userName={currentUser.name}
-        onNavigateTab={(tab) => {
-          const isManager = currentUser.role === 'manager';
-          let target: NavTab = 'dashboard';
-
-          switch (tab) {
-            case 'dashboard':
-            case 'profile':
-            case 'courses':
-            case 'quizzes':
-            case 'certificates':
-            case 'shift-register':
-            case 'shift-view':
-            case 'employees':
-            case 'create-employee':
-            case 'manager-scheduler':
-            case 'attendance':
-            case 'attendance-exceptions':
-            case 'manager-quiz-creator':
-              target = tab as NavTab;
-              break;
-            case 'shifts':
-            case 'shift':
-              target = isManager ? 'manager-scheduler' : 'shift-register';
-              break;
-            case 'schedule':
-              target = isManager ? 'manager-scheduler' : 'shift-view';
-              break;
-            case 'timesheet':
-            case 'timekeeping':
-              target = 'attendance';
-              break;
-            case 'course':
-              target = 'courses';
-              break;
-            case 'quiz':
-              target = 'quizzes';
-              break;
-            case 'certificate':
-            case 'certs':
-              target = 'certificates';
-              break;
-            default:
-              target = 'dashboard';
-              break;
-          }
-
-          setActiveTab(target);
-          setIsAiAssistantOpen(false);
-        }}
       />
     </div>
   );

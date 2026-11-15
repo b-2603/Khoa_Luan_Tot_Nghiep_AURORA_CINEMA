@@ -13,28 +13,18 @@ import {
   Sparkles, 
   X, 
   Search, 
-  Filter, 
   Star, 
   Award, 
-  Flame, 
-  User, 
-  ChevronRight, 
-  HelpCircle, 
   Send, 
   Edit3, 
   GraduationCap, 
   Check, 
-  CheckCheck,
-  ShieldAlert,
   Zap,
   BookmarkCheck,
-  Film,
   ArrowRight,
   Lock,
-  Unlock,
   AlertTriangle,
   FileQuestion,
-  RotateCcw,
   AlertCircle
 } from 'lucide-react';
 
@@ -555,7 +545,6 @@ export const CoursesPage: React.FC<CoursesPageProps> = ({ onNavigateToQuiz }) =>
                   <div className="space-y-4">
                     {/* BĂNG TIẾN ĐỘ BÀI HỌC (VIDEO 50% + BÀI TEST 10 CÂU 50% = 100%) */}
                     {(() => {
-                      const activeModIdx = selectedCourse.modules.findIndex(m => m.id === activeModule.id);
                       const currentProg = getModuleProgress(selectedCourse.id, activeModule.id, activeModule.isCompleted);
 
                       return (

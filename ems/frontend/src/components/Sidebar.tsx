@@ -8,7 +8,6 @@ import {
   CalendarPlus, 
   Calendar, 
   Users, 
-  UserPlus, 
   CalendarRange, 
   Clock, 
   AlertCircle, 

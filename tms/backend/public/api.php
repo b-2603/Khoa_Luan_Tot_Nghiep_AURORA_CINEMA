@@ -85,7 +85,7 @@ function requireAdmin() {
     }
 
     $userId = (int)$_SESSION['tms_user']['id'];
-    $result = $db->query("SELECT id, username, full_name, phone, theater_id, role, status FROM users WHERE id = {$userId} LIMIT 1");
+    $result = $db->query("SELECT u.id,u.username,u.full_name,u.email,u.phone,u.theater_id,u.role,u.status,t.name AS theater_name FROM users u LEFT JOIN theaters t ON t.id=u.theater_id WHERE u.id = {$userId} LIMIT 1");
     if (!$result) {
         jsonResponse(array('success' => false, 'message' => 'Không thể xác minh trạng thái tài khoản trong aurora_db: ' . $db->error), 500);
     }
@@ -97,6 +97,10 @@ function requireAdmin() {
     }
 
     $user['role'] = AdminController::normalizeRole($user['role']);
+    if ($user['role'] === 'super_admin') {
+        $user['theater_id'] = 0;
+        $user['theater_name'] = 'Toàn hệ thống';
+    }
     $_SESSION['tms_user'] = $user;
     return $user;
 }
@@ -358,7 +362,7 @@ function syncTmsOperationalNotifications($db) {
             SELECT CONCAT('marketing-plan-approval:',mp.id,':',DATE_FORMAT(COALESCE(mp.submitted_at,mp.updated_at,mp.created_at),'%Y%m%d%H%i%s')),
                    'marketing_approval','warning','Kế hoạch Marketing chờ phê duyệt',
                    CONCAT(COALESCE(NULLIF(mp.plan_code,''),CONCAT('KH-',mp.id)),' · ',COALESCE(NULLIF(mp.plan_name,''),mp.movie_title),' · ',COALESCE(mp.movie_title,'Chưa đặt tên')),
-                   'super_admin','marketing_approvals','Xem và phê duyệt','marketing_movie_plan',mp.id,
+                   'super_admin','theater_plans','Xem và phê duyệt','marketing_movie_plan',mp.id,
                    COALESCE(NULLIF(mp.submitted_by,''),'Marketing'),COALESCE(mp.submitted_at,mp.updated_at,mp.created_at,NOW())
             FROM movie_plans mp
             WHERE mp.marketing_owner_id IS NOT NULL AND mp.approval_status='pending_approval'
@@ -419,7 +423,7 @@ function restoreTmsIdentity() {
     $expected = hash_hmac('sha256', $payload, $tmsIdentitySecret);
     if ($parts[2] !== $expected || (int)$parts[1] < time()) { clearTmsIdentity(); return; }
     $userId = (int)$parts[0];
-    $result = $db->query("SELECT id, username, full_name, phone, theater_id, role, status FROM users WHERE id = {$userId} AND status = 'active' LIMIT 1");
+    $result = $db->query("SELECT u.id,u.username,u.full_name,u.email,u.phone,u.theater_id,u.role,u.status,t.name AS theater_name FROM users u LEFT JOIN theaters t ON t.id=u.theater_id WHERE u.id = {$userId} AND u.status = 'active' LIMIT 1");
     if (!$result || !($user = $result->fetch_assoc())) { clearTmsIdentity(); return; }
     // The signed identity is intentionally authoritative over a stale PHP
     // session. It is only issued after a successful credential check.
@@ -433,6 +437,7 @@ require_once dirname(__FILE__) . '/../app/Http/Controllers/RevenueController.php
 require_once dirname(__FILE__) . '/../app/Http/Controllers/ReportController.php';
 require_once dirname(__FILE__) . '/../app/Http/Controllers/PosDeviceController.php';
 require_once dirname(__FILE__) . '/../app/Http/Controllers/MarketingController.php';
+require_once dirname(__FILE__) . '/../app/Http/Controllers/PromotionDeploymentController.php';
 require_once dirname(__FILE__) . '/../app/Http/Controllers/ProductPlanningController.php';
 $controller = new AdminController($db);
 $auditLogController = new AuditLogController($db);
@@ -440,6 +445,7 @@ $revenueController = new RevenueController($db);
 $reportController = new ReportController($db);
 $posDeviceController = new PosDeviceController($db);
 $marketingController = new MarketingController($db);
+$promotionDeploymentController = new PromotionDeploymentController($db);
 $productPlanningController = new ProductPlanningController($db);
 $action = isset($_GET['action']) ? $_GET['action'] : 'health';
 
@@ -450,6 +456,29 @@ if ($action === 'ticket-pricing-policies') {
     if ($requestMethod === 'GET') $controller->ticketPricingPolicies();
     if ($requestMethod === 'POST' || $requestMethod === 'PUT') $controller->saveTicketPricingPolicy();
     jsonResponse(array('success' => false, 'message' => 'Phương thức không được hỗ trợ.'), 405);
+}
+
+if ($action === 'theater-promotions') {
+    $promotionDeploymentController->handle();
+}
+
+if ($action === 'promotion-image') {
+    if($requestMethod!=='POST')jsonResponse(array('success'=>false,'message'=>'Phương thức không được hỗ trợ.'),405);
+    $user=requireAdmin();$role=AdminController::normalizeRole($user['role']);
+    if(!in_array($role,array('marketing_manager','super_admin'),true))jsonResponse(array('success'=>false,'message'=>'Bạn không có quyền tải ảnh chương trình khuyến mãi.'),403);
+    if(!isset($_FILES['image'])||!is_array($_FILES['image']))jsonResponse(array('success'=>false,'message'=>'Vui lòng chọn ảnh chương trình.'),422);
+    $file=$_FILES['image'];if($file['error']!==UPLOAD_ERR_OK||!is_uploaded_file($file['tmp_name']))jsonResponse(array('success'=>false,'message'=>'Không thể nhận tệp ảnh. Vui lòng thử lại.'),400);
+    if((int)$file['size']<1||(int)$file['size']>8*1024*1024)jsonResponse(array('success'=>false,'message'=>'Ảnh phải có dung lượng tối đa 8 MB.'),422);
+    $info=function_exists('getimagesize')?@getimagesize($file['tmp_name']):false;$mime=is_array($info)&&isset($info['mime'])?$info['mime']:'';
+    $types=array('image/jpeg'=>'jpg','image/png'=>'png','image/webp'=>'webp');if(!isset($types[$mime]))jsonResponse(array('success'=>false,'message'=>'Ảnh phải là JPG, PNG hoặc WebP hợp lệ.'),422);
+    if(is_array($info)&&((int)$info[0]<600||(int)$info[1]<300))jsonResponse(array('success'=>false,'message'=>'Ảnh cần có kích thước tối thiểu 600 × 300 px.'),422);
+    $directory=dirname(__FILE__).DIRECTORY_SEPARATOR.'uploads'.DIRECTORY_SEPARATOR.'promotions';if(!is_dir($directory)&&!mkdir($directory,0755,true)&&!is_dir($directory))jsonResponse(array('success'=>false,'message'=>'Không thể tạo thư mục ảnh CTKM.'),500);
+    $fileName='promotion-'.date('YmdHis').'-'.substr(sha1(uniqid((string)mt_rand(),true)),0,12).'.'.$types[$mime];$target=$directory.DIRECTORY_SEPARATOR.$fileName;
+    if(!move_uploaded_file($file['tmp_name'],$target))jsonResponse(array('success'=>false,'message'=>'Không thể lưu ảnh chương trình trên máy chủ.'),500);
+    $publicDirectory=str_replace('\\','/',dirname($_SERVER['SCRIPT_NAME']));$host=isset($_SERVER['HTTP_HOST'])&&preg_match('/^[A-Za-z0-9.-]+(?::[0-9]{1,5})?$/',$_SERVER['HTTP_HOST'])?$_SERVER['HTTP_HOST']:'localhost';$scheme=!empty($_SERVER['HTTPS'])&&strtolower($_SERVER['HTTPS'])!=='off'?'https':'http';$url=$scheme.'://'.$host.rtrim($publicDirectory,'/').'/uploads/promotions/'.rawurlencode($fileName);
+    $original=$db->real_escape_string(substr((string)$file['name'],0,255));$fileEsc=$db->real_escape_string($fileName);$mimeEsc=$db->real_escape_string($mime);$urlEsc=$db->real_escape_string($url);$size=(int)$file['size'];$actor=(int)$user['id'];
+    if(!$db->query("CREATE TABLE IF NOT EXISTS promotion_media_assets (id BIGINT UNSIGNED AUTO_INCREMENT PRIMARY KEY,promotion_id BIGINT UNSIGNED NULL,file_name VARCHAR(180) NOT NULL,original_name VARCHAR(255) NOT NULL,mime_type VARCHAR(80) NOT NULL,file_size INT UNSIGNED NOT NULL,public_url VARCHAR(500) NOT NULL,uploaded_by BIGINT UNSIGNED NULL,created_at DATETIME NOT NULL,KEY idx_promotion_media_promotion(promotion_id),KEY idx_promotion_media_uploader(uploaded_by,created_at)) ENGINE=InnoDB DEFAULT CHARSET=utf8 COLLATE=utf8_unicode_ci")||!$db->query("INSERT INTO promotion_media_assets(file_name,original_name,mime_type,file_size,public_url,uploaded_by,created_at) VALUES('{$fileEsc}','{$original}','{$mimeEsc}',{$size},'{$urlEsc}',{$actor},NOW())")){@unlink($target);jsonResponse(array('success'=>false,'message'=>'Không thể ghi nhận ảnh trong aurora_db.'),500);}
+    jsonResponse(array('success'=>true,'message'=>'Đã tải ảnh chương trình và lưu vào thư viện aurora_db.','data'=>array('id'=>(int)$db->insert_id,'url'=>$url,'name'=>$fileName,'width'=>is_array($info)?(int)$info[0]:0,'height'=>is_array($info)?(int)$info[1]:0)),201);
 }
 
 if ($action === 'product-catalog-workflow') {
@@ -784,6 +813,10 @@ if ($action === 'login' && $requestMethod === 'POST') {
         unset($user['password_hash']);
 
         $user['role'] = AdminController::normalizeRole($user['role']);
+        if ($user['role'] === 'super_admin') {
+            $user['theater_id'] = 0;
+            $user['theater_name'] = 'Toàn hệ thống';
+        }
         $roleDefs = AdminController::getRoleDefinitions();
         $user['role_info'] = isset($roleDefs[$user['role']]) ? $roleDefs[$user['role']] : array(
             'code' => $user['role'],
@@ -829,6 +862,83 @@ if ($action === 'me') {
     $roleDefs = AdminController::getRoleDefinitions();
     $user['role_info'] = isset($roleDefs[$user['role']]) ? $roleDefs[$user['role']] : null;
     jsonResponse(array('success' => true, 'data' => $user));
+}
+
+if ($action === 'account-profile') {
+    $sessionUser = requireAdmin();
+    $userId = (int)$sessionUser['id'];
+
+    if ($requestMethod === 'PUT') {
+        $input = requestJson();
+        $fullName = isset($input['full_name']) ? trim((string)$input['full_name']) : '';
+        $email = isset($input['email']) ? trim((string)$input['email']) : '';
+        $phone = isset($input['phone']) ? preg_replace('/[\s.\-]/', '', trim((string)$input['phone'])) : '';
+        $currentPassword = isset($input['current_password']) ? (string)$input['current_password'] : '';
+        $newPassword = isset($input['new_password']) ? (string)$input['new_password'] : '';
+
+        if ($fullName === '' || strlen($fullName) > 120) jsonResponse(array('success'=>false,'message'=>'Họ và tên phải có từ 1 đến 120 ký tự.'),422);
+        if ($email === '' || strlen($email) > 180 || !filter_var($email, FILTER_VALIDATE_EMAIL)) jsonResponse(array('success'=>false,'message'=>'Email công việc không đúng định dạng.'),422);
+        if ($phone !== '' && !preg_match('/^(?:\+84|0)[0-9]{9,10}$/', $phone)) jsonResponse(array('success'=>false,'message'=>'Số điện thoại phải bắt đầu bằng 0 hoặc +84 và có độ dài hợp lệ.'),422);
+        if ($newPassword !== '' && strlen($newPassword) < 8) jsonResponse(array('success'=>false,'message'=>'Mật khẩu mới phải có ít nhất 8 ký tự.'),422);
+
+        $passwordSql = '';
+        if ($newPassword !== '') {
+            if ($currentPassword === '') jsonResponse(array('success'=>false,'message'=>'Vui lòng nhập mật khẩu hiện tại để đổi mật khẩu.'),422);
+            $passwordResult = $db->query("SELECT password_hash FROM users WHERE id={$userId} LIMIT 1");
+            $passwordRow = $passwordResult ? $passwordResult->fetch_assoc() : null;
+            if (!$passwordRow || !passwordMatches($currentPassword, $passwordRow['password_hash'])) {
+                writeTmsAuditLog($db, 'PROFILE_PASSWORD_REJECTED', 'Đổi mật khẩu bị từ chối do mật khẩu hiện tại không đúng.', array('user_id'=>$userId,'username'=>$sessionUser['username'],'role'=>$sessionUser['role'],'module'=>'account','entity_type'=>'user','entity_id'=>$userId,'severity'=>'warning','status_code'=>422));
+                jsonResponse(array('success'=>false,'message'=>'Mật khẩu hiện tại không chính xác.'),422);
+            }
+            $newHash = function_exists('password_hash') ? password_hash($newPassword, PASSWORD_BCRYPT) : crypt($newPassword);
+            $passwordSql = ", password_hash='".$db->real_escape_string($newHash)."'";
+        }
+
+        $fullNameEsc = $db->real_escape_string($fullName);
+        $emailEsc = $db->real_escape_string($email);
+        $phoneEsc = $db->real_escape_string($phone);
+        if (!$db->query("UPDATE users SET full_name='{$fullNameEsc}',email='{$emailEsc}',phone='{$phoneEsc}',updated_at=NOW(){$passwordSql} WHERE id={$userId} AND status='active'")) {
+            jsonResponse(array('success'=>false,'message'=>'Không thể cập nhật hồ sơ trong aurora_db: '.$db->error),500);
+        }
+        writeTmsAuditLog($db, 'PROFILE_UPDATED', $newPassword !== '' ? 'Cập nhật hồ sơ cá nhân và mật khẩu.' : 'Cập nhật hồ sơ cá nhân.', array('user_id'=>$userId,'username'=>$sessionUser['username'],'role'=>$sessionUser['role'],'module'=>'account','entity_type'=>'user','entity_id'=>$userId,'severity'=>'success','status_code'=>200,'metadata'=>array('password_changed'=>$newPassword !== '')));
+    } else if ($requestMethod !== 'GET') {
+        jsonResponse(array('success'=>false,'message'=>'Phương thức không được hỗ trợ cho hồ sơ tài khoản.'),405);
+    }
+
+    $profileResult = $db->query("SELECT u.id,u.username,u.full_name,u.email,u.phone,u.role,u.status,u.theater_id,u.last_login,u.created_at,u.updated_at,t.name AS theater_name,t.address AS theater_address,t.city AS theater_city,'' AS theater_phone,(SELECT COUNT(*) FROM screens s WHERE s.theater_id=t.id) AS total_screens,'active' AS theater_status FROM users u LEFT JOIN theaters t ON t.id=u.theater_id WHERE u.id={$userId} LIMIT 1");
+    if (!$profileResult) jsonResponse(array('success'=>false,'message'=>'Không thể tải hồ sơ tài khoản từ aurora_db: '.$db->error),500);
+    $profile = $profileResult->fetch_assoc();
+    if (!$profile) jsonResponse(array('success'=>false,'message'=>'Không tìm thấy hồ sơ tài khoản trong aurora_db.'),404);
+    $profile['id'] = (int)$profile['id'];
+    $profile['theater_id'] = (int)$profile['theater_id'];
+    $profile['total_screens'] = (int)$profile['total_screens'];
+    $profile['role'] = AdminController::normalizeRole($profile['role']);
+    if ($profile['role'] === 'super_admin') {
+        $theaterCountResult = $db->query("SELECT COUNT(*) FROM theaters");
+        $screenCountResult = $db->query("SELECT COUNT(*) FROM screens");
+        $theaterCountRow = $theaterCountResult ? $theaterCountResult->fetch_row() : array(0);
+        $screenCountRow = $screenCountResult ? $screenCountResult->fetch_row() : array(0);
+        $profile['scope_mode'] = 'system';
+        $profile['scope_name'] = 'Toàn hệ thống Aurora Cinema';
+        $profile['theater_id'] = 0;
+        $profile['theater_name'] = null;
+        $profile['theater_address'] = null;
+        $profile['theater_city'] = null;
+        $profile['theater_phone'] = null;
+        $profile['theater_status'] = null;
+        $profile['total_theaters'] = isset($theaterCountRow[0]) ? (int)$theaterCountRow[0] : 0;
+        $profile['total_screens'] = isset($screenCountRow[0]) ? (int)$screenCountRow[0] : 0;
+    } else {
+        $profile['scope_mode'] = 'theater';
+        $profile['scope_name'] = !empty($profile['theater_name']) ? $profile['theater_name'] : 'Chưa được gán rạp';
+        $profile['total_theaters'] = $profile['theater_id'] > 0 ? 1 : 0;
+    }
+    $roleDefs = AdminController::getRoleDefinitions();
+    $profile['role_info'] = isset($roleDefs[$profile['role']]) ? $roleDefs[$profile['role']] : null;
+    $profile['source'] = 'aurora_db';
+    $_SESSION['tms_user'] = array_merge($_SESSION['tms_user'], array('full_name'=>$profile['full_name'],'phone'=>$profile['phone'],'email'=>$profile['email']));
+    setTmsIdentity($_SESSION['tms_user']);
+    jsonResponse(array('success'=>true,'message'=>$requestMethod === 'PUT' ? 'Đã cập nhật hồ sơ tài khoản trong aurora_db.' : 'Đã tải hồ sơ tài khoản từ aurora_db.','data'=>$profile));
 }
 
 if ($action === 'roles') {
@@ -1021,7 +1131,7 @@ if ($action === 'identity-status') {
 
 if ($action === 'customer-account-status') {
     requireAdmin();
-    $controller->requireRbacPermission('users', 'update');
+    $controller->requireRbacPermission('customers', 'update');
     if ($requestMethod === 'POST' || $requestMethod === 'PUT') $controller->updateCustomerStatus();
     jsonResponse(array('success' => false, 'message' => 'Phương thức không được hỗ trợ cho trạng thái customer.'), 405);
 }
@@ -1214,14 +1324,14 @@ if ($action === 'movie-management') {
     $controller->movieManagement();
 }
 
-$resources = array('movies', 'screens', 'schedules', 'staff', 'ticket-types', 'products', 'vouchers', 'customers', 'theaters', 'promotions', 'system-configs', 'transactions', 'refunds', 'movie-plans', 'movie-allocations');
+$resources = array('movies', 'screens', 'schedules', 'staff', 'ticket-types', 'products', 'vouchers', 'customers', 'theaters', 'promotions', 'system-configs', 'transactions', 'refunds', 'movie-allocations');
 if (in_array($action, $resources, true)) {
     $rbacResourceKeys = array(
         'movies'=>'movies', 'screens'=>'screens', 'schedules'=>'schedules', 'staff'=>'staff',
         'ticket-types'=>'ticket_types', 'products'=>'products', 'vouchers'=>'vouchers',
         'promotions'=>'vouchers', 'customers'=>'customers', 'transactions'=>'transactions_refunds',
         'refunds'=>'transactions_refunds', 'system-configs'=>'settings', 'theaters'=>'screens',
-        'movie-plans'=>'movies', 'movie-allocations'=>'movies'
+        'movie-allocations'=>'movies'
     );
     if (isset($rbacResourceKeys[$action])) {
         requireAdmin();

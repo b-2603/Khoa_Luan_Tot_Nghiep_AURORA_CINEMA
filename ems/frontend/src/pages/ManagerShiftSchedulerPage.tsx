@@ -1,24 +1,22 @@
-import React, { useState, useEffect, useRef } from 'react';
+import React, { useState, useEffect } from 'react';
 import { User, WorkSchedule, ShiftRegistration, Shift } from '../types';
 import {
-  getUsers, getWorkSchedules, saveWorkSchedules, getShiftRegistrations,
+  getUsers, getWorkSchedules, getShiftRegistrations,
   saveShiftRegistrations, updateShiftRegistrationStatus, syncApprovedRegistrationsToSchedules,
-  mergeWorkSchedules, saveSingleWorkSchedule, removeSingleWorkSchedule,
-  approveShiftRegistrationsForDate, getShiftReminders, sendShiftReminders, ShiftReminder
+  saveSingleWorkSchedule, removeSingleWorkSchedule,
+  getShiftReminders, sendShiftReminders, ShiftReminder
 } from '../services/storage';
 import {
   fetchWorkSchedules, fetchShiftRegistrations, fetchShifts, fetchEmployees,
   approveShiftRegistration, rejectShiftRegistration, approveAllShiftRegistrations,
-  assignWorkSchedule, deleteWorkScheduleApi, publishWorkSchedules
+  assignWorkSchedule, deleteWorkScheduleApi
 } from '../services/apiClient';
 import {
-  Sparkles, RefreshCw, CheckCircle2, MapPin,
-  Check, AlertCircle, XCircle, Inbox, LayoutGrid, CheckCheck,
-  X, Edit3, Trash2, Save, Bell, Lock,
-  Unlock, Zap, BarChart3,
+  CheckCircle2, AlertCircle, XCircle, Inbox, LayoutGrid, CheckCheck,
+  X, Edit3, Bell, BarChart3,
   ClipboardList, ShieldCheck, UserPlus
 } from 'lucide-react';
-import { getWeekDaysByOffset, getTodayDateString } from '../utils/dateUtils';
+import { getWeekDaysByOffset } from '../utils/dateUtils';
 
 const LOCATIONS = [
   'Cụm Rạp 1 - Quầy Vé Box Office',
@@ -76,7 +74,6 @@ export const ManagerShiftSchedulerPage: React.FC = () => {
   const weekDays = getWeekDaysByOffset(weekOffset);
   const currentWeekDays = getWeekDaysByOffset(0);
   const nextWeekDays = getWeekDaysByOffset(1);
-  const today = getTodayDateString();
 
   const [users, setUsers] = useState<User[]>(getUsers().filter(u => u.role === 'staff'));
   const [schedules, setSchedules] = useState<WorkSchedule[]>(getWorkSchedules());
@@ -84,17 +81,7 @@ export const ManagerShiftSchedulerPage: React.FC = () => {
   const [shifts, setShifts] = useState<Shift[]>([]);
   const [reminders, setReminders] = useState<ShiftReminder[]>(getShiftReminders());
 
-  const [registrationGateStatus, setRegistrationGateStatus] = useState<'open' | 'locked'>(() => {
-    try {
-      const saved = localStorage.getItem('aurora_ems_gate_status');
-      return saved === 'locked' ? 'locked' : 'open';
-    } catch {
-      return 'open';
-    }
-  });
-
   const [activeTab, setActiveTab] = useState<'published' | 'registrations'>('published');
-  const [isAiLoading, setIsAiLoading] = useState(false);
   const [isPublishing, setIsPublishing] = useState(false);
   const [processingId, setProcessingId] = useState<string | null>(null);
   const [toast, setToast] = useState<{ type: 'success' | 'info' | 'error'; msg: string } | null>(null);
@@ -104,9 +91,6 @@ export const ManagerShiftSchedulerPage: React.FC = () => {
   const [editLocation, setEditLocation] = useState('');
   const [isSavingEdit, setIsSavingEdit] = useState(false);
 
-  const [planVersion, setPlanVersion] = useState<number>(1);
-  const seedRef = useRef<number>(1);
-  const [viewDate, setViewDate] = useState<string>(weekDays[0]?.date || today);
 
   useEffect(() => {
     (async () => {
@@ -137,16 +121,6 @@ export const ManagerShiftSchedulerPage: React.FC = () => {
   const showToast = (type: 'success' | 'info' | 'error', msg: string) => {
     setToast({ type, msg });
     setTimeout(() => setToast(null), 5000);
-  };
-
-  const handleToggleGate = () => {
-    const nextStatus: 'open' | 'locked' = registrationGateStatus === 'open' ? 'locked' : 'open';
-    setRegistrationGateStatus(nextStatus);
-    localStorage.setItem('aurora_ems_gate_status', nextStatus);
-    showToast(
-      nextStatus === 'open' ? 'success' : 'info',
-      nextStatus === 'open' ? 'Đã mở cổng đăng ký ca tuần!' : 'Đã khóa cổng đăng ký ca!'
-    );
   };
 
   const handleApproveSingle = async (reg: ShiftRegistration) => {
@@ -231,191 +205,6 @@ export const ManagerShiftSchedulerPage: React.FC = () => {
     }
   };
 
-  const handleRunSmartWeeklyScheduler = async (customSeed?: number) => {
-    setIsAiLoading(true);
-    const currentSeed = customSeed !== undefined ? customSeed : seedRef.current;
-    setPlanVersion(currentSeed);
-
-    const allDates = weekDays.map(d => d.date);
-    const generatedSchedules: WorkSchedule[] = [];
-
-    const weeklyShiftCount: Record<string, number> = {};
-    const nightWeekendCount: Record<string, number> = {};
-    const assignedShiftByDay: Record<string, Record<string, string>> = {};
-
-    users.forEach(u => {
-      weeklyShiftCount[u.id] = 0;
-      nightWeekendCount[u.id] = 0;
-    });
-
-    for (let dayIdx = 0; dayIdx < weekDays.length; dayIdx++) {
-      const dayObj = weekDays[dayIdx];
-      const dateStr = dayObj.date;
-      const prevDateStr = dayIdx > 0 ? weekDays[dayIdx - 1].date : '';
-      const isWeekend = dayObj.dayLabel.includes('Thứ Bảy') || dayObj.dayLabel.includes('Chủ Nhật');
-
-      assignedShiftByDay[dateStr] = {};
-
-      const canAssignStaffToShift = (staff: User, shiftId: string): boolean => {
-        if (assignedShiftByDay[dateStr][staff.id]) return false;
-        if (weeklyShiftCount[staff.id] >= MAX_SHIFTS_PER_WEEK) return false;
-        if (shiftId === 'shift-1' && prevDateStr) {
-          const prevShift = assignedShiftByDay[prevDateStr]?.[staff.id];
-          if (prevShift === 'shift-3') return false;
-        }
-        return true;
-      };
-
-      for (const need of FIXED_SHIFTS) {
-        const targetCount = isWeekend ? need.neededWeekend : need.neededWeekday;
-        if (targetCount <= 0) continue;
-
-        const applicants = registrations
-          .filter(r => r.date === dateStr && matchShiftId(r.shiftId, need.shiftId) && r.status !== 'rejected')
-          .map(r => users.find(u => matchUserId(u.id, r.userId)))
-          .filter((u): u is User => Boolean(u))
-          .filter(u => canAssignStaffToShift(u, need.shiftId));
-
-        let chosenApplicants: User[] = [];
-
-        if (applicants.length <= targetCount) {
-          chosenApplicants = applicants;
-        } else {
-          chosenApplicants = [...applicants].sort((a, b) => {
-            const countDiff = (weeklyShiftCount[a.id] || 0) - (weeklyShiftCount[b.id] || 0);
-            if (countDiff !== 0) return countDiff;
-
-            const nwDiff = (nightWeekendCount[a.id] || 0) - (nightWeekendCount[b.id] || 0);
-            if (nwDiff !== 0) return nwDiff;
-
-            const hashA = ((Number(a.id.replace(/\D/g, '')) || 1) * 31 + currentSeed * 17 + dayIdx * 7) % 100;
-            const hashB = ((Number(b.id.replace(/\D/g, '')) || 2) * 31 + currentSeed * 17 + dayIdx * 7) % 100;
-            return hashA - hashB;
-          }).slice(0, targetCount);
-        }
-
-        chosenApplicants.forEach((staff, idx) => {
-          assignedShiftByDay[dateStr][staff.id] = need.shiftId;
-          weeklyShiftCount[staff.id] = (weeklyShiftCount[staff.id] || 0) + 1;
-          if (isWeekend || need.shiftId === 'shift-3') {
-            nightWeekendCount[staff.id] = (nightWeekendCount[staff.id] || 0) + 1;
-          }
-
-          const loc = getDefaultLocationForStaff(staff, currentSeed + idx);
-          generatedSchedules.push({
-            id: `sch-${Date.now()}-${dateStr}-${staff.id}`,
-            userId: staff.id,
-            userName: staff.name,
-            userAvatar: staff.avatar,
-            staffCode: staff.phone || staff.staffCode,
-            department: staff.department,
-            date: dateStr,
-            shiftId: need.shiftId,
-            shiftName: need.shiftName,
-            location: loc as any,
-            status: 'assigned',
-            assignedBy: `Khớp đăng ký (PA #${currentSeed})`,
-          });
-        });
-      }
-
-      for (const need of FIXED_SHIFTS) {
-        const targetCount = isWeekend ? need.neededWeekend : need.neededWeekday;
-        const currentAssignedInShift = Object.values(assignedShiftByDay[dateStr]).filter(sId => sId === need.shiftId).length;
-        const shortage = targetCount - currentAssignedInShift;
-
-        if (shortage <= 0) continue;
-
-        const availableCandidates = users
-          .filter(u => canAssignStaffToShift(u, need.shiftId))
-          .sort((a, b) => {
-            const aHasRegToday = registrations.some(r => r.date === dateStr && matchUserId(r.userId, a.id)) ? 0 : 1;
-            const bHasRegToday = registrations.some(r => r.date === dateStr && matchUserId(r.userId, b.id)) ? 0 : 1;
-            if (aHasRegToday !== bHasRegToday) return aHasRegToday - bHasRegToday;
-
-            const aBelowMin = (weeklyShiftCount[a.id] || 0) < MIN_SHIFTS_PER_WEEK ? 0 : 1;
-            const bBelowMin = (weeklyShiftCount[b.id] || 0) < MIN_SHIFTS_PER_WEEK ? 0 : 1;
-            if (aBelowMin !== bBelowMin) return aBelowMin - bBelowMin;
-
-            const countDiff = (weeklyShiftCount[a.id] || 0) - (weeklyShiftCount[b.id] || 0);
-            if (Math.abs(countDiff) > 1) return countDiff;
-
-            const rotA = ((Number(a.id.replace(/\D/g, '')) || 1) * 19 + currentSeed * 23 + dayIdx * 11) % 97;
-            const rotB = ((Number(b.id.replace(/\D/g, '')) || 2) * 19 + currentSeed * 23 + dayIdx * 11) % 97;
-            return rotA - rotB;
-          });
-
-        const selectedFillers = availableCandidates.slice(0, shortage);
-
-        selectedFillers.forEach((staff, idx) => {
-          assignedShiftByDay[dateStr][staff.id] = need.shiftId;
-          weeklyShiftCount[staff.id] = (weeklyShiftCount[staff.id] || 0) + 1;
-          if (isWeekend || need.shiftId === 'shift-3') {
-            nightWeekendCount[staff.id] = (nightWeekendCount[staff.id] || 0) + 1;
-          }
-
-          const loc = getDefaultLocationForStaff(staff, currentSeed + dayIdx + idx);
-          const hadOtherReg = registrations.some(r => r.date === dateStr && matchUserId(r.userId, staff.id));
-
-          generatedSchedules.push({
-            id: `sch-${Date.now()}-${dateStr}-${staff.id}-${idx}`,
-            userId: staff.id,
-            userName: staff.name,
-            userAvatar: staff.avatar,
-            staffCode: staff.phone || staff.staffCode,
-            department: staff.department,
-            date: dateStr,
-            shiftId: need.shiftId,
-            shiftName: need.shiftName,
-            location: loc as any,
-            status: 'assigned',
-            assignedBy: hadOtherReg
-              ? `Điều chuyển ca (PA #${currentSeed})`
-              : `Bù ca thiếu (PA #${currentSeed})`,
-          });
-        });
-      }
-    }
-
-    const merged = mergeWorkSchedules(generatedSchedules, allDates);
-    setSchedules(merged);
-
-    allDates.forEach(d => {
-      if (assignedShiftByDay[d]) {
-        approveShiftRegistrationsForDate(d, assignedShiftByDay[d]);
-      }
-    });
-    setRegistrations(prev =>
-      prev.map(r => {
-        if (!allDates.includes(r.date)) return r;
-        const staff = users.find(u => matchUserId(u.id, r.userId));
-        const assignedShift = staff ? assignedShiftByDay[r.date]?.[staff.id] : undefined;
-        if (assignedShift && matchShiftId(assignedShift, r.shiftId)) {
-          return { ...r, status: 'approved' };
-        }
-        return r;
-      })
-    );
-
-    try {
-      for (const dateStr of allDates) {
-        const dayScheds = generatedSchedules.filter(s => s.date === dateStr);
-        await publishWorkSchedules(dayScheds, dateStr, `AI Phân Ca (PA #${currentSeed})`);
-      }
-    } catch {}
-
-    setIsAiLoading(false);
-    showToast(
-      'success',
-      `Đã xếp lịch 7 ngày (Phương án #${currentSeed} — ${generatedSchedules.length} suất ca).`
-    );
-  };
-
-  const handleRegeneratePlan = () => {
-    seedRef.current += 1;
-    handleRunSmartWeeklyScheduler(seedRef.current);
-  };
-
   const startEdit = (userId: string, date: string, targetShiftId?: string) => {
     const dayScheds = schedules.filter(s => matchUserId(s.userId, userId) && s.date === date);
     const sch = targetShiftId
@@ -495,13 +284,6 @@ export const ManagerShiftSchedulerPage: React.FC = () => {
   const pendingRegs = weekRegistrations.filter(r => r.status === 'pending');
   const weekSchedules = schedules.filter(s => weekDateSet.has(s.date));
 
-  const totalSlotsNeededWeek = weekDays.reduce((sum, d) => {
-    const isWe = d.dayLabel.includes('Thứ Bảy') || d.dayLabel.includes('Chủ Nhật');
-    return sum + FIXED_SHIFTS.reduce((acc, n) => acc + (isWe ? n.neededWeekend : n.neededWeekday), 0);
-  }, 0);
-
-  const fillPct = totalSlotsNeededWeek > 0 ? Math.min(100, Math.round((weekSchedules.length / totalSlotsNeededWeek) * 100)) : 0;
-
   const staffUnderMinRegs = users.filter(u => {
     const count = weekRegistrations.filter(r => matchUserId(r.userId, u.id)).length;
     return count < MIN_SHIFTS_PER_WEEK;
@@ -518,7 +300,6 @@ export const ManagerShiftSchedulerPage: React.FC = () => {
           <button
             onClick={() => {
               setWeekOffset(0);
-              setViewDate(currentWeekDays[0]?.date || today);
               cancelEdit();
             }}
             className={`px-3 py-1.5 rounded-lg text-xs font-bold transition cursor-pointer ${
@@ -532,7 +313,6 @@ export const ManagerShiftSchedulerPage: React.FC = () => {
           <button
             onClick={() => {
               setWeekOffset(1);
-              setViewDate(nextWeekDays[0]?.date || today);
               cancelEdit();
             }}
             className={`px-3 py-1.5 rounded-lg text-xs font-bold transition cursor-pointer ${

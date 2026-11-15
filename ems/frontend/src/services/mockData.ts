@@ -1,4 +1,4 @@
-import { User, Course, Quiz, QuizAttempt, Certificate, Shift, ShiftRegistration, WorkSchedule, Attendance, AttendanceException } from '../types';
+import { User, Course, Quiz, Certificate, Shift, Attendance, AttendanceException } from '../types';
 
 export const INITIAL_SHIFTS: Shift[] = [
   { id: 'shift-1', name: 'Ca Sáng (08:00 - 16:00)', startTime: '08:00', endTime: '16:00', code: 'SH1', color: '#06b6d4' },

@@ -795,6 +795,16 @@ function aurora_promotion_payload($row) {
         'imageUrl' => $row['image_url'],
         'discountType' => $row['discount_type'],
         'discountValue' => (float)$row['discount_value'],
+        'benefitType' => $row['benefit_type'],
+        'benefitTitle' => $row['benefit_title'],
+        'benefitDescription' => $row['benefit_description'],
+        'giftProductId' => $row['gift_product_id'] === null ? null : (int)$row['gift_product_id'],
+        'giftProductName' => isset($row['gift_product_name']) ? $row['gift_product_name'] : null,
+        'giftQuantity' => (int)$row['gift_quantity'],
+        'buyQuantity' => (int)$row['buy_quantity'],
+        'getQuantity' => (int)$row['get_quantity'],
+        'applicationScope' => $row['application_scope'],
+        'redemptionInstructions' => $row['redemption_instructions'],
         'minOrderAmount' => (float)$row['min_order_amount'],
         'maxDiscount' => (float)$row['max_discount'],
         'startsAt' => $row['starts_at'],
@@ -1099,14 +1109,14 @@ if ($resource === 'promotions' || $resource === 'promotion_detail') {
     $detailId = $resource === 'promotion_detail' && isset($_GET['id']) ? (int)$_GET['id'] : 0;
     if ($resource === 'promotion_detail' && $detailId < 1) aurora_response(array('message' => 'Ưu đãi không hợp lệ.'), 422);
     $detailWhere = $detailId > 0 ? ' AND id=' . $detailId : '';
-    $sql = "SELECT id, name, code, short_description, details, terms_text, category, audience,
-                   badge_text, theme_color, image_url, discount_type, discount_value,
+    $sql = "SELECT v.id, v.name, v.code, v.short_description, v.details, v.terms_text, v.category, v.audience,
+                   v.badge_text, v.theme_color, v.image_url, v.discount_type, v.discount_value,v.benefit_type,v.benefit_title,v.benefit_description,v.gift_product_id,v.gift_quantity,v.buy_quantity,v.get_quantity,v.application_scope,v.redemption_instructions,gift.name gift_product_name,
                    min_order_amount, max_discount, starts_at, ends_at, usage_limit,
                    used_count, is_featured
-            FROM vouchers
-            WHERE status='active' AND starts_at <= NOW() AND ends_at >= NOW()
-              AND (usage_limit=0 OR used_count < usage_limit)" . $detailWhere . "
-            ORDER BY is_featured DESC, sort_order ASC, ends_at ASC, id DESC";
+            FROM vouchers v LEFT JOIN products gift ON gift.id=v.gift_product_id
+            WHERE v.status='active' AND v.starts_at <= NOW() AND v.ends_at >= NOW()
+              AND (v.usage_limit=0 OR v.used_count < v.usage_limit)" . str_replace('id=','v.id=',$detailWhere) . "
+            ORDER BY v.is_featured DESC, v.sort_order ASC, v.ends_at ASC, v.id DESC";
     $result = $db->query($sql);
     if (!$result) aurora_response(array('message' => $db->error), 500);
     $promotions = array();
@@ -3566,7 +3576,7 @@ if ($resource === 'bookings') {
             $foundVoucher = $stmt->fetch(); $stmt->close();
             if (!$foundVoucher) throw new Exception('Mã ưu đãi không hợp lệ, đã hết hạn hoặc hết lượt sử dụng.');
             if ($subtotal < (float)$minimumOrder) throw new Exception('Đơn hàng chưa đạt giá trị tối thiểu của mã ưu đãi.');
-            $discount = $voucherType === 'percent' ? $subtotal * (float)$voucherValue / 100 : min((float)$voucherValue, $subtotal);
+            $discount = $voucherType === 'percent' ? $subtotal * (float)$voucherValue / 100 : ($voucherType==='amount'?min((float)$voucherValue,$subtotal):0);
             if ((float)$maximumDiscount > 0) $discount = min($discount, (float)$maximumDiscount);
             $discount = round($discount);
             $total = max(0, $subtotal - $discount);
@@ -4115,8 +4125,8 @@ if ($resource === 'apply_voucher') {
     if ($code === '') aurora_response(array('message' => 'Vui lòng nhập mã voucher.'), 422);
 
     if (!aurora_ensure_vouchers($db)) aurora_response(array('message' => 'Không thể đọc danh mục voucher.'), 500);
-    $stmt = $db->prepare("SELECT name, discount_type, discount_value, min_order_amount, max_discount FROM vouchers WHERE code=? AND status='active' AND starts_at <= NOW() AND ends_at >= NOW() AND (usage_limit=0 OR used_count < usage_limit) LIMIT 1");
-    $stmt->bind_param('s', $code); $stmt->execute(); $stmt->bind_result($voucherName, $voucherType, $voucherValue, $minimumOrder, $maximumDiscount);
+    $stmt = $db->prepare("SELECT name, discount_type, discount_value, min_order_amount, max_discount,benefit_title,benefit_description,redemption_instructions FROM vouchers WHERE code=? AND status='active' AND starts_at <= NOW() AND ends_at >= NOW() AND (usage_limit=0 OR used_count < usage_limit) LIMIT 1");
+    $stmt->bind_param('s', $code); $stmt->execute(); $stmt->bind_result($voucherName, $voucherType, $voucherValue, $minimumOrder, $maximumDiscount,$benefitTitle,$benefitDescription,$redemptionInstructions);
     $foundVoucher = $stmt->fetch(); $stmt->close();
     if (!$foundVoucher) {
         aurora_response(array('message' => 'Mã voucher không hợp lệ hoặc đã hết hạn.'), 404);
@@ -4127,7 +4137,7 @@ if ($resource === 'apply_voucher') {
     $discount = 0;
     if ($voucherType === 'percent') {
         $discount = $total * (float)$voucherValue / 100;
-    } else {
+    } else if($voucherType==='amount') {
         $discount = min((float)$voucherValue, $total);
     }
     if ((float)$maximumDiscount > 0) $discount = min($discount, (float)$maximumDiscount);
@@ -4136,7 +4146,10 @@ if ($resource === 'apply_voucher') {
     aurora_response(array(
         'valid'    => true,
         'code'     => $code,
-        'desc'     => $voucherName,
+        'desc'     => $benefitTitle?$benefitTitle:$voucherName,
+        'benefitType'=>$voucherType,
+        'benefitDescription'=>$benefitDescription,
+        'redemptionInstructions'=>$redemptionInstructions,
         'discount' => $discount,
         'final'    => max(0, $total - $discount),
     ), 200);
