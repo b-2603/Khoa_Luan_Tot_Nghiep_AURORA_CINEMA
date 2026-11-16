@@ -4,7 +4,7 @@ import AccountManagementPage, { type IdentityAccount, type IdentitySystem, type 
 import CustomerWorkspace, { CustomerProfileDrawer } from './components/CustomerWorkspace';
 import BookingHistoryWorkspace from './components/BookingHistoryWorkspace';
 import MarketingWorkspace, { MarketingPlanApproval } from './components/MarketingWorkspace';
-import PromotionCenterWorkspace from './components/PromotionCenterWorkspace';
+import { PromotionApprovalWorkspace, PromotionManagementWorkspace } from './components/PromotionWorkspace';
 import TheaterPromotionWorkspace from './components/TheaterPromotionWorkspace';
 import NotificationCenter from './components/NotificationCenter';
 import ProductCatalogManagement from './components/ProductCatalogManagement';
@@ -114,13 +114,13 @@ type NavItem = { id: string; name: string; icon: React.ElementType; children?: s
 // interface. These are route identifiers only; users always see business names.
 const PAGE_TITLES: Record<string, string> = {
   dashboard: 'Tổng quan hệ thống', accounts: 'Tài khoản & Phân quyền', cinemas: 'Hệ thống rạp', movies: 'Danh sách phim',
-  theater_plans: 'Duyệt kế hoạch phim', theater_plan_approvals: 'Duyệt kế hoạch phim', movie_plan: 'Duyệt kế hoạch phim', schedules: 'Lịch chiếu', screens: 'Quản lý phòng chiếu', pricing: 'Chính sách giá',
-  catalog: 'Danh mục dùng chung', promotions: 'Khuyến mãi & Ưu đãi', products: 'Quản lý hàng hóa', staff: 'Nhân viên & Ca làm việc',
+  theater_plans: 'Kế hoạch rạp', theater_plan_approvals: 'Duyệt kế hoạch phim', promotion_approvals: 'Duyệt chương trình khuyến mãi', movie_plan: 'Duyệt kế hoạch phim', schedules: 'Lịch chiếu', screens: 'Quản lý phòng chiếu', pricing: 'Chính sách giá',
+  catalog: 'Danh mục dùng chung', promotions: 'Chương trình khuyến mãi', products: 'Quản lý hàng hóa', staff: 'Nhân viên & Ca làm việc',
   reports: 'Báo cáo vận hành', pos_devices: 'Thiết bị POS', audit_log: 'Nhật ký hệ thống', settings: 'Cấu hình hệ thống',
   transactions: 'Giao dịch', refunds: 'Hoàn tiền', showtimes: 'Lịch chiếu', shifts: 'Phiên làm việc', cinema_customers: 'Khách hàng', booking_history: 'Lịch sử đặt vé'
   , 'mkt-dashboard':'Tổng quan', 'mkt-movies':'Danh sách phim', 'mkt-plans':'Kế hoạch phim', 'mkt-campaigns':'Quảng bá phim',
   'mkt-promotions':'Chương trình khuyến mãi', 'mkt-vouchers':'Voucher', 'mkt-contents':'Nội dung Customer Website',
-  'mkt-notifications':'Thông báo Marketing', 'mkt-segments':'Phân nhóm khách hàng', 'mkt-reports':'Báo cáo Marketing', 'mkt-account':'Thông tin cá nhân'
+  'mkt-notifications':'Thông báo Marketing', 'mkt-segments':'Phân nhóm khách hàng', 'mkt-reports':'Báo cáo Marketing'
   , marketing_approvals:'Duyệt kế hoạch rạp'
 };
 
@@ -144,11 +144,11 @@ function getRoleNavItems(role: TMSRole): NavItem[] {
         { id: 'cinema_customers', name: 'Khách hàng', icon: UserRound },
         { id: 'cinemas', name: 'Hệ thống rạp', icon: Building2 },
         { id: 'movies', name: 'Danh sách phim', icon: Film },
-        { id: 'theater_plans', name: 'Kế hoạch rạp', icon: CalendarCheck, children: ['Duyệt kế hoạch phim'] },
+        { id: 'theater_plans', name: 'Kế hoạch rạp', icon: CalendarCheck, children: ['Duyệt kế hoạch phim', 'Duyệt chương trình khuyến mãi'] },
         { id: 'schedules', name: 'Lịch chiếu', icon: CalendarDays },
         { id: 'pricing', name: 'Chính sách giá chung', icon: Tag },
         { id: 'catalog', name: 'Danh mục dùng chung', icon: Package },
-        { id: 'promotions', name: 'CTKM & Khuyến mãi', icon: Ticket, children: ['Duyệt & quản lý CTKM'] },
+        { id: 'promotions', name: 'Chương trình khuyến mãi', icon: Ticket },
         { id: 'reports', name: 'Báo cáo tổng hợp', icon: BarChart3 },
         { id: 'pos_devices', name: 'Thiết bị POS', icon: Monitor, children: ['Quản lý POS', 'Phê duyệt POS'] },
         { id: 'audit_log', name: 'Audit Log', icon: ScrollText },
@@ -200,7 +200,6 @@ function getRoleNavItems(role: TMSRole): NavItem[] {
         { id: 'mkt-notifications', name: 'Thông báo Marketing', icon: Bell },
         { id: 'mkt-segments', name: 'Nhóm khách hàng', icon: Users },
         { id: 'mkt-reports', name: 'Báo cáo Marketing', icon: BarChart3 },
-        { id: 'mkt-account', name: 'Thông tin cá nhân', icon: UserRound },
       ];
   }
 }
@@ -221,7 +220,8 @@ const VIEW_RBAC_MODULE: Record<string, string> = {
   catalog: 'products', products: 'products',
   cinema_customers: 'customers',
   booking_history: 'booking_history',
-  promotions: 'vouchers', 'Duyệt kế hoạch CTKM': 'vouchers', 'Duyệt & quản lý CTKM': 'vouchers', 'Quản lý CTKM hệ thống': 'vouchers',
+  promotion_approvals: 'vouchers', 'Duyệt chương trình khuyến mãi': 'vouchers', 'Duyệt kế hoạch CTKM': 'vouchers',
+  promotions: 'vouchers', 'Chương trình khuyến mãi': 'vouchers', 'Quản lý CTKM hệ thống': 'vouchers',
   'Voucher tại rạp': 'vouchers', 'Tiếp nhận CTKM': 'vouchers', 'Triển khai CTKM': 'vouchers', 'Đề xuất điều chỉnh': 'vouchers', 'Tiếp nhận & triển khai CTKM': 'vouchers',
   staff: 'staff', shifts: 'staff', 'NV bán hàng': 'staff', 'Nhân viên rạp': 'staff', 'Phiên bán hàng': 'staff', 'Phiên làm việc': 'staff',
   reports: 'reports',
@@ -233,7 +233,7 @@ const VIEW_RBAC_MODULE: Record<string, string> = {
   audit_log: 'audit_logs', settings: 'settings',
   'mkt-dashboard': 'marketing', 'mkt-movies': 'marketing', 'mkt-plans': 'marketing', 'mkt-campaigns': 'marketing',
   'mkt-promotions': 'marketing', 'mkt-vouchers': 'marketing', 'mkt-contents': 'marketing',
-  'mkt-notifications': 'marketing', 'mkt-segments': 'marketing', 'mkt-reports': 'marketing', 'mkt-account': 'marketing',
+  'mkt-notifications': 'marketing', 'mkt-segments': 'marketing', 'mkt-reports': 'marketing',
 };
 
 // The Marketing landing page is intentionally exposed at the common
@@ -276,7 +276,7 @@ const allowedTmsViews = (role: TMSRole) => {
     (item.children || []).forEach(child => allowed.add(child));
   });
   const operationalViews: Record<TMSRole, string[]> = {
-    super_admin: ['screens', 'transactions', 'refunds', 'movies', 'marketing_approvals', 'Duyệt kế hoạch CTKM', 'Quản lý CTKM hệ thống'],
+    super_admin: ['screens', 'transactions', 'refunds', 'movies', 'marketing_approvals', 'promotion_approvals', 'Duyệt kế hoạch CTKM', 'Quản lý CTKM hệ thống'],
     cinema_admin: ['screens', 'movie_plan', 'schedules'],
     supervisor: ['screens', 'showtimes', 'transactions', 'refunds'],
     accounting: ['transactions', 'refunds'],
@@ -2895,7 +2895,8 @@ export default function App() {
     // Legacy deep links named "Kế hoạch phim" are deliberately redirected to
     // the only valid source of truth: plans submitted by Marketing for review.
     if (role === 'super_admin' && (a === 'theater_plans' || a === 'theater_plan_approvals' || a === 'Duyệt kế hoạch phim' || a === 'Duyệt kế hoạch' || a === 'Kế hoạch phim' || a === 'Phân bổ phim cho rạp' || a === 'marketing_approvals')) return <MarketingPlanApproval apiBase={API_BASE} notify={showSystemNotice} requestConfirm={requestSystemConfirmation}/>;
-    if (role === 'marketing_manager') return <MarketingWorkspace active={a} user={currentUser!} apiBase={API_BASE} notify={showSystemNotice} requestConfirm={requestSystemConfirmation} onNavigate={setActive}/>;
+    if (role === 'super_admin' && (a === 'promotion_approvals' || a === 'Duyệt chương trình khuyến mãi' || a === 'Duyệt kế hoạch CTKM')) return <PromotionApprovalWorkspace apiBase={API_BASE} notify={showSystemNotice} requestConfirm={requestSystemConfirmation}/>;
+    if (role === 'marketing_manager') return <MarketingWorkspace active={a} apiBase={API_BASE} notify={showSystemNotice} requestConfirm={requestSystemConfirmation} onNavigate={setActive}/>;
 
     if (a === 'dashboard' || a === 'Tổng quan tài chính') return renderDashboard();
 
@@ -3689,7 +3690,7 @@ export default function App() {
     );
 
     // PROMOTIONS & CTKM
-    if (role === 'super_admin' && (a === 'promotions' || a === 'Duyệt kế hoạch CTKM' || a === 'Duyệt & quản lý CTKM' || a === 'Quản lý CTKM hệ thống')) return <PromotionCenterWorkspace apiBase={API_BASE} notify={showSystemNotice} requestConfirm={requestSystemConfirmation}/>;
+    if (role === 'super_admin' && (a === 'promotions' || a === 'Chương trình khuyến mãi' || a === 'Quản lý CTKM hệ thống')) return <PromotionManagementWorkspace apiBase={API_BASE} notify={showSystemNotice} requestConfirm={requestSystemConfirmation}/>;
     if (role === 'cinema_admin' && (a === 'promotions' || a === 'Voucher / CTKM' || a === 'Voucher tại rạp' || a === 'Tiếp nhận CTKM' || a === 'Triển khai CTKM' || a === 'Đề xuất điều chỉnh' || a === 'Tiếp nhận & triển khai CTKM')) return <TheaterPromotionWorkspace apiBase={API_BASE} notify={showSystemNotice} requestConfirm={requestSystemConfirmation}/>;
 
     // PRODUCT MASTER DATA & THEATER DISTRIBUTION PLANS

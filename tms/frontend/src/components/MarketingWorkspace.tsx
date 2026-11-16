@@ -7,8 +7,8 @@ import {
 import { formatVietnameseDate, VietnameseDateInput, VietnameseDateTimeInput } from './VietnameseDateInput';
 import MarketingCampaignWorkspace from './MarketingCampaignWorkspace';
 import { MarketingPromotionWorkspace } from './PromotionWorkspace';
+import WebsiteContentWorkspace from './WebsiteContentWorkspace';
 
-type MarketingUser = { id?: number; username: string; full_name: string; email?: string; phone?: string };
 type Row = Record<string, any> & { id: number };
 type Field = { key: string; label: string; type?: 'text'|'number'|'date'|'datetime-local'|'textarea'|'select'; options?: Array<[string,string]> };
 type ModuleConfig = { resource: string; title: string; singular: string; description: string; icon: any; fields: Field[]; primary: string; code?: string; status?: string };
@@ -32,11 +32,6 @@ const modules: Record<string, ModuleConfig> = {
     {key:'discount_value',label:'Giá trị',type:'number'},{key:'quantity',label:'Số lượng phát hành',type:'number'},{key:'start_date',label:'Hiệu lực từ',type:'date'},
     {key:'end_date',label:'Hết hạn',type:'date'},{key:'status',label:'Trạng thái',type:'select',options:[['draft','Bản nháp'],['active','Đang phát hành'],['paused','Tạm dừng'],['expired','Hết hạn']]}
   ]},
-  'mkt-contents': { resource:'contents', title:'Nội dung Customer Website', singular:'nội dung', description:'Quản lý banner, phim nổi bật, tin tức và lịch hiển thị trên website.', icon:Globe2, primary:'title', status:'status', fields:[
-    {key:'title',label:'Tiêu đề'},{key:'content_type',label:'Loại nội dung',type:'select',options:[['banner','Banner trang chủ'],['featured_movie','Phim nổi bật'],['news','Tin tức']]},
-    {key:'placement',label:'Vị trí hiển thị'},{key:'summary',label:'Nội dung / thông điệp',type:'textarea'},{key:'media_url',label:'URL hình ảnh / trailer'},
-    {key:'publish_at',label:'Lịch hiển thị',type:'datetime-local'},{key:'status',label:'Trạng thái',type:'select',options:[['draft','Bản nháp'],['scheduled','Đã lên lịch'],['published','Đã công bố'],['archived','Lưu trữ']]}
-  ]},
   'mkt-notifications': { resource:'notifications', title:'Thông báo Marketing', singular:'thông báo', description:'Soạn nội dung, chọn kênh, đối tượng nhận và lịch gửi.', icon:Bell, primary:'title', status:'status', fields:[
     {key:'title',label:'Tiêu đề'},{key:'channel',label:'Kênh gửi',type:'select',options:[['in_app','Trong ứng dụng'],['email','Email'],['push','Push notification'],['sms','SMS']]},
     {key:'audience',label:'Đối tượng nhận'},{key:'message',label:'Nội dung',type:'textarea'},{key:'scheduled_at',label:'Thời gian gửi',type:'datetime-local'},
@@ -52,13 +47,13 @@ const money = (value:any) => `${Number(value || 0).toLocaleString('vi-VN')} ₫`
 const displayDate = (value:any) => formatVietnameseDate(value ? String(value) : '', '—');
 const normalizeDateTime = (value:any) => value ? String(value).replace(' ', 'T').slice(0,16) : '';
 
-export default function MarketingWorkspace({ active, user, apiBase, notify, requestConfirm, onNavigate }:{ active:string; user:MarketingUser; apiBase:string; notify:(message:string)=>void; requestConfirm:ConfirmAction; onNavigate:(view:string)=>void }) {
+export default function MarketingWorkspace({ active, apiBase, notify, requestConfirm, onNavigate }:{ active:string; apiBase:string; notify:(message:string)=>void; requestConfirm:ConfirmAction; onNavigate:(view:string)=>void }) {
   if (active === 'dashboard' || active === 'mkt-dashboard') return <MarketingDashboard apiBase={apiBase} notify={notify} onNavigate={onNavigate}/>;
   if (active === 'mkt-movies' || active === 'mkt-plans') return <MoviePlanning active={active} apiBase={apiBase} notify={notify} requestConfirm={requestConfirm}/>;
   if (active === 'mkt-campaigns') return <MarketingCampaignWorkspace apiBase={apiBase} notify={notify} requestConfirm={requestConfirm}/>;
   if (active === 'mkt-promotions') return <MarketingPromotionWorkspace apiBase={apiBase} notify={notify} requestConfirm={requestConfirm}/>;
+  if (active === 'mkt-contents') return <WebsiteContentWorkspace apiBase={apiBase} notify={notify} requestConfirm={requestConfirm}/>;
   if (active === 'mkt-reports') return <MarketingReports apiBase={apiBase} notify={notify}/>;
-  if (active === 'mkt-account') return <MarketingAccount apiBase={apiBase} user={user} notify={notify}/>;
   const config = modules[active] || modules['mkt-promotions'];
   return <ResourceManager config={config} apiBase={apiBase} notify={notify} requestConfirm={requestConfirm}/>;
 }
@@ -340,7 +335,5 @@ function historyText(value:string){return value==='created'?'Tạo bản nháp':
 function formatDateTime(value:any){if(!value)return '—';const d=new Date(String(value).replace(' ','T'));return Number.isNaN(d.getTime())?String(value):d.toLocaleString('vi-VN')}
 
 function MarketingReports({apiBase,notify}:{apiBase:string;notify:(m:string)=>void}) { const [data,setData]=useState<any>(null);useEffect(()=>{fetch(`${apiBase}?action=marketing-reports`,{credentials:'include'}).then(r=>r.json()).then(j=>j.success?setData(j.data):notify(j.message)).catch(()=>notify('Không thể tải báo cáo Marketing.'))},[apiBase,notify]);const max=useMemo(()=>Math.max(1,...(data?.monthly||[]).map((x:any)=>Number(x.budget))),[data]);return <div className="mkt-page"><section className="mkt-toolbar mkt-toolbar-end"><button onClick={()=>window.print()}><BarChart3/>Xuất / In báo cáo</button></section><section className="mkt-stat-grid"><article><i><Target/></i><div><small>Tổng ngân sách</small><b>{money(data?.total_budget)}</b></div></article><article><i><CheckCircle2/></i><div><small>Chiến dịch hoàn tất</small><b>{data?.campaigns_completed||0}</b></div></article><article><i><Send/></i><div><small>Thông báo đã gửi</small><b>{data?.notifications_sent||0}</b></div></article><article><i><Gift/></i><div><small>Voucher đã dùng</small><b>{data?.voucher_usage||0}</b></div></article></section><section className="mkt-dashboard-grid"><article className="mkt-panel"><header><b>Ngân sách theo tháng</b></header><div className="mkt-bars">{(data?.monthly||[]).map((x:any)=><p key={x.month}><span>{x.month}</span><i><em style={{width:`${Number(x.budget)/max*100}%`}}/></i><b>{money(x.budget)}</b></p>)}</div></article><article className="mkt-panel"><header><b>Phân bổ theo kênh</b></header><div className="mkt-channel-list">{(data?.channels||[]).map((x:any)=><p key={x.channel}><span><Megaphone/>{x.channel}</span><b>{x.total} chiến dịch</b><small>{money(x.budget)}</small></p>)}</div></article></section></div> }
-
-function MarketingAccount({apiBase,user,notify}:{apiBase:string;user:MarketingUser;notify:(m:string)=>void}) {const [form,setForm]=useState({full_name:user.full_name,email:user.email||'',phone:user.phone||''});useEffect(()=>{fetch(`${apiBase}?action=marketing-account`,{credentials:'include'}).then(r=>r.json()).then(j=>{if(j.success&&j.data)setForm({full_name:j.data.full_name||'',email:j.data.email||'',phone:j.data.phone||''})})},[apiBase]);const save=async(e:FormEvent)=>{e.preventDefault();const r=await fetch(`${apiBase}?action=marketing-account`,{method:'PUT',credentials:'include',headers:{'Content-Type':'application/json'},body:JSON.stringify(form)});const j=await r.json();notify(j.message||'Đã cập nhật hồ sơ.');};return <div className="mkt-page"><form className="mkt-profile mkt-panel" onSubmit={save}><div className="mkt-avatar">{form.full_name.split(' ').slice(-1)[0]?.[0]||'M'}</div><div><label><span>Họ và tên</span><input value={form.full_name} onChange={e=>setForm({...form,full_name:e.target.value})}/></label><label><span>Email công việc</span><input type="email" value={form.email} onChange={e=>setForm({...form,email:e.target.value})}/></label><label><span>Số điện thoại</span><input value={form.phone} onChange={e=>setForm({...form,phone:e.target.value})}/></label><label><span>Vai trò</span><input value="Bộ phận Marketing · Toàn hệ thống" disabled/></label><button><Save/>Lưu thay đổi</button></div></form></div>}
 
 function Status({value}:{value:any}) {const key=String(value||'draft').toLowerCase();return <span className={`mkt-status ${key}`}>{STATUS[key]||value||'Bản nháp'}</span>}

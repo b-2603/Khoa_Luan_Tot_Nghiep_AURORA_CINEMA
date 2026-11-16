@@ -35,6 +35,30 @@ ALTER TABLE marketing_promotions
   ADD COLUMN IF NOT EXISTS application_scope VARCHAR(20) NOT NULL DEFAULT 'order',
   ADD COLUMN IF NOT EXISTS redemption_instructions TEXT NULL;
 
+ALTER TABLE marketing_promotions
+  ADD COLUMN IF NOT EXISTS source_type VARCHAR(30) NOT NULL DEFAULT 'marketing_plan',
+  ADD COLUMN IF NOT EXISTS admin_objective TEXT NULL,
+  ADD COLUMN IF NOT EXISTS coordination_note TEXT NULL;
+
+CREATE TABLE IF NOT EXISTS promotion_department_assignments (
+  id BIGINT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
+  promotion_id BIGINT UNSIGNED NOT NULL,
+  recipient_role VARCHAR(40) NOT NULL,
+  recipient_label VARCHAR(120) NOT NULL,
+  theater_id BIGINT UNSIGNED NULL,
+  responsibility TEXT NOT NULL,
+  due_date DATE NULL,
+  status VARCHAR(30) NOT NULL DEFAULT 'assigned',
+  assigned_by BIGINT UNSIGNED NOT NULL,
+  assigned_by_name VARCHAR(120) NOT NULL,
+  assigned_at DATETIME NOT NULL,
+  accepted_at DATETIME NULL,
+  completed_at DATETIME NULL,
+  updated_at DATETIME NULL,
+  KEY idx_promotion_assignment (promotion_id,status),
+  KEY idx_promotion_recipient (recipient_role,theater_id,status)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8 COLLATE=utf8_unicode_ci;
+
 UPDATE marketing_promotions SET approval_status='pending_approval' WHERE approval_status='pending';
 
 CREATE TABLE IF NOT EXISTS marketing_promotion_history (

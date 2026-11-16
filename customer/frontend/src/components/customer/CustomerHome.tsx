@@ -2,12 +2,13 @@ import { useEffect, useMemo, useRef, useState } from 'react';
 import {
   ArrowRight, CalendarDays, Check, ChevronLeft, ChevronRight, Clock3,
   Film, Gift, MapPin, Play, Search, ShieldCheck, Smartphone, Sparkles,
-  Ticket, Trophy, Users,
+  Ticket, Trophy, Users, Pencil, Plus,
 } from 'lucide-react';
 
 const API_URL = 'http://localhost/AURORA%20CINEMA/customer/backend/public/api.php';
 
 type Language = 'vi' | 'en';
+type WebsiteContent = { id:number; title:string; placementKey:string; eyebrow?:string; summary?:string; bodyText?:string; mediaUrl?:string; altText?:string; buttonLabel?:string; buttonUrl?:string };
 
 type CustomerHomeProps = {
   language: Language;
@@ -77,6 +78,17 @@ export default function CustomerHome({
   const [quickLoading, setQuickLoading] = useState(false);
   const [quickError, setQuickError] = useState('');
   const [quickSearched, setQuickSearched] = useState(false);
+  const [websiteContents, setWebsiteContents] = useState<WebsiteContent[]>([]);
+  const cmsEditorMode = useMemo(() => new URLSearchParams(window.location.search).get('cms_editor') === '1', []);
+
+  useEffect(() => {
+    let active = true;
+    fetch(`${API_URL}?action=website_contents`, { credentials: 'include', cache: 'no-store' })
+      .then(response => response.ok ? response.json() : Promise.reject(new Error('CMS unavailable')))
+      .then(result => { if (active) setWebsiteContents(Array.isArray(result.contents) ? result.contents : []); })
+      .catch(() => { if (active) setWebsiteContents([]); });
+    return () => { active = false; };
+  }, []);
 
   useEffect(() => {
     if (selectedTheaterId) setQuickTheaterId(selectedTheaterId);
@@ -86,30 +98,66 @@ export default function CustomerHome({
     .filter(movie => movie.status === 'NOW_SHOWING')
     .sort((a, b) => Number(Boolean(b.isHot)) - Number(Boolean(a.isHot)))
     .slice(0, 4), [movies]);
-  const heroMovie = featuredMovies[heroIndex] || featuredMovies[0];
+  const cmsHeroes = useMemo(() => websiteContents.filter(item => item.placementKey === 'home_hero'), [websiteContents]);
+  const heroSlides = cmsHeroes.length ? cmsHeroes.map(item => ({ ...item, isCms: true })) : featuredMovies.map(item => ({ ...item, isCms: false }));
+  const heroSlide:any = heroSlides[heroIndex] || heroSlides[0];
+  const heroMovie = heroSlide?.isCms ? null : heroSlide;
+  const announcement = websiteContents.find(item => item.placementKey === 'home_announcement');
+  const cmsOffer = websiteContents.find(item => item.placementKey === 'home_offer');
+  const featuredBlock = websiteContents.find(item => item.placementKey === 'home_featured');
+
+  function selectCmsContent(item:WebsiteContent|null,placementKey:string){
+    if(!cmsEditorMode)return;
+    window.parent.postMessage({type:'aurora-cms-select',contentId:item?.id||0,placementKey},'*');
+  }
+
+  function CmsEditButton({item,placement,label}:{item?:WebsiteContent;placement:string;label:string}){
+    if(!cmsEditorMode)return null;
+    return <button className="customer-cms-edit" onClick={event=>{event.preventDefault();event.stopPropagation();selectCmsContent(item||null,placement)}}><Pencil size={13}/>{item?'Chỉnh sửa':`Thêm ${label}`}</button>;
+  }
+
+  function renderAdZone(placementKey:string,label:string){
+    const items=websiteContents.filter(item=>item.placementKey===placementKey);
+    if(!items.length&&!cmsEditorMode)return null;
+    return <section className={`home-v2-ad-zone ${items.length?'has-content':'is-empty'}`} data-cms-placement={placementKey}>
+      {items.map(item=><article key={item.id} className="home-v2-ad-card" style={item.mediaUrl?{backgroundImage:`linear-gradient(90deg,rgba(13,27,46,.94),rgba(13,27,46,.3)),url(${item.mediaUrl})`}:undefined}>
+        <CmsEditButton item={item} placement={placementKey} label="quảng cáo"/><div><span>{item.eyebrow||'AURORA ADVERTISING'}</span><h2>{item.title}</h2><p>{item.summary||item.bodyText}</p>{item.buttonLabel&&<button onClick={()=>openCmsLink(item)}>{item.buttonLabel}<ArrowRight/></button>}</div>
+      </article>)}
+      {cmsEditorMode&&<button className="home-v2-ad-add" onClick={()=>selectCmsContent(null,placementKey)}><Plus/>Thêm {label}</button>}
+    </section>;
+  }
   const visibleMovies = movies.filter(movie => movie.status === activeMovieTab).slice(0, 8);
   const memberPoints = Number(user?.points || 0);
   const nextTarget = memberPoints < 500 ? 500 : memberPoints < 2000 ? 2000 : memberPoints < 5000 ? 5000 : 10000;
   const memberProgress = Math.min(100, Math.round(memberPoints * 100 / nextTarget));
 
   useEffect(() => {
-    if (heroIndex >= featuredMovies.length) setHeroIndex(0);
-  }, [featuredMovies.length, heroIndex]);
+    if (heroIndex >= heroSlides.length) setHeroIndex(0);
+  }, [heroSlides.length, heroIndex]);
 
   useEffect(() => {
-    if (featuredMovies.length < 2 || isHeroPaused || window.matchMedia('(prefers-reduced-motion: reduce)').matches) return;
+    if (heroSlides.length < 2 || isHeroPaused || window.matchMedia('(prefers-reduced-motion: reduce)').matches) return;
     const timer = window.setTimeout(() => {
-      setHeroIndex(index => (index + 1) % featuredMovies.length);
+      setHeroIndex(index => (index + 1) % heroSlides.length);
     }, 6500);
     return () => window.clearTimeout(timer);
-  }, [featuredMovies.length, heroIndex, isHeroPaused]);
+  }, [heroSlides.length, heroIndex, isHeroPaused]);
 
   function showPreviousHero() {
-    setHeroIndex(index => (index - 1 + featuredMovies.length) % featuredMovies.length);
+    setHeroIndex(index => (index - 1 + heroSlides.length) % heroSlides.length);
   }
 
   function showNextHero() {
-    setHeroIndex(index => (index + 1) % featuredMovies.length);
+    setHeroIndex(index => (index + 1) % heroSlides.length);
+  }
+
+  function openCmsLink(item: WebsiteContent) {
+    recordEvent('VIEW_WEBSITE_CONTENT', 'website_content', item.id, { placement: item.placementKey });
+    const target = String(item.buttonUrl || '').trim();
+    if (target === '/offers' || target === 'offers') return onOpenOffers();
+    if (target === '/movies' || target === 'movies') return onOpenMovies();
+    if (target === '/schedule' || target === 'schedule') return onOpenSchedule();
+    if (/^https?:\/\//i.test(target)) window.location.assign(target);
   }
 
   function recordEvent(eventType: string, entityType = '', entityId = 0, metadata: Record<string, unknown> = {}) {
@@ -175,32 +223,33 @@ export default function CustomerHome({
           setIsHeroPaused(false);
         }}
       >
-        {heroMovie?.bannerUrl || heroMovie?.posterUrl || heroMovie?.poster ? <img key={`hero-image-${heroMovie.id}`} className="home-v2-hero-backdrop" src={heroMovie.bannerUrl || heroMovie.posterUrl || heroMovie.poster} alt="" /> : null}
+        <CmsEditButton item={heroSlide?.isCms?heroSlide:undefined} placement="home_hero" label="Hero"/>
+        {heroSlide?.mediaUrl || heroSlide?.bannerUrl || heroSlide?.posterUrl || heroSlide?.poster ? <img key={`hero-image-${heroSlide.id}`} className="home-v2-hero-backdrop" src={heroSlide.mediaUrl || heroSlide.bannerUrl || heroSlide.posterUrl || heroSlide.poster} alt={heroSlide.altText || ''} /> : null}
         <div className="home-v2-hero-overlay" />
-        <div key={`hero-content-${heroMovie?.id || heroIndex}`} className="home-v2-hero-content">
-          <span className="home-v2-eyebrow"><Sparkles size={14}/>{t('Trải nghiệm điện ảnh Aurora', 'The Aurora cinema experience')}</span>
-          <h1>{heroMovie?.title || t('Chạm vào từng khoảnh khắc điện ảnh', 'Experience every cinematic moment')}</h1>
-          <p>{heroMovie?.description || t('Khám phá phim mới, chọn suất chiếu phù hợp và đặt ghế chỉ trong vài phút.', 'Discover new movies, find the right showtime and reserve your seats in minutes.')}</p>
+        <div key={`hero-content-${heroSlide?.id || heroIndex}`} className="home-v2-hero-content">
+          <span className="home-v2-eyebrow"><Sparkles size={14}/>{heroSlide?.eyebrow || t('Trải nghiệm điện ảnh Aurora', 'The Aurora cinema experience')}</span>
+          <h1>{heroSlide?.title || t('Chạm vào từng khoảnh khắc điện ảnh', 'Experience every cinematic moment')}</h1>
+          <p>{heroSlide?.summary || heroSlide?.bodyText || heroSlide?.description || t('Khám phá phim mới, chọn suất chiếu phù hợp và đặt ghế chỉ trong vài phút.', 'Discover new movies, find the right showtime and reserve your seats in minutes.')}</p>
           <div className="home-v2-hero-meta">
             {heroMovie && <><span className={`home-v2-rating ${ratingClass(heroMovie.ageRating || heroMovie.rating)}`}>{heroMovie.ageRating || heroMovie.rating}</span><span><Clock3 size={15}/>{heroMovie.duration || heroMovie.durationMinutes} {t('phút', 'min')}</span><span><Film size={15}/>{heroMovie.format || '2D Digital'}</span></>}
           </div>
           <div className="home-v2-actions">
-            <button className="home-v2-primary" onClick={() => heroMovie && onOpenMovie(heroMovie)}><Ticket size={17}/>{t('Đặt vé ngay', 'Book now')}</button>
+            {heroSlide?.isCms ? <button className="home-v2-primary" onClick={() => openCmsLink(heroSlide)}><ArrowRight size={17}/>{heroSlide.buttonLabel || t('Khám phá ngay', 'Explore now')}</button> : <button className="home-v2-primary" onClick={() => heroMovie && onOpenMovie(heroMovie)}><Ticket size={17}/>{t('Đặt vé ngay', 'Book now')}</button>}
             {heroMovie && <button className="home-v2-secondary" onClick={() => onWatchTrailer(heroMovie)}><Play size={16}/>{t('Xem trailer', 'Watch trailer')}</button>}
           </div>
         </div>
-        {featuredMovies.length > 1 && <div className="home-v2-hero-nav">
+        {heroSlides.length > 1 && <div className="home-v2-hero-nav">
           <button className="home-v2-hero-arrow" aria-label={t('Phim trước', 'Previous movie')} onClick={showPreviousHero}><ChevronLeft size={18}/></button>
           <div className="home-v2-hero-dots" aria-label={t('Chọn phim nổi bật', 'Choose featured movie')}>
-            {featuredMovies.map((movie, index) => <button
-              key={movie.id}
+            {heroSlides.map((slide:any, index) => <button
+              key={slide.id}
               className={index === heroIndex ? 'active' : ''}
-              aria-label={`${t('Chuyển đến', 'Go to')} ${movie.title}`}
+              aria-label={`${t('Chuyển đến', 'Go to')} ${slide.title}`}
               aria-current={index === heroIndex ? 'true' : undefined}
               onClick={() => setHeroIndex(index)}
             ><i /></button>)}
           </div>
-          <span aria-live="polite"><b>{String(heroIndex + 1).padStart(2, '0')}</b> / {String(featuredMovies.length).padStart(2, '0')}</span>
+          <span aria-live="polite"><b>{String(heroIndex + 1).padStart(2, '0')}</b> / {String(heroSlides.length).padStart(2, '0')}</span>
           <button className="home-v2-hero-arrow" aria-label={t('Phim tiếp theo', 'Next movie')} onClick={showNextHero}><ChevronRight size={18}/></button>
         </div>}
       </article>
@@ -220,10 +269,11 @@ export default function CustomerHome({
           </>}
         </article>
 
-        <article className="home-v2-offer-card">
+        <article className="home-v2-offer-card customer-cms-target">
+          <CmsEditButton item={cmsOffer} placement="home_offer" label="thẻ ưu đãi"/>
           <div className="home-v2-offer-icon"><Gift size={22}/></div>
-          <div><span>{t('Ưu đãi nổi bật', 'Featured offer')}</span><h3>{promotions[0]?.name || t('Ưu đãi dành cho bạn', 'Offers made for you')}</h3><p>{promotions[0]?.description || t('Khám phá voucher và combo mới nhất từ Aurora.', 'Discover Aurora’s latest vouchers and combos.')}</p></div>
-          <button onClick={() => { if (promotions[0]) recordEvent('VIEW_PROMOTION', 'promotion', Number(promotions[0].id)); onOpenOffers(); }}>{t('Khám phá', 'Explore')}<ArrowRight size={14}/></button>
+          <div><span>{cmsOffer?.eyebrow || t('Ưu đãi nổi bật', 'Featured offer')}</span><h3>{cmsOffer?.title || promotions[0]?.name || t('Ưu đãi dành cho bạn', 'Offers made for you')}</h3><p>{cmsOffer?.summary || promotions[0]?.description || t('Khám phá voucher và combo mới nhất từ Aurora.', 'Discover Aurora’s latest vouchers and combos.')}</p></div>
+          <button onClick={() => { if (cmsOffer) openCmsLink(cmsOffer); else { if (promotions[0]) recordEvent('VIEW_PROMOTION', 'promotion', Number(promotions[0].id)); onOpenOffers(); } }}>{cmsOffer?.buttonLabel || t('Khám phá', 'Explore')}<ArrowRight size={14}/></button>
         </article>
 
         <article className="home-v2-trust-card">
@@ -231,6 +281,8 @@ export default function CustomerHome({
         </article>
       </aside>
     </section>
+    {(announcement||cmsEditorMode)&&<section className={`home-v2-cms-announcement customer-cms-target${announcement?'':' is-editor-empty'}`}><CmsEditButton item={announcement} placement="home_announcement" label="thông báo"/>{announcement?<><div><Sparkles/><span><b>{announcement.title}</b><small>{announcement.summary || announcement.bodyText}</small></span></div>{announcement.buttonLabel&&<button onClick={()=>openCmsLink(announcement)}>{announcement.buttonLabel}<ArrowRight/></button>}</>:<div><Plus/><span><b>Thêm thông báo trang chủ</b><small>Nhấp để tạo nội dung mới tại vị trí này.</small></span></div>}</section>}
+    {renderAdZone('home_ad_top','quảng cáo đầu trang')}
 
     <section className="home-v2-quick" aria-labelledby="quick-booking-title">
       <div className="home-v2-section-heading compact"><div><span>{t('Nhanh chóng & chính xác', 'Fast and precise')}</span><h2 id="quick-booking-title">{t('Tìm suất chiếu phù hợp', 'Find your perfect showtime')}</h2></div><button onClick={onOpenSchedule}>{t('Xem toàn bộ lịch chiếu', 'View full schedule')}<ArrowRight size={15}/></button></div>
@@ -246,8 +298,11 @@ export default function CustomerHome({
       </div>}
     </section>
 
-    <section className="home-v2-catalogue">
-      <div className="home-v2-section-heading"><div><span>{t('Đang có tại Aurora', 'Now at Aurora')}</span><h2>{t('Khám phá điện ảnh', 'Discover cinema')}</h2></div><button onClick={onOpenMovies}>{t('Xem tất cả phim', 'View all movies')}<ArrowRight size={15}/></button></div>
+    {renderAdZone('home_ad_middle','quảng cáo giữa trang')}
+
+    <section className="home-v2-catalogue customer-cms-target">
+      <CmsEditButton item={featuredBlock} placement="home_featured" label="tiêu đề khối phim"/>
+      <div className="home-v2-section-heading"><div><span>{featuredBlock?.eyebrow || t('Đang có tại Aurora', 'Now at Aurora')}</span><h2>{featuredBlock?.title || t('Khám phá điện ảnh', 'Discover cinema')}</h2>{featuredBlock?.summary&&<small className="home-v2-section-summary">{featuredBlock.summary}</small>}</div><button onClick={()=>featuredBlock?.buttonUrl?openCmsLink(featuredBlock):onOpenMovies()}>{featuredBlock?.buttonLabel || t('Xem tất cả phim', 'View all movies')}<ArrowRight size={15}/></button></div>
       <div className="home-v2-tabs" role="tablist">
         {([
           ['NOW_SHOWING', t('Đang chiếu', 'Now showing')],
@@ -265,6 +320,8 @@ export default function CustomerHome({
         </article>)}
       </div> : <div className="home-v2-empty catalogue"><Film size={24}/>{t('Danh mục này đang được cập nhật từ Aurora DB.', 'This catalogue is being updated from Aurora DB.')}</div>}
     </section>
+
+    {renderAdZone('home_ad_bottom','quảng cáo cuối trang')}
 
     <section className="home-v2-benefits">
       <div><Ticket/><b>{t('Đặt vé linh hoạt', 'Flexible booking')}</b><span>{t('Chọn rạp, suất và ghế theo thời gian thực', 'Choose cinema, showtime and seats in real time')}</span></div>

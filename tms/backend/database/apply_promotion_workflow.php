@@ -31,7 +31,8 @@ $promotionColumns = array(
     'review_note'=>'TEXT NULL','published_by'=>'VARCHAR(120) NULL','published_at'=>'DATETIME NULL','voucher_id'=>'BIGINT UNSIGNED NULL',
     'benefit_type'=>"VARCHAR(30) NOT NULL DEFAULT 'percent'",'benefit_title'=>'VARCHAR(150) NULL','benefit_description'=>'TEXT NULL',
     'gift_product_id'=>'BIGINT UNSIGNED NULL','gift_quantity'=>'INT UNSIGNED NOT NULL DEFAULT 0','buy_quantity'=>'INT UNSIGNED NOT NULL DEFAULT 0',
-    'get_quantity'=>'INT UNSIGNED NOT NULL DEFAULT 0','application_scope'=>"VARCHAR(20) NOT NULL DEFAULT 'order'",'redemption_instructions'=>'TEXT NULL'
+    'get_quantity'=>'INT UNSIGNED NOT NULL DEFAULT 0','application_scope'=>"VARCHAR(20) NOT NULL DEFAULT 'order'",'redemption_instructions'=>'TEXT NULL',
+    'source_type'=>"VARCHAR(30) NOT NULL DEFAULT 'marketing_plan'",'admin_objective'=>'TEXT NULL','coordination_note'=>'TEXT NULL'
 );
 foreach ($promotionColumns as $column=>$definition) {
     if (!addColumnWhenMissing($db, 'marketing_promotions', $column, $definition)) { fwrite(STDERR, "Loi marketing_promotions.{$column}: {$db->error}\n"); exit(1); }
@@ -52,6 +53,7 @@ if (!$db->query("CREATE TABLE IF NOT EXISTS promotion_theater_deployments (
     KEY idx_promotion_deployment_theater (theater_id,status,pos_enabled),KEY idx_promotion_deployment_voucher (voucher_id)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8 COLLATE=utf8_unicode_ci")) { fwrite(STDERR, "Khong the tao bang phan phoi CTKM: {$db->error}\n"); exit(1); }
 if (!$db->query("CREATE TABLE IF NOT EXISTS promotion_media_assets (id BIGINT UNSIGNED AUTO_INCREMENT PRIMARY KEY,promotion_id BIGINT UNSIGNED NULL,file_name VARCHAR(180) NOT NULL,original_name VARCHAR(255) NOT NULL,mime_type VARCHAR(80) NOT NULL,file_size INT UNSIGNED NOT NULL,public_url VARCHAR(500) NOT NULL,uploaded_by BIGINT UNSIGNED NULL,created_at DATETIME NOT NULL,KEY idx_promotion_media_promotion(promotion_id),KEY idx_promotion_media_uploader(uploaded_by,created_at)) ENGINE=InnoDB DEFAULT CHARSET=utf8 COLLATE=utf8_unicode_ci")) { fwrite(STDERR, "Khong the tao thu vien anh CTKM: {$db->error}\n"); exit(1); }
+if (!$db->query("CREATE TABLE IF NOT EXISTS promotion_department_assignments (id BIGINT UNSIGNED AUTO_INCREMENT PRIMARY KEY,promotion_id BIGINT UNSIGNED NOT NULL,recipient_role VARCHAR(40) NOT NULL,recipient_label VARCHAR(120) NOT NULL,theater_id BIGINT UNSIGNED NULL,responsibility TEXT NOT NULL,due_date DATE NULL,status VARCHAR(30) NOT NULL DEFAULT 'assigned',assigned_by BIGINT UNSIGNED NOT NULL,assigned_by_name VARCHAR(120) NOT NULL,assigned_at DATETIME NOT NULL,accepted_at DATETIME NULL,completed_at DATETIME NULL,updated_at DATETIME NULL,KEY idx_promotion_assignment(promotion_id,status),KEY idx_promotion_recipient(recipient_role,theater_id,status)) ENGINE=InnoDB DEFAULT CHARSET=utf8 COLLATE=utf8_unicode_ci")) { fwrite(STDERR, "Khong the tao bang phan cong CTKM: {$db->error}\n"); exit(1); }
 $db->query("ALTER TABLE vouchers MODIFY discount_type VARCHAR(30) NOT NULL DEFAULT 'percent'");
 $voucherColumns = array(
     'short_description'=>'VARCHAR(255) NULL','details'=>'TEXT NULL','terms_text'=>'TEXT NULL','category'=>"VARCHAR(30) NOT NULL DEFAULT 'ticket'",

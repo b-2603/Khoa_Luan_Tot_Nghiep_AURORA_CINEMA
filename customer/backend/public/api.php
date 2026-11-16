@@ -839,6 +839,36 @@ if ($resource === 'health') {
     aurora_response(array('status' => 'ok', 'service' => 'aurora-customer-api', 'database' => $db->errno ? 'error' : 'ok'), 200);
 }
 
+// Public CMS feed. Only content explicitly published by Marketing, enabled and
+// inside its Vietnam-time display window can reach the Customer Website.
+if ($resource === 'website_contents') {
+    aurora_method('GET');
+    $table = $db->query("SHOW TABLES LIKE 'marketing_contents'");
+    if (!$table || !$table->num_rows) aurora_response(array('contents'=>array(),'source'=>'aurora_db'), 200);
+    $required = array('placement_key','eyebrow','body_text','button_label','button_url','alt_text','sort_order','is_visible','starts_at','ends_at');
+    foreach ($required as $columnName) {
+        $columnEsc = $db->real_escape_string($columnName);
+        $column = $db->query("SHOW COLUMNS FROM marketing_contents LIKE '{$columnEsc}'");
+        if (!$column || !$column->num_rows) aurora_response(array('contents'=>array(),'source'=>'aurora_db','message'=>'CMS đang được nâng cấp.'), 200);
+    }
+    $nowEsc = $db->real_escape_string(aurora_vietnam_now());
+    $result = $db->query("SELECT id,title,content_type,placement_key,eyebrow,summary,body_text,media_url,alt_text,button_label,button_url,starts_at,ends_at,sort_order
+        FROM marketing_contents
+        WHERE status='published' AND is_visible=1
+          AND (starts_at IS NULL OR starts_at<='{$nowEsc}')
+          AND (ends_at IS NULL OR ends_at>='{$nowEsc}')
+        ORDER BY FIELD(placement_key,'home_hero','home_announcement','home_offer','home_ad_top','home_featured','home_ad_middle','home_ad_bottom'),sort_order,id");
+    if (!$result) aurora_response(array('message'=>'Không thể tải nội dung Customer Website: '.$db->error),500);
+    $contents=array();
+    while($row=$result->fetch_assoc())$contents[]=array(
+        'id'=>(int)$row['id'],'title'=>$row['title'],'type'=>$row['content_type'],'placementKey'=>$row['placement_key'],
+        'eyebrow'=>$row['eyebrow'],'summary'=>$row['summary'],'bodyText'=>$row['body_text'],'mediaUrl'=>$row['media_url'],
+        'altText'=>$row['alt_text'],'buttonLabel'=>$row['button_label'],'buttonUrl'=>$row['button_url'],
+        'startsAt'=>$row['starts_at'],'endsAt'=>$row['ends_at'],'sortOrder'=>(int)$row['sort_order']
+    );
+    aurora_response(array('contents'=>$contents,'source'=>'aurora_db','serverTime'=>$nowEsc),200);
+}
+
 if ($resource === 'address_provinces') {
     aurora_method('GET');
     if (!aurora_ensure_administrative_catalog($db)) aurora_response(array('message'=>'Không thể chuẩn bị danh mục tỉnh/thành trong aurora_db.'), 500);

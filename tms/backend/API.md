@@ -92,6 +92,14 @@ Khi được duyệt, kế hoạch chuyển sang `published` và tạo bản ghi
 
 Hồ sơ phim do Marketing tạo được lưu trong `movies` với `status = 'draft'` và `marketing_owner_id`. Phim chỉ chuyển sang `coming_soon` khi kế hoạch đã được Admin Tổng duyệt và Marketing thực hiện thao tác `publish-movie`.
 
+### CMS Customer Website
+
+- `GET|POST|PUT|DELETE ?action=marketing-contents` — quản lý nội dung theo vị trí `home_hero`, `home_announcement`, `home_offer`, `home_featured` và các vùng quảng cáo `home_ad_top|middle|bottom`; hỗ trợ nháp, lịch hiển thị, công bố và ẩn nội dung.
+- Màn `mkt-contents` nhúng nguyên trang Customer với `cms_editor=1`. Các vùng được chọn gửi sự kiện `aurora-cms-select` về TMS để mở đúng hồ sơ hoặc tạo nội dung mới tại đúng vị trí.
+- `PUT ?action=marketing-contents&operation=reorder` — lưu thứ tự kéo-thả bằng body `{ "ids": [3, 1, 2] }`.
+- `POST ?action=marketing-content-media` — upload ảnh CMS (JPG/PNG/GIF/WebP, tối đa 10 MB), lưu metadata trong `aurora_db.marketing_content_assets`.
+- Customer API `?action=website_contents` chỉ trả nội dung `published`, được bật hiển thị và đang nằm trong khoảng `starts_at`–`ends_at`. Mọi lần tạo/sửa/xóa được ghi trong `marketing_content_history`.
+
 ## Trung tâm CTKM Admin Tổng
 
 - Trong TMS Admin Tổng, duyệt và quản lý CTKM được gộp trong mục “CTKM & Khuyến mãi”, gồm tab “Duyệt kế hoạch” và “Quản lý CTKM hệ thống”. “Kế hoạch rạp” chỉ dành cho kế hoạch phim.

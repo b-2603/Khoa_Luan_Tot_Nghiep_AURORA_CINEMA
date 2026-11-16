@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useState } from 'react';
 import {
   Activity, AlertTriangle, CalendarDays, CheckCircle2, ChevronLeft, ChevronRight,
-  Clock3, Download, Eye, FileClock, FilterX, Fingerprint, RefreshCw, Search,
+  Clock3, Eye, FileClock, FilterX, Fingerprint, Search,
   ShieldCheck, UserRound, Users, X, XCircle
 } from 'lucide-react';
 import './AuditLogManagement.css';
@@ -43,11 +43,7 @@ function severityOf(row:AuditRow) {
   return 'info';
 }
 
-function escapeCsv(value:unknown) {
-  return `"${String(value ?? '').replace(/"/g,'""')}"`;
-}
-
-export default function AuditLogManagement({apiBase,notify}:Props) {
+export default function AuditLogManagement({apiBase}:Props) {
   const [rows,setRows] = useState<AuditRow[]>([]);
   const [summary,setSummary] = useState(EMPTY_SUMMARY);
   const [meta,setMeta] = useState({page:1,per_page:20,total:0,total_pages:1});
@@ -61,7 +57,6 @@ export default function AuditLogManagement({apiBase,notify}:Props) {
   const [dateTo,setDateTo] = useState('');
   const [page,setPage] = useState(1);
   const [loading,setLoading] = useState(true);
-  const [exporting,setExporting] = useState(false);
   const [error,setError] = useState('');
   const [selected,setSelected] = useState<AuditRow|null>(null);
   const [refreshKey,setRefreshKey] = useState(0);
@@ -99,40 +94,7 @@ export default function AuditLogManagement({apiBase,notify}:Props) {
   const setFilter = (setter:(value:string)=>void,value:string) => { setter(value); setPage(1); };
   const resetFilters = () => { setQuery('');setAction('');setRole('');setModule('');setSeverity('');setDateFrom('');setDateTo('');setPage(1); };
 
-  const exportCsv = async () => {
-    setExporting(true);
-    try {
-      const collected:AuditRow[] = [];
-      let current = 1; let pages = 1;
-      do {
-        const response = await fetch(`${apiBase}?${makeParams(current,250)}`,{credentials:'include',cache:'no-store'});
-        const result:ResponseShape = await response.json();
-        if (!response.ok || !result.success) throw new Error(result.message || 'Không thể xuất dữ liệu.');
-        collected.push(...(result.data || [])); pages = result.meta.total_pages; current++;
-      } while (current <= pages);
-      const header = ['Mã','Thời gian','Người dùng','Họ tên','Vai trò','Hành động','Module','Đối tượng','Chi tiết','Mức độ','HTTP','IP'];
-      const lines = [header.map(escapeCsv).join(','),...collected.map(row => [row.id,row.created_at,row.username,row.actor_name,ROLE_LABELS[row.role]||row.role,row.action,MODULE_LABELS[row.module]||row.module,[row.entity_type,row.entity_id].filter(Boolean).join(' #'),row.details,row.severity,row.status_code,row.ip_address].map(escapeCsv).join(','))];
-      const blob = new Blob(['\ufeff'+lines.join('\r\n')],{type:'text/csv;charset=utf-8'});
-      const url = URL.createObjectURL(blob); const link = document.createElement('a');
-      link.href=url; link.download=`aurora-audit-log-${new Date().toISOString().slice(0,10)}.csv`; link.click(); URL.revokeObjectURL(url);
-      notify(`Đã xuất ${collected.length} bản ghi Audit Log.`);
-    } catch (caught) { setError((caught as Error).message); }
-    finally { setExporting(false); }
-  };
-
   return <section className="audit-workspace">
-    <div className="audit-hero">
-      <div className="audit-hero-copy">
-        <span className="audit-eyebrow"><ShieldCheck size={15}/> TRUNG TÂM KIỂM SOÁT HỆ THỐNG</span>
-        <h2>Audit Log</h2>
-        <p>Theo dõi dấu vết hoạt động, sự kiện bảo mật và thay đổi dữ liệu trên toàn bộ Aurora Cinema.</p>
-      </div>
-      <div className="audit-hero-actions">
-        <button className="audit-btn secondary" onClick={()=>setRefreshKey(key=>key+1)} disabled={loading}><RefreshCw size={16} className={loading?'spin':''}/> Làm mới</button>
-        <button className="audit-btn primary" onClick={exportCsv} disabled={exporting || !meta.total}><Download size={16}/> {exporting?'Đang xuất...':'Xuất CSV'}</button>
-      </div>
-    </div>
-
     <div className="audit-kpis">
       <article><span className="audit-kpi-icon blue"><FileClock/></span><div><small>Tổng bản ghi</small><strong>{summary.total.toLocaleString('vi-VN')}</strong><em>Toàn bộ lịch sử</em></div></article>
       <article><span className="audit-kpi-icon green"><Activity/></span><div><small>Hôm nay</small><strong>{summary.today.toLocaleString('vi-VN')}</strong><em>{summary.last_24h.toLocaleString('vi-VN')} trong 24 giờ</em></div></article>
