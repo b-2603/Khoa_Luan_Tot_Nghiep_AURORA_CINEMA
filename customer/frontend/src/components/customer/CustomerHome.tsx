@@ -128,7 +128,7 @@ export default function CustomerHome({
   }
   const visibleMovies = movies.filter(movie => movie.status === activeMovieTab).slice(0, 8);
   const memberPoints = Number(user?.points || 0);
-  const nextTarget = memberPoints < 500 ? 500 : memberPoints < 2000 ? 2000 : memberPoints < 5000 ? 5000 : 10000;
+  const nextTarget = memberPoints < 500000 ? 500000 : memberPoints < 2000000 ? 2000000 : memberPoints < 5000000 ? 5000000 : 10000000;
   const memberProgress = Math.min(100, Math.round(memberPoints * 100 / nextTarget));
 
   useEffect(() => {

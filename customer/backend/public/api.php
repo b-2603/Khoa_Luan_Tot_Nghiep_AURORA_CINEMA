@@ -563,6 +563,9 @@ function aurora_ensure_sales_orders($db) {
         amount_received DECIMAL(12,2) NOT NULL DEFAULT 0,
         change_amount DECIMAL(12,2) NOT NULL DEFAULT 0,
         status VARCHAR(20) NOT NULL DEFAULT 'PAID',
+        loyalty_points_redeemed INT UNSIGNED NOT NULL DEFAULT 0,
+        loyalty_discount_amount DECIMAL(12,2) NOT NULL DEFAULT 0,
+        loyalty_points_earned INT UNSIGNED NOT NULL DEFAULT 0,
         created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
         updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
         INDEX idx_orders_channel (channel),
@@ -1399,21 +1402,28 @@ function aurora_ensure_loyalty_schema($db) {
         id BIGINT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
         user_id BIGINT UNSIGNED NOT NULL,
         booking_id BIGINT UNSIGNED NULL,
+        order_id BIGINT UNSIGNED NULL,
         points_change INT NOT NULL,
+        ticket_amount DECIMAL(12,2) NOT NULL DEFAULT 0,
+        product_amount DECIMAL(12,2) NOT NULL DEFAULT 0,
+        ticket_rate DECIMAL(5,2) NOT NULL DEFAULT 0,
+        product_rate DECIMAL(5,2) NOT NULL DEFAULT 0,
+        point_value_vnd INT UNSIGNED NOT NULL DEFAULT 1,
         balance_after INT UNSIGNED NOT NULL,
         transaction_type VARCHAR(30) NOT NULL,
         description VARCHAR(255) NOT NULL,
         created_at DATETIME NOT NULL,
-        UNIQUE KEY uq_loyalty_booking (booking_id),
+        UNIQUE KEY uq_loyalty_order_type (order_id, transaction_type),
+        KEY idx_loyalty_booking (booking_id),
         KEY idx_loyalty_user_created (user_id, created_at)
     ) ENGINE=InnoDB DEFAULT CHARSET=utf8");
 }
 
 function aurora_membership_level($points) {
     $points = (int)$points;
-    if ($points >= 5000) return 'PLATINUM';
-    if ($points >= 2000) return 'GOLD';
-    if ($points >= 500) return 'SILVER';
+    if ($points >= 5000000) return 'VIP';
+    if ($points >= 2000000) return 'GOLD';
+    if ($points >= 500000) return 'SILVER';
     return 'STANDARD';
 }
 
@@ -1485,10 +1495,10 @@ function aurora_ensure_membership_tiers($db) {
     ) ENGINE=InnoDB DEFAULT CHARSET=utf8");
     if (!$created) return false;
     return $db->query("INSERT IGNORE INTO customer_membership_tiers (tier_code,tier_name,min_points,theme_color,benefits_json,sort_order,is_active,created_at,updated_at) VALUES
-        ('STANDARD','Standard',0,'#50708f','[\"Tích điểm sau mỗi giao dịch\",\"Nhận ưu đãi thành viên\",\"Quản lý vé trực tuyến\"]',1,1,NOW(),NOW()),
-        ('SILVER','Silver',500,'#7891a8','[\"Tăng 5% điểm thưởng\",\"Ưu tiên thông báo phim mới\",\"Quà sinh nhật Aurora\"]',2,1,NOW(),NOW()),
-        ('GOLD','Gold',2000,'#d69b26','[\"Tăng 10% điểm thưởng\",\"Ưu đãi combo độc quyền\",\"Ưu tiên hỗ trợ thành viên\"]',3,1,NOW(),NOW()),
-        ('PLATINUM','Platinum',5000,'#46566b','[\"Tăng 15% điểm thưởng\",\"Đặc quyền suất chiếu sớm\",\"Quà tri ân hằng năm\"]',4,1,NOW(),NOW())");
+        ('STANDARD','Standard',0,'#50708f','[\"Tích 5% tiền vé\",\"Tích 10% tiền hàng hóa\",\"Dùng điểm tại POS\"]',1,1,NOW(),NOW()),
+        ('SILVER','Silver',500000,'#7891a8','[\"Tích 5% tiền vé\",\"Tích 10% tiền hàng hóa\",\"Quà sinh nhật Aurora\"]',2,1,NOW(),NOW()),
+        ('GOLD','Gold',2000000,'#d69b26','[\"Tích 5% tiền vé\",\"Tích 10% tiền hàng hóa\",\"Ưu đãi combo độc quyền\"]',3,1,NOW(),NOW()),
+        ('VIP','VIP',5000000,'#0d1b2e','[\"Cộng thêm 3% tích điểm cho vé\",\"Cộng thêm 3% tích điểm cho hàng hóa\",\"Dùng điểm trực tiếp tại POS\"]',4,1,NOW(),NOW())");
 }
 
 function aurora_ensure_support_schema($db) {
@@ -1546,25 +1556,28 @@ function aurora_ensure_support_schema($db) {
             ('BOOKING','Tôi nên đến rạp trước bao lâu?','Aurora khuyến nghị đến rạp trước ít nhất 15 phút để nhận vé, mua bắp nước và vào phòng đúng giờ.',2,1,NOW(),NOW()),
             ('PAYMENT','Thanh toán bị trừ tiền nhưng chưa có vé?','Hãy kiểm tra lịch sử đặt vé trong tài khoản. Nếu chưa có mã vé sau 10 phút, gửi yêu cầu kèm mã giao dịch.',1,1,NOW(),NOW()),
             ('PAYMENT','Khi nào tôi nhận được tiền hoàn?','Thời gian hoàn tiền phụ thuộc phương thức thanh toán và thường mất 3 đến 10 ngày làm việc.',2,1,NOW(),NOW()),
-            ('MEMBERSHIP','Điểm Aurora được tính như thế nào?','Mỗi 1.000 đồng chi tiêu hợp lệ được quy đổi thành 1 điểm và ghi vào số điểm sau khi thanh toán thành công.',1,1,NOW(),NOW()),
+            ('MEMBERSHIP','Điểm Aurora được tính như thế nào?','Vé tích 5%, hàng hóa mua kèm tích 10%. Giá trị thưởng được quy đổi theo 1 điểm bằng 1.000 đồng; thành viên VIP được cộng thêm 3% cho mỗi loại.',1,1,NOW(),NOW()),
             ('TECHNICAL','Tôi quên mật khẩu thì làm gì?','Chọn Quên mật khẩu tại màn hình đăng nhập và làm theo hướng dẫn gửi đến email đã đăng ký.',1,1,NOW(),NOW())");
     }
     return true;
 }
 
 function aurora_award_booking_points($db, $userId, $bookingId, $amount) {
-    $earned = max(0, (int)floor(((float)$amount) / 1000));
-    if ($earned < 1) return 0;
     $userId = (int)$userId; $bookingId = (int)$bookingId;
-    $existing = $db->query("SELECT id FROM loyalty_point_transactions WHERE booking_id={$bookingId} LIMIT 1");
+    $orderId=0;$orderResult=$db->query("SELECT id FROM orders WHERE booking_id={$bookingId} ORDER BY id DESC LIMIT 1");if($orderResult&&($orderRow=$orderResult->fetch_assoc()))$orderId=(int)$orderRow['id'];
+    $userLevelResult=$db->query("SELECT membership_level FROM users WHERE id={$userId} LIMIT 1");$levelRow=$userLevelResult?$userLevelResult->fetch_assoc():null;$bonus=$levelRow&&in_array($levelRow['membership_level'],array('VIP','PLATINUM'),true)?3:0;$rate=5+$bonus;
+    $earned = max(0, (int)floor(((float)$amount) * $rate / 100));
+    if ($earned < 1) return 0;
+    $existing = $db->query("SELECT id FROM loyalty_point_transactions WHERE booking_id={$bookingId} AND transaction_type='ONLINE_EARN' LIMIT 1");
     if ($existing && $existing->num_rows) return 0;
     $current = $db->query("SELECT points FROM users WHERE id={$userId} FOR UPDATE");
     if (!$current || !($row = $current->fetch_assoc())) throw new Exception('Không tìm thấy tài khoản thành viên để cộng điểm.');
     $newBalance = (int)$row['points'] + $earned;
-    $level = aurora_membership_level($newBalance);
+    $lifetimeResult=$db->query("SELECT COALESCE(SUM(CASE WHEN points_change>0 THEN points_change ELSE 0 END),0) total FROM loyalty_point_transactions WHERE user_id={$userId}");$lifetimeRow=$lifetimeResult?$lifetimeResult->fetch_assoc():array('total'=>0);$level = aurora_membership_level((int)$lifetimeRow['total']+$earned);
     if (!$db->query("UPDATE users SET points={$newBalance}, membership_level='{$level}', updated_at=NOW() WHERE id={$userId}")) throw new Exception('Không thể cập nhật điểm thành viên.');
     $description = $db->real_escape_string('Tích điểm từ đơn đặt vé #' . $bookingId);
-    if (!$db->query("INSERT INTO loyalty_point_transactions (user_id, booking_id, points_change, balance_after, transaction_type, description, created_at) VALUES ({$userId}, {$bookingId}, {$earned}, {$newBalance}, 'BOOKING_EARN', '{$description}', NOW())")) throw new Exception('Không thể ghi nhận lịch sử điểm.');
+    if (!$db->query("INSERT INTO loyalty_point_transactions (user_id, booking_id, order_id, points_change, ticket_amount, product_amount, ticket_rate, product_rate, point_value_vnd, balance_after, transaction_type, description, created_at) VALUES ({$userId}, {$bookingId}, ".($orderId>0?$orderId:'NULL').", {$earned}, ".(float)$amount.", 0, {$rate}, 10, 1, {$newBalance}, 'ONLINE_EARN', '{$description}', NOW())")) throw new Exception('Không thể ghi nhận lịch sử điểm.');
+    if($orderId>0)$db->query("UPDATE orders SET loyalty_points_earned={$earned} WHERE id={$orderId}");
     return $earned;
 }
 
@@ -2471,11 +2484,11 @@ if ($resource === 'loyalty') {
     $userId = aurora_require_user();
     if (!aurora_ensure_loyalty_schema($db)) aurora_response(array('message' => 'Không thể khởi tạo sổ điểm Aurora.'), 500);
     $history = array();
-    $result = $db->query("SELECT id, booking_id, points_change, balance_after, transaction_type, description, created_at FROM loyalty_point_transactions WHERE user_id=".(int)$userId." ORDER BY id DESC LIMIT 30");
+    $result = $db->query("SELECT id,booking_id,order_id,points_change,ticket_amount,product_amount,ticket_rate,product_rate,point_value_vnd,balance_after,transaction_type,description,created_at FROM loyalty_point_transactions WHERE user_id=".(int)$userId." ORDER BY id DESC LIMIT 30");
     if (!$result) aurora_response(array('message' => 'Không thể tải lịch sử điểm.'), 500);
     while ($row = $result->fetch_assoc()) {
         $row['id'] = (int)$row['id']; $row['booking_id'] = $row['booking_id'] !== null ? (int)$row['booking_id'] : null;
-        $row['points_change'] = (int)$row['points_change']; $row['balance_after'] = (int)$row['balance_after'];
+        $row['points_change'] = (int)$row['points_change']; $row['balance_after'] = (int)$row['balance_after'];$row['order_id']=$row['order_id']!==null?(int)$row['order_id']:null;$row['ticket_amount']=(float)$row['ticket_amount'];$row['product_amount']=(float)$row['product_amount'];$row['ticket_rate']=(float)$row['ticket_rate'];$row['product_rate']=(float)$row['product_rate'];$row['point_value_vnd']=(int)$row['point_value_vnd'];
         $history[] = $row;
     }
     aurora_response(array('member' => aurora_public_user($db, $userId), 'history' => $history), 200);
@@ -2495,17 +2508,17 @@ if ($resource === 'membership_overview') {
         $card = aurora_membership_card_for_user($db,$userId);
         $userResult = $db->query("SELECT full_name,membership_level,points FROM users WHERE id=".(int)$userId." LIMIT 1");
         if ($card && $userResult && ($user=$userResult->fetch_assoc())) {
-            $points = max(0,(int)$user['points']); $level = $user['membership_level'] ? $user['membership_level'] : aurora_membership_level($points);
-            $thresholds=array('STANDARD'=>500,'SILVER'=>2000,'GOLD'=>5000); $nextNames=array('STANDARD'=>'SILVER','SILVER'=>'GOLD','GOLD'=>'PLATINUM');
+            $points = max(0,(int)$user['points']);$lifetimeResult=$db->query("SELECT COALESCE(SUM(CASE WHEN points_change>0 THEN points_change ELSE 0 END),0) total FROM loyalty_point_transactions WHERE user_id=".(int)$userId);$lifetimeRow=$lifetimeResult?$lifetimeResult->fetch_assoc():array('total'=>$points);$lifetime=max($points,(int)$lifetimeRow['total']); $level = $user['membership_level'] ? $user['membership_level'] : aurora_membership_level($lifetime);
+            $thresholds=array('STANDARD'=>500000,'SILVER'=>2000000,'GOLD'=>5000000); $nextNames=array('STANDARD'=>'SILVER','SILVER'=>'GOLD','GOLD'=>'VIP');
             $nextThreshold=isset($thresholds[$level])?$thresholds[$level]:null;
-            $member=array('fullName'=>$user['full_name'],'cardNumber'=>$card['card_number'],'level'=>$level,'points'=>$points,'activatedAt'=>$card['activated_at'],'expiresAt'=>$card['expires_at'],'nextLevel'=>isset($nextNames[$level])?$nextNames[$level]:null,'nextThreshold'=>$nextThreshold,'pointsToNext'=>$nextThreshold===null?0:max(0,$nextThreshold-$points));
+            $member=array('fullName'=>$user['full_name'],'cardNumber'=>$card['card_number'],'level'=>$level,'points'=>$points,'lifetimePoints'=>$lifetime,'pointValueVnd'=>1,'redeemableValue'=>$points,'ticketRate'=>in_array($level,array('VIP','PLATINUM'),true)?8:5,'productRate'=>in_array($level,array('VIP','PLATINUM'),true)?13:10,'activatedAt'=>$card['activated_at'],'expiresAt'=>$card['expires_at'],'nextLevel'=>isset($nextNames[$level])?$nextNames[$level]:null,'nextThreshold'=>$nextThreshold,'pointsToNext'=>$nextThreshold===null?0:max(0,$nextThreshold-$lifetime));
             if (aurora_ensure_loyalty_schema($db)) {
-                $historyResult=$db->query("SELECT id,points_change,balance_after,transaction_type,description,created_at FROM loyalty_point_transactions WHERE user_id=".(int)$userId." ORDER BY id DESC LIMIT 8");
+                $historyResult=$db->query("SELECT id,order_id,points_change,ticket_amount,product_amount,ticket_rate,product_rate,point_value_vnd,balance_after,transaction_type,description,created_at FROM loyalty_point_transactions WHERE user_id=".(int)$userId." ORDER BY id DESC LIMIT 12");
                 while ($historyResult && ($row=$historyResult->fetch_assoc())) { $row['id']=(int)$row['id'];$row['points_change']=(int)$row['points_change'];$row['balance_after']=(int)$row['balance_after'];$history[]=$row; }
             }
         }
     }
-    aurora_response(array('tiers'=>$tiers,'member'=>$member,'history'=>$history,'rules'=>array('earnRate'=>'1 điểm / 1.000đ','source'=>'aurora_db')),200);
+    aurora_response(array('tiers'=>$tiers,'member'=>$member,'history'=>$history,'rules'=>array('ticketRate'=>5,'productRate'=>10,'vipBonus'=>3,'pointValueVnd'=>1,'redeemAt'=>'POS','source'=>'aurora_db')),200);
 }
 
 // ── /support_center (GET) ──────────────────────────────────────────────────
@@ -3714,15 +3727,15 @@ if ($resource === 'membership_card') {
     $available = max(0, (int)$user['points']);
     $earned = max($earned, $available + $used); // supports customers created before the ledger
     $level = $user['membership_level'] ? $user['membership_level'] : aurora_membership_level($available);
-    $thresholds = array('STANDARD'=>500, 'SILVER'=>2000, 'GOLD'=>5000);
-    $nextNames = array('STANDARD'=>'SILVER', 'SILVER'=>'GOLD', 'GOLD'=>'PLATINUM');
+    $thresholds = array('STANDARD'=>500000, 'SILVER'=>2000000, 'GOLD'=>5000000);
+    $nextNames = array('STANDARD'=>'SILVER', 'SILVER'=>'GOLD', 'GOLD'=>'VIP');
     $nextThreshold = isset($thresholds[$level]) ? $thresholds[$level] : null;
     aurora_response(array('card' => array(
         'cardNumber' => $card['card_number'], 'status' => 'ACTIVE', 'membershipLevel' => $level,
         'activatedAt' => $card['activated_at'], 'expiresAt' => $card['expires_at'], 'totalSpent' => $totalSpent,
         'pointsAccumulated' => $earned, 'pointsUsed' => $used, 'pointsAvailable' => $available,
         'pointsExpiring' => 0, 'nextLevel' => isset($nextNames[$level]) ? $nextNames[$level] : null,
-        'nextThreshold' => $nextThreshold, 'pointsToNextLevel' => $nextThreshold === null ? 0 : max(0, $nextThreshold - $available),
+        'nextThreshold' => $nextThreshold, 'pointsToNextLevel' => $nextThreshold === null ? 0 : max(0, $nextThreshold - $earned),
         'expiryNote' => 'Điểm chưa có lịch hết hạn.'
     )), 200);
 }
@@ -4235,23 +4248,39 @@ if ($resource === 'booking_detail') {
         if(isset($ticketsBySeat[$seatId])){$ticket=$ticketsBySeat[$seatId];$tickets[]=array('code'=>$ticket['ticket_code'],'seat'=>$label,'seatType'=>$seat['seat_type'],'price'=>(float)$seat['price'],'status'=>$ticket['status'],'issuedAt'=>$ticket['issued_at'],'checkedInAt'=>$ticket['checked_in_at'],'qrPayload'=>'AURORA|TICKET|'.$ticket['ticket_code'].'|'.$ticket['qr_token']);}
     }
 
-    $order=null;$orderId=0;
+    $order=null;$orderId=0;$orderItems=array();$onlinePayment=null;$redemption=null;
     // Quyền sở hữu đã được xác minh bằng bookings.user_id ở truy vấn phía
     // trên. Liên kết order bằng booking_id để vẫn đọc đúng các đơn POS cũ có
     // customer_id chưa được đồng bộ.
-    if(aurora_ensure_sales_orders($db)){
-        aurora_ensure_order_voucher_column($db);
-        $orderResult=$db->query("SELECT id,order_code,channel,subtotal,discount_amount,voucher_code,total_amount,payment_method,amount_received,status,created_at FROM orders WHERE booking_id=".(int)$row['id']." ORDER BY id DESC LIMIT 1");
-        if($orderResult&&($orderRow=$orderResult->fetch_assoc())){$orderId=(int)$orderRow['id'];$order=array('id'=>$orderId,'code'=>$orderRow['order_code'],'channel'=>$orderRow['channel'],'subtotal'=>(float)$orderRow['subtotal'],'discountAmount'=>(float)$orderRow['discount_amount'],'voucherCode'=>$orderRow['voucher_code'],'totalAmount'=>(float)$orderRow['total_amount'],'paymentMethod'=>$orderRow['payment_method'],'amountReceived'=>(float)$orderRow['amount_received'],'status'=>$orderRow['status'],'createdAt'=>$orderRow['created_at']);}
+    // Endpoint GET chi doc schema hien co trong aurora_db. Khong goi ham tao/
+    // migrate bang tai day: schema POS thuc te co the khac schema khoi tao cu,
+    // lam ham ensure tra ve false va vo tinh bo qua toan bo hoa don.
+    $ordersTable=$db->query("SHOW TABLES LIKE 'orders'");
+    if($ordersTable&&$ordersTable->num_rows>0){
+        $voucherColumn=$db->query("SHOW COLUMNS FROM orders LIKE 'voucher_code'");
+        $voucherSelect=($voucherColumn&&$voucherColumn->num_rows>0)?'voucher_code':'NULL AS voucher_code';
+        $bookingCodeEsc=$db->real_escape_string($row['booking_code']);
+        // booking_code/order_code are unique. Ownership was already verified by
+        // bookings.user_id above, so this safely recovers legacy POS orders whose
+        // booking_id and customer_id were not backfilled when the sale was made.
+        $orderResult=$db->query("SELECT id,order_code,booking_id,customer_id,cashier_id,channel,subtotal,discount_amount,{$voucherSelect},total_amount,payment_method,amount_received,change_amount,status,created_at,updated_at FROM orders WHERE booking_id=".(int)$row['id']." OR order_code='{$bookingCodeEsc}' ORDER BY CASE WHEN booking_id=".(int)$row['id']." THEN 0 ELSE 1 END,id DESC LIMIT 1");
+        if(!$orderResult)aurora_response(array('message'=>'Khong the doc thong tin don hang tu aurora_db.'),500);
+        if($orderResult&&($orderRow=$orderResult->fetch_assoc())){
+            $orderId=(int)$orderRow['id'];$cashierId=(int)$orderRow['cashier_id'];$cashier=null;
+            if($cashierId>0){$cashierResult=$db->query("SELECT full_name,username,counter_code FROM pos_users WHERE id={$cashierId} LIMIT 1");if($cashierResult&&($cashierRow=$cashierResult->fetch_assoc()))$cashier=array('fullName'=>$cashierRow['full_name'],'username'=>$cashierRow['username'],'counter'=>$cashierRow['counter_code']);}
+            $order=array('id'=>$orderId,'code'=>$orderRow['order_code'],'bookingId'=>(int)$orderRow['booking_id'],'channel'=>$orderRow['channel'],'subtotal'=>(float)$orderRow['subtotal'],'discountAmount'=>(float)$orderRow['discount_amount'],'voucherCode'=>$orderRow['voucher_code'],'totalAmount'=>(float)$orderRow['total_amount'],'paymentMethod'=>$orderRow['payment_method'],'amountReceived'=>(float)$orderRow['amount_received'],'changeAmount'=>(float)$orderRow['change_amount'],'status'=>$orderRow['status'],'createdAt'=>$orderRow['created_at'],'updatedAt'=>$orderRow['updated_at'],'cashier'=>$cashier);
+        }
     }
     $payments=array();if($orderId>0){$paymentResult=$db->query("SELECT method,amount,reference_code,created_at FROM payments WHERE order_id={$orderId} ORDER BY id DESC");while($paymentResult&&($payment=$paymentResult->fetch_assoc()))$payments[]=array('method'=>$payment['method'],'amount'=>(float)$payment['amount'],'referenceCode'=>$payment['reference_code'],'createdAt'=>$payment['created_at']);}
     $concessions=array();$concessionKeys=array();
-    // Đơn mua trực tiếp tại quầy POS lưu vé, combo và merchandise trong
-    // order_items. Chỉ lấy các dòng không phải vé để hiển thị khu bắp nước.
-    if($orderId>0){$orderItemsTable=$db->query("SHOW TABLES LIKE 'order_items'");if($orderItemsTable&&$orderItemsTable->num_rows){$concessionResult=$db->query("SELECT item_type,item_code,item_name,quantity,unit_price FROM order_items WHERE order_id={$orderId} AND item_type IN ('COMBO','MERCHANDISE') ORDER BY id");while($concessionResult&&($item=$concessionResult->fetch_assoc())){$key=$item['item_code'].'|'.$item['unit_price'];$concessionKeys[$key]=true;$concessions[]=array('type'=>$item['item_type'],'code'=>$item['item_code'],'name'=>$item['item_name'],'quantity'=>(int)$item['quantity'],'unitPrice'=>(float)$item['unit_price'],'total'=>(int)$item['quantity']*(float)$item['unit_price']);}}}
+    // Don POS luu toan bo ve, combo va hang hoa trong order_items. Tra ve
+    // nguyen ven tat ca dong de lich su mua hang khong bi mat san pham kem.
+    if($orderId>0){$orderItemsTable=$db->query("SHOW TABLES LIKE 'order_items'");if($orderItemsTable&&$orderItemsTable->num_rows){$itemResult=$db->query("SELECT item_type,item_code,item_name,quantity,unit_price,seat_id FROM order_items WHERE order_id={$orderId} ORDER BY id");while($itemResult&&($item=$itemResult->fetch_assoc())){$normalized=array('type'=>$item['item_type'],'code'=>$item['item_code'],'name'=>$item['item_name'],'quantity'=>(int)$item['quantity'],'unitPrice'=>(float)$item['unit_price'],'total'=>(int)$item['quantity']*(float)$item['unit_price'],'seatId'=>(int)$item['seat_id']);$orderItems[]=$normalized;if(in_array($item['item_type'],array('COMBO','MERCHANDISE'),true)){$key=$item['item_code'].'|'.$item['unit_price'];$concessionKeys[$key]=true;$concessions[]=$normalized;}}}}
     // Đơn online cũ lưu combo trong booking_concessions. Hợp nhất theo mã và
     // giá để không cộng trùng nếu một đơn đã được đồng bộ sang order_items.
-    $legacyResult=$db->query("SELECT item_code,item_name,quantity,unit_price FROM booking_concessions WHERE booking_id=".(int)$row['id']." ORDER BY id");while($legacyResult&&($item=$legacyResult->fetch_assoc())){$key=$item['item_code'].'|'.$item['unit_price'];if(isset($concessionKeys[$key]))continue;$concessions[]=array('type'=>'COMBO','code'=>$item['item_code'],'name'=>$item['item_name'],'quantity'=>(int)$item['quantity'],'unitPrice'=>(float)$item['unit_price'],'total'=>(int)$item['quantity']*(float)$item['unit_price']);}
+    $legacyResult=$db->query("SELECT item_code,item_name,quantity,unit_price FROM booking_concessions WHERE booking_id=".(int)$row['id']." ORDER BY id");while($legacyResult&&($item=$legacyResult->fetch_assoc())){$key=$item['item_code'].'|'.$item['unit_price'];if(isset($concessionKeys[$key]))continue;$normalizedLegacy=array('type'=>'COMBO','code'=>$item['item_code'],'name'=>$item['item_name'],'quantity'=>(int)$item['quantity'],'unitPrice'=>(float)$item['unit_price'],'total'=>(int)$item['quantity']*(float)$item['unit_price'],'seatId'=>0);$concessionKeys[$key]=true;$concessions[]=$normalizedLegacy;$orderItems[]=$normalizedLegacy;}
+    if($orderId>0){$onlineTable=$db->query("SHOW TABLES LIKE 'online_payment_transactions'");if($onlineTable&&$onlineTable->num_rows){$onlineResult=$db->query("SELECT provider,txn_ref,amount,status,provider_transaction_no,bank_code,card_type,paid_at,expires_at FROM online_payment_transactions WHERE order_id={$orderId} ORDER BY id DESC LIMIT 1");if($onlineResult&&($onlineRow=$onlineResult->fetch_assoc()))$onlinePayment=array('provider'=>$onlineRow['provider'],'transactionReference'=>$onlineRow['txn_ref'],'amount'=>(float)$onlineRow['amount'],'status'=>$onlineRow['status'],'providerTransactionNo'=>$onlineRow['provider_transaction_no'],'bankCode'=>$onlineRow['bank_code'],'cardType'=>$onlineRow['card_type'],'paidAt'=>$onlineRow['paid_at'],'expiresAt'=>$onlineRow['expires_at']);}}
+    $redemptionTable=$db->query("SHOW TABLES LIKE 'pos_booking_redemptions'");if($redemptionTable&&$redemptionTable->num_rows){$redemptionResult=$db->query("SELECT redeemed_at,note FROM pos_booking_redemptions WHERE booking_id=".(int)$row['id']." ORDER BY redeemed_at DESC LIMIT 1");if($redemptionResult&&($redemptionRow=$redemptionResult->fetch_assoc()))$redemption=array('redeemedAt'=>$redemptionRow['redeemed_at'],'note'=>$redemptionRow['note']);}
 
     aurora_response(array('booking' => array(
         'id'              => (int)$row['id'],
@@ -4286,8 +4315,11 @@ if ($resource === 'booking_detail') {
             'dataSource'   => 'aurora_db',
         ),
         'order'           => $order,
+        'orderItems'      => $orderItems,
         'payments'        => $payments,
         'concessions'     => $concessions,
+        'onlinePayment'   => $onlinePayment,
+        'redemption'      => $redemption,
     )), 200);
 }
 

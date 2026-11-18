@@ -44,11 +44,17 @@ export type BookingDetail = {
     totalAmount: number;
     paymentMethod: string;
     amountReceived: number;
+    changeAmount: number;
     status: string;
     createdAt: string;
+    updatedAt?: string;
+    cashier?: { fullName: string; username: string; counter: string } | null;
   };
+  orderItems: Array<{ type: string; code: string; name: string; quantity: number; unitPrice: number; total: number; seatId: number }>;
   payments: Array<{ method: string; amount: number; referenceCode: string; createdAt: string }>;
   concessions: Array<{ type?: string; code: string; name: string; quantity: number; unitPrice: number; total: number }>;
+  onlinePayment?: null | { provider: string; transactionReference: string; amount: number; status: string; providerTransactionNo?: string; bankCode?: string; cardType?: string; paidAt?: string; expiresAt?: string };
+  redemption?: null | { redeemedAt: string; note?: string };
 };
 
 export type BookingReceiptResult = 'downloaded' | 'shared' | 'cancelled';

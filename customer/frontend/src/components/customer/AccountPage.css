@@ -301,3 +301,44 @@
 .booking-concession-list small em{margin-right:6px;padding:2px 5px;border-radius:4px;color:#97620b;background:#fff3d4;font-size:7px;font-style:normal;font-weight:850;text-transform:uppercase}
 .booking-detail-foot button{height:38px;display:inline-flex;align-items:center;justify-content:center;gap:6px}.booking-detail-foot button:hover{border-color:#8aa8c5;background:#f6f9fc}.booking-detail-foot button:disabled{opacity:.62;cursor:wait}.booking-detail-foot button.primary:hover{background:#f8ce62}.booking-pdf-button{min-width:150px}.booking-pdf-button .spin{animation:spin .8s linear infinite}
 @media(max-width:520px){.booking-detail-foot button{height:44px}.booking-pdf-button{min-width:0}}
+
+/* Complete order dossier -------------------------------------------------- */
+.booking-order-overview{display:grid;grid-template-columns:1.25fr 1fr 1fr 1fr auto;align-items:center;gap:0;margin-bottom:14px;overflow:hidden;border:1px solid #dbe4ed;border-radius:13px;background:#fff;box-shadow:0 5px 18px rgba(13,27,46,.05)}
+.booking-order-overview>div{min-width:0;display:grid;gap:3px;padding:13px 15px;border-right:1px solid #e6ebf1}
+.booking-order-overview small{color:#8795a5;font-size:8px;font-weight:850;letter-spacing:.07em}
+.booking-order-overview b,.booking-order-overview strong{overflow:hidden;color:#203b56;font-size:11px;text-overflow:ellipsis;white-space:nowrap}
+.booking-order-overview>div:first-child strong{color:#245e9d;font:850 11px ui-monospace,SFMono-Regular,Consolas,monospace}
+.booking-order-overview>div:nth-child(4) strong{color:#b9780c;font-size:14px}
+.booking-order-state{display:flex;align-items:center;gap:6px;margin:0 14px;padding:6px 9px;border-radius:99px;color:#1f7654;background:#e3f6ec;font-size:8px;font-weight:900;white-space:nowrap}
+.booking-order-state i{width:6px;height:6px;border-radius:50%;background:currentColor}
+.booking-order-state.pending{color:#9a650c;background:#fff1d3}.booking-order-state.cancelled,.booking-order-state.expired{color:#b33b47;background:#fde9eb}
+
+.booking-line-items{margin-top:18px;overflow:hidden;border:1px solid #dfe6ee;border-radius:14px;background:#fff}
+.booking-line-items>header{display:flex;align-items:center;justify-content:space-between;gap:14px;padding:14px 16px;border-bottom:1px solid #e5ebf1}
+.booking-line-items>header>div{display:flex;align-items:center;gap:8px;color:#c08217}
+.booking-line-items>header span{display:grid}.booking-line-items>header b{color:#17334f;font-size:12px}.booking-line-items>header small{color:#8795a4;font-size:8px}.booking-line-items>header>strong{color:#b7770c;font-size:13px}
+.booking-line-items-head,.booking-line-item{display:grid;grid-template-columns:minmax(0,1fr) 60px 110px 120px;align-items:center;gap:10px;padding:9px 16px}
+.booking-line-items-head{color:#7c8c9e;background:#f6f8fb;font-size:8px;font-weight:900;letter-spacing:.05em}
+.booking-line-items-head span:not(:first-child){text-align:right}
+.booking-line-item{min-height:48px;border-top:1px solid #edf1f5;color:#40566e;font-size:9px}
+.booking-line-item>span:first-child{display:flex;align-items:center;gap:9px;min-width:0}
+.booking-line-item>span:first-child>i{width:29px;height:29px;display:grid;flex:0 0 auto;place-items:center;border-radius:8px;color:#2864a5;background:#eaf2fb}
+.booking-line-item>span:first-child>i.combo,.booking-line-item>span:first-child>i.merchandise{color:#a76b09;background:#fff1d7}
+.booking-line-item>span:first-child>span{min-width:0;display:grid}.booking-line-item>span:first-child b{overflow:hidden;color:#263f58;font-size:9.5px;text-overflow:ellipsis;white-space:nowrap}.booking-line-item>span:first-child small{margin-top:2px;color:#8a98a7;font:700 7.5px ui-monospace,SFMono-Regular,Consolas,monospace}
+.booking-line-item>b,.booking-line-item>span:nth-child(3),.booking-line-item>strong{text-align:right}.booking-line-item>strong{color:#1f3d59;font-size:10px}
+
+.booking-detail-columns{align-items:start}
+.booking-detail-columns>section{min-height:100%}
+.booking-detail-columns dd{max-width:65%;overflow-wrap:anywhere;text-align:right}
+.booking-payment-proof{border:1px solid #d8eee5}
+.booking-online-payment{display:grid;gap:3px;margin-top:9px;padding:10px;border:1px solid #dce6f1;border-radius:9px;background:#f5f8fc}
+.booking-online-payment b{color:#294c70;font-size:9px}.booking-online-payment span{color:#7a8b9d;font-size:8px}.booking-online-payment code{overflow:hidden;color:#3c6387;font-size:8px;text-overflow:ellipsis}
+
+@media(max-width:900px){.booking-order-overview{grid-template-columns:1fr 1fr}.booking-order-overview>div{border-bottom:1px solid #e6ebf1}.booking-order-state{width:max-content;margin:11px 14px}.booking-line-items-head,.booking-line-item{grid-template-columns:minmax(0,1fr) 40px 90px 100px}}
+@media(max-width:620px){.booking-order-overview{grid-template-columns:1fr}.booking-order-overview>div{border-right:0}.booking-line-items-head{display:none}.booking-line-item{grid-template-columns:minmax(0,1fr) auto;padding:11px 12px}.booking-line-item>b{display:none}.booking-line-item>span:nth-child(3){display:none}.booking-line-item>strong{font-size:11px}.booking-detail-columns dd{max-width:58%}}
+
+/* Aurora Rewards */
+.aurora-points-page{padding:32px}.points-balance-hero{display:flex;align-items:center;justify-content:space-between;gap:24px;margin-bottom:18px;padding:28px 30px;overflow:hidden;border:1px solid #e8c458;border-radius:20px;background:linear-gradient(125deg,#0d1b2e 0%,#142a45 62%,#31445c 100%);box-shadow:0 16px 35px rgba(13,27,46,.17);color:#fff}.points-balance-hero>div:first-child{display:grid}.points-balance-hero span{color:#f4c04a;font-size:11px;font-weight:900;letter-spacing:.13em}.points-balance-hero strong{margin:5px 0;color:#fff;font-size:40px}.points-balance-hero strong small{font-size:14px}.points-balance-hero p{margin:0;color:#bdc9d7;font-size:12px}.points-balance-hero p b{color:#f4c04a}.points-tier-orb{width:92px;height:92px;display:grid;flex:0 0 auto;place-items:center;border:1px solid rgba(244,192,74,.45);border-radius:50%;color:#f4c04a;background:rgba(244,192,74,.1)}.points-tier-orb small{font-size:7px;letter-spacing:.16em}.points-tier-orb b{font-size:11px}
+.points-policy-grid{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:12px;margin-bottom:24px}.points-policy-grid article{display:flex;gap:12px;padding:17px;border:1px solid #e4eaf1;border-radius:14px;background:#fff}.points-policy-grid article>svg{flex:0 0 auto;color:#2d6fb1}.points-policy-grid article>span{display:grid}.points-policy-grid small{color:#8493a4;font-size:8px;font-weight:900;letter-spacing:.07em}.points-policy-grid b{margin:3px 0;color:#14334f;font-size:18px}.points-policy-grid p{margin:0;color:#718196;font-size:9px;line-height:1.4}.points-policy-grid article.vip{border-color:#ead18a;background:#fffaf0}.points-policy-grid article.vip>svg,.points-policy-grid article.vip b{color:#b6780c}
+.points-ledger{overflow:hidden;border:1px solid #e2e8ef;border-radius:16px;background:#fff}.points-ledger>header{display:flex;align-items:center;justify-content:space-between;padding:18px 20px;border-bottom:1px solid #e8edf2}.points-ledger>header span{color:#b8780b;font-size:9px;font-weight:900;letter-spacing:.1em}.points-ledger>header h3{margin:3px 0 0;color:#132d48;font-size:15px}.points-ledger>header>small{color:#8b99a8;font-size:9px}.points-ledger article{display:grid;grid-template-columns:38px minmax(0,1fr) auto;align-items:center;gap:12px;padding:14px 20px;border-top:1px solid #edf1f5}.points-ledger article>span{width:34px;height:34px;display:grid;place-items:center;border-radius:10px}.points-ledger article>span.earn{color:#987000;background:#fff2c8}.points-ledger article>span.redeem{color:#147353;background:#e1f5ec}.points-ledger article>div{display:grid}.points-ledger article b{color:#213d58;font-size:11px}.points-ledger article small{margin-top:3px;color:#8997a7;font-size:8px}.points-ledger article em{margin-top:4px;color:#53769a;font-size:8px;font-style:normal}.points-ledger article>strong{display:grid;text-align:right;font-size:11px}.points-ledger article>strong.plus{color:#19815e}.points-ledger article>strong.minus{color:#bd4c55}.points-ledger article>strong small{font-weight:600}
+@media(max-width:900px){.points-policy-grid{grid-template-columns:1fr 1fr}}@media(max-width:600px){.aurora-points-page{padding:18px}.points-balance-hero{padding:20px}.points-balance-hero strong{font-size:30px}.points-tier-orb{width:72px;height:72px}.points-policy-grid{grid-template-columns:1fr}.points-ledger article{grid-template-columns:34px 1fr}.points-ledger article>strong{grid-column:2;text-align:left}}

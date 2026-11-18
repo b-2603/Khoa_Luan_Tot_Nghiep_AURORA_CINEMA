@@ -270,7 +270,12 @@ function formatLastLogin(value?: string | null) {
 const TMS_VIEW_PARAM = 'view';
 const tmsViewStorageKey = (user: Pick<TMSUser, 'id' | 'username'>) => `aurora_tms_active_view:${user.id || user.username}`;
 const allowedTmsViews = (role: TMSRole) => {
-  const allowed = new Set<string>(['dashboard']);
+  // These shared workspaces can be injected into the sidebar from RBAC even
+  // when they are not part of a role's static navigation. Keep them in the
+  // navigation whitelist; renderContent still enforces the actual permission.
+  // Without this, selecting (for example) Booking History as super_admin is
+  // immediately rewritten to the dashboard by the active-view effect below.
+  const allowed = new Set<string>(['dashboard', 'cinema_customers', 'booking_history']);
   getRoleNavItems(role).forEach(item => {
     allowed.add(item.id);
     (item.children || []).forEach(child => allowed.add(child));
@@ -777,6 +782,7 @@ export default function App() {
   const [scheduleBulkDeleting, setScheduleBulkDeleting] = useState(false);
   const [scheduleAutoGenerating, setScheduleAutoGenerating] = useState(false);
   const [scheduleAutoPlan, setScheduleAutoPlan] = useState<{allocation_id:number;expected_count:number;target_count:number;existing_count:number;movie_id:number;show_date:string;plan_code:string}|null>(null);
+  const [scheduleAutoRequest, setScheduleAutoRequest] = useState<{allocation_id:number;movie_id:number;movie_title:string;plan_code:string;plan_name:string;minimum_count:number;existing_count:number;minimum_selectable_count:number;maximum_count:number;requested_count:number}|null>(null);
   const [scheduleSlotAvailability, setScheduleSlotAvailability] = useState<Record<string, ScheduleSlotAvailability>>({});
   // Only a time explicitly changed by the operator is protected from automatic
   // suggestions. A server suggestion must never mark a conflicting default as
@@ -2037,7 +2043,7 @@ export default function App() {
     return availability?.requested?.start === slot.start_time && Number(availability.screen?.id || 0) === Number(slot.screen_id) && !availability.requested.available;
   });
   const matchingScheduleAutoPlan = scheduleAutoPlan && scheduleAutoPlan.movie_id === Number(scheduleForm.movie_id) && scheduleAutoPlan.show_date === scheduleForm.show_date ? scheduleAutoPlan : null;
-  const generateAutomaticSchedule = async () => {
+  const openAutomaticScheduleRequest = async () => {
     if (scheduleForm.id || scheduleAutoGenerating) return;
     const allocation = scheduleMoviesList.find(movie => Number(movie.id) === Number(scheduleForm.movie_id) && Number(movie.theater_id) === Number(scheduleTheaterFilter || movie.theater_id) && scheduleForm.show_date >= movie.allocated_start_date && scheduleForm.show_date <= movie.allocated_end_date);
     if (!allocation || !scheduleForm.ticket_type_ids.length) {
@@ -2046,7 +2052,30 @@ export default function App() {
     }
     setScheduleAutoGenerating(true);
     try {
-      const response = await fetch(`${API_BASE}?action=schedule-auto-draft`,{method:'POST',credentials:'include',headers:{'Content-Type':'application/json','X-TMS-User':currentUser?.username||'admin_rap'},body:JSON.stringify({movie_id:Number(scheduleForm.movie_id),allocation_id:Number(allocation.allocation_id),show_date:scheduleForm.show_date,ticket_type_ids:scheduleForm.ticket_type_ids,theater_id:currentUser?.role==='super_admin'?scheduleTheaterFilter:undefined})});
+      const response = await fetch(`${API_BASE}?action=schedule-auto-draft`,{method:'POST',credentials:'include',headers:{'Content-Type':'application/json','X-TMS-User':currentUser?.username||'admin_rap'},body:JSON.stringify({movie_id:Number(scheduleForm.movie_id),allocation_id:Number(allocation.allocation_id),show_date:scheduleForm.show_date,ticket_type_ids:scheduleForm.ticket_type_ids,preview_only:true,theater_id:currentUser?.role==='super_admin'?scheduleTheaterFilter:undefined})});
+      const result = await response.json();
+      if (!response.ok || !result.success) throw new Error(result.message || 'Không thể đọc chỉ tiêu xếp lịch.');
+      setScheduleAutoRequest({allocation_id:Number(result.data.allocation_id),movie_id:Number(scheduleForm.movie_id),movie_title:allocation.title,plan_code:String(result.data.plan_code||allocation.plan_code||''),plan_name:String(result.data.plan_name||allocation.plan_name||''),minimum_count:Number(result.data.minimum_count),existing_count:Number(result.data.existing_count),minimum_selectable_count:Number(result.data.minimum_selectable_count),maximum_count:Number(result.data.maximum_count||120),requested_count:Number(result.data.minimum_selectable_count)});
+    } catch (error) {
+      setSystemNotice({message:error instanceof Error?error.message:'Không thể đọc chỉ tiêu xếp lịch.',type:'error'});
+    } finally { setScheduleAutoGenerating(false); }
+  };
+  const generateAutomaticSchedule = async (requestedCount:number) => {
+    if (scheduleForm.id || scheduleAutoGenerating || !scheduleAutoRequest) return;
+    const allocation = scheduleMoviesList.find(movie => Number(movie.id) === Number(scheduleAutoRequest.movie_id) && Number(movie.allocation_id) === Number(scheduleAutoRequest.allocation_id));
+    if (!allocation) {
+      setSystemNotice({message:'Phân bổ phim không còn hiệu lực. Vui lòng chọn lại phim.',type:'warning'});
+      setScheduleAutoRequest(null);
+      return;
+    }
+    if (!Number.isInteger(requestedCount) || requestedCount < scheduleAutoRequest.minimum_selectable_count || requestedCount > scheduleAutoRequest.maximum_count) {
+      setSystemNotice({message:`Vui lòng chọn từ ${scheduleAutoRequest.minimum_selectable_count} đến ${scheduleAutoRequest.maximum_count} suất.`,type:'warning'});
+      return;
+    }
+    setScheduleAutoRequest(null);
+    setScheduleAutoGenerating(true);
+    try {
+      const response = await fetch(`${API_BASE}?action=schedule-auto-draft`,{method:'POST',credentials:'include',headers:{'Content-Type':'application/json','X-TMS-User':currentUser?.username||'admin_rap'},body:JSON.stringify({movie_id:Number(scheduleForm.movie_id),allocation_id:Number(allocation.allocation_id),show_date:scheduleForm.show_date,ticket_type_ids:scheduleForm.ticket_type_ids,requested_count:requestedCount,theater_id:currentUser?.role==='super_admin'?scheduleTheaterFilter:undefined})});
       const result = await response.json();
       if (!response.ok || !result.success) throw new Error(result.message || 'Không thể xếp lịch tự động.');
       const generatedSlots = (result.data.slots || []).map((slot:any,index:number)=>({key:`auto-${Date.now()}-${index}`,screen_id:Number(slot.screen_id),start_time:String(slot.start_time),end_time:String(slot.end_time)}));
@@ -2056,8 +2085,8 @@ export default function App() {
       setScheduleAutoPlan({allocation_id:Number(result.data.allocation_id),expected_count:Number(result.data.required_count),target_count:Number(result.data.target_count),existing_count:Number(result.data.existing_count),movie_id:Number(scheduleForm.movie_id),show_date:scheduleForm.show_date,plan_code:String(result.data.plan_code||'')});
       const roomIds:number[] = Array.from(new Set<number>(generatedSlots.map((slot:any)=>Number(slot.screen_id))));
       const prices = (result.data.slots || []).map((slot:any)=>Number(slot.price||0));
-      setScheduleForm(previous=>({...previous,screen_ids:roomIds,time_slots:generatedSlots,start_time:generatedSlots[0]?.start_time||previous.start_time,end_time:generatedSlots[0]?.end_time||previous.end_time,ticket_price:prices.length?Math.min(...prices):previous.ticket_price,operational_note:`Tự động xếp theo kế hoạch ${result.data.plan_code} · ${result.data.required_count} suất/ngày${previous.operational_note?` · ${previous.operational_note}`:''}`}));
-      setSystemNotice({message:`Đã xếp ${result.data.required_count} suất còn thiếu; ngày này đã có ${result.data.existing_count}/${result.data.target_count} suất theo kế hoạch. Kiểm tra danh sách rồi lưu để ghi vào aurora_db.`,type:'success'});
+      setScheduleForm(previous=>({...previous,screen_ids:roomIds,time_slots:generatedSlots,start_time:generatedSlots[0]?.start_time||previous.start_time,end_time:generatedSlots[0]?.end_time||previous.end_time,ticket_price:prices.length?Math.min(...prices):previous.ticket_price,operational_note:`Tự động xếp theo kế hoạch ${result.data.plan_code} · tổng ${result.data.target_count} suất/ngày${previous.operational_note?` · ${previous.operational_note}`:''}`}));
+      setSystemNotice({message:`Đã xếp ${result.data.required_count} suất mới để đạt tổng ${result.data.target_count} suất trong ngày. Kiểm tra danh sách rồi lưu để ghi vào aurora_db.`,type:'success'});
     } catch (error) {
       setSystemNotice({message:error instanceof Error?error.message:'Không thể xếp lịch tự động.',type:'error'});
     } finally { setScheduleAutoGenerating(false); }
@@ -2068,6 +2097,7 @@ export default function App() {
       scheduleAvailabilitySequence.current = {};
       setScheduleSlotAvailability({});
       setScheduleAutoPlan(null);
+      setScheduleAutoRequest(null);
     }
   }, [showScheduleModal]);
   useEffect(() => {
@@ -2901,7 +2931,7 @@ export default function App() {
     if (a === 'dashboard' || a === 'Tổng quan tài chính') return renderDashboard();
 
     if (a === 'cinema_customers') return <CustomerWorkspace apiBase={API_BASE} canManage={role === 'super_admin'}/>;
-    if (a === 'booking_history') return <BookingHistoryWorkspace apiBase={API_BASE}/>;
+    if (a === 'booking_history') return <BookingHistoryWorkspace apiBase={API_BASE} role={role}/>;
 
     // ACCOUNTS & PERMISSIONS (super_admin only)
     if (a === 'accounts' || a === 'Danh sách tài khoản' || a === 'Ma trận phân quyền') {
@@ -4023,7 +4053,7 @@ export default function App() {
                       <div className="tms-form-group full"><label className="tms-form-label">Phim đã phân bổ cho rạp <em>*</em></label><select required className="tms-form-select" value={scheduleForm.movie_id || 0} onChange={e => { const movieId = Number(e.target.value); const slots = scheduleForm.time_slots.map(slot => ({ ...slot, end_time: calculateScheduleEndTime(slot.start_time, movieId) })); setScheduleForm({...scheduleForm, movie_id:movieId, time_slots:slots, start_time:slots[0]?.start_time || '09:00', end_time:slots[0]?.end_time || '11:00'}); }}><option value={0} disabled>{getScheduleMovieOptions(scheduleForm.show_date).length ? 'Chọn phim đã được phân bổ' : 'Không có phim phù hợp ngày đã chọn'}</option>{getScheduleMovieOptions(scheduleForm.show_date).map(m => <option key={m.id} value={m.id}>{m.title} · {m.duration_minutes} phút · {m.plan_code}</option>)}</select>{!scheduleForm.id && Number(scheduleMovieId) === Number(scheduleForm.movie_id) && <small className="schedule-prefilled-movie"><CheckCircle2 size={13}/> Đã chọn sẵn theo phim bạn đang xem. Bạn vẫn có thể đổi sang phim được phân bổ khác.</small>}</div>
                       <div className="tms-form-group"><label className="tms-form-label">Trạng thái mở bán <em>*</em></label><select className="tms-form-select schedule-status-select" value={scheduleForm.status} onChange={e => setScheduleForm({...scheduleForm,status:e.target.value})}><option value="scheduled">Mở bán theo lịch (OPEN)</option><option value="running" disabled>Đang chiếu — tự động theo giờ</option><option value="finished" disabled>Đã kết thúc — tự động theo giờ</option>{scheduleForm.id > 0 && <option value="cancelled">Đã hủy — ngừng bán (CANCELLED)</option>}</select></div>
                     </div>
-                    <div className="schedule-section-heading timing"><Clock size={16}/><div><b>Phòng & khung giờ vận hành</b>{matchingScheduleAutoPlan&&<small>Đã xếp {scheduleForm.time_slots.length} suất mới · {matchingScheduleAutoPlan.existing_count} đã có / {matchingScheduleAutoPlan.target_count} suất kế hoạch · {matchingScheduleAutoPlan.plan_code}</small>}</div>{!scheduleForm.id&&<button type="button" className="tms-btn tms-btn-outline" disabled={scheduleAutoGenerating||!scheduleForm.movie_id||!scheduleForm.ticket_type_ids.length} onClick={()=>void generateAutomaticSchedule()}><Sparkles size={15}/>{scheduleAutoGenerating?'Đang tìm phòng trống…':'Tự động xếp lịch'}</button>}</div>
+                    <div className="schedule-section-heading timing"><Clock size={16}/><div><b>Phòng & khung giờ vận hành</b>{matchingScheduleAutoPlan&&<small>Đã xếp {scheduleForm.time_slots.length} suất mới · {matchingScheduleAutoPlan.existing_count} đã có / {matchingScheduleAutoPlan.target_count} suất đã chọn · {matchingScheduleAutoPlan.plan_code}</small>}</div>{!scheduleForm.id&&<button type="button" className="tms-btn tms-btn-outline" disabled={scheduleAutoGenerating||!scheduleForm.movie_id||!scheduleForm.ticket_type_ids.length} onClick={()=>void openAutomaticScheduleRequest()}><Sparkles size={15}/>{scheduleAutoGenerating?'Đang đọc kế hoạch…':'Tự động xếp lịch'}</button>}</div>
                     <div className="schedule-date-card">
                       <div className="schedule-date-heading"><span><CalendarDays size={18}/></span><div><b>Ngày chiếu</b><small>Hiển thị theo chuẩn Việt Nam: ngày / tháng / năm</small></div><em>{formatVietnameseDate(scheduleForm.show_date)}</em></div>
                       <div className="schedule-date-selects">
@@ -4070,6 +4100,38 @@ export default function App() {
               </div>
               <div className="tms-modal-footer schedule-editor-footer"><div><button type="button" className="tms-btn tms-btn-outline" onClick={() => setShowScheduleModal(false)}>Hủy</button><button type="submit" className="tms-btn tms-btn-primary" disabled={scheduleAvailabilityPending || scheduleHasConflicts || !scheduleForm.movie_id || !scheduleForm.ticket_type_ids.length || !scheduleForm.time_slots.length || scheduleForm.time_slots.some(slot=>!slot.screen_id)}><CalendarCheck size={16}/>{scheduleForm.id ? 'Lưu thay đổi' : `Tạo ${scheduleForm.time_slots.length} suất chiếu`}</button></div></div>
             </form>
+          </div>
+        </div>
+      )}
+
+      {scheduleAutoRequest && (
+        <div className="tms-modal-overlay schedule-auto-request-overlay" role="presentation" onMouseDown={event=>{if(event.target===event.currentTarget&&!scheduleAutoGenerating)setScheduleAutoRequest(null);}}>
+          <div className="tms-modal-box schedule-auto-request-modal" role="dialog" aria-modal="true" aria-labelledby="schedule-auto-request-title">
+            <header>
+              <span className="schedule-auto-request-icon"><Sparkles size={22}/></span>
+              <div><small>XẾP LỊCH THÔNG MINH · AURORA DB</small><h3 id="schedule-auto-request-title">Bạn muốn xếp bao nhiêu suất chiếu?</h3><p>Hệ thống sẽ tự chọn phòng và khung giờ trống, sau đó tạo bản nháp để bạn kiểm tra.</p></div>
+              <button type="button" aria-label="Đóng" onClick={()=>setScheduleAutoRequest(null)}><X size={17}/></button>
+            </header>
+            <section className="schedule-auto-request-plan">
+              <div><span><Film size={15}/></span><small>PHIM ĐANG XẾP</small><b>{scheduleAutoRequest.movie_title}</b></div>
+              <div><span><Target size={15}/></span><small>KẾ HOẠCH</small><b>{scheduleAutoRequest.plan_code}</b></div>
+              <div><span><CalendarDays size={15}/></span><small>NGÀY CHIẾU</small><b>{formatVietnameseDate(scheduleForm.show_date)}</b></div>
+            </section>
+            <section className="schedule-auto-request-count">
+              <label htmlFor="schedule-auto-count">Tổng số suất mong muốn trong ngày</label>
+              <div className="schedule-auto-stepper">
+                <button type="button" aria-label="Giảm số suất" disabled={scheduleAutoRequest.requested_count<=scheduleAutoRequest.minimum_selectable_count} onClick={()=>setScheduleAutoRequest(current=>current?{...current,requested_count:Math.max(current.minimum_selectable_count,current.requested_count-1)}:current)}>−</button>
+                <input id="schedule-auto-count" type="number" min={scheduleAutoRequest.minimum_selectable_count} max={scheduleAutoRequest.maximum_count} step="1" value={scheduleAutoRequest.requested_count} onChange={event=>setScheduleAutoRequest(current=>current?{...current,requested_count:Number(event.target.value)}:current)}/>
+                <span>suất</span>
+                <button type="button" aria-label="Tăng số suất" disabled={scheduleAutoRequest.requested_count>=scheduleAutoRequest.maximum_count} onClick={()=>setScheduleAutoRequest(current=>current?{...current,requested_count:Math.min(current.maximum_count,current.requested_count+1)}:current)}>+</button>
+              </div>
+              <div className="schedule-auto-request-rules">
+                <p><CheckCircle2 size={15}/><span>Kế hoạch yêu cầu tối thiểu <b>{scheduleAutoRequest.minimum_count} suất/ngày</b>.</span></p>
+                <p><Clock size={15}/><span>Hiện đã có <b>{scheduleAutoRequest.existing_count} suất</b>; hệ thống sẽ tạo thêm <b>{Math.max(0,scheduleAutoRequest.requested_count-scheduleAutoRequest.existing_count)} suất</b>.</span></p>
+              </div>
+              {scheduleAutoRequest.requested_count<scheduleAutoRequest.minimum_selectable_count&&<div className="schedule-auto-request-error"><AlertTriangle size={15}/> Số suất phải từ {scheduleAutoRequest.minimum_selectable_count} trở lên để đáp ứng kế hoạch và tạo thêm lịch.</div>}
+            </section>
+            <footer><span><ShieldCheck size={15}/> Chỉ ghi vào aurora_db sau khi bạn kiểm tra và nhấn Tạo suất chiếu.</span><div><button type="button" className="tms-btn tms-btn-outline" onClick={()=>setScheduleAutoRequest(null)}>Hủy</button><button type="button" className="tms-btn tms-btn-primary" disabled={!Number.isInteger(scheduleAutoRequest.requested_count)||scheduleAutoRequest.requested_count<scheduleAutoRequest.minimum_selectable_count||scheduleAutoRequest.requested_count>scheduleAutoRequest.maximum_count} onClick={()=>void generateAutomaticSchedule(scheduleAutoRequest.requested_count)}><Sparkles size={16}/> Xếp {Math.max(0,scheduleAutoRequest.requested_count-scheduleAutoRequest.existing_count)} suất mới</button></div></footer>
           </div>
         </div>
       )}

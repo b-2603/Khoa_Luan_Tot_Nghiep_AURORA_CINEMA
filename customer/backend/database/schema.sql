@@ -19,7 +19,7 @@ CREATE TABLE IF NOT EXISTS users (
   password_hash VARCHAR(255) NOT NULL,
   role VARCHAR(30) NOT NULL DEFAULT 'customer',
   status VARCHAR(20) NOT NULL DEFAULT 'active',
-  membership_level ENUM('STANDARD', 'SILVER', 'GOLD', 'PLATINUM') NOT NULL DEFAULT 'STANDARD',
+  membership_level ENUM('STANDARD', 'SILVER', 'GOLD', 'VIP', 'PLATINUM') NOT NULL DEFAULT 'STANDARD',
   points INT UNSIGNED NOT NULL DEFAULT 0,
   created_at TIMESTAMP NULL DEFAULT CURRENT_TIMESTAMP,
   updated_at TIMESTAMP NULL
@@ -249,10 +249,33 @@ CREATE TABLE IF NOT EXISTS orders (
   status VARCHAR(20) NOT NULL DEFAULT 'PAID',
   created_at TIMESTAMP NULL DEFAULT CURRENT_TIMESTAMP,
   updated_at TIMESTAMP NULL,
+  loyalty_points_redeemed INT UNSIGNED NOT NULL DEFAULT 0,
+  loyalty_discount_amount DECIMAL(12,2) NOT NULL DEFAULT 0,
+  loyalty_points_earned INT UNSIGNED NOT NULL DEFAULT 0,
   INDEX idx_orders_channel (channel),
   INDEX idx_orders_created (created_at),
   INDEX idx_orders_customer (customer_id)
 ) ENGINE=InnoDB;
+
+CREATE TABLE IF NOT EXISTS loyalty_point_transactions (
+  id BIGINT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
+  user_id BIGINT UNSIGNED NOT NULL,
+  booking_id BIGINT UNSIGNED NULL,
+  order_id BIGINT UNSIGNED NULL,
+  points_change INT NOT NULL,
+  ticket_amount DECIMAL(12,2) NOT NULL DEFAULT 0,
+  product_amount DECIMAL(12,2) NOT NULL DEFAULT 0,
+  ticket_rate DECIMAL(5,2) NOT NULL DEFAULT 0,
+  product_rate DECIMAL(5,2) NOT NULL DEFAULT 0,
+  point_value_vnd INT UNSIGNED NOT NULL DEFAULT 1,
+  balance_after INT UNSIGNED NOT NULL,
+  transaction_type VARCHAR(30) NOT NULL,
+  description VARCHAR(255) NOT NULL,
+  created_at DATETIME NOT NULL,
+  UNIQUE KEY uq_loyalty_order_type (order_id,transaction_type),
+  KEY idx_loyalty_booking (booking_id),
+  KEY idx_loyalty_user_created (user_id,created_at)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8;
 
 CREATE TABLE IF NOT EXISTS payments (
   id BIGINT UNSIGNED AUTO_INCREMENT PRIMARY KEY,

@@ -50,6 +50,8 @@ type MembershipCard = {
 };
 
 type BookingHistoryItem={id:number;code:string;totalAmount:number;status:string;startsAt:string;movieTitle:string;theaterName:string;screenName:string;seats:string};
+type LoyaltyTransaction={id:number;order_id?:number|null;points_change:number;balance_after:number;transaction_type:string;description:string;ticket_amount?:number;product_amount?:number;ticket_rate?:number;product_rate?:number;point_value_vnd?:number;created_at:string};
+type LoyaltyOverview={member:{level:string;points:number;lifetimePoints:number;pointValueVnd:number;redeemableValue:number;ticketRate:number;productRate:number;nextLevel:string|null;nextThreshold:number|null;pointsToNext:number}|null;history:LoyaltyTransaction[]};
 
 const salesChannelLabel=(channel?:string)=>channel==='POS'?'Mua trực tiếp tại quầy':channel==='ONLINE'?'Website Aurora':channel||'—';
 const paymentMethodLabel=(method?:string)=>method==='CASH'?'Tiền mặt':method==='CARD'?'Thẻ ngân hàng':method==='TRANSFER'?'Chuyển khoản':method==='QR_VNPAY'?'VNPAY QR':method||'—';
@@ -75,10 +77,11 @@ const TABS = [
 ];
 
 const MEMBERSHIP_CONFIG: Record<string, { label: string; color: string; next?: string; nextPoints: number }> = {
-  STANDARD: { label: 'Thành Viên', color: '#64748b', next: 'SILVER',   nextPoints: 500  },
-  SILVER:   { label: 'Bạc',        color: '#94a3b8', next: 'GOLD',     nextPoints: 2000 },
-  GOLD:     { label: 'Vàng',       color: '#f4c04a', next: 'PLATINUM', nextPoints: 5000 },
-  PLATINUM: { label: 'Bạch Kim',   color: '#e2e8f0', next: undefined,  nextPoints: 9999 },
+  STANDARD: { label: 'Thành Viên', color: '#64748b', next: 'SILVER', nextPoints: 500000 },
+  SILVER:   { label: 'Bạc', color: '#94a3b8', next: 'GOLD', nextPoints: 2000000 },
+  GOLD:     { label: 'Vàng', color: '#f4c04a', next: 'VIP', nextPoints: 5000000 },
+  VIP:      { label: 'VIP', color: '#0d1b2e', next: undefined, nextPoints: 5000000 },
+  PLATINUM: { label: 'VIP', color: '#0d1b2e', next: undefined, nextPoints: 5000000 },
 };
 
 type AdministrativeProvince = {
@@ -253,6 +256,8 @@ export default function AccountPage({ authUser, onUserUpdate, initialTab = 'info
   const [receiptExportMessage,setReceiptExportMessage]=useState('');
   const [membershipCard, setMembershipCard] = useState<MembershipCard | null>(null);
   const [membershipLoading, setMembershipLoading] = useState(false);
+  const [loyaltyOverview,setLoyaltyOverview]=useState<LoyaltyOverview>({member:null,history:[]});
+  const [loyaltyLoading,setLoyaltyLoading]=useState(false);
   const [voucherCode, setVoucherCode] = useState('');
   const [avatarUploading, setAvatarUploading] = useState(false);
   const [avatarPreviewOpen, setAvatarPreviewOpen] = useState(false);
@@ -369,6 +374,12 @@ export default function AccountPage({ authUser, onUserUpdate, initialTab = 'info
       .catch(() => setBookings([]))
       .finally(() => setBookingsLoading(false));
   }, [activeTab]);
+
+  useEffect(()=>{
+    if(activeTab!=='points')return;let active=true;setLoyaltyLoading(true);
+    fetch(`${API_URL}?action=membership_overview&_=${Date.now()}`,{credentials:'include',cache:'no-store'}).then(async response=>{const data=await response.json();if(!response.ok)throw new Error(data.message||'Không thể tải điểm thưởng.');return data;}).then(data=>{if(active)setLoyaltyOverview({member:data.member||null,history:data.history||[]});}).catch(()=>{if(active)setLoyaltyOverview({member:null,history:[]});}).finally(()=>{if(active)setLoyaltyLoading(false)});
+    return()=>{active=false};
+  },[activeTab]);
 
   useEffect(()=>{if(!bookingDetail&&!bookingDetailLoading)return;const previous=document.body.style.overflow;const onKey=(event:KeyboardEvent)=>{if(event.key==='Escape'&&!bookingDetailLoading)setBookingDetail(null);};document.body.style.overflow='hidden';document.addEventListener('keydown',onKey);return()=>{document.body.style.overflow=previous;document.removeEventListener('keydown',onKey);};},[bookingDetail,bookingDetailLoading]);
 
@@ -540,6 +551,16 @@ export default function AccountPage({ authUser, onUserUpdate, initialTab = 'info
   const memberCfg = MEMBERSHIP_CONFIG[memberLevel] || MEMBERSHIP_CONFIG.STANDARD;
   const avatarLetter = (authUser?.fullName || fullName || 'A').charAt(0).toUpperCase();
   const avatarUrl = profile?.avatarUrl || authUser?.avatarUrl || '';
+  const bookingProductLines: BookingDetail['orderItems'] = bookingDetail ? [...(bookingDetail.orderItems || [])] : [];
+  if (bookingDetail && !bookingProductLines.some(item => item.type === 'TICKET')) {
+    bookingDetail.tickets.forEach(ticket => bookingProductLines.push({ type:'TICKET', code:ticket.code, name:`Vé xem phim · Ghế ${ticket.seat}`, quantity:1, unitPrice:ticket.price, total:ticket.price, seatId:0 }));
+  }
+  if (bookingDetail) {
+    bookingDetail.concessions.forEach(item => {
+      const exists = bookingProductLines.some(line => line.type !== 'TICKET' && line.code === item.code && Number(line.unitPrice) === Number(item.unitPrice));
+      if (!exists) bookingProductLines.push({ type:item.type || 'COMBO', code:item.code, name:item.name, quantity:item.quantity, unitPrice:item.unitPrice, total:item.total, seatId:0 });
+    });
+  }
 
   return (
     <div style={{ minHeight: '100vh', background: 'linear-gradient(180deg,#f0f4f8 0%,#eef0f4 100%)', fontFamily: "'Inter','Segoe UI',Arial,sans-serif" }}>
@@ -777,10 +798,10 @@ export default function AccountPage({ authUser, onUserUpdate, initialTab = 'info
                 <div style={{ background: '#fff', borderRadius: 14, padding: 20, border: '1px solid #e8edf4', marginBottom: 20 }}>
                   <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: 10 }}>
                     <span style={{ fontSize: 13.5, fontWeight: 700, color: '#0d1b2e' }}>Tiến đến hạng {MEMBERSHIP_CONFIG[membershipCard?.nextLevel || memberCfg.next || '']?.label}</span>
-                    <span style={{ fontSize: 12, color: '#64748b' }}>{membershipCard?.pointsAvailable ?? profile?.points ?? 0} / {membershipCard?.nextThreshold || memberCfg.nextPoints} điểm</span>
+                    <span style={{ fontSize: 12, color: '#64748b' }}>{membershipCard?.pointsAccumulated ?? profile?.points ?? 0} / {membershipCard?.nextThreshold || memberCfg.nextPoints} điểm tích lũy</span>
                   </div>
                   <div style={{ background: '#f1f5f9', borderRadius: 99, height: 8, overflow: 'hidden' }}>
-                    <div style={{ height: '100%', borderRadius: 99, background: 'linear-gradient(90deg,#f4c04a,#f4c04a)', width: `${Math.min(100, ((membershipCard?.pointsAvailable ?? profile?.points ?? 0) / (membershipCard?.nextThreshold || memberCfg.nextPoints)) * 100)}%`, transition: 'width 1s ease' }} />
+                    <div style={{ height: '100%', borderRadius: 99, background: 'linear-gradient(90deg,#f4c04a,#f4c04a)', width: `${Math.min(100, ((membershipCard?.pointsAccumulated ?? profile?.points ?? 0) / (membershipCard?.nextThreshold || memberCfg.nextPoints)) * 100)}%`, transition: 'width 1s ease' }} />
                   </div>
                   <div style={{ fontSize: 12, color: '#64748b', marginTop: 8 }}>
                     Cần thêm <strong style={{ color: '#f4c04a' }}>{membershipCard?.pointsToNextLevel ?? Math.max(0, memberCfg.nextPoints - (profile?.points || 0))}</strong> điểm để lên hạng
@@ -836,16 +857,13 @@ export default function AccountPage({ authUser, onUserUpdate, initialTab = 'info
 
           {/* ── TAB: ĐIỂM THƯỞNG ── */}
           {activeTab === 'points' && (
-            <div style={{ padding: 32 }}>
-              <PageHeading icon={Sparkles} title="Điểm thưởng Aurora" subtitle="Tích điểm sau mỗi giao dịch và dùng điểm để nhận ưu đãi." />
-              <div style={{ borderRadius: 18, padding: 26, background: 'linear-gradient(135deg,#fff7dc,#fff 65%)', border: '1px solid #f4c04a', display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 20, flexWrap: 'wrap', marginBottom: 22 }}>
-                <div><div style={{ fontSize: 12, fontWeight: 800, color: '#f4c04a', letterSpacing: 1 }}>SỐ DƯ ĐIỂM HIỆN TẠI</div><div style={{ fontSize: 38, fontWeight: 900, color: '#f4c04a', marginTop: 3 }}>{profile?.points || 0} <span style={{ fontSize: 15 }}>điểm</span></div><div style={{ color: '#64748b', fontSize: 13 }}>1.000đ chi tiêu hợp lệ = 1 điểm Aurora</div></div>
-                <div style={{ width: 64, height: 64, borderRadius: '50%', background: '#f4c04a', display: 'grid', placeItems: 'center', boxShadow: '0 8px 20px rgba(244,192,74,.35)' }}><Star size={31} fill="#0d1b2e" color="#0d1b2e" /></div>
-              </div>
-              <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3,minmax(0,1fr))', gap: 14, marginBottom: 24 }}>
-                {[['1', 'điểm', 'mỗi 1.000đ chi tiêu'], ['500', 'điểm', 'để lên hạng Silver'], ['2.000', 'điểm', 'để lên hạng Gold']].map(item => <div key={item[0]} style={{ border: '1px solid #e8edf4', borderRadius: 12, padding: 16, textAlign: 'center' }}><b style={{ fontSize: 20, color: '#0d1b2e' }}>{item[0]} <span style={{ fontSize: 12 }}>{item[1]}</span></b><div style={{ color: '#64748b', fontSize: 12, marginTop: 5 }}>{item[2]}</div></div>)}
-              </div>
-              <div style={{ borderTop: '1px solid #e8edf4', paddingTop: 20 }}><SectionTitle>LỊCH SỬ ĐIỂM</SectionTitle><EmptyState icon="⭐" title="Chưa có giao dịch điểm" text="Điểm từ các vé thanh toán thành công sẽ được cập nhật tại đây." compact /></div>
+            <div className="aurora-points-page">
+              <PageHeading icon={Sparkles} title="Điểm thưởng Aurora" subtitle="Tích theo từng nhóm sản phẩm và sử dụng trực tiếp khi thanh toán tại POS." />
+              {loyaltyLoading?<LoadingState text="Đang đối chiếu sổ điểm từ aurora_db..."/>:<>
+              <section className="points-balance-hero"><div><span>SỐ DƯ KHẢ DỤNG</span><strong>{Number(loyaltyOverview.member?.points??profile?.points??0).toLocaleString('vi-VN')} <small>điểm</small></strong><p>Tương đương <b>{formatMoney(loyaltyOverview.member?.redeemableValue||0)}</b> khi mua trực tiếp tại quầy</p></div><div className="points-tier-orb"><Star size={30} fill="currentColor"/><small>HẠNG</small><b>{loyaltyOverview.member?.level||memberLevel}</b></div></section>
+              <section className="points-policy-grid"><article><Ticket/><span><small>VÉ XEM PHIM</small><b>{loyaltyOverview.member?.ticketRate||5}%</b><p>Giá trị vé thanh toán hợp lệ</p></span></article><article><Popcorn/><span><small>BẮP NƯỚC & HÀNG HÓA</small><b>{loyaltyOverview.member?.productRate||10}%</b><p>Sản phẩm mua kèm trong đơn</p></span></article><article className="vip"><Sparkles/><span><small>ĐẶC QUYỀN VIP</small><b>+3%</b><p>Cộng thêm cho từng loại sản phẩm</p></span></article><article><Banknote/><span><small>QUY ĐỔI TẠI POS</small><b>1 điểm = 1đ</b><p>Không quy đổi tiền mặt</p></span></article></section>
+              <section className="points-ledger"><header><div><span>LỊCH SỬ ĐIỂM</span><h3>Sổ giao dịch thành viên</h3></div><small>Dữ liệu trực tiếp từ aurora_db</small></header>{loyaltyOverview.history.length?<div>{loyaltyOverview.history.map(row=><article key={row.id}><span className={row.points_change>=0?'earn':'redeem'}>{row.points_change>=0?<Sparkles size={16}/>:<Banknote size={16}/>}</span><div><b>{row.description}</b><small>{formatDateTime(row.created_at)}{row.order_id?` · Đơn #${row.order_id}`:''}</small>{row.points_change>0&&<em>Vé {Number(row.ticket_rate||5)}% · Hàng hóa {Number(row.product_rate||10)}%</em>}</div><strong className={row.points_change>=0?'plus':'minus'}>{row.points_change>=0?'+':''}{Number(row.points_change).toLocaleString('vi-VN')} điểm<small>Còn {Number(row.balance_after).toLocaleString('vi-VN')}</small></strong></article>)}</div>:<EmptyState icon="⭐" title="Chưa có giao dịch điểm" text="Điểm sẽ được ghi nhận sau khi đơn hàng thành viên thanh toán thành công." compact />}</section>
+              </>}
             </div>
           )}
 
@@ -866,8 +884,15 @@ export default function AccountPage({ authUser, onUserUpdate, initialTab = 'info
       {bookingDetail&&(
         <div className="booking-detail-backdrop" onMouseDown={event=>{if(event.target===event.currentTarget)setBookingDetail(null);}}>
           <section className="booking-detail-modal" role="dialog" aria-modal="true" aria-labelledby="booking-detail-title">
-            <header className="booking-detail-head"><div><span><QrCode size={14}/> VÉ ĐIỆN TỬ AURORA</span><h2 id="booking-detail-title">Chi tiết đơn hàng</h2><p>Mỗi ghế có một mã vé và QR riêng để soát vé tại rạp.</p></div><button type="button" onClick={()=>setBookingDetail(null)} aria-label="Đóng chi tiết đơn hàng"><X size={20}/></button></header>
+            <header className="booking-detail-head"><div><span><ReceiptText size={14}/> HỒ SƠ ĐƠN HÀNG AURORA</span><h2 id="booking-detail-title">Chi tiết đơn hàng</h2><p>Thông tin suất chiếu, vé điện tử, hàng hóa và thanh toán được đối chiếu từ aurora_db.</p></div><button type="button" onClick={()=>setBookingDetail(null)} aria-label="Đóng chi tiết đơn hàng"><X size={20}/></button></header>
             <div className="booking-detail-scroll">
+              <section className="booking-order-overview">
+                <div><small>MÃ ĐƠN HÀNG</small><strong>{bookingDetail.order?.code||bookingDetail.code}</strong></div>
+                <div><small>KÊNH BÁN</small><b>{salesChannelLabel(bookingDetail.order?.channel)}</b></div>
+                <div><small>THANH TOÁN</small><b>{paymentMethodLabel(bookingDetail.order?.paymentMethod||bookingDetail.payments[0]?.method)}</b></div>
+                <div><small>GIÁ TRỊ ĐƠN</small><strong>{formatMoney(bookingDetail.order?.totalAmount??bookingDetail.total_amount)}</strong></div>
+                <span className={`booking-order-state ${bookingDetail.status.toLowerCase()}`}><i/>{bookingDetail.status==='PAID'?'Đã thanh toán':bookingDetail.status==='PENDING'?'Chờ thanh toán':bookingDetail.status==='CANCELLED'?'Đã hủy':'Hết hạn'}</span>
+              </section>
               <section className="booking-movie-summary">
                 <div className="booking-poster">{bookingDetail.poster_url?<img src={bookingDetail.poster_url} alt={bookingDetail.movie_title}/>:<Film size={34}/>}</div>
                 <div><span>{bookingDetail.age_rating||'P'} · {bookingDetail.format||'2D'} · {bookingDetail.duration_minutes} phút</span><h3>{bookingDetail.movie_title}</h3><p><Calendar size={15}/>{formatDateTime(bookingDetail.starts_at)} - {formatDateTime(bookingDetail.ends_at)}</p><p><MapPin size={15}/>{bookingDetail.theater_name} · {bookingDetail.screen_name}</p><small>{bookingDetail.theater_address}{bookingDetail.city?` · ${bookingDetail.city}`:''}</small></div>
@@ -880,9 +905,15 @@ export default function AccountPage({ authUser, onUserUpdate, initialTab = 'info
                 <TicketQr ticket={ticket}/>
               </article>)}</div>:<div className="booking-no-ticket"><QrCode size={28}/><b>Vé QR chưa được phát hành</b><span>Vé điện tử được tạo sau khi đơn hàng thanh toán thành công.</span></div>}
 
+              <section className="booking-line-items">
+                <header><div><ReceiptText size={17}/><span><b>Chi tiết sản phẩm</b><small>{bookingProductLines.length} dòng sản phẩm trong đơn</small></span></div><strong>{formatMoney(bookingDetail.order?.totalAmount??bookingDetail.total_amount)}</strong></header>
+                <div className="booking-line-items-head"><span>Sản phẩm</span><span>SL</span><span>Đơn giá</span><span>Thành tiền</span></div>
+                {bookingProductLines.map((item,index)=><div className="booking-line-item" key={`${item.code}-${index}`}><span><i className={item.type.toLowerCase()}>{item.type==='TICKET'?<Ticket size={15}/>:<Popcorn size={15}/>}</i><span><b>{item.name}</b><small>{item.code}</small></span></span><b>{item.quantity}</b><span>{formatMoney(item.unitPrice)}</span><strong>{formatMoney(item.total)}</strong></div>)}
+              </section>
+
               <div className="booking-detail-columns">
-                <section><h4><ReceiptText size={16}/>Thông tin đơn hàng</h4><dl><div><dt>Mã đơn hàng</dt><dd>{bookingDetail.order?.code||bookingDetail.code}</dd></div><div><dt>Người đặt</dt><dd>{bookingDetail.customer?.fullName||authUser?.fullName||'Khách hàng Aurora'}</dd></div><div><dt>Email</dt><dd>{bookingDetail.customer?.email||authUser?.email||'—'}</dd></div>{bookingDetail.customer?.phone&&<div><dt>Số điện thoại</dt><dd>{bookingDetail.customer.phone}</dd></div>}<div><dt>Ngày đặt</dt><dd>{formatDateTime(bookingDetail.order?.createdAt||bookingDetail.created_at)}</dd></div><div><dt>Kênh bán</dt><dd>{salesChannelLabel(bookingDetail.order?.channel)}</dd></div><div><dt>Phương thức</dt><dd>{paymentMethodLabel(bookingDetail.order?.paymentMethod||bookingDetail.payments[0]?.method)}</dd></div>{bookingDetail.order?.voucherCode&&<div><dt>Voucher</dt><dd>{bookingDetail.order.voucherCode}</dd></div>}<div><dt>Tạm tính</dt><dd>{formatMoney(bookingDetail.order?.subtotal??bookingDetail.total_amount)}</dd></div><div><dt>Giảm giá</dt><dd>- {formatMoney(bookingDetail.order?.discountAmount||0)}</dd></div><div className="total"><dt>Tổng thanh toán</dt><dd>{formatMoney(bookingDetail.total_amount)}</dd></div></dl></section>
-                <section><h4><Popcorn size={16}/>Bắp nước & thanh toán</h4>{bookingDetail.concessions.length?<div className="booking-concession-list">{bookingDetail.concessions.map(item=><div key={`${item.code}-${item.unitPrice}`}><span><b>{item.name}</b><small><em>{item.type==='MERCHANDISE'?'Hàng hóa':'Combo'}</em>{item.quantity} × {formatMoney(item.unitPrice)}</small></span><strong>{formatMoney(item.total)}</strong></div>)}</div>:<div className="booking-empty-concession">Đơn hàng không có bắp nước hoặc hàng hóa.</div>}{(bookingDetail.payments.length?bookingDetail.payments:[{method:bookingDetail.order?.paymentMethod||'',amount:bookingDetail.total_amount,referenceCode:bookingDetail.order?.code||bookingDetail.code,createdAt:bookingDetail.order?.createdAt||bookingDetail.created_at}]).map((payment,index)=><div className="booking-payment-proof" key={`${payment.referenceCode}-${index}`}><Banknote size={17}/><span><small>{paymentMethodLabel(payment.method)} · {formatMoney(payment.amount)}</small><b>{payment.referenceCode||'Chưa có mã đối soát'}</b></span></div>)}</section>
+                <section><h4><User size={16}/>Khách hàng & tiếp nhận</h4><dl><div><dt>Người đặt</dt><dd>{bookingDetail.customer?.fullName||authUser?.fullName||'Khách hàng Aurora'}</dd></div><div><dt>Email</dt><dd>{bookingDetail.customer?.email||authUser?.email||'—'}</dd></div><div><dt>Số điện thoại</dt><dd>{bookingDetail.customer?.phone||'—'}</dd></div><div><dt>Ngày đặt</dt><dd>{formatDateTime(bookingDetail.order?.createdAt||bookingDetail.created_at)}</dd></div><div><dt>Thu ngân</dt><dd>{bookingDetail.order?.cashier?.fullName||'Hệ thống trực tuyến'}</dd></div><div><dt>Quầy bán</dt><dd>{bookingDetail.order?.cashier?.counter||'Website Aurora'}</dd></div>{bookingDetail.redemption&&<div><dt>Đổi/nhận vé</dt><dd>{formatDateTime(bookingDetail.redemption.redeemedAt)}</dd></div>}<div><dt>Mã chứng từ</dt><dd>{bookingDetail.receipt?.documentCode||`AURORA-RECEIPT-${bookingDetail.code}`}</dd></div></dl></section>
+                <section><h4><Banknote size={16}/>Thanh toán & đối soát</h4><dl><div><dt>Tạm tính</dt><dd>{formatMoney(bookingDetail.order?.subtotal??bookingDetail.total_amount)}</dd></div><div><dt>Giảm giá</dt><dd>- {formatMoney(bookingDetail.order?.discountAmount||0)}</dd></div>{bookingDetail.order?.voucherCode&&<div><dt>Voucher</dt><dd>{bookingDetail.order.voucherCode}</dd></div>}<div><dt>Khách thanh toán</dt><dd>{formatMoney(bookingDetail.order?.amountReceived||bookingDetail.total_amount)}</dd></div>{Boolean(bookingDetail.order?.changeAmount)&&<div><dt>Tiền thừa</dt><dd>{formatMoney(bookingDetail.order?.changeAmount||0)}</dd></div>}<div className="total"><dt>Tổng đơn hàng</dt><dd>{formatMoney(bookingDetail.order?.totalAmount??bookingDetail.total_amount)}</dd></div></dl>{(bookingDetail.payments.length?bookingDetail.payments:[{method:bookingDetail.order?.paymentMethod||'',amount:bookingDetail.total_amount,referenceCode:bookingDetail.order?.code||bookingDetail.code,createdAt:bookingDetail.order?.createdAt||bookingDetail.created_at}]).map((payment,index)=><div className="booking-payment-proof" key={`${payment.referenceCode}-${index}`}><Banknote size={17}/><span><small>{paymentMethodLabel(payment.method)} · {formatMoney(payment.amount)} · {formatDateTime(payment.createdAt)}</small><b>{payment.referenceCode||'Chưa có mã đối soát'}</b></span></div>)}{bookingDetail.onlinePayment&&<div className="booking-online-payment"><b>{bookingDetail.onlinePayment.provider} · {bookingDetail.onlinePayment.status}</b><span>{bookingDetail.onlinePayment.bankCode||'Ngân hàng chưa xác định'}{bookingDetail.onlinePayment.cardType?` · ${bookingDetail.onlinePayment.cardType}`:''}</span><code>{bookingDetail.onlinePayment.providerTransactionNo||bookingDetail.onlinePayment.transactionReference}</code></div>}</section>
               </div>
             </div>
             <footer className="booking-detail-foot"><p role="status"><Shield size={15}/>{receiptExportMessage||'File PDF có đầy đủ vé, QR, suất chiếu, phòng chiếu và thanh toán.'}</p><button type="button" className="booking-pdf-button" onClick={()=>void exportBookingReceipt()} disabled={receiptExporting}>{receiptExporting?<Loader2 className="spin" size={16}/>:<FileDown size={16}/>}<span>{receiptExporting?'Đang tạo PDF…':'Tải / chia sẻ PDF'}</span></button><button type="button" className="primary" onClick={()=>setBookingDetail(null)}>Hoàn tất</button></footer>
