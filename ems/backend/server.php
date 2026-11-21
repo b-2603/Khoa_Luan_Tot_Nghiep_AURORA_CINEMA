@@ -389,6 +389,51 @@ if ($route === '/auth/register' && $method === 'POST') {
 // ------------------------------------------------------------------------------
 // UC02, UC03, UC04: EMPLOYEES MANAGEMENT
 // ------------------------------------------------------------------------------
+// Shared EMS/TMS communication channel. Both applications use this table in aurora_db.
+if (strpos($route, '/communications') === 0) {
+    $pdo->exec("CREATE TABLE IF NOT EXISTS aurora_internal_messages (
+      id BIGINT UNSIGNED NOT NULL AUTO_INCREMENT PRIMARY KEY,
+      sender_system VARCHAR(8) NOT NULL, sender_user_id BIGINT UNSIGNED NOT NULL,
+      recipient_system VARCHAR(8) NOT NULL, recipient_user_id BIGINT UNSIGNED NOT NULL,
+      content TEXT NOT NULL, topic_tag VARCHAR(80) NULL, read_at DATETIME NULL,
+      created_at DATETIME NOT NULL, updated_at DATETIME NOT NULL,
+      INDEX idx_message_sender(sender_system,sender_user_id,created_at),
+      INDEX idx_message_recipient(recipient_system,recipient_user_id,read_at,created_at)
+    ) ENGINE=InnoDB DEFAULT CHARSET=utf8 COLLATE=utf8_unicode_ci");
+    $emsId = intval($_GET['user_id'] ?? ($body['user_id'] ?? 0));
+    $exists = $pdo->prepare("SELECT id,name,role FROM ems_users WHERE id=? AND status='active' LIMIT 1");
+    $exists->execute([$emsId]); $me = $exists->fetch();
+    if (!$me) jsonResponse(['status'=>'error','message'=>'Tài khoản EMS không hợp lệ.'],401);
+    if ($route === '/communications/contacts' && $method === 'GET') {
+        $contacts=[];
+        $q=$pdo->query("SELECT id,name,role,email,department,avatar FROM ems_users WHERE status='active' ORDER BY name");
+        foreach($q as $x){if(intval($x['id'])===$emsId)continue;$x['system']='ems';$x['ref']='ems:'.$x['id'];$contacts[]=$x;}
+        $q=$pdo->query("SELECT id,full_name AS name,role,email,theater_id FROM users WHERE status='active' AND role<>'customer' ORDER BY full_name");
+        foreach($q as $x){$x['system']='tms';$x['ref']='tms:'.$x['id'];$x['department']='Theater Management System';$contacts[]=$x;}
+        $c=$pdo->prepare("SELECT IF(sender_system='ems' AND sender_user_id=?,CONCAT(recipient_system,':',recipient_user_id),CONCAT(sender_system,':',sender_user_id)) ref,MAX(id) last_id FROM aurora_internal_messages WHERE (sender_system='ems' AND sender_user_id=?) OR (recipient_system='ems' AND recipient_user_id=?) GROUP BY ref ORDER BY last_id DESC");$c->execute([$emsId,$emsId,$emsId]);$conversationRefs=[];foreach($c as $x)$conversationRefs[]=$x['ref'];
+        $u=$pdo->prepare("SELECT CONCAT(sender_system,':',sender_user_id) ref,COUNT(*) total FROM aurora_internal_messages WHERE recipient_system='ems' AND recipient_user_id=? AND read_at IS NULL GROUP BY sender_system,sender_user_id");$u->execute([$emsId]);$unread=[];foreach($u as $x)$unread[$x['ref']]=intval($x['total']);
+        jsonResponse(['status'=>'success','data'=>['contacts'=>$contacts,'conversation_refs'=>$conversationRefs,'unread'=>$unread,'me'=>['ref'=>'ems:'.$emsId,'name'=>$me['name'],'role'=>$me['role']]]]);
+    }
+    $partner=(string)($_GET['partner']??($body['partner']??''));
+    if(!preg_match('/^(ems|tms):(\d+)$/',$partner,$m))jsonResponse(['status'=>'error','message'=>'Người nhận không hợp lệ.'],422);
+    $ps=$m[1];$pid=intval($m[2]);
+    if($route==='/communications/messages'&&$method==='GET'){
+        $s=$pdo->prepare("SELECT id,sender_system,sender_user_id,recipient_system,recipient_user_id,content,topic_tag,read_at,created_at FROM aurora_internal_messages WHERE (sender_system='ems' AND sender_user_id=? AND recipient_system=? AND recipient_user_id=?) OR (sender_system=? AND sender_user_id=? AND recipient_system='ems' AND recipient_user_id=?) ORDER BY id ASC LIMIT 500");
+        $s->execute([$emsId,$ps,$pid,$ps,$pid,$emsId]);$rows=$s->fetchAll();foreach($rows as &$x)$x['mine']=$x['sender_system']==='ems'&&intval($x['sender_user_id'])===$emsId;
+        jsonResponse(['status'=>'success','data'=>$rows]);
+    }
+    if($route==='/communications/read'&&in_array($method,['PUT','POST'])){
+        $s=$pdo->prepare("UPDATE aurora_internal_messages SET read_at=COALESCE(read_at,NOW()),updated_at=NOW() WHERE sender_system=? AND sender_user_id=? AND recipient_system='ems' AND recipient_user_id=?");$s->execute([$ps,$pid,$emsId]);jsonResponse(['status'=>'success']);
+    }
+    if($route==='/communications/messages'&&$method==='POST'){
+        $content=trim((string)($body['content']??''));$topic=substr(trim((string)($body['topic_tag']??'')),0,80);
+        if($content===''||strlen($content)>4000)jsonResponse(['status'=>'error','message'=>'Tin nhắn phải có từ 1 đến 4.000 ký tự.'],422);
+        $s=$pdo->prepare("INSERT INTO aurora_internal_messages(sender_system,sender_user_id,recipient_system,recipient_user_id,content,topic_tag,created_at,updated_at) VALUES('ems',?,?,?,?,?,NOW(),NOW())");$s->execute([$emsId,$ps,$pid,$content,$topic]);
+        jsonResponse(['status'=>'success','message'=>'Đã gửi tin nhắn.','data'=>['id'=>intval($pdo->lastInsertId())]],201);
+    }
+    jsonResponse(['status'=>'error','message'=>'Route trao đổi không tồn tại.'],404);
+}
+
 if ($route === '/employees' && $method === 'GET') {
     $search = $_GET['search'] ?? '';
     $dept = $_GET['dept'] ?? 'all';

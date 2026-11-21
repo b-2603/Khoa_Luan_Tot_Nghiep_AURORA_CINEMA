@@ -8,6 +8,12 @@ import { User, Course, Quiz, Certificate, Shift, ShiftRegistration, WorkSchedule
 import * as storage from './storage';
 
 export const API_BASE_URL = 'http://localhost:8000/api/v1';
+export type CommunicationContact={id:number;ref:string;name:string;role:string;system:'ems'|'tms';department?:string;avatar?:string};
+export type CommunicationMessage={id:number;sender_system:string;sender_user_id:number;content:string;topic_tag?:string;read_at?:string;created_at:string;mine:boolean};
+export async function fetchCommunicationContacts(userId:string){const id=String(userId).replace('usr-','');const r=await fetch(`${API_BASE_URL}/communications/contacts?user_id=${id}`,{cache:'no-store'}),j=await r.json();if(!r.ok||j.status!=='success')throw new Error(j.message);return j.data as {contacts:CommunicationContact[];conversation_refs:string[];unread:Record<string,number>};}
+export async function fetchCommunicationMessages(userId:string,partner:string){const id=String(userId).replace('usr-','');const r=await fetch(`${API_BASE_URL}/communications/messages?user_id=${id}&partner=${encodeURIComponent(partner)}`,{cache:'no-store'}),j=await r.json();if(!r.ok||j.status!=='success')throw new Error(j.message);return j.data as CommunicationMessage[];}
+export async function sendCommunicationMessage(userId:string,partner:string,content:string,topicTag:string){const r=await fetch(`${API_BASE_URL}/communications/messages`,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({user_id:String(userId).replace('usr-',''),partner,content,topic_tag:topicTag})}),j=await r.json();if(!r.ok||j.status!=='success')throw new Error(j.message);return j;}
+export async function markCommunicationRead(userId:string,partner:string){await fetch(`${API_BASE_URL}/communications/read`,{method:'PUT',headers:{'Content-Type':'application/json'},body:JSON.stringify({user_id:String(userId).replace('usr-',''),partner})});}
 
 // Kiểm tra trạng thái kết nối MySQL Backend
 export async function checkBackendHealth(): Promise<{ connected: boolean; message: string; data?: any }> {

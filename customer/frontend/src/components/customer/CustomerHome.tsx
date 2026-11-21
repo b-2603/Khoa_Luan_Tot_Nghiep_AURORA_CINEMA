@@ -80,6 +80,10 @@ export default function CustomerHome({
   const [quickSearched, setQuickSearched] = useState(false);
   const [websiteContents, setWebsiteContents] = useState<WebsiteContent[]>([]);
   const cmsEditorMode = useMemo(() => new URLSearchParams(window.location.search).get('cms_editor') === '1', []);
+  const cmsParentOrigin = useMemo(() => {
+    try { return document.referrer ? new URL(document.referrer).origin : window.location.origin; }
+    catch { return window.location.origin; }
+  }, []);
 
   useEffect(() => {
     let active = true;
@@ -108,7 +112,7 @@ export default function CustomerHome({
 
   function selectCmsContent(item:WebsiteContent|null,placementKey:string){
     if(!cmsEditorMode)return;
-    window.parent.postMessage({type:'aurora-cms-select',contentId:item?.id||0,placementKey},'*');
+    window.parent.postMessage({type:'aurora-cms-select',contentId:item?.id||0,placementKey},cmsParentOrigin);
   }
 
   function CmsEditButton({item,placement,label}:{item?:WebsiteContent;placement:string;label:string}){

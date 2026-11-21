@@ -257,9 +257,48 @@ CREATE TABLE IF NOT EXISTS `system_configs` (
   `updated_at` DATETIME NULL DEFAULT NULL
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8 COLLATE=utf8_unicode_ci;
 
+-- 16. Tùy chọn giao diện TMS theo tài khoản
+CREATE TABLE IF NOT EXISTS `tms_user_preferences` (
+  `user_id` BIGINT UNSIGNED NOT NULL PRIMARY KEY,
+  `menu_position` VARCHAR(12) NOT NULL DEFAULT 'left',
+  `background_theme` VARCHAR(20) NOT NULL DEFAULT 'cloud',
+  `accent_color` VARCHAR(20) NOT NULL DEFAULT 'aurora',
+  `interface_density` VARCHAR(20) NOT NULL DEFAULT 'comfortable',
+  `font_scale` VARCHAR(12) NOT NULL DEFAULT 'medium',
+  `sidebar_default` VARCHAR(12) NOT NULL DEFAULT 'expanded',
+  `content_width` VARCHAR(12) NOT NULL DEFAULT 'contained',
+  `sidebar_theme` VARCHAR(12) NOT NULL DEFAULT 'navy',
+  `topbar_style` VARCHAR(12) NOT NULL DEFAULT 'light',
+  `card_style` VARCHAR(12) NOT NULL DEFAULT 'elevated',
+  `corner_style` VARCHAR(12) NOT NULL DEFAULT 'soft',
+  `table_style` VARCHAR(12) NOT NULL DEFAULT 'clean',
+  `scrollbar_style` VARCHAR(12) NOT NULL DEFAULT 'slim',
+  `reduce_motion` TINYINT(1) NOT NULL DEFAULT 0,
+  `high_contrast` TINYINT(1) NOT NULL DEFAULT 0,
+  `show_footer` TINYINT(1) NOT NULL DEFAULT 1,
+  `sticky_topbar` TINYINT(1) NOT NULL DEFAULT 0,
+  `show_notifications` TINYINT(1) NOT NULL DEFAULT 1,
+  `show_greeting` TINYINT(1) NOT NULL DEFAULT 1,
+  `show_role_badge` TINYINT(1) NOT NULL DEFAULT 1,
+  `remember_last_view` TINYINT(1) NOT NULL DEFAULT 1,
+  `highlight_focus` TINYINT(1) NOT NULL DEFAULT 1,
+  `created_at` DATETIME NOT NULL,
+  `updated_at` DATETIME NOT NULL,
+  KEY `idx_tms_preferences_updated` (`updated_at`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8 COLLATE=utf8_unicode_ci;
+
 -- ========================================================
 -- SEED DATA MẪU CƠ BẢN
 -- ========================================================
+CREATE TABLE IF NOT EXISTS `aurora_internal_messages` (
+  `id` BIGINT UNSIGNED NOT NULL AUTO_INCREMENT PRIMARY KEY,
+  `sender_system` VARCHAR(8) NOT NULL, `sender_user_id` BIGINT UNSIGNED NOT NULL,
+  `recipient_system` VARCHAR(8) NOT NULL, `recipient_user_id` BIGINT UNSIGNED NOT NULL,
+  `content` TEXT NOT NULL, `topic_tag` VARCHAR(80) NULL, `read_at` DATETIME NULL,
+  `created_at` DATETIME NOT NULL, `updated_at` DATETIME NOT NULL,
+  KEY `idx_message_sender` (`sender_system`,`sender_user_id`,`created_at`),
+  KEY `idx_message_recipient` (`recipient_system`,`recipient_user_id`,`read_at`,`created_at`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8 COLLATE=utf8_unicode_ci;
 
 INSERT INTO `users` (`username`, `password_hash`, `full_name`, `phone`, `email`, `role`, `status`)
 VALUES

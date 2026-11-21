@@ -16,6 +16,8 @@ import RbacManagement, { type PermissionAction, type PermissionActions, type Rba
 import CinemaMoviePlanWorkspace, { type CinemaPlanView } from './components/CinemaMoviePlanWorkspace';
 import MovieManagementWorkspace from './components/MovieManagementWorkspace';
 import AccountProfileModal, { type AccountProfile } from './components/AccountProfileModal';
+import UserPreferencesPage, { DEFAULT_TMS_PREFERENCES, type TmsPreferences } from './components/UserPreferencesPage';
+import CommunicationWorkspace from './components/CommunicationWorkspace';
 import './components/MarketingWorkspace.css';
 import './components/MarketingReviewHierarchy.css';
 import './components/MarketingWorkspace.layout.css';
@@ -30,7 +32,7 @@ import {
   ShieldAlert, UserCheck, Monitor, ScrollText, CreditCard, Search, RefreshCw,
   Tv, Clapperboard as ShowtimeIcon, MapPin, Clock, Target,
   CalendarCheck, Sparkles, Globe, CirclePause,
-  Play, WalletCards, KeyRound, LockKeyhole, CircleDollarSign, Phone, Activity, History, Printer, Megaphone
+  Play, WalletCards, KeyRound, LockKeyhole, CircleDollarSign, Phone, Activity, History, Printer, Megaphone, MessageSquare
 } from 'lucide-react';
 
 // ============================================================
@@ -116,7 +118,7 @@ const PAGE_TITLES: Record<string, string> = {
   dashboard: 'Tổng quan hệ thống', accounts: 'Tài khoản & Phân quyền', cinemas: 'Hệ thống rạp', movies: 'Danh sách phim',
   theater_plans: 'Kế hoạch rạp', theater_plan_approvals: 'Duyệt kế hoạch phim', promotion_approvals: 'Duyệt chương trình khuyến mãi', movie_plan: 'Duyệt kế hoạch phim', schedules: 'Lịch chiếu', screens: 'Quản lý phòng chiếu', pricing: 'Chính sách giá',
   catalog: 'Danh mục dùng chung', promotions: 'Chương trình khuyến mãi', products: 'Quản lý hàng hóa', staff: 'Nhân viên & Ca làm việc',
-  reports: 'Báo cáo vận hành', pos_devices: 'Thiết bị POS', audit_log: 'Nhật ký hệ thống', settings: 'Cấu hình hệ thống',
+  reports: 'Báo cáo vận hành', pos_devices: 'Thiết bị POS', audit_log: 'Nhật ký hệ thống', settings: 'Cài đặt', communications:'Kênh trao đổi',
   transactions: 'Giao dịch', refunds: 'Hoàn tiền', showtimes: 'Lịch chiếu', shifts: 'Phiên làm việc', cinema_customers: 'Khách hàng', booking_history: 'Lịch sử đặt vé'
   , 'mkt-dashboard':'Tổng quan', 'mkt-movies':'Danh sách phim', 'mkt-plans':'Kế hoạch phim', 'mkt-campaigns':'Quảng bá phim',
   'mkt-promotions':'Chương trình khuyến mãi', 'mkt-vouchers':'Voucher', 'mkt-contents':'Nội dung Customer Website',
@@ -152,7 +154,6 @@ function getRoleNavItems(role: TMSRole): NavItem[] {
         { id: 'reports', name: 'Báo cáo tổng hợp', icon: BarChart3 },
         { id: 'pos_devices', name: 'Thiết bị POS', icon: Monitor, children: ['Quản lý POS', 'Phê duyệt POS'] },
         { id: 'audit_log', name: 'Audit Log', icon: ScrollText },
-        { id: 'settings', name: 'Cấu hình hệ thống', icon: Settings },
       ];
     case 'cinema_admin':
       return [
@@ -230,7 +231,7 @@ const VIEW_RBAC_MODULE: Record<string, string> = {
   approvals: 'transactions_refunds', 'Xem giao dịch': 'transactions_refunds', 'Lịch sử thanh toán': 'transactions_refunds',
   'Hủy giao dịch': 'transactions_refunds', 'Hoàn tiền': 'transactions_refunds', 'Nghiệp vụ ngoại lệ': 'transactions_refunds',
   invoices: 'transactions_refunds', reconciliation: 'transactions_refunds', 'Đối soát giao dịch': 'transactions_refunds', 'Đối soát thanh toán': 'transactions_refunds',
-  audit_log: 'audit_logs', settings: 'settings',
+  audit_log: 'audit_logs',
   'mkt-dashboard': 'marketing', 'mkt-movies': 'marketing', 'mkt-plans': 'marketing', 'mkt-campaigns': 'marketing',
   'mkt-promotions': 'marketing', 'mkt-vouchers': 'marketing', 'mkt-contents': 'marketing',
   'mkt-notifications': 'marketing', 'mkt-segments': 'marketing', 'mkt-reports': 'marketing',
@@ -275,7 +276,7 @@ const allowedTmsViews = (role: TMSRole) => {
   // navigation whitelist; renderContent still enforces the actual permission.
   // Without this, selecting (for example) Booking History as super_admin is
   // immediately rewritten to the dashboard by the active-view effect below.
-  const allowed = new Set<string>(['dashboard', 'cinema_customers', 'booking_history']);
+  const allowed = new Set<string>(['dashboard', 'cinema_customers', 'booking_history', 'settings', 'communications']);
   getRoleNavItems(role).forEach(item => {
     allowed.add(item.id);
     (item.children || []).forEach(child => allowed.add(child));
@@ -624,6 +625,7 @@ export default function App() {
   const [sidebarOpen, setSidebarOpen] = useState(() => window.innerWidth > 760);
   const [userDropdownOpen, setUserDropdownOpen] = useState(false);
   const [showAccountProfile, setShowAccountProfile] = useState(false);
+  const [preferences, setPreferences] = useState<TmsPreferences>(DEFAULT_TMS_PREFERENCES);
   const [reportDate, setReportDate] = useState(() => localIsoDate());
 
   // DATA
@@ -860,11 +862,16 @@ export default function App() {
       setActive('dashboard');
       return;
     }
-    window.sessionStorage.setItem(tmsViewStorageKey(currentUser), active);
-    replaceTmsViewInUrl(active);
+    if (preferences.remember_last_view) {
+      window.sessionStorage.setItem(tmsViewStorageKey(currentUser), active);
+      replaceTmsViewInUrl(active);
+    } else {
+      window.sessionStorage.removeItem(tmsViewStorageKey(currentUser));
+      replaceTmsViewInUrl();
+    }
     const parent = getRoleNavItems(currentUser.role).find(item => item.children?.includes(active));
     if (parent) setExpanded(parent.id);
-  }, [active, isLoggedIn, currentUser?.id, currentUser?.role]);
+  }, [active, isLoggedIn, currentUser?.id, currentUser?.role, preferences.remember_last_view]);
 
   useEffect(() => {
     if (!isLoggedIn || !currentUser) return;
@@ -875,6 +882,25 @@ export default function App() {
     window.addEventListener('popstate', handleHistoryNavigation);
     return () => window.removeEventListener('popstate', handleHistoryNavigation);
   }, [isLoggedIn, currentUser?.id, currentUser?.role]);
+
+  useEffect(() => {
+    if (!isLoggedIn || !currentUser) return;
+    let activeRequest = true;
+    fetch(`${API_BASE}?action=user-preferences`, { credentials:'include' })
+      .then(response => response.json().then(result => ({ response, result })))
+      .then(({response,result}) => {
+        if (!activeRequest || !response.ok || !result.success) return;
+        const next = { ...DEFAULT_TMS_PREFERENCES, ...(result.data?.preferences || {}) } as TmsPreferences;
+        setPreferences(next);
+        setSidebarOpen(next.sidebar_default === 'expanded' && window.innerWidth > 760);
+      })
+      .catch(() => { if (activeRequest) setPreferences(DEFAULT_TMS_PREFERENCES); });
+    return () => { activeRequest = false; };
+  }, [isLoggedIn, currentUser?.id]);
+
+  useEffect(() => {
+    document.documentElement.style.fontSize = preferences.font_scale === 'small' ? '15px' : preferences.font_scale === 'large' ? '17px' : '16px';
+  }, [preferences.font_scale]);
 
   const showSystemNotice = (message: string) => {
     const text = String(message || 'Đã hoàn tất thao tác.');
@@ -2497,13 +2523,14 @@ export default function App() {
   const canPerform = (moduleKey:string, action:PermissionAction='view') => role === 'super_admin' || Boolean(currentPermissions[moduleKey]?.actions?.[action]);
   const baseNavItems = role ? getRoleNavItems(role) : [];
   const supplementalNavItems:NavItem[] = [
+    { id:'communications', name:'Kênh trao đổi', icon:MessageSquare },
     { id:'cinema_customers', name:'Khách hàng', icon:UserRound },
     { id:'booking_history', name:'Lịch sử đặt vé', icon:History },
   ];
-  const navItems = role ? [...baseNavItems, ...supplementalNavItems.filter(item => !baseNavItems.some(existing => existing.id===item.id) && (role==='super_admin' || (permissionsLoaded && canPerform(rbacModuleForView(item.id, role), 'view'))))].filter(item => {
+  const navItems = role ? [...baseNavItems, ...supplementalNavItems.filter(item => !baseNavItems.some(existing => existing.id===item.id) && (item.id==='communications' || role==='super_admin' || (permissionsLoaded && canPerform(rbacModuleForView(item.id, role), 'view'))))].filter(item => {
     if (role === 'super_admin' || !permissionsLoaded) return true;
     const moduleKey = rbacModuleForView(item.id, role);
-    return !moduleKey || canPerform(moduleKey, 'view');
+    return item.id==='communications' || !moduleKey || canPerform(moduleKey, 'view');
   }) : [];
   const pendingRefunds = refundsList.filter(r => r.status === 'pending').length;
   const cancelRequests = txnsList.filter(t => t.cancel_requested).length;
@@ -2926,6 +2953,7 @@ export default function App() {
     // the only valid source of truth: plans submitted by Marketing for review.
     if (role === 'super_admin' && (a === 'theater_plans' || a === 'theater_plan_approvals' || a === 'Duyệt kế hoạch phim' || a === 'Duyệt kế hoạch' || a === 'Kế hoạch phim' || a === 'Phân bổ phim cho rạp' || a === 'marketing_approvals')) return <MarketingPlanApproval apiBase={API_BASE} notify={showSystemNotice} requestConfirm={requestSystemConfirmation}/>;
     if (role === 'super_admin' && (a === 'promotion_approvals' || a === 'Duyệt chương trình khuyến mãi' || a === 'Duyệt kế hoạch CTKM')) return <PromotionApprovalWorkspace apiBase={API_BASE} notify={showSystemNotice} requestConfirm={requestSystemConfirmation}/>;
+    if (a === 'communications' || a === 'Kênh trao đổi') return <CommunicationWorkspace apiBase={API_BASE} notify={showSystemNotice}/>;
     if (role === 'marketing_manager') return <MarketingWorkspace active={a} apiBase={API_BASE} notify={showSystemNotice} requestConfirm={requestSystemConfirmation} onNavigate={setActive}/>;
 
     if (a === 'dashboard' || a === 'Tổng quan tài chính') return renderDashboard();
@@ -3776,25 +3804,8 @@ export default function App() {
     // AUDIT LOG
     if (a === 'audit_log' || a === 'Audit Log') return <AuditLogManagement apiBase={API_BASE} notify={showSystemNotice}/>;
 
-    // SETTINGS
-    if (a === 'settings' || a === 'Cấu hình hệ thống') return (
-      <div className="tms-card-table" style={{padding:24}}>
-        <div style={{display:'flex',alignItems:'center',gap:12,marginBottom:16}}>
-          <div style={{background:'#fef3c7',color:'#d97706',padding:12,borderRadius:10}}><ShieldAlert size={28}/></div>
-          <div><h3 style={{margin:0,fontSize:'1.1rem',fontWeight:800}}>Cấu hình hệ thống TMS (Admin Tổng)</h3><p style={{margin:'3px 0 0',fontSize:'0.84rem',color:'#64748b'}}>Thiết lập máy chủ, kết nối MySQL WAMP Server và cài đặt bảo mật RBAC.</p></div>
-        </div>
-        <div style={{background:'#f8fafc',border:'1px solid #e2e8f0',borderRadius:10,padding:16}}>
-          <div style={{display:'grid',gridTemplateColumns:'repeat(2,1fr)',gap:16,fontSize:'0.85rem'}}>
-            <div><b>Cơ sở dữ liệu:</b> MySQL 5.0.51b / aurora_db (WAMP)</div>
-            <div><b>Kết nối:</b> <span style={{color:'#059669',fontWeight:700}}>● Đang kết nối</span></div>
-            <div><b>Phân quyền:</b> Multi-role RBAC (4 Vai trò)</div>
-            <div><b>Mã hóa mật khẩu:</b> Bcrypt Hash an toàn</div>
-            <div><b>Phiên bản TMS:</b> RBAC v2.0.0</div>
-            <div><b>Web Server:</b> WAMP Apache 2.x</div>
-          </div>
-        </div>
-      </div>
-    );
+    // Personal interface preferences for every authenticated TMS actor.
+    if (a === 'settings' || a === 'Cài đặt') return <UserPreferencesPage apiBase={API_BASE} value={preferences} onPreview={setPreferences} onSaved={setPreferences} notify={showSystemNotice} onOpenProfile={()=>setShowAccountProfile(true)}/>;
 
     return (
       <div style={{display:'flex',flexDirection:'column',alignItems:'center',justifyContent:'center',padding:'60px 24px',textAlign:'center',color:'#64748b'}}>
@@ -3811,7 +3822,7 @@ export default function App() {
   const displayName = currentUser?.full_name || '';
 
   return (
-    <div className={`app-shell ${sidebarOpen ? 'sidebar-visible' : 'sidebar-hidden'}`}>
+    <div className={`app-shell ${sidebarOpen ? 'sidebar-visible' : 'sidebar-hidden'} menu-${preferences.menu_position} pref-bg-${preferences.background_theme} pref-accent-${preferences.accent_color} pref-density-${preferences.interface_density} pref-width-${preferences.content_width} pref-sidebar-${preferences.sidebar_theme} pref-topbar-${preferences.topbar_style} pref-cards-${preferences.card_style} pref-corners-${preferences.corner_style} pref-table-${preferences.table_style} pref-scrollbar-${preferences.scrollbar_style}${preferences.reduce_motion?' pref-reduce-motion':''}${preferences.high_contrast?' pref-high-contrast':''}${preferences.sticky_topbar?' pref-sticky-topbar':''}${preferences.highlight_focus?' pref-focus-visible':''}`}>
       {systemConfirm && (
         <div className="aurora-dialog-backdrop" role="presentation">
           <section className="aurora-dialog" role="alertdialog" aria-modal="true" aria-labelledby="aurora-dialog-title" aria-describedby="aurora-dialog-message">
@@ -3885,20 +3896,20 @@ export default function App() {
           <div className="topbar-spacer" />
           <div className="topbar-actions">
             {/* Notifications */}
-            <NotificationCenter
+            {preferences.show_notifications && <NotificationCenter
               apiBase={API_BASE}
               enabled={isLoggedIn && Boolean(currentUser)}
               userKey={currentUser?.id || currentUser?.username}
               onOpen={() => setUserDropdownOpen(false)}
               onNavigate={view => { setActive(view); setUserDropdownOpen(false); }}
               onError={message => setSystemNotice({ message, type: 'error' })}
-            />
+            />}
 
             {/* User info - NO ROLE SWITCHER */}
             <div className="topbar-user-wrap">
               <button type="button" className="topbar-user-btn" title={`${displayName} · ${rc.name}`} aria-label={`Tài khoản ${displayName}, ${rc.name}`} onClick={() => setUserDropdownOpen(!userDropdownOpen)}>
-                <div className="hello"><span>Xin chào,</span><strong>{displayName}</strong></div>
-                <span className={`role-badge-pill ${role}`}>{rc.badge}</span>
+                {preferences.show_greeting && <div className="hello"><span>Xin chào,</span><strong>{displayName}</strong></div>}
+                {preferences.show_role_badge && <span className={`role-badge-pill ${role}`}>{rc.badge}</span>}
                 <ChevronDown size={15} />
                 <div className="user-icon"><UserRound size={20} /></div>
               </button>
@@ -3915,6 +3926,10 @@ export default function App() {
 
                   <button type="button" className="user-dropdown-item profile" onClick={() => { setUserDropdownOpen(false); setShowAccountProfile(true); }}>
                     <UserRound size={16}/><span><b>Xem hồ sơ tài khoản</b><small>Thông tin cá nhân và bảo mật</small></span>
+                  </button>
+
+                  <button type="button" className="user-dropdown-item system-settings" onClick={() => { setUserDropdownOpen(false); setActive('settings'); }}>
+                    <Settings size={16}/><span><b>Cài đặt giao diện</b><small>Bố cục, màu sắc và hiển thị</small></span>
                   </button>
 
                   <button type="button" className="user-dropdown-item danger" onClick={handleLogout} style={{ marginTop: 4 }}>
@@ -3937,7 +3952,7 @@ export default function App() {
 
           {renderContent()}
 
-          <footer>© 2026 Aurora Cinema • Theater Management System (TMS)<span>RBAC v2.0.0</span></footer>
+          {preferences.show_footer && <footer>© 2026 Aurora Cinema • Theater Management System (TMS)<span>RBAC v2.0.0</span></footer>}
         </div>
       </main>
 
@@ -4109,7 +4124,7 @@ export default function App() {
           <div className="tms-modal-box schedule-auto-request-modal" role="dialog" aria-modal="true" aria-labelledby="schedule-auto-request-title">
             <header>
               <span className="schedule-auto-request-icon"><Sparkles size={22}/></span>
-              <div><small>XẾP LỊCH THÔNG MINH · AURORA DB</small><h3 id="schedule-auto-request-title">Bạn muốn xếp bao nhiêu suất chiếu?</h3><p>Hệ thống sẽ tự chọn phòng và khung giờ trống, sau đó tạo bản nháp để bạn kiểm tra.</p></div>
+              <div><h3 id="schedule-auto-request-title">Bạn muốn xếp bao nhiêu suất chiếu?</h3></div>
               <button type="button" aria-label="Đóng" onClick={()=>setScheduleAutoRequest(null)}><X size={17}/></button>
             </header>
             <section className="schedule-auto-request-plan">
@@ -4121,8 +4136,10 @@ export default function App() {
               <label htmlFor="schedule-auto-count">Tổng số suất mong muốn trong ngày</label>
               <div className="schedule-auto-stepper">
                 <button type="button" aria-label="Giảm số suất" disabled={scheduleAutoRequest.requested_count<=scheduleAutoRequest.minimum_selectable_count} onClick={()=>setScheduleAutoRequest(current=>current?{...current,requested_count:Math.max(current.minimum_selectable_count,current.requested_count-1)}:current)}>−</button>
-                <input id="schedule-auto-count" type="number" min={scheduleAutoRequest.minimum_selectable_count} max={scheduleAutoRequest.maximum_count} step="1" value={scheduleAutoRequest.requested_count} onChange={event=>setScheduleAutoRequest(current=>current?{...current,requested_count:Number(event.target.value)}:current)}/>
-                <span>suất</span>
+                <div className="schedule-auto-stepper-value">
+                  <input id="schedule-auto-count" aria-label="Tổng số suất mong muốn" type="number" min={scheduleAutoRequest.minimum_selectable_count} max={scheduleAutoRequest.maximum_count} step="1" value={Number.isFinite(scheduleAutoRequest.requested_count)?String(scheduleAutoRequest.requested_count):''} onChange={event=>setScheduleAutoRequest(current=>current?{...current,requested_count:Number(event.target.value)}:current)}/>
+                  <span>suất</span>
+                </div>
                 <button type="button" aria-label="Tăng số suất" disabled={scheduleAutoRequest.requested_count>=scheduleAutoRequest.maximum_count} onClick={()=>setScheduleAutoRequest(current=>current?{...current,requested_count:Math.min(current.maximum_count,current.requested_count+1)}:current)}>+</button>
               </div>
               <div className="schedule-auto-request-rules">
@@ -4131,7 +4148,7 @@ export default function App() {
               </div>
               {scheduleAutoRequest.requested_count<scheduleAutoRequest.minimum_selectable_count&&<div className="schedule-auto-request-error"><AlertTriangle size={15}/> Số suất phải từ {scheduleAutoRequest.minimum_selectable_count} trở lên để đáp ứng kế hoạch và tạo thêm lịch.</div>}
             </section>
-            <footer><span><ShieldCheck size={15}/> Chỉ ghi vào aurora_db sau khi bạn kiểm tra và nhấn Tạo suất chiếu.</span><div><button type="button" className="tms-btn tms-btn-outline" onClick={()=>setScheduleAutoRequest(null)}>Hủy</button><button type="button" className="tms-btn tms-btn-primary" disabled={!Number.isInteger(scheduleAutoRequest.requested_count)||scheduleAutoRequest.requested_count<scheduleAutoRequest.minimum_selectable_count||scheduleAutoRequest.requested_count>scheduleAutoRequest.maximum_count} onClick={()=>void generateAutomaticSchedule(scheduleAutoRequest.requested_count)}><Sparkles size={16}/> Xếp {Math.max(0,scheduleAutoRequest.requested_count-scheduleAutoRequest.existing_count)} suất mới</button></div></footer>
+            <footer><div><button type="button" className="tms-btn tms-btn-outline" onClick={()=>setScheduleAutoRequest(null)}>Hủy</button><button type="button" className="tms-btn tms-btn-primary" disabled={!Number.isInteger(scheduleAutoRequest.requested_count)||scheduleAutoRequest.requested_count<scheduleAutoRequest.minimum_selectable_count||scheduleAutoRequest.requested_count>scheduleAutoRequest.maximum_count} onClick={()=>void generateAutomaticSchedule(scheduleAutoRequest.requested_count)}><Sparkles size={16}/> Xếp {Math.max(0,scheduleAutoRequest.requested_count-scheduleAutoRequest.existing_count)} suất mới</button></div></footer>
           </div>
         </div>
       )}

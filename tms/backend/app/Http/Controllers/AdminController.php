@@ -14,7 +14,6 @@ class AdminController
         'customers' => array('table' => 'customers', 'search' => array('full_name', 'phone', 'email'), 'fields' => array('full_name', 'phone', 'email', 'membership_level', 'points')),
         'theaters' => array('table' => 'theaters', 'search' => array('name', 'city'), 'fields' => array('name', 'address', 'city', 'phone', 'total_screens', 'status')),
         'promotions' => array('table' => 'vouchers', 'search' => array('name', 'code'), 'fields' => array('code', 'name', 'discount_type', 'discount_value', 'starts_at', 'ends_at', 'usage_limit', 'status')),
-        'system-configs' => array('table' => 'system_configs', 'search' => array('config_key'), 'fields' => array('config_key', 'config_value', 'description')),
         'transactions' => array('table' => 'transactions', 'search' => array('transaction_code', 'payment_method'), 'fields' => array('transaction_code', 'customer_id', 'channel', 'amount', 'payment_method', 'status')),
         'refunds' => array('table' => 'refunds', 'search' => array('reason', 'status'), 'fields' => array('transaction_id', 'reason', 'amount', 'status', 'requested_by')),
         'movie-allocations' => array('table' => 'movie_allocations', 'search' => array('movie_title', 'theater_name'), 'fields' => array('plan_id', 'movie_id', 'movie_title', 'theater_id', 'theater_name', 'min_screenings_per_day', 'preferred_screen_types', 'allocated_start_date', 'allocated_end_date', 'status', 'confirmed_by', 'confirmed_at')),
@@ -91,7 +90,6 @@ class AdminController
                 'bg' => '#fef3c7',
                 'description' => 'Quản trị viên cấp cao nhất hệ thống AURORA CINEMA. Toàn quyền quản trị hệ thống, rạp, tài khoản nhân sự và phân quyền RBAC.',
                 'can_manage_users' => true,
-                'can_manage_settings' => true,
                 'can_approve_refunds' => true,
                 'can_view_financials' => true,
                 'can_edit_screens' => true,
@@ -106,7 +104,6 @@ class AdminController
                 'bg' => '#dbeafe',
                 'description' => 'Quản lý toàn diện rạp chiếu: Suất chiếu, phim đang chiếu, phòng chiếu & thiết bị, hàng hóa F&B, nhân sự rạp và phê duyệt hoàn vé tại quầy.',
                 'can_manage_users' => false,
-                'can_manage_settings' => false,
                 'can_approve_refunds' => true,
                 'can_view_financials' => true,
                 'can_edit_screens' => true,
@@ -121,7 +118,6 @@ class AdminController
                 'bg' => '#d1fae5',
                 'description' => 'Điều hành trực tiếp ca trực rạp: Giám sát vận hành phòng chiếu (máy chiếu, điều hòa, âm thanh), điều phối suất chiếu, chấm công nhân sự và lập yêu cầu hoàn vé.',
                 'can_manage_users' => false,
-                'can_manage_settings' => false,
                 'can_approve_refunds' => false,
                 'can_view_financials' => false,
                 'can_edit_screens' => true,
@@ -136,7 +132,6 @@ class AdminController
                 'bg' => '#ede9fe',
                 'description' => 'Quản lý tài chính, hạch toán doanh thu vé & F&B, đối soát kênh thanh toán (POS, Web, OTA), quản lý giá vé và đặc quyền kiểm duyệt hoàn tiền.',
                 'can_manage_users' => false,
-                'can_manage_settings' => false,
                 'can_approve_refunds' => true,
                 'can_view_financials' => true,
                 'can_edit_screens' => false,
@@ -151,7 +146,6 @@ class AdminController
                 'bg' => '#fce7f3',
                 'description' => 'Lập kế hoạch và vận hành chiến dịch Marketing, chương trình khuyến mãi, voucher, nội dung website, thông báo và phân nhóm khách hàng.',
                 'can_manage_users' => false,
-                'can_manage_settings' => false,
                 'can_approve_refunds' => false,
                 'can_view_financials' => false,
                 'can_edit_screens' => false,
@@ -299,15 +293,6 @@ class AdminController
                 'accounting' => 'Không có quyền truy cập'
             ),
             array(
-                'module' => 'Cài đặt hệ thống (System Settings)',
-                'key' => 'settings',
-                'super_admin' => 'Đặc quyền cấu hình hệ thống máy chủ, kết nối TMS',
-                'cinema_admin' => 'Không có quyền truy cập',
-                'supervisor' => 'Không có quyền truy cập',
-                'accounting' => 'Không có quyền truy cập',
-                'marketing_manager' => 'Không có quyền truy cập'
-            ),
-            array(
                 'module' => 'Marketing & Truyền thông',
                 'key' => 'marketing',
                 'super_admin' => 'Theo dõi, phê duyệt CTKM và giám sát hoạt động Marketing',
@@ -385,6 +370,11 @@ class AdminController
             KEY idx_tms_rbac_user_module (module_key)
         ) ENGINE=InnoDB DEFAULT CHARSET=utf8 COLLATE=utf8_unicode_ci");
         if ($this->db->error) jsonResponse(array('success'=>false,'message'=>'Không thể khởi tạo quyền riêng tài khoản trong aurora_db: '.$this->db->error),500);
+
+        // Appearance preferences are personal and available to every actor;
+        // remove the obsolete RBAC module that used to restrict Settings.
+        $this->db->query("DELETE FROM tms_rbac_user_permissions WHERE module_key='settings'");
+        $this->db->query("DELETE FROM tms_rbac_permissions WHERE module_key='settings'");
     }
 
     public function permissionMatrix()

@@ -868,69 +868,120 @@ class MarketingController
         global $requestMethod;
         $user=requireAdmin();
         $actorId=(int)$user['id'];
+        $placements=$this->contentPlacements();
         if($requestMethod==='GET'){
             $where=array('1=1');
-            if(!empty($_GET['placement'])){$placement=$this->db->real_escape_string(trim((string)$_GET['placement']));$where[]="placement_key='{$placement}'";}
+            if(!empty($_GET['placement'])){
+                $placement=trim((string)$_GET['placement']);
+                if(!isset($placements[$placement]))jsonResponse(array('success'=>false,'message'=>'Vị trí nội dung không hợp lệ.'),422);
+                $where[]="placement_key='".$this->db->real_escape_string($placement)."'";
+            }
             if(!empty($_GET['q'])){$q=$this->db->real_escape_string(trim((string)$_GET['q']));$where[]="(title LIKE '%{$q}%' OR summary LIKE '%{$q}%' OR body_text LIKE '%{$q}%')";}
             $rows=$this->rows("SELECT * FROM marketing_contents WHERE ".implode(' AND ',$where)." ORDER BY FIELD(placement_key,'home_hero','home_announcement','home_offer','home_ad_top','home_featured','home_ad_middle','home_ad_bottom'),sort_order,id");
+            $summaryRows=$this->rows("SELECT placement_key,status,is_visible,starts_at,ends_at FROM marketing_contents");
             $summary=array('total'=>0,'published'=>0,'scheduled'=>0,'draft'=>0,'visible_now'=>0);
-            foreach($rows as $row){$summary['total']++;if(isset($summary[$row['status']]))$summary[$row['status']]++;if($row['status']==='published'&&(int)$row['is_visible']===1&&(empty($row['starts_at'])||strtotime($row['starts_at'])<=time())&&(empty($row['ends_at'])||strtotime($row['ends_at'])>=time()))$summary['visible_now']++;}
-            jsonResponse(array('success'=>true,'data'=>$rows,'meta'=>array('summary'=>$summary,'placements'=>array(
-                array('key'=>'home_hero','label'=>'Hero trang chủ','description'=>'Banner lớn đầu trang Customer','max'=>5),
-                array('key'=>'home_announcement','label'=>'Thông báo trang chủ','description'=>'Thông điệp ngắn dưới khu vực nổi bật','max'=>3),
-                array('key'=>'home_offer','label'=>'Thẻ ưu đãi','description'=>'Ưu đãi nổi bật cạnh Hero','max'=>1),
-                array('key'=>'home_featured','label'=>'Khối phim nổi bật','description'=>'Tiêu đề và mô tả cho danh mục phim','max'=>1),
-                array('key'=>'home_ad_top','label'=>'Quảng cáo đầu trang','description'=>'Banner quảng cáo dưới khu vực Hero','max'=>8),
-                array('key'=>'home_ad_middle','label'=>'Quảng cáo giữa trang','description'=>'Banner quảng cáo giữa đặt vé nhanh và danh mục phim','max'=>8),
-                array('key'=>'home_ad_bottom','label'=>'Quảng cáo cuối trang','description'=>'Banner quảng cáo trước khu vực tiện ích','max'=>8)
-            ))));
+            $cmsCounts=array();$liveCounts=array();
+            $now=time();
+            foreach($summaryRows as $row){
+                $key=$row['placement_key'];$summary['total']++;$cmsCounts[$key]=isset($cmsCounts[$key])?$cmsCounts[$key]+1:1;
+                if(isset($summary[$row['status']]))$summary[$row['status']]++;
+                if($row['status']==='published'&&(int)$row['is_visible']===1&&(empty($row['starts_at'])||strtotime($row['starts_at'])<=$now)&&(empty($row['ends_at'])||strtotime($row['ends_at'])>=$now)){$summary['visible_now']++;$liveCounts[$key]=isset($liveCounts[$key])?$liveCounts[$key]+1:1;}
+            }
+            $fallbacks=array(
+                'home_hero'=>array('count'=>min(4,(int)$this->scalar("SELECT COUNT(*) FROM movies WHERE status='now_showing'")),'label'=>'phim từ danh mục'),
+                'home_offer'=>array('count'=>min(1,(int)$this->scalar("SELECT COUNT(*) FROM vouchers WHERE status='active' AND (starts_at IS NULL OR starts_at<=NOW()) AND (ends_at IS NULL OR ends_at>=NOW())")),'label'=>'ưu đãi từ hệ thống'),
+                'home_featured'=>array('count'=>(int)$this->scalar("SELECT COUNT(*) FROM movies WHERE status='now_showing'"),'label'=>'phim đang chiếu')
+            );
+            foreach($placements as $key=>$definition){
+                $placements[$key]['cms_count']=isset($cmsCounts[$key])?(int)$cmsCounts[$key]:0;
+                $placements[$key]['live_count']=isset($liveCounts[$key])?(int)$liveCounts[$key]:0;
+                $placements[$key]['fallback_count']=isset($fallbacks[$key])?(int)$fallbacks[$key]['count']:0;
+                $placements[$key]['fallback_label']=isset($fallbacks[$key])?$fallbacks[$key]['label']:'';
+                $placements[$key]['display_source']=$placements[$key]['live_count']>0?'cms':($placements[$key]['fallback_count']>0?'aurora_db':'empty');
+            }
+            $systemComponents=array(
+                array('key'=>'site_header','label'=>'Đầu trang & điều hướng','description'=>'Logo, chọn rạp, tài khoản và menu Customer','source'=>'Cấu hình hệ thống'),
+                array('key'=>'member_rewards','label'=>'Aurora Rewards','description'=>'Hạng thành viên và điểm thưởng theo tài khoản','source'=>'aurora_db.users'),
+                array('key'=>'quick_booking','label'=>'Tìm suất chiếu nhanh','description'=>'Rạp, phim, ngày chiếu và suất chiếu khả dụng','source'=>'aurora_db.showtimes'),
+                array('key'=>'customer_benefits','label'=>'Tiện ích & cam kết','description'=>'Thông tin dịch vụ cố định của Aurora Cinema','source'=>'Cấu hình hệ thống')
+            );
+            jsonResponse(array('success'=>true,'data'=>$rows,'meta'=>array('summary'=>$summary,'placements'=>array_values($placements),'system_components'=>$systemComponents)));
         }
         $input=requestJson();
         $operation=isset($_GET['operation'])?trim((string)$_GET['operation']):'';
         if($requestMethod==='PUT'&&$operation==='reorder'){
-            $ids=isset($input['ids'])&&is_array($input['ids'])?$input['ids']:array();
-            $this->db->query('START TRANSACTION');
-            foreach($ids as $index=>$rawId){$id=(int)$rawId;if($id>0&&!$this->db->query("UPDATE marketing_contents SET sort_order=".($index+1).",updated_at=NOW() WHERE id={$id}")){$this->db->rollback();jsonResponse(array('success'=>false,'message'=>'Không thể lưu thứ tự nội dung.'),500);}}
-            $this->db->commit();jsonResponse(array('success'=>true,'message'=>'Đã lưu thứ tự hiển thị vào aurora_db.'));
+            $placement=isset($input['placement_key'])?trim((string)$input['placement_key']):'';
+            $rawIds=isset($input['ids'])&&is_array($input['ids'])?$input['ids']:array();
+            $ids=array_values(array_unique(array_filter(array_map('intval',$rawIds))));
+            if(!isset($placements[$placement])||!$ids||count($ids)!==count($rawIds))jsonResponse(array('success'=>false,'message'=>'Danh sách sắp xếp không hợp lệ.'),422);
+            $placementEsc=$this->db->real_escape_string($placement);
+            $validCount=(int)$this->scalar("SELECT COUNT(*) FROM marketing_contents WHERE placement_key='{$placementEsc}' AND id IN (".implode(',',$ids).")");
+            if($validCount!==count($ids))jsonResponse(array('success'=>false,'message'=>'Không thể sắp xếp nội dung thuộc vùng khác.'),422);
+            if(!$this->db->query('START TRANSACTION'))jsonResponse(array('success'=>false,'message'=>'Không thể bắt đầu cập nhật thứ tự.'),500);
+            foreach($ids as $index=>$id){if(!$this->db->query("UPDATE marketing_contents SET sort_order=".($index+1).",updated_at=NOW() WHERE id={$id} AND placement_key='{$placementEsc}'")){$this->db->rollback();jsonResponse(array('success'=>false,'message'=>'Không thể lưu thứ tự nội dung: '.$this->db->error),500);}}
+            if(!$this->db->commit()){$this->db->rollback();jsonResponse(array('success'=>false,'message'=>'Không thể hoàn tất cập nhật thứ tự.'),500);}
+            jsonResponse(array('success'=>true,'message'=>'Đã lưu thứ tự hiển thị vào aurora_db.'));
         }
         $id=isset($input['id'])?(int)$input['id']:(isset($_GET['id'])?(int)$_GET['id']:0);
         if($requestMethod==='DELETE'){
             if($id<1)jsonResponse(array('success'=>false,'message'=>'Nội dung không hợp lệ.'),422);
             $existing=$this->rows("SELECT * FROM marketing_contents WHERE id={$id} LIMIT 1");
             if(!$existing)jsonResponse(array('success'=>false,'message'=>'Nội dung không tồn tại.'),404);
-            $this->logContentHistory($id,'deleted',$existing[0],$user);
-            if(!$this->db->query("DELETE FROM marketing_contents WHERE id={$id} LIMIT 1"))jsonResponse(array('success'=>false,'message'=>'Không thể xóa nội dung: '.$this->db->error),500);
+            if(!$this->db->query('START TRANSACTION'))jsonResponse(array('success'=>false,'message'=>'Không thể bắt đầu thao tác xóa.'),500);
+            if(!$this->logContentHistory($id,'deleted',$existing[0],$user)||!$this->db->query("DELETE FROM marketing_contents WHERE id={$id} LIMIT 1")){$error=$this->db->error;$this->db->rollback();jsonResponse(array('success'=>false,'message'=>'Không thể xóa nội dung: '.$error),500);}
+            if(!$this->compactContentOrder($existing[0]['placement_key'])){$error=$this->db->error;$this->db->rollback();jsonResponse(array('success'=>false,'message'=>'Không thể cập nhật lại thứ tự sau khi xóa: '.$error),500);}
+            if(!$this->db->commit()){$this->db->rollback();jsonResponse(array('success'=>false,'message'=>'Không thể hoàn tất thao tác xóa.'),500);}
             jsonResponse(array('success'=>true,'message'=>'Đã xóa nội dung khỏi aurora_db.'));
         }
         if($requestMethod!=='POST'&&$requestMethod!=='PUT')jsonResponse(array('success'=>false,'message'=>'Phương thức không được hỗ trợ.'),405);
         $title=isset($input['title'])?trim((string)$input['title']):'';
         $placement=isset($input['placement_key'])?trim((string)$input['placement_key']):'home_hero';
         $status=isset($input['status'])?trim((string)$input['status']):'draft';
-        $allowedPlacements=array('home_hero','home_announcement','home_offer','home_featured','home_ad_top','home_ad_middle','home_ad_bottom');
         $allowedStatuses=array('draft','scheduled','published','archived');
-        if($title===''||!in_array($placement,$allowedPlacements,true)||!in_array($status,$allowedStatuses,true))jsonResponse(array('success'=>false,'message'=>'Tiêu đề, vị trí hoặc trạng thái không hợp lệ.'),422);
-        $startsAt=$this->contentDate(isset($input['starts_at'])?$input['starts_at']:'');
-        $endsAt=$this->contentDate(isset($input['ends_at'])?$input['ends_at']:'');
+        if($title===''||$this->contentLength($title)>200||!isset($placements[$placement])||!in_array($status,$allowedStatuses,true))jsonResponse(array('success'=>false,'message'=>'Tiêu đề, vị trí hoặc trạng thái không hợp lệ.'),422);
+        $startsAt=$this->contentDate(isset($input['starts_at'])?$input['starts_at']:'','Thời gian bắt đầu');
+        $endsAt=$this->contentDate(isset($input['ends_at'])?$input['ends_at']:'','Thời gian kết thúc');
         if($startsAt!==null&&$endsAt!==null&&strtotime($endsAt)<=strtotime($startsAt))jsonResponse(array('success'=>false,'message'=>'Thời gian kết thúc phải sau thời gian bắt đầu.'),422);
         if($status==='scheduled'&&$startsAt===null)jsonResponse(array('success'=>false,'message'=>'Nội dung lên lịch cần có thời gian bắt đầu.'),422);
+        $mediaUrl=isset($input['media_url'])?trim((string)$input['media_url']):'';
+        $buttonUrl=isset($input['button_url'])?trim((string)$input['button_url']):'';
+        if($mediaUrl!==''&&(!filter_var($mediaUrl,FILTER_VALIDATE_URL)||!in_array(strtolower((string)parse_url($mediaUrl,PHP_URL_SCHEME)),array('http','https'),true)))jsonResponse(array('success'=>false,'message'=>'URL hình ảnh phải dùng http hoặc https hợp lệ.'),422);
+        if($buttonUrl!==''&&!preg_match('#^/(?!/)#',$buttonUrl)&&!filter_var($buttonUrl,FILTER_VALIDATE_URL))jsonResponse(array('success'=>false,'message'=>'Liên kết nút phải là đường dẫn nội bộ bắt đầu bằng / hoặc URL http(s) hợp lệ.'),422);
+        if($buttonUrl!==''&&filter_var($buttonUrl,FILTER_VALIDATE_URL)&&!in_array(strtolower(parse_url($buttonUrl,PHP_URL_SCHEME)),array('http','https'),true))jsonResponse(array('success'=>false,'message'=>'Liên kết nút chỉ hỗ trợ http hoặc https.'),422);
+        $contentType=$placement==='home_featured'?'featured_movie':($placement==='home_announcement'?'news':'banner');
         $fields=array(
-            'title'=>$title,'content_type'=>isset($input['content_type'])?trim((string)$input['content_type']):'banner',
+            'title'=>$title,'content_type'=>$contentType,
             'placement_key'=>$placement,'placement'=>$this->contentPlacementLabel($placement),'eyebrow'=>isset($input['eyebrow'])?trim((string)$input['eyebrow']):'',
             'summary'=>isset($input['summary'])?trim((string)$input['summary']):'','body_text'=>isset($input['body_text'])?trim((string)$input['body_text']):'',
-            'media_url'=>isset($input['media_url'])?trim((string)$input['media_url']):'','alt_text'=>isset($input['alt_text'])?trim((string)$input['alt_text']):'',
-            'button_label'=>isset($input['button_label'])?trim((string)$input['button_label']):'','button_url'=>isset($input['button_url'])?trim((string)$input['button_url']):'',
+            'media_url'=>$mediaUrl,'alt_text'=>isset($input['alt_text'])?trim((string)$input['alt_text']):'',
+            'button_label'=>isset($input['button_label'])?trim((string)$input['button_label']):'','button_url'=>$buttonUrl,
             'status'=>$status,'is_visible'=>!empty($input['is_visible'])?1:0,'starts_at'=>$startsAt,'ends_at'=>$endsAt,'publish_at'=>$startsAt
         );
-        if(strlen($title)>200||strlen($fields['button_label'])>80||strlen($fields['media_url'])>500)jsonResponse(array('success'=>false,'message'=>'Một số trường vượt quá độ dài cho phép.'),422);
+        if($this->contentLength($fields['eyebrow'])>140||$this->contentLength($fields['button_label'])>80||$this->contentLength($fields['media_url'])>500||$this->contentLength($fields['button_url'])>500||$this->contentLength($fields['alt_text'])>255)jsonResponse(array('success'=>false,'message'=>'Một số trường vượt quá độ dài cho phép.'),422);
+        $existing=array();
+        if($id>0){$existing=$this->rows("SELECT * FROM marketing_contents WHERE id={$id} LIMIT 1");if(!$existing)jsonResponse(array('success'=>false,'message'=>'Nội dung không tồn tại.'),404);}
+        $placementEsc=$this->db->real_escape_string($placement);
+        $limitWhere=$id>0?" AND id<>{$id}":'';
+        if((int)$this->scalar("SELECT COUNT(*) FROM marketing_contents WHERE placement_key='{$placementEsc}'{$limitWhere}")>=(int)$placements[$placement]['max'])jsonResponse(array('success'=>false,'message'=>'Vùng “'.$placements[$placement]['label'].'” đã đạt tối đa '.$placements[$placement]['max'].' nội dung.'),409);
         $sets=array();foreach($fields as $key=>$value){$sets[]="`{$key}`=".($value===null?'NULL':"'".$this->db->real_escape_string((string)$value)."'");}
-        if($status==='published'){$sets[]='published_at=COALESCE(published_at,NOW())';$sets[]="published_by='".$this->db->real_escape_string($user['full_name'])."'";}
-        $this->db->query('START TRANSACTION');
-        if($id>0){$existing=$this->rows("SELECT * FROM marketing_contents WHERE id={$id} LIMIT 1");if(!$existing){$this->db->rollback();jsonResponse(array('success'=>false,'message'=>'Nội dung không tồn tại.'),404);}if(!$this->db->query("UPDATE marketing_contents SET ".implode(',',$sets).",updated_at=NOW() WHERE id={$id}")){$this->db->rollback();jsonResponse(array('success'=>false,'message'=>'Không thể cập nhật nội dung: '.$this->db->error),500);}$savedId=$id;$action='updated';}
-        else{$next=(int)$this->scalar("SELECT COALESCE(MAX(sort_order),0)+1 FROM marketing_contents WHERE placement_key='".$this->db->real_escape_string($placement)."'");if(!$this->db->query("INSERT INTO marketing_contents SET ".implode(',',$sets).",sort_order={$next},created_by={$actorId},created_at=NOW(),updated_at=NOW()")){$this->db->rollback();jsonResponse(array('success'=>false,'message'=>'Không thể tạo nội dung: '.$this->db->error),500);}$savedId=(int)$this->db->insert_id;$action='created';}
+        if($status==='published'){$sets[]='published_at=COALESCE(published_at,NOW())';$sets[]="published_by='".$this->db->real_escape_string($user['full_name'])."'";}else{$sets[]='published_at=NULL';$sets[]='published_by=NULL';}
+        if(!$this->db->query('START TRANSACTION'))jsonResponse(array('success'=>false,'message'=>'Không thể bắt đầu lưu nội dung.'),500);
+        if($id>0){
+            $oldPlacement=$existing[0]['placement_key'];
+            if($oldPlacement!==$placement){$next=(int)$this->scalar("SELECT COALESCE(MAX(sort_order),0)+1 FROM marketing_contents WHERE placement_key='{$placementEsc}'");$sets[]='sort_order='.$next;}
+            if(!$this->db->query("UPDATE marketing_contents SET ".implode(',',$sets).",updated_at=NOW() WHERE id={$id}")){$error=$this->db->error;$this->db->rollback();jsonResponse(array('success'=>false,'message'=>'Không thể cập nhật nội dung: '.$error),500);}
+            if($oldPlacement!==$placement&&!$this->compactContentOrder($oldPlacement)){$error=$this->db->error;$this->db->rollback();jsonResponse(array('success'=>false,'message'=>'Không thể cập nhật thứ tự vùng cũ: '.$error),500);}
+            $savedId=$id;$action='updated';
+        }else{
+            $next=(int)$this->scalar("SELECT COALESCE(MAX(sort_order),0)+1 FROM marketing_contents WHERE placement_key='{$placementEsc}'");
+            if(!$this->db->query("INSERT INTO marketing_contents SET ".implode(',',$sets).",sort_order={$next},created_by={$actorId},created_at=NOW(),updated_at=NOW()")){$error=$this->db->error;$this->db->rollback();jsonResponse(array('success'=>false,'message'=>'Không thể tạo nội dung: '.$error),500);}
+            $savedId=(int)$this->db->insert_id;$action='created';
+        }
         $saved=$this->rows("SELECT * FROM marketing_contents WHERE id={$savedId} LIMIT 1");
-        $this->logContentHistory($savedId,$action,$saved[0],$user);
+        if(!$this->logContentHistory($savedId,$action,$saved[0],$user)){$error=$this->db->error;$this->db->rollback();jsonResponse(array('success'=>false,'message'=>'Không thể ghi lịch sử nội dung: '.$error),500);}
         if(!empty($fields['media_url'])){$url=$this->db->real_escape_string($fields['media_url']);$this->db->query("UPDATE marketing_content_assets SET content_id={$savedId} WHERE public_url='{$url}' AND uploaded_by={$actorId}");}
-        $this->db->commit();jsonResponse(array('success'=>true,'message'=>$id>0?'Đã cập nhật nội dung Customer Website.':'Đã tạo nội dung Customer Website.','data'=>$saved[0]),$id>0?200:201);
+        if(!$this->db->commit()){$this->db->rollback();jsonResponse(array('success'=>false,'message'=>'Không thể hoàn tất lưu nội dung.'),500);}
+        jsonResponse(array('success'=>true,'message'=>$id>0?'Đã cập nhật nội dung Customer Website.':'Đã tạo nội dung Customer Website.','data'=>$saved[0]),$id>0?200:201);
     }
 
     private function contentMedia()
@@ -955,9 +1006,20 @@ class MarketingController
         jsonResponse(array('success'=>true,'message'=>'Đã tải ảnh lên thư viện aurora_db.','data'=>array('url'=>$url,'width'=>(int)$info[0],'height'=>(int)$info[1])),201);
     }
 
-    private function contentDate($value){$value=trim((string)$value);if($value==='')return null;$timestamp=strtotime(str_replace('T',' ',$value));return $timestamp===false?null:date('Y-m-d H:i:s',$timestamp);}
+    private function contentPlacements(){return array(
+        'home_hero'=>array('key'=>'home_hero','label'=>'Hero trang chủ','description'=>'Banner lớn đầu trang Customer','max'=>5),
+        'home_announcement'=>array('key'=>'home_announcement','label'=>'Thông báo trang chủ','description'=>'Thông điệp ngắn dưới khu vực nổi bật','max'=>3),
+        'home_offer'=>array('key'=>'home_offer','label'=>'Thẻ ưu đãi','description'=>'Ưu đãi nổi bật cạnh Hero','max'=>1),
+        'home_featured'=>array('key'=>'home_featured','label'=>'Khối phim nổi bật','description'=>'Tiêu đề và mô tả cho danh mục phim','max'=>1),
+        'home_ad_top'=>array('key'=>'home_ad_top','label'=>'Quảng cáo đầu trang','description'=>'Banner quảng cáo dưới khu vực Hero','max'=>8),
+        'home_ad_middle'=>array('key'=>'home_ad_middle','label'=>'Quảng cáo giữa trang','description'=>'Banner quảng cáo giữa đặt vé nhanh và danh mục phim','max'=>8),
+        'home_ad_bottom'=>array('key'=>'home_ad_bottom','label'=>'Quảng cáo cuối trang','description'=>'Banner quảng cáo trước khu vực tiện ích','max'=>8)
+    );}
+    private function contentLength($value){return function_exists('mb_strlen')?mb_strlen((string)$value,'UTF-8'):strlen((string)$value);}
+    private function contentDate($value,$label='Thời gian'){$value=trim((string)$value);if($value==='')return null;$normalized=str_replace('T',' ',$value);if(!preg_match('/^(\d{4})-(\d{2})-(\d{2}) (\d{2}):(\d{2})(?::(\d{2}))?$/',$normalized,$parts)||!checkdate((int)$parts[2],(int)$parts[3],(int)$parts[1])||(int)$parts[4]>23||(int)$parts[5]>59||(isset($parts[6])&&(int)$parts[6]>59))jsonResponse(array('success'=>false,'message'=>$label.' không hợp lệ.'),422);return sprintf('%04d-%02d-%02d %02d:%02d:%02d',(int)$parts[1],(int)$parts[2],(int)$parts[3],(int)$parts[4],(int)$parts[5],isset($parts[6])?(int)$parts[6]:0);}
     private function contentPlacementLabel($key){$labels=array('home_hero'=>'Hero trang chủ','home_announcement'=>'Thông báo trang chủ','home_offer'=>'Thẻ ưu đãi','home_featured'=>'Khối phim nổi bật','home_ad_top'=>'Quảng cáo đầu trang','home_ad_middle'=>'Quảng cáo giữa trang','home_ad_bottom'=>'Quảng cáo cuối trang');return isset($labels[$key])?$labels[$key]:$key;}
-    private function logContentHistory($id,$action,$snapshot,$user){$json=$this->db->real_escape_string(json_encode($snapshot));$name=$this->db->real_escape_string(isset($user['full_name'])?$user['full_name']:$user['username']);$this->db->query("INSERT INTO marketing_content_history(content_id,action_name,snapshot_json,actor_id,actor_name,created_at) VALUES (".(int)$id.",'".$this->db->real_escape_string($action)."','{$json}',".(int)$user['id'].",'{$name}',NOW())");}
+    private function compactContentOrder($placement){$placementEsc=$this->db->real_escape_string((string)$placement);$rows=$this->rows("SELECT id FROM marketing_contents WHERE placement_key='{$placementEsc}' ORDER BY sort_order,id");foreach($rows as $index=>$row){$id=(int)$row['id'];if(!$this->db->query("UPDATE marketing_contents SET sort_order=".($index+1)." WHERE id={$id}"))return false;}return true;}
+    private function logContentHistory($id,$action,$snapshot,$user){$json=$this->db->real_escape_string(json_encode($snapshot));$name=$this->db->real_escape_string(isset($user['full_name'])?$user['full_name']:$user['username']);return(bool)$this->db->query("INSERT INTO marketing_content_history(content_id,action_name,snapshot_json,actor_id,actor_name,created_at) VALUES (".(int)$id.",'".$this->db->real_escape_string($action)."','{$json}',".(int)$user['id'].",'{$name}',NOW())");}
 
     private function listResource($definition)
     {

@@ -433,6 +433,8 @@ restoreTmsIdentity();
 
 require_once dirname(__FILE__) . '/../app/Http/Controllers/AdminController.php';
 require_once dirname(__FILE__) . '/../app/Http/Controllers/AuditLogController.php';
+require_once dirname(__FILE__) . '/../app/Http/Controllers/UserPreferencesController.php';
+require_once dirname(__FILE__) . '/../app/Http/Controllers/CommunicationController.php';
 require_once dirname(__FILE__) . '/../app/Http/Controllers/RevenueController.php';
 require_once dirname(__FILE__) . '/../app/Http/Controllers/ReportController.php';
 require_once dirname(__FILE__) . '/../app/Http/Controllers/PosDeviceController.php';
@@ -441,6 +443,8 @@ require_once dirname(__FILE__) . '/../app/Http/Controllers/PromotionDeploymentCo
 require_once dirname(__FILE__) . '/../app/Http/Controllers/ProductPlanningController.php';
 $controller = new AdminController($db);
 $auditLogController = new AuditLogController($db);
+$userPreferencesController = new UserPreferencesController($db);
+$communicationController = new CommunicationController($db);
 $revenueController = new RevenueController($db);
 $reportController = new ReportController($db);
 $posDeviceController = new PosDeviceController($db);
@@ -448,6 +452,13 @@ $marketingController = new MarketingController($db);
 $promotionDeploymentController = new PromotionDeploymentController($db);
 $productPlanningController = new ProductPlanningController($db);
 $action = isset($_GET['action']) ? $_GET['action'] : 'health';
+
+if ($action === 'user-preferences') {
+    $userPreferencesController->handle($requestMethod);
+}
+if ($action === 'communications') {
+    $communicationController->handle($requestMethod);
+}
 
 // Pricing is a dedicated, audited matrix rather than a generic CRUD list.
 // Every consumer (TMS/POS/customer website) can therefore read the same
@@ -1324,13 +1335,13 @@ if ($action === 'movie-management') {
     $controller->movieManagement();
 }
 
-$resources = array('movies', 'screens', 'schedules', 'staff', 'ticket-types', 'products', 'vouchers', 'customers', 'theaters', 'promotions', 'system-configs', 'transactions', 'refunds', 'movie-allocations');
+$resources = array('movies', 'screens', 'schedules', 'staff', 'ticket-types', 'products', 'vouchers', 'customers', 'theaters', 'promotions', 'transactions', 'refunds', 'movie-allocations');
 if (in_array($action, $resources, true)) {
     $rbacResourceKeys = array(
         'movies'=>'movies', 'screens'=>'screens', 'schedules'=>'schedules', 'staff'=>'staff',
         'ticket-types'=>'ticket_types', 'products'=>'products', 'vouchers'=>'vouchers',
         'promotions'=>'vouchers', 'customers'=>'customers', 'transactions'=>'transactions_refunds',
-        'refunds'=>'transactions_refunds', 'system-configs'=>'settings', 'theaters'=>'screens',
+        'refunds'=>'transactions_refunds', 'theaters'=>'screens',
         'movie-allocations'=>'movies'
     );
     if (isset($rbacResourceKeys[$action])) {
