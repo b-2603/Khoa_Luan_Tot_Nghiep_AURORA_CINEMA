@@ -17,7 +17,8 @@ import {
   MessageSquare
 } from 'lucide-react';
 
-import { getAttendanceExceptions, getCurrentUser, getShiftReminders, getUnreadChatCount } from '../services/storage';
+import { getAttendanceExceptions, getCurrentUser, getShiftReminders } from '../services/storage';
+import { fetchCommunicationContacts } from '../services/apiClient';
 
 export type NavTab = 
   | 'dashboard'
@@ -53,14 +54,17 @@ export const Sidebar: React.FC<SidebarProps> = ({ userRole, activeTab, onTabChan
   const pendingCount = getAttendanceExceptions().filter(e => e.status === 'pending').length;
   const currentUser = getCurrentUser();
   const hasShiftReminder = userRole === 'staff' && currentUser ? getShiftReminders(currentUser.id).length > 0 : false;
-  const [unreadChatCount, setUnreadChatCount] = useState<number>(() =>
-    currentUser ? getUnreadChatCount(currentUser.id, userRole) : 0
-  );
+  const [unreadChatCount, setUnreadChatCount] = useState(0);
 
   useEffect(() => {
-    const syncUnread = () => {
+    const syncUnread = async () => {
       const u = getCurrentUser();
-      if (u) setUnreadChatCount(getUnreadChatCount(u.id, userRole));
+      if (u) {
+        try {
+          const data = await fetchCommunicationContacts(u.id);
+          setUnreadChatCount(Object.values(data.unread || {}).reduce((sum, count) => sum + Number(count), 0));
+        } catch { /* Giữ badge hiện tại khi backend tạm mất kết nối. */ }
+      }
     };
     syncUnread();
     const timer = setInterval(syncUnread, 1500);

@@ -459,6 +459,9 @@ if ($action === 'user-preferences') {
 if ($action === 'communications') {
     $communicationController->handle($requestMethod);
 }
+if ($action === 'communication-file') {
+    $communicationController->download();
+}
 
 // Pricing is a dedicated, audited matrix rather than a generic CRUD list.
 // Every consumer (TMS/POS/customer website) can therefore read the same

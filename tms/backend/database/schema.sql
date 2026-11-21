@@ -294,10 +294,27 @@ CREATE TABLE IF NOT EXISTS `aurora_internal_messages` (
   `id` BIGINT UNSIGNED NOT NULL AUTO_INCREMENT PRIMARY KEY,
   `sender_system` VARCHAR(8) NOT NULL, `sender_user_id` BIGINT UNSIGNED NOT NULL,
   `recipient_system` VARCHAR(8) NOT NULL, `recipient_user_id` BIGINT UNSIGNED NOT NULL,
-  `content` TEXT NOT NULL, `topic_tag` VARCHAR(80) NULL, `read_at` DATETIME NULL,
+  `content` TEXT NOT NULL, `topic_tag` VARCHAR(80) NULL,
+  `reply_to_id` BIGINT UNSIGNED NULL, `message_type` VARCHAR(16) NOT NULL DEFAULT 'text',
+  `read_at` DATETIME NULL,
   `created_at` DATETIME NOT NULL, `updated_at` DATETIME NOT NULL,
   KEY `idx_message_sender` (`sender_system`,`sender_user_id`,`created_at`),
   KEY `idx_message_recipient` (`recipient_system`,`recipient_user_id`,`read_at`,`created_at`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8 COLLATE=utf8_unicode_ci;
+
+CREATE TABLE IF NOT EXISTS `aurora_message_attachments` (
+  `id` BIGINT UNSIGNED NOT NULL AUTO_INCREMENT PRIMARY KEY,
+  `message_id` BIGINT UNSIGNED NOT NULL, `original_name` VARCHAR(255) NOT NULL,
+  `stored_name` VARCHAR(255) NOT NULL, `mime_type` VARCHAR(120) NOT NULL,
+  `size_bytes` BIGINT UNSIGNED NOT NULL, `created_at` DATETIME NOT NULL,
+  UNIQUE KEY `uq_attachment_message` (`message_id`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8 COLLATE=utf8_unicode_ci;
+
+CREATE TABLE IF NOT EXISTS `aurora_message_reactions` (
+  `message_id` BIGINT UNSIGNED NOT NULL, `actor_system` VARCHAR(8) NOT NULL,
+  `actor_user_id` BIGINT UNSIGNED NOT NULL, `emoji` VARCHAR(16) NOT NULL,
+  `created_at` DATETIME NOT NULL,
+  PRIMARY KEY (`message_id`,`actor_system`,`actor_user_id`,`emoji`)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8 COLLATE=utf8_unicode_ci;
 
 INSERT INTO `users` (`username`, `password_hash`, `full_name`, `phone`, `email`, `role`, `status`)
