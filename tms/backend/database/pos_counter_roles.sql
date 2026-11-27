@@ -16,8 +16,8 @@ CREATE TABLE IF NOT EXISTS pos_counter_roles (
 INSERT INTO pos_counter_roles
   (code,name,description,can_sell_tickets,can_sell_concessions,can_redeem_online_booking,can_sell_merchandise,is_active,sort_order,updated_at)
 VALUES
-  ('concession','Concession','Đổi vé online và bán bắp nước trực tiếp',0,1,1,0,1,10,NOW()),
-  ('box_ticket','Box Ticket','Bán vé tại quầy và bán kèm bắp nước',1,1,0,0,1,20,NOW()),
+  ('box_ticket','Box Ticket','Bán vé tại quầy, chọn ghế và đổi vé online',1,0,1,0,1,10,NOW()),
+  ('concession','Concession','Bán bắp nước, thức ăn và combo',0,1,0,0,1,20,NOW()),
   ('merchandise','Merchandise','Bán quà lưu niệm và sản phẩm phim',0,0,0,1,1,30,NOW())
 ON DUPLICATE KEY UPDATE name=VALUES(name),description=VALUES(description),can_sell_tickets=VALUES(can_sell_tickets),can_sell_concessions=VALUES(can_sell_concessions),can_redeem_online_booking=VALUES(can_redeem_online_booking),can_sell_merchandise=VALUES(can_sell_merchandise),is_active=VALUES(is_active),sort_order=VALUES(sort_order),updated_at=NOW();
 

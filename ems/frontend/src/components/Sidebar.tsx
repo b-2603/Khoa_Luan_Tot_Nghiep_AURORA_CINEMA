@@ -74,12 +74,11 @@ export const Sidebar: React.FC<SidebarProps> = ({ userRole, activeTab, onTabChan
 
   const staffMenuItems: MenuItem[] = [
     { id: 'dashboard', label: 'Trang Chủ Tổng Quan', icon: Home },
-    { id: 'attendance', label: 'Điểm Danh & Chấm Công', icon: Clock },
-    { 
-      id: 'attendance-exceptions', 
-      label: 'Giải Trình Chấm Công', 
-      icon: AlertCircle,
-      badge: pendingCount > 0 ? `${pendingCount}` : undefined 
+    {
+      id: 'attendance',
+      label: 'Chấm Công & Giải Trình',
+      icon: Clock,
+      badge: pendingCount > 0 ? `${pendingCount}` : undefined,
     },
     { id: 'shift-view', label: 'Xem Lịch Phân Ca', icon: Calendar },
     { 
@@ -135,7 +134,9 @@ export const Sidebar: React.FC<SidebarProps> = ({ userRole, activeTab, onTabChan
           <nav className="space-y-1">
             {menu.map((item) => {
               const Icon = item.icon;
-              const isActive = activeTab === item.id;
+              const isActive =
+                activeTab === item.id ||
+                (item.id === 'attendance' && activeTab === 'attendance-exceptions');
               return (
                 <button
                   key={item.id}

@@ -1,5 +1,5 @@
 -- ==============================================================================
--- Cấu hình OAuth Google & Facebook và Sandbox Mode cho Aurora Cinema
+-- Cấu hình OAuth Google & Facebook thật cho Aurora Cinema
 -- Cơ sở dữ liệu: aurora_db
 -- ==============================================================================
 
@@ -23,6 +23,8 @@ VALUES
   ('oauth_facebook_client_id', '', 'Meta App ID cho Facebook Login từ Meta for Developers', NOW()),
   ('oauth_facebook_client_secret', '', 'Meta App Secret cho Facebook Login', NOW()),
   ('oauth_facebook_redirect_uri', 'http://localhost/AURORA%20CINEMA/customer/backend/public/api.php?action=oauth_callback&provider=facebook', 'Facebook Login Redirect URI', NOW()),
-  ('oauth_sandbox_enabled', '1', 'Chế độ mô phỏng Facebook khi chưa có cấu hình thật; Google luôn yêu cầu OAuth 2.0 thật', NOW())
+  ('oauth_facebook_graph_version', 'v25.0', 'Phiên bản Meta Graph API dùng cho Facebook Login', NOW()),
+  ('oauth_sandbox_enabled', '0', 'OAuth giả lập đã tắt; Google và Facebook luôn yêu cầu tài khoản thật', NOW())
 ON DUPLICATE KEY UPDATE
+  `description` = VALUES(`description`),
   `updated_at` = NOW();

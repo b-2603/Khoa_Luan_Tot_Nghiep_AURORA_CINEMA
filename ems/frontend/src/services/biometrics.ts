@@ -109,7 +109,7 @@ export function getAuthorizedWifiConfig(): NetworkConfig {
   } catch (e) { }
 
   return {
-    authorizedIp: '192.168.1.206',
+    authorizedIp: '192.168.99.240',
     updatedAt: new Date().toISOString(),
     wifiSsidName: 'AURORA-CINEMA-STAFF-5G',
   };

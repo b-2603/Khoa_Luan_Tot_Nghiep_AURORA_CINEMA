@@ -374,11 +374,7 @@ export const AttendanceExceptionsPage: React.FC<AttendanceExceptionsPageProps> =
               {/* Actions / Review Feedback */}
               {exc.status === 'pending' ? (
                 isManager ? (
-                  <div className="flex items-center justify-between pt-2 border-t border-slate-100">
-                    <span className="text-[11px] text-amber-800 font-medium">
-                      ⚠️ Duyệt đơn sẽ tự động đồng bộ miễn trừ sang bảng chấm công của nhân viên.
-                    </span>
-
+                  <div className="flex items-center justify-end pt-2 border-t border-slate-100">
                     <div className="flex items-center gap-2.5">
                       <button
                         onClick={() => handleAction(exc.id, 'rejected')}

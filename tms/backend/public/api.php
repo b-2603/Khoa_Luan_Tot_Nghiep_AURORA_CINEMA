@@ -85,7 +85,7 @@ function requireAdmin() {
     }
 
     $userId = (int)$_SESSION['tms_user']['id'];
-    $result = $db->query("SELECT id, username, full_name, phone, theater_id, role, status FROM users WHERE id = {$userId} LIMIT 1");
+    $result = $db->query("SELECT u.id,u.username,u.full_name,u.email,u.phone,u.theater_id,u.role,u.status,t.name AS theater_name FROM users u LEFT JOIN theaters t ON t.id=u.theater_id WHERE u.id = {$userId} LIMIT 1");
     if (!$result) {
         jsonResponse(array('success' => false, 'message' => 'Không thể xác minh trạng thái tài khoản trong aurora_db: ' . $db->error), 500);
     }
@@ -97,6 +97,10 @@ function requireAdmin() {
     }
 
     $user['role'] = AdminController::normalizeRole($user['role']);
+    if ($user['role'] === 'super_admin') {
+        $user['theater_id'] = 0;
+        $user['theater_name'] = 'Toàn hệ thống';
+    }
     $_SESSION['tms_user'] = $user;
     return $user;
 }
@@ -135,6 +139,256 @@ if (!$db->query("SET time_zone = '+07:00'")) {
     jsonResponse(array('success' => false, 'message' => 'Không thể đặt múi giờ Việt Nam cho kết nối aurora_db: ' . $db->error), 500);
 }
 
+/** Upgrade audit_logs in place without deleting legacy history. */
+function ensureTmsAuditLogSchema($db) {
+    if (!$db->query("CREATE TABLE IF NOT EXISTS audit_logs (
+        id BIGINT UNSIGNED NOT NULL AUTO_INCREMENT PRIMARY KEY,
+        user_id BIGINT UNSIGNED NULL, username VARCHAR(80) NOT NULL, role VARCHAR(40) NULL,
+        action VARCHAR(80) NOT NULL, module VARCHAR(60) NULL, entity_type VARCHAR(80) NULL,
+        entity_id VARCHAR(120) NULL, details TEXT NULL, severity VARCHAR(20) NOT NULL DEFAULT 'info',
+        status_code SMALLINT UNSIGNED NULL, http_method VARCHAR(10) NULL, request_path VARCHAR(255) NULL,
+        ip_address VARCHAR(45) NULL, user_agent VARCHAR(500) NULL, metadata_json TEXT NULL,
+        event_hash CHAR(64) NULL, created_at TIMESTAMP NULL DEFAULT CURRENT_TIMESTAMP
+    ) ENGINE=InnoDB DEFAULT CHARSET=utf8 COLLATE=utf8_general_ci")) return false;
+    $tableCollation = $db->query("SELECT TABLE_COLLATION FROM information_schema.TABLES WHERE TABLE_SCHEMA=DATABASE() AND TABLE_NAME='audit_logs' LIMIT 1");
+    $tableCollationRow = $tableCollation ? $tableCollation->fetch_assoc() : null;
+    if ($tableCollationRow && strtolower($tableCollationRow['TABLE_COLLATION']) !== 'utf8_general_ci') {
+        if (!$db->query("ALTER TABLE audit_logs CONVERT TO CHARACTER SET utf8 COLLATE utf8_general_ci")) return false;
+    }
+    $columns = array(
+        'user_id'=>"BIGINT UNSIGNED NULL AFTER id", 'role'=>"VARCHAR(40) NULL AFTER username",
+        'module'=>"VARCHAR(60) NULL AFTER action", 'entity_type'=>"VARCHAR(80) NULL AFTER module",
+        'entity_id'=>"VARCHAR(120) NULL AFTER entity_type", 'severity'=>"VARCHAR(20) NOT NULL DEFAULT 'info' AFTER details",
+        'status_code'=>"SMALLINT UNSIGNED NULL AFTER severity", 'http_method'=>"VARCHAR(10) NULL AFTER status_code",
+        'request_path'=>"VARCHAR(255) NULL AFTER http_method", 'user_agent'=>"VARCHAR(500) NULL AFTER ip_address",
+        'metadata_json'=>"TEXT NULL AFTER user_agent", 'event_hash'=>"CHAR(64) NULL AFTER metadata_json"
+    );
+    foreach ($columns as $name => $definition) {
+        $found = $db->query("SHOW COLUMNS FROM audit_logs LIKE '".$db->real_escape_string($name)."'");
+        if ((!$found || $found->num_rows === 0) && !$db->query("ALTER TABLE audit_logs ADD COLUMN `{$name}` {$definition}")) return false;
+    }
+    $indexes = array('idx_audit_created'=>'created_at','idx_audit_action'=>'action','idx_audit_user'=>'username','idx_audit_module'=>'module');
+    foreach ($indexes as $index => $column) {
+        $found = $db->query("SHOW INDEX FROM audit_logs WHERE Key_name='".$db->real_escape_string($index)."'");
+        if ((!$found || $found->num_rows === 0) && !$db->query("CREATE INDEX `{$index}` ON audit_logs (`{$column}`)")) return false;
+    }
+    return true;
+}
+
+/** Append one sanitized event to aurora_db. Passwords and session tokens are never accepted. */
+function writeTmsAuditLog($db, $action, $details, $options = array()) {
+    if (!ensureTmsAuditLogSchema($db)) return false;
+    $sessionUser = !empty($_SESSION['tms_user']) ? $_SESSION['tms_user'] : array();
+    $userId = isset($options['user_id']) ? (int)$options['user_id'] : (!empty($sessionUser['id']) ? (int)$sessionUser['id'] : 0);
+    $username = isset($options['username']) ? trim((string)$options['username']) : (!empty($sessionUser['username']) ? $sessionUser['username'] : 'anonymous');
+    $role = isset($options['role']) ? trim((string)$options['role']) : (!empty($sessionUser['role']) ? AdminController::normalizeRole($sessionUser['role']) : 'guest');
+    $module = isset($options['module']) ? trim((string)$options['module']) : 'system';
+    $entityType = isset($options['entity_type']) ? trim((string)$options['entity_type']) : '';
+    $entityId = isset($options['entity_id']) ? trim((string)$options['entity_id']) : '';
+    $severity = isset($options['severity']) && in_array($options['severity'], array('info','success','warning','error'), true) ? $options['severity'] : 'info';
+    $statusCode = isset($options['status_code']) ? max(0, min(999, (int)$options['status_code'])) : 200;
+    $method = isset($_SERVER['REQUEST_METHOD']) ? strtoupper(substr($_SERVER['REQUEST_METHOD'], 0, 10)) : '';
+    $path = isset($_SERVER['REQUEST_URI']) ? substr($_SERVER['REQUEST_URI'], 0, 255) : '';
+    $ip = isset($_SERVER['REMOTE_ADDR']) ? substr($_SERVER['REMOTE_ADDR'], 0, 45) : '';
+    $agent = isset($_SERVER['HTTP_USER_AGENT']) ? substr($_SERVER['HTTP_USER_AGENT'], 0, 500) : '';
+    $metadata = isset($options['metadata']) && is_array($options['metadata']) ? json_encode($options['metadata']) : '';
+    $occurredAt = date('Y-m-d H:i:s');
+    $hash = hash('sha256', $occurredAt.'|'.$userId.'|'.$username.'|'.$action.'|'.$details.'|'.$ip);
+    $values = array($username,$role,$action,$module,$entityType,$entityId,$details,$severity,$method,$path,$ip,$agent,$metadata,$hash);
+    foreach ($values as $key => $value) $values[$key] = $db->real_escape_string((string)$value);
+    $userSql = $userId > 0 ? $userId : 'NULL'; $statusSql = $statusCode > 0 ? $statusCode : 'NULL';
+    return (bool)$db->query("INSERT INTO audit_logs
+      (user_id,username,role,action,module,entity_type,entity_id,details,severity,status_code,http_method,request_path,ip_address,user_agent,metadata_json,event_hash,created_at)
+      VALUES ({$userSql},'{$values[0]}','{$values[1]}','{$values[2]}','{$values[3]}','{$values[4]}','{$values[5]}','{$values[6]}','{$values[7]}',{$statusSql},'{$values[8]}','{$values[9]}','{$values[10]}','{$values[11]}','{$values[12]}','{$values[13]}','{$occurredAt}')");
+}
+
+function ensureTmsNotificationSchema($db) {
+    $notifications = $db->query("CREATE TABLE IF NOT EXISTS tms_notifications (
+        id BIGINT UNSIGNED NOT NULL AUTO_INCREMENT PRIMARY KEY,
+        notification_key VARCHAR(160) NOT NULL,
+        category VARCHAR(40) NOT NULL DEFAULT 'system',
+        severity VARCHAR(20) NOT NULL DEFAULT 'info',
+        title VARCHAR(180) NOT NULL,
+        message VARCHAR(600) NOT NULL,
+        target_roles VARCHAR(255) NOT NULL DEFAULT 'all',
+        target_user_id BIGINT UNSIGNED NULL,
+        theater_id BIGINT UNSIGNED NULL,
+        action_view VARCHAR(80) NULL,
+        action_label VARCHAR(100) NULL,
+        entity_type VARCHAR(60) NULL,
+        entity_id BIGINT UNSIGNED NULL,
+        created_by VARCHAR(120) NOT NULL DEFAULT 'Aurora System',
+        created_at DATETIME NOT NULL,
+        expires_at DATETIME NULL,
+        UNIQUE KEY uq_tms_notification_key (notification_key),
+        KEY idx_tms_notification_scope (target_user_id, theater_id, created_at),
+        KEY idx_tms_notification_roles (target_roles),
+        KEY idx_tms_notification_expiry (expires_at)
+    ) ENGINE=InnoDB DEFAULT CHARSET=utf8");
+    if (!$notifications) return false;
+
+    return (bool)$db->query("CREATE TABLE IF NOT EXISTS tms_notification_receipts (
+        notification_id BIGINT UNSIGNED NOT NULL,
+        user_id BIGINT UNSIGNED NOT NULL,
+        read_at DATETIME NULL,
+        dismissed_at DATETIME NULL,
+        created_at DATETIME NOT NULL,
+        updated_at DATETIME NOT NULL,
+        PRIMARY KEY (notification_id, user_id),
+        KEY idx_tms_notification_receipt_user (user_id, read_at, dismissed_at)
+    ) ENGINE=InnoDB DEFAULT CHARSET=utf8");
+}
+
+function tmsNotificationTableExists($db, $table) {
+    $safe = $db->real_escape_string($table);
+    $result = $db->query("SHOW TABLES LIKE '{$safe}'");
+    return $result && $result->num_rows > 0;
+}
+
+function tmsNotificationColumnExists($db, $table, $column) {
+    $safeTable = preg_replace('/[^a-zA-Z0-9_]/', '', $table);
+    $safeColumn = $db->real_escape_string($column);
+    $result = $db->query("SHOW COLUMNS FROM {$safeTable} LIKE '{$safeColumn}'");
+    return $result && $result->num_rows > 0;
+}
+
+// Convert outstanding operational work into durable, de-duplicated inbox
+// records. Source rows stay authoritative; this function never creates demo
+// requests and can safely run whenever the notification center refreshes.
+function syncTmsOperationalNotifications($db) {
+    if (tmsNotificationTableExists($db, 'refunds')) {
+        $db->query("UPDATE tms_notifications n SET n.expires_at=NOW()
+            WHERE n.entity_type='refund' AND NOT EXISTS
+            (SELECT 1 FROM refunds r WHERE r.id=n.entity_id AND r.status='pending')");
+        $db->query("INSERT INTO tms_notifications
+            (notification_key,category,severity,title,message,target_roles,action_view,action_label,entity_type,entity_id,created_by,created_at)
+            SELECT CONCAT('refund:',r.id),'refund','warning',
+                   CONCAT('Yêu cầu hoàn tiền #',r.id),
+                   CONCAT('Giao dịch ',COALESCE(t.transaction_code,CONCAT('#',r.transaction_id)),' đang chờ duyệt · ',FORMAT(r.amount,0),' đ'),
+                   'super_admin,supervisor,accounting','refunds','Xem yêu cầu','refund',r.id,'Aurora Finance',COALESCE(r.created_at,NOW())
+            FROM refunds r LEFT JOIN transactions t ON t.id=r.transaction_id
+            WHERE r.status='pending'
+            ON DUPLICATE KEY UPDATE title=VALUES(title),message=VALUES(message),severity=VALUES(severity),target_roles=VALUES(target_roles),action_view=VALUES(action_view),expires_at=NULL");
+    }
+
+    if (tmsNotificationTableExists($db, 'transactions') && tmsNotificationColumnExists($db, 'transactions', 'cancel_requested')) {
+        $db->query("UPDATE tms_notifications n SET n.expires_at=NOW()
+            WHERE n.entity_type='transaction' AND n.notification_key LIKE 'cancel-transaction:%' AND NOT EXISTS
+            (SELECT 1 FROM transactions t WHERE t.id=n.entity_id AND t.cancel_requested=1)");
+        $db->query("INSERT INTO tms_notifications
+            (notification_key,category,severity,title,message,target_roles,action_view,action_label,entity_type,entity_id,created_by,created_at)
+            SELECT CONCAT('cancel-transaction:',id),'transaction','critical','Yêu cầu hủy giao dịch',
+                   CONCAT(transaction_code,' đang chờ phê duyệt · ',FORMAT(amount,0),' đ'),
+                   'super_admin,supervisor,accounting','transactions','Kiểm tra giao dịch','transaction',id,'Aurora POS',COALESCE(updated_at,created_at,NOW())
+            FROM transactions WHERE cancel_requested=1
+            ON DUPLICATE KEY UPDATE message=VALUES(message),severity=VALUES(severity),target_roles=VALUES(target_roles),action_view=VALUES(action_view),expires_at=NULL");
+    }
+
+    if (tmsNotificationTableExists($db, 'movie_allocations')) {
+        $db->query("UPDATE tms_notifications n SET n.expires_at=NOW()
+            WHERE n.entity_type='movie_allocation' AND NOT EXISTS
+            (SELECT 1 FROM movie_allocations a WHERE a.id=n.entity_id AND a.status='pending')");
+        $db->query("INSERT INTO tms_notifications
+            (notification_key,category,severity,title,message,target_roles,theater_id,action_view,action_label,entity_type,entity_id,created_by,created_at)
+            SELECT CONCAT('movie-allocation:',id),'movie_plan','info','Có kế hoạch phim mới cần tiếp nhận',
+                   CONCAT(movie_title,' · ',allocated_start_date,' đến ',allocated_end_date),
+                   'cinema_admin',theater_id,'movie_plan','Mở kế hoạch phim','movie_allocation',id,'Admin Tổng',NOW()
+            FROM movie_allocations WHERE status='pending'
+            ON DUPLICATE KEY UPDATE title=VALUES(title),message=VALUES(message),theater_id=VALUES(theater_id),action_view=VALUES(action_view),expires_at=NULL");
+    }
+
+    if (tmsNotificationTableExists($db, 'product_plan_theaters') && tmsNotificationTableExists($db, 'product_plans')) {
+        $db->query("UPDATE tms_notifications n SET n.expires_at=NOW()
+            WHERE n.entity_type='product_plan_assignment' AND NOT EXISTS
+            (SELECT 1 FROM product_plan_theaters pt WHERE pt.id=n.entity_id AND pt.status='sent')");
+        $db->query("INSERT INTO tms_notifications
+            (notification_key,category,severity,title,message,target_roles,theater_id,action_view,action_label,entity_type,entity_id,created_by,created_at)
+            SELECT CONCAT('product-plan-assignment:',pt.id),'product_plan','info','Kế hoạch hàng hóa mới từ Admin Tổng',
+                   CONCAT(p.plan_code,' · ',p.title,' · áp dụng ',DATE_FORMAT(p.effective_date,'%d/%m/%Y')),
+                   'cinema_admin',pt.theater_id,'products','Xem và xác nhận','product_plan_assignment',pt.id,
+                   COALESCE(NULLIF(p.sent_by_name,''),'Admin Tổng'),COALESCE(pt.sent_at,p.sent_at,NOW())
+            FROM product_plan_theaters pt INNER JOIN product_plans p ON p.id=pt.plan_id
+            WHERE pt.status='sent' AND p.status='sent'
+            ON DUPLICATE KEY UPDATE title=VALUES(title),message=VALUES(message),theater_id=VALUES(theater_id),action_view=VALUES(action_view),action_label=VALUES(action_label),expires_at=NULL");
+    }
+
+    // A product distribution grants a cinema the right to sell the selected
+    // catalogue items. It is deliberately separate from the KPI plan above:
+    // the assignment remains actionable until the cinema administrator has
+    // acknowledged and synchronised it to the local POS inventory.
+    if (tmsNotificationTableExists($db, 'product_distribution_theaters')
+        && tmsNotificationTableExists($db, 'product_distributions')) {
+        $db->query("UPDATE tms_notifications n SET n.expires_at=NOW()
+            WHERE n.entity_type='product_distribution_assignment' AND NOT EXISTS
+            (SELECT 1 FROM product_distribution_theaters dt
+             INNER JOIN product_distributions d ON d.id=dt.distribution_id
+             WHERE dt.id=n.entity_id AND dt.status='published' AND d.status='published')");
+        $db->query("INSERT INTO tms_notifications
+            (notification_key,category,severity,title,message,target_roles,theater_id,action_view,action_label,entity_type,entity_id,created_by,created_at)
+            SELECT CONCAT('product-distribution-assignment:',dt.id),'product_distribution','warning',
+                   'Phân bố hàng hóa mới cần xác nhận',
+                   CONCAT(d.distribution_code,' · ',d.title,' · ',
+                          (SELECT COUNT(*) FROM product_distribution_items di WHERE di.distribution_id=d.id),' mặt hàng',
+                          IF(COALESCE((SELECT SUM(di2.opening_stock) FROM product_distribution_items di2 WHERE di2.distribution_id=d.id),0)>0,
+                             CONCAT(' · tồn đầu kỳ ',FORMAT((SELECT SUM(di3.opening_stock) FROM product_distribution_items di3 WHERE di3.distribution_id=d.id),0)),'')),
+                   'cinema_admin',dt.theater_id,'products','Xem và xác nhận','product_distribution_assignment',dt.id,
+                   COALESCE(NULLIF(d.published_by_name,''),'Admin Tổng'),COALESCE(dt.published_at,d.published_at,NOW())
+            FROM product_distribution_theaters dt
+            INNER JOIN product_distributions d ON d.id=dt.distribution_id
+            WHERE dt.status='published' AND d.status='published'
+            ON DUPLICATE KEY UPDATE title=VALUES(title),message=VALUES(message),severity=VALUES(severity),
+                theater_id=VALUES(theater_id),action_view=VALUES(action_view),action_label=VALUES(action_label),
+                created_by=VALUES(created_by),expires_at=NULL");
+    }
+
+    // Marketing movie-plan approvals are submitted in another TMS workspace,
+    // but Admin Tổng must receive them in the same durable inbox.  The
+    // submission timestamp is part of the key so a revised and re-submitted
+    // plan becomes a genuinely new unread notification.
+    if (tmsNotificationTableExists($db, 'movie_plans')
+        && tmsNotificationColumnExists($db, 'movie_plans', 'approval_status')
+        && tmsNotificationColumnExists($db, 'movie_plans', 'marketing_owner_id')) {
+        $db->query("UPDATE tms_notifications n SET n.expires_at=NOW()
+            WHERE n.entity_type='marketing_movie_plan'
+              AND n.category='marketing_approval'
+              AND NOT EXISTS (
+                  SELECT 1 FROM movie_plans mp
+                  WHERE mp.id=n.entity_id
+                    AND mp.approval_status='pending_approval'
+                    AND n.notification_key=CONCAT('marketing-plan-approval:',mp.id,':',DATE_FORMAT(COALESCE(mp.submitted_at,mp.updated_at,mp.created_at),'%Y%m%d%H%i%s'))
+              )");
+        $db->query("INSERT INTO tms_notifications
+            (notification_key,category,severity,title,message,target_roles,action_view,action_label,entity_type,entity_id,created_by,created_at)
+            SELECT CONCAT('marketing-plan-approval:',mp.id,':',DATE_FORMAT(COALESCE(mp.submitted_at,mp.updated_at,mp.created_at),'%Y%m%d%H%i%s')),
+                   'marketing_approval','warning','Kế hoạch Marketing chờ phê duyệt',
+                   CONCAT(COALESCE(NULLIF(mp.plan_code,''),CONCAT('KH-',mp.id)),' · ',COALESCE(NULLIF(mp.plan_name,''),mp.movie_title),' · ',COALESCE(mp.movie_title,'Chưa đặt tên')),
+                   'super_admin','theater_plans','Xem và phê duyệt','marketing_movie_plan',mp.id,
+                   COALESCE(NULLIF(mp.submitted_by,''),'Marketing'),COALESCE(mp.submitted_at,mp.updated_at,mp.created_at,NOW())
+            FROM movie_plans mp
+            WHERE mp.marketing_owner_id IS NOT NULL AND mp.approval_status='pending_approval'
+            ON DUPLICATE KEY UPDATE title=VALUES(title),message=VALUES(message),severity=VALUES(severity),target_roles=VALUES(target_roles),action_view=VALUES(action_view),action_label=VALUES(action_label),created_by=VALUES(created_by),expires_at=NULL");
+
+        // Return the decision to the exact Marketing owner. These records are
+        // generated only after a real review timestamp exists, avoiding demo
+        // or historical draft data from creating noise.
+        $db->query("INSERT INTO tms_notifications
+            (notification_key,category,severity,title,message,target_roles,target_user_id,action_view,action_label,entity_type,entity_id,created_by,created_at)
+            SELECT CONCAT('marketing-plan-result:',mp.id,':',DATE_FORMAT(mp.reviewed_at,'%Y%m%d%H%i%s')),
+                   'marketing_result',IF(mp.approval_status='approved','success','warning'),
+                   IF(mp.approval_status='approved','Kế hoạch đã được phê duyệt','Kế hoạch cần chỉnh sửa'),
+                   CONCAT(COALESCE(NULLIF(mp.plan_code,''),CONCAT('KH-',mp.id)),' · ',COALESCE(NULLIF(mp.plan_name,''),mp.movie_title),
+                          IF(mp.approval_status='revision_requested' AND COALESCE(mp.approval_note,'')<>'',CONCAT(' · ',mp.approval_note),'')),
+                   'marketing_manager',mp.marketing_owner_id,'mkt-plans','Xem kết quả','marketing_movie_plan',mp.id,
+                   COALESCE(NULLIF(mp.reviewed_by,''),'Admin Tổng'),mp.reviewed_at
+            FROM movie_plans mp
+            WHERE mp.marketing_owner_id IS NOT NULL
+              AND mp.approval_status IN ('approved','revision_requested')
+              AND mp.reviewed_at IS NOT NULL
+              AND mp.reviewed_at>'1970-01-02 00:00:00'
+            ON DUPLICATE KEY UPDATE title=VALUES(title),message=VALUES(message),severity=VALUES(severity),target_user_id=VALUES(target_user_id),action_view=VALUES(action_view),action_label=VALUES(action_label),created_by=VALUES(created_by),expires_at=NULL");
+    }
+}
+
 // Scope every cinema operator to one cinema.  This migration is intentionally
 // here (before session restoration) so both a fresh login and an existing
 // signed session receive the same theater_id from aurora_db.
@@ -169,7 +423,7 @@ function restoreTmsIdentity() {
     $expected = hash_hmac('sha256', $payload, $tmsIdentitySecret);
     if ($parts[2] !== $expected || (int)$parts[1] < time()) { clearTmsIdentity(); return; }
     $userId = (int)$parts[0];
-    $result = $db->query("SELECT id, username, full_name, phone, theater_id, role, status FROM users WHERE id = {$userId} AND status = 'active' LIMIT 1");
+    $result = $db->query("SELECT u.id,u.username,u.full_name,u.email,u.phone,u.theater_id,u.role,u.status,t.name AS theater_name FROM users u LEFT JOIN theaters t ON t.id=u.theater_id WHERE u.id = {$userId} AND u.status = 'active' LIMIT 1");
     if (!$result || !($user = $result->fetch_assoc())) { clearTmsIdentity(); return; }
     // The signed identity is intentionally authoritative over a stale PHP
     // session. It is only issued after a successful credential check.
@@ -178,10 +432,36 @@ function restoreTmsIdentity() {
 restoreTmsIdentity();
 
 require_once dirname(__FILE__) . '/../app/Http/Controllers/AdminController.php';
+require_once dirname(__FILE__) . '/../app/Http/Controllers/AuditLogController.php';
+require_once dirname(__FILE__) . '/../app/Http/Controllers/UserPreferencesController.php';
+require_once dirname(__FILE__) . '/../app/Http/Controllers/CommunicationController.php';
 require_once dirname(__FILE__) . '/../app/Http/Controllers/RevenueController.php';
+require_once dirname(__FILE__) . '/../app/Http/Controllers/ReportController.php';
+require_once dirname(__FILE__) . '/../app/Http/Controllers/PosDeviceController.php';
+require_once dirname(__FILE__) . '/../app/Http/Controllers/MarketingController.php';
+require_once dirname(__FILE__) . '/../app/Http/Controllers/PromotionDeploymentController.php';
+require_once dirname(__FILE__) . '/../app/Http/Controllers/ProductPlanningController.php';
 $controller = new AdminController($db);
+$auditLogController = new AuditLogController($db);
+$userPreferencesController = new UserPreferencesController($db);
+$communicationController = new CommunicationController($db);
 $revenueController = new RevenueController($db);
+$reportController = new ReportController($db);
+$posDeviceController = new PosDeviceController($db);
+$marketingController = new MarketingController($db);
+$promotionDeploymentController = new PromotionDeploymentController($db);
+$productPlanningController = new ProductPlanningController($db);
 $action = isset($_GET['action']) ? $_GET['action'] : 'health';
+
+if ($action === 'user-preferences') {
+    $userPreferencesController->handle($requestMethod);
+}
+if ($action === 'communications') {
+    $communicationController->handle($requestMethod);
+}
+if ($action === 'communication-file') {
+    $communicationController->download();
+}
 
 // Pricing is a dedicated, audited matrix rather than a generic CRUD list.
 // Every consumer (TMS/POS/customer website) can therefore read the same
@@ -190,6 +470,42 @@ if ($action === 'ticket-pricing-policies') {
     if ($requestMethod === 'GET') $controller->ticketPricingPolicies();
     if ($requestMethod === 'POST' || $requestMethod === 'PUT') $controller->saveTicketPricingPolicy();
     jsonResponse(array('success' => false, 'message' => 'Phương thức không được hỗ trợ.'), 405);
+}
+
+if ($action === 'theater-promotions') {
+    $promotionDeploymentController->handle();
+}
+
+if ($action === 'promotion-image') {
+    if($requestMethod!=='POST')jsonResponse(array('success'=>false,'message'=>'Phương thức không được hỗ trợ.'),405);
+    $user=requireAdmin();$role=AdminController::normalizeRole($user['role']);
+    if(!in_array($role,array('marketing_manager','super_admin'),true))jsonResponse(array('success'=>false,'message'=>'Bạn không có quyền tải ảnh chương trình khuyến mãi.'),403);
+    if(!isset($_FILES['image'])||!is_array($_FILES['image']))jsonResponse(array('success'=>false,'message'=>'Vui lòng chọn ảnh chương trình.'),422);
+    $file=$_FILES['image'];if($file['error']!==UPLOAD_ERR_OK||!is_uploaded_file($file['tmp_name']))jsonResponse(array('success'=>false,'message'=>'Không thể nhận tệp ảnh. Vui lòng thử lại.'),400);
+    if((int)$file['size']<1||(int)$file['size']>8*1024*1024)jsonResponse(array('success'=>false,'message'=>'Ảnh phải có dung lượng tối đa 8 MB.'),422);
+    $info=function_exists('getimagesize')?@getimagesize($file['tmp_name']):false;$mime=is_array($info)&&isset($info['mime'])?$info['mime']:'';
+    $types=array('image/jpeg'=>'jpg','image/png'=>'png','image/webp'=>'webp');if(!isset($types[$mime]))jsonResponse(array('success'=>false,'message'=>'Ảnh phải là JPG, PNG hoặc WebP hợp lệ.'),422);
+    if(is_array($info)&&((int)$info[0]<600||(int)$info[1]<300))jsonResponse(array('success'=>false,'message'=>'Ảnh cần có kích thước tối thiểu 600 × 300 px.'),422);
+    $directory=dirname(__FILE__).DIRECTORY_SEPARATOR.'uploads'.DIRECTORY_SEPARATOR.'promotions';if(!is_dir($directory)&&!mkdir($directory,0755,true)&&!is_dir($directory))jsonResponse(array('success'=>false,'message'=>'Không thể tạo thư mục ảnh CTKM.'),500);
+    $fileName='promotion-'.date('YmdHis').'-'.substr(sha1(uniqid((string)mt_rand(),true)),0,12).'.'.$types[$mime];$target=$directory.DIRECTORY_SEPARATOR.$fileName;
+    if(!move_uploaded_file($file['tmp_name'],$target))jsonResponse(array('success'=>false,'message'=>'Không thể lưu ảnh chương trình trên máy chủ.'),500);
+    $publicDirectory=str_replace('\\','/',dirname($_SERVER['SCRIPT_NAME']));$host=isset($_SERVER['HTTP_HOST'])&&preg_match('/^[A-Za-z0-9.-]+(?::[0-9]{1,5})?$/',$_SERVER['HTTP_HOST'])?$_SERVER['HTTP_HOST']:'localhost';$scheme=!empty($_SERVER['HTTPS'])&&strtolower($_SERVER['HTTPS'])!=='off'?'https':'http';$url=$scheme.'://'.$host.rtrim($publicDirectory,'/').'/uploads/promotions/'.rawurlencode($fileName);
+    $original=$db->real_escape_string(substr((string)$file['name'],0,255));$fileEsc=$db->real_escape_string($fileName);$mimeEsc=$db->real_escape_string($mime);$urlEsc=$db->real_escape_string($url);$size=(int)$file['size'];$actor=(int)$user['id'];
+    if(!$db->query("CREATE TABLE IF NOT EXISTS promotion_media_assets (id BIGINT UNSIGNED AUTO_INCREMENT PRIMARY KEY,promotion_id BIGINT UNSIGNED NULL,file_name VARCHAR(180) NOT NULL,original_name VARCHAR(255) NOT NULL,mime_type VARCHAR(80) NOT NULL,file_size INT UNSIGNED NOT NULL,public_url VARCHAR(500) NOT NULL,uploaded_by BIGINT UNSIGNED NULL,created_at DATETIME NOT NULL,KEY idx_promotion_media_promotion(promotion_id),KEY idx_promotion_media_uploader(uploaded_by,created_at)) ENGINE=InnoDB DEFAULT CHARSET=utf8 COLLATE=utf8_unicode_ci")||!$db->query("INSERT INTO promotion_media_assets(file_name,original_name,mime_type,file_size,public_url,uploaded_by,created_at) VALUES('{$fileEsc}','{$original}','{$mimeEsc}',{$size},'{$urlEsc}',{$actor},NOW())")){@unlink($target);jsonResponse(array('success'=>false,'message'=>'Không thể ghi nhận ảnh trong aurora_db.'),500);}
+    jsonResponse(array('success'=>true,'message'=>'Đã tải ảnh chương trình và lưu vào thư viện aurora_db.','data'=>array('id'=>(int)$db->insert_id,'url'=>$url,'name'=>$fileName,'width'=>is_array($info)?(int)$info[0]:0,'height'=>is_array($info)?(int)$info[1]:0)),201);
+}
+
+if ($action === 'product-catalog-workflow') {
+    $productPlanningController->handle('catalog', $requestMethod);
+}
+if ($action === 'product-product-image') {
+    $productPlanningController->handle('media', $requestMethod);
+}
+if ($action === 'product-distributions') {
+    $productPlanningController->handle('distributions', $requestMethod);
+}
+if ($action === 'product-plans') {
+    $productPlanningController->handle('plans', $requestMethod);
 }
 
 if ($action === 'pos-staff') {
@@ -230,7 +546,7 @@ if ($action === 'movie-media-chunk') {
     if ($requestMethod !== 'POST') jsonResponse(array('success' => false, 'message' => 'Phương thức không được hỗ trợ.'), 400);
     $user = requireAdmin();
     $role = AdminController::normalizeRole($user['role']);
-    if (!in_array($role, array('super_admin', 'cinema_admin'), true)) jsonResponse(array('success' => false, 'message' => 'Bạn không có quyền tải media phim lên.'), 403);
+    if (!in_array($role, array('super_admin', 'cinema_admin', 'marketing_manager'), true)) jsonResponse(array('success' => false, 'message' => 'Bạn không có quyền tải media phim lên.'), 403);
 
     $kind = isset($_POST['kind']) ? $_POST['kind'] : '';
     $allowedMimeTypes = array(
@@ -303,7 +619,7 @@ if ($action === 'movie-media') {
     }
     $user = requireAdmin();
     $role = AdminController::normalizeRole($user['role']);
-    if (!in_array($role, array('super_admin', 'cinema_admin'), true)) {
+    if (!in_array($role, array('super_admin', 'cinema_admin', 'marketing_manager'), true)) {
         jsonResponse(array('success' => false, 'message' => 'Bạn không có quyền tải media phim lên.'), 403);
     }
 
@@ -388,7 +704,7 @@ if ($action === 'health') {
         'service' => 'aurora-tms',
         'database' => 'connected',
         'connected_database' => $currentDb,
-        'roles_supported' => array('super_admin', 'cinema_admin', 'supervisor', 'accounting'),
+        'roles_supported' => array('super_admin', 'cinema_admin', 'supervisor', 'accounting', 'marketing_manager'),
         'timestamp' => date('c')
     ));
 }
@@ -414,6 +730,7 @@ if ($action === 'login' && $requestMethod === 'POST') {
     $password = isset($input['password']) ? (string)$input['password'] : '';
 
     if ($username === '' || $password === '') {
+        writeTmsAuditLog($db, 'LOGIN_FAILED', 'Yêu cầu đăng nhập thiếu thông tin bắt buộc.', array('username'=>$username === '' ? 'anonymous' : $username,'role'=>'guest','module'=>'security','severity'=>'warning','status_code'=>400));
         jsonResponse(array('success' => false, 'message' => 'Vui lòng nhập đầy đủ tên đăng nhập và mật khẩu.'), 400);
     }
 
@@ -485,10 +802,12 @@ if ($action === 'login' && $requestMethod === 'POST') {
 
     if ($user) {
         if (!passwordMatches($password, $user['password_hash'])) {
+            writeTmsAuditLog($db, 'LOGIN_FAILED', 'Đăng nhập thất bại do thông tin xác thực không đúng.', array('username'=>$user['username'],'user_id'=>$user['id'],'role'=>$user['role'],'module'=>'security','entity_type'=>'user','entity_id'=>$user['id'],'severity'=>'warning','status_code'=>401));
             jsonResponse(array('success' => false, 'message' => 'Tên đăng nhập hoặc mật khẩu không chính xác.'), 401);
         }
 
         if ($user['status'] !== 'active') {
+            writeTmsAuditLog($db, 'LOGIN_BLOCKED', 'Tài khoản bị khóa hoặc ngưng hoạt động đã thử đăng nhập.', array('username'=>$user['username'],'user_id'=>$user['id'],'role'=>$user['role'],'module'=>'security','entity_type'=>'user','entity_id'=>$user['id'],'severity'=>'error','status_code'=>403));
             jsonResponse(array('success' => false, 'message' => 'Tài khoản nhân sự TMS đang bị khóa hoặc ngưng hoạt động.'), 403);
         }
 
@@ -508,6 +827,10 @@ if ($action === 'login' && $requestMethod === 'POST') {
         unset($user['password_hash']);
 
         $user['role'] = AdminController::normalizeRole($user['role']);
+        if ($user['role'] === 'super_admin') {
+            $user['theater_id'] = 0;
+            $user['theater_name'] = 'Toàn hệ thống';
+        }
         $roleDefs = AdminController::getRoleDefinitions();
         $user['role_info'] = isset($roleDefs[$user['role']]) ? $roleDefs[$user['role']] : array(
             'code' => $user['role'],
@@ -521,6 +844,7 @@ if ($action === 'login' && $requestMethod === 'POST') {
         regenerateTmsSession();
         $_SESSION['tms_user'] = $user;
         setTmsIdentity($user);
+        writeTmsAuditLog($db, 'LOGIN_SUCCESS', 'Đăng nhập TMS thành công.', array('user_id'=>$user['id'],'username'=>$user['username'],'role'=>$user['role'],'module'=>'security','entity_type'=>'session','severity'=>'success','status_code'=>200,'metadata'=>array('theater_id'=>(int)$user['theater_id'])));
         jsonResponse(array(
             'success' => true,
             'message' => 'Đăng nhập thành công với vai trò ' . $user['role_info']['name'],
@@ -531,10 +855,13 @@ if ($action === 'login' && $requestMethod === 'POST') {
     // Every authenticated TMS account must exist in aurora_db. Creating a
     // temporary fallback user here used to leave the browser with no durable
     // server identity, allowing an old account session to reappear on F5.
+    writeTmsAuditLog($db, 'LOGIN_FAILED', 'Đăng nhập thất bại do không tìm thấy tài khoản phù hợp.', array('username'=>$username,'role'=>'guest','module'=>'security','entity_type'=>'user','severity'=>'warning','status_code'=>401));
     jsonResponse(array('success' => false, 'message' => 'Tên đăng nhập hoặc mật khẩu không chính xác.'), 401);
 }
 
 if ($action === 'logout') {
+    $logoutUser = !empty($_SESSION['tms_user']) ? $_SESSION['tms_user'] : array();
+    if (!empty($logoutUser)) writeTmsAuditLog($db, 'LOGOUT', 'Đăng xuất TMS an toàn.', array('user_id'=>$logoutUser['id'],'username'=>$logoutUser['username'],'role'=>$logoutUser['role'],'module'=>'security','entity_type'=>'session','severity'=>'info','status_code'=>200));
     unset($_SESSION['tms_user']);
     if (session_id()) {
         session_destroy();
@@ -551,9 +878,188 @@ if ($action === 'me') {
     jsonResponse(array('success' => true, 'data' => $user));
 }
 
+if ($action === 'account-profile') {
+    $sessionUser = requireAdmin();
+    $userId = (int)$sessionUser['id'];
+
+    if ($requestMethod === 'PUT') {
+        $input = requestJson();
+        $fullName = isset($input['full_name']) ? trim((string)$input['full_name']) : '';
+        $email = isset($input['email']) ? trim((string)$input['email']) : '';
+        $phone = isset($input['phone']) ? preg_replace('/[\s.\-]/', '', trim((string)$input['phone'])) : '';
+        $currentPassword = isset($input['current_password']) ? (string)$input['current_password'] : '';
+        $newPassword = isset($input['new_password']) ? (string)$input['new_password'] : '';
+
+        if ($fullName === '' || strlen($fullName) > 120) jsonResponse(array('success'=>false,'message'=>'Họ và tên phải có từ 1 đến 120 ký tự.'),422);
+        if ($email === '' || strlen($email) > 180 || !filter_var($email, FILTER_VALIDATE_EMAIL)) jsonResponse(array('success'=>false,'message'=>'Email công việc không đúng định dạng.'),422);
+        if ($phone !== '' && !preg_match('/^(?:\+84|0)[0-9]{9,10}$/', $phone)) jsonResponse(array('success'=>false,'message'=>'Số điện thoại phải bắt đầu bằng 0 hoặc +84 và có độ dài hợp lệ.'),422);
+        if ($newPassword !== '' && strlen($newPassword) < 8) jsonResponse(array('success'=>false,'message'=>'Mật khẩu mới phải có ít nhất 8 ký tự.'),422);
+
+        $passwordSql = '';
+        if ($newPassword !== '') {
+            if ($currentPassword === '') jsonResponse(array('success'=>false,'message'=>'Vui lòng nhập mật khẩu hiện tại để đổi mật khẩu.'),422);
+            $passwordResult = $db->query("SELECT password_hash FROM users WHERE id={$userId} LIMIT 1");
+            $passwordRow = $passwordResult ? $passwordResult->fetch_assoc() : null;
+            if (!$passwordRow || !passwordMatches($currentPassword, $passwordRow['password_hash'])) {
+                writeTmsAuditLog($db, 'PROFILE_PASSWORD_REJECTED', 'Đổi mật khẩu bị từ chối do mật khẩu hiện tại không đúng.', array('user_id'=>$userId,'username'=>$sessionUser['username'],'role'=>$sessionUser['role'],'module'=>'account','entity_type'=>'user','entity_id'=>$userId,'severity'=>'warning','status_code'=>422));
+                jsonResponse(array('success'=>false,'message'=>'Mật khẩu hiện tại không chính xác.'),422);
+            }
+            $newHash = function_exists('password_hash') ? password_hash($newPassword, PASSWORD_BCRYPT) : crypt($newPassword);
+            $passwordSql = ", password_hash='".$db->real_escape_string($newHash)."'";
+        }
+
+        $fullNameEsc = $db->real_escape_string($fullName);
+        $emailEsc = $db->real_escape_string($email);
+        $phoneEsc = $db->real_escape_string($phone);
+        if (!$db->query("UPDATE users SET full_name='{$fullNameEsc}',email='{$emailEsc}',phone='{$phoneEsc}',updated_at=NOW(){$passwordSql} WHERE id={$userId} AND status='active'")) {
+            jsonResponse(array('success'=>false,'message'=>'Không thể cập nhật hồ sơ trong aurora_db: '.$db->error),500);
+        }
+        writeTmsAuditLog($db, 'PROFILE_UPDATED', $newPassword !== '' ? 'Cập nhật hồ sơ cá nhân và mật khẩu.' : 'Cập nhật hồ sơ cá nhân.', array('user_id'=>$userId,'username'=>$sessionUser['username'],'role'=>$sessionUser['role'],'module'=>'account','entity_type'=>'user','entity_id'=>$userId,'severity'=>'success','status_code'=>200,'metadata'=>array('password_changed'=>$newPassword !== '')));
+    } else if ($requestMethod !== 'GET') {
+        jsonResponse(array('success'=>false,'message'=>'Phương thức không được hỗ trợ cho hồ sơ tài khoản.'),405);
+    }
+
+    $profileResult = $db->query("SELECT u.id,u.username,u.full_name,u.email,u.phone,u.role,u.status,u.theater_id,u.last_login,u.created_at,u.updated_at,t.name AS theater_name,t.address AS theater_address,t.city AS theater_city,'' AS theater_phone,(SELECT COUNT(*) FROM screens s WHERE s.theater_id=t.id) AS total_screens,'active' AS theater_status FROM users u LEFT JOIN theaters t ON t.id=u.theater_id WHERE u.id={$userId} LIMIT 1");
+    if (!$profileResult) jsonResponse(array('success'=>false,'message'=>'Không thể tải hồ sơ tài khoản từ aurora_db: '.$db->error),500);
+    $profile = $profileResult->fetch_assoc();
+    if (!$profile) jsonResponse(array('success'=>false,'message'=>'Không tìm thấy hồ sơ tài khoản trong aurora_db.'),404);
+    $profile['id'] = (int)$profile['id'];
+    $profile['theater_id'] = (int)$profile['theater_id'];
+    $profile['total_screens'] = (int)$profile['total_screens'];
+    $profile['role'] = AdminController::normalizeRole($profile['role']);
+    if ($profile['role'] === 'super_admin') {
+        $theaterCountResult = $db->query("SELECT COUNT(*) FROM theaters");
+        $screenCountResult = $db->query("SELECT COUNT(*) FROM screens");
+        $theaterCountRow = $theaterCountResult ? $theaterCountResult->fetch_row() : array(0);
+        $screenCountRow = $screenCountResult ? $screenCountResult->fetch_row() : array(0);
+        $profile['scope_mode'] = 'system';
+        $profile['scope_name'] = 'Toàn hệ thống Aurora Cinema';
+        $profile['theater_id'] = 0;
+        $profile['theater_name'] = null;
+        $profile['theater_address'] = null;
+        $profile['theater_city'] = null;
+        $profile['theater_phone'] = null;
+        $profile['theater_status'] = null;
+        $profile['total_theaters'] = isset($theaterCountRow[0]) ? (int)$theaterCountRow[0] : 0;
+        $profile['total_screens'] = isset($screenCountRow[0]) ? (int)$screenCountRow[0] : 0;
+    } else {
+        $profile['scope_mode'] = 'theater';
+        $profile['scope_name'] = !empty($profile['theater_name']) ? $profile['theater_name'] : 'Chưa được gán rạp';
+        $profile['total_theaters'] = $profile['theater_id'] > 0 ? 1 : 0;
+    }
+    $roleDefs = AdminController::getRoleDefinitions();
+    $profile['role_info'] = isset($roleDefs[$profile['role']]) ? $roleDefs[$profile['role']] : null;
+    $profile['source'] = 'aurora_db';
+    $_SESSION['tms_user'] = array_merge($_SESSION['tms_user'], array('full_name'=>$profile['full_name'],'phone'=>$profile['phone'],'email'=>$profile['email']));
+    setTmsIdentity($_SESSION['tms_user']);
+    jsonResponse(array('success'=>true,'message'=>$requestMethod === 'PUT' ? 'Đã cập nhật hồ sơ tài khoản trong aurora_db.' : 'Đã tải hồ sơ tài khoản từ aurora_db.','data'=>$profile));
+}
+
 if ($action === 'roles') {
     requireAdmin();
     jsonResponse(array('success' => true, 'roles' => array_values(AdminController::getRoleDefinitions())));
+}
+
+if ($action === 'notifications') {
+    $user = requireAdmin();
+    if (!ensureTmsNotificationSchema($db)) {
+        jsonResponse(array('success' => false, 'message' => 'Không thể khởi tạo trung tâm thông báo trong aurora_db.'), 500);
+    }
+    syncTmsOperationalNotifications($db);
+
+    $userId = (int)$user['id'];
+    $role = $db->real_escape_string(AdminController::normalizeRole($user['role']));
+    $theaterId = isset($user['theater_id']) ? (int)$user['theater_id'] : 0;
+    $displayName = $db->real_escape_string(isset($user['full_name']) ? $user['full_name'] : $user['username']);
+    $welcomeKey = $db->real_escape_string('tms-welcome:' . $userId);
+    $db->query("INSERT IGNORE INTO tms_notifications
+        (notification_key,category,severity,title,message,target_roles,target_user_id,action_view,action_label,created_by,created_at)
+        VALUES ('{$welcomeKey}','system','success','Trung tâm thông báo đã sẵn sàng',
+        'Xin chào {$displayName}. Các công việc cần xử lý sẽ được cập nhật tại đây theo đúng vai trò và phạm vi rạp.',
+        'all',{$userId},'dashboard','Về tổng quan','Aurora System',NOW())");
+
+    $scope = "(n.target_user_id={$userId} OR (n.target_user_id IS NULL AND (n.target_roles='all' OR FIND_IN_SET('{$role}',n.target_roles)>0)))";
+    if ($role !== 'super_admin' && $theaterId > 0) {
+        $scope .= " AND (n.theater_id IS NULL OR n.theater_id={$theaterId})";
+    } else if ($role !== 'super_admin') {
+        $scope .= " AND n.theater_id IS NULL";
+    }
+    $scope .= " AND (n.expires_at IS NULL OR n.expires_at>NOW())";
+
+    if ($requestMethod === 'GET') {
+        $filter = isset($_GET['filter']) ? (string)$_GET['filter'] : 'all';
+        if (!in_array($filter, array('all','unread','actionable'), true)) $filter = 'all';
+        $limit = isset($_GET['limit']) ? (int)$_GET['limit'] : 40;
+        if ($limit < 1) $limit = 1;
+        if ($limit > 100) $limit = 100;
+        $filterCondition = '';
+        if ($filter === 'unread') $filterCondition = ' AND r.read_at IS NULL';
+        if ($filter === 'actionable') $filterCondition = " AND n.action_view IS NOT NULL AND n.entity_type IS NOT NULL";
+        $result = $db->query("SELECT n.id,n.category,n.severity,n.title,n.message,n.theater_id,n.action_view,n.action_label,
+                n.entity_type,n.entity_id,n.created_by,n.created_at,r.read_at
+            FROM tms_notifications n
+            LEFT JOIN tms_notification_receipts r ON r.notification_id=n.id AND r.user_id={$userId}
+            WHERE {$scope} AND r.dismissed_at IS NULL{$filterCondition}
+            ORDER BY (r.read_at IS NULL) DESC,n.created_at DESC,n.id DESC LIMIT {$limit}");
+        if (!$result) jsonResponse(array('success' => false, 'message' => 'Không thể tải thông báo từ aurora_db: '.$db->error), 500);
+        $items = array();
+        while ($row = $result->fetch_assoc()) {
+            $row['id'] = (int)$row['id'];
+            $row['theater_id'] = $row['theater_id'] === null ? null : (int)$row['theater_id'];
+            $row['entity_id'] = $row['entity_id'] === null ? null : (int)$row['entity_id'];
+            $row['is_read'] = $row['read_at'] !== null;
+            $items[] = $row;
+        }
+        $countResult = $db->query("SELECT
+                SUM(IF(r.read_at IS NULL,1,0)) AS unread_count,
+                SUM(IF(n.action_view IS NOT NULL AND n.entity_type IS NOT NULL,1,0)) AS actionable_count,
+                SUM(IF(n.severity IN ('warning','critical') AND r.read_at IS NULL,1,0)) AS priority_count,
+                COUNT(*) AS total_count
+            FROM tms_notifications n
+            LEFT JOIN tms_notification_receipts r ON r.notification_id=n.id AND r.user_id={$userId}
+            WHERE {$scope} AND r.dismissed_at IS NULL");
+        $countRow = $countResult ? $countResult->fetch_assoc() : array();
+        jsonResponse(array('success' => true, 'data' => $items, 'summary' => array(
+            'unread' => isset($countRow['unread_count']) ? (int)$countRow['unread_count'] : 0,
+            'actionable' => isset($countRow['actionable_count']) ? (int)$countRow['actionable_count'] : 0,
+            'priority' => isset($countRow['priority_count']) ? (int)$countRow['priority_count'] : 0,
+            'total' => isset($countRow['total_count']) ? (int)$countRow['total_count'] : 0,
+            'returned' => count($items), 'filter' => $filter,
+            'source' => 'aurora_db', 'refreshed_at' => date('Y-m-d H:i:s')
+        )));
+    }
+
+    if ($requestMethod === 'POST' || $requestMethod === 'PUT') {
+        $input = requestJson();
+        $operation = isset($input['operation']) ? (string)$input['operation'] : 'read';
+        $notificationId = isset($input['notification_id']) ? (int)$input['notification_id'] : 0;
+        if (!in_array($operation, array('read','read_all','dismiss'), true)) {
+            jsonResponse(array('success' => false, 'message' => 'Thao tác thông báo không hợp lệ.'), 422);
+        }
+        if (($operation === 'read' || $operation === 'dismiss') && $notificationId < 1) {
+            jsonResponse(array('success' => false, 'message' => 'Thiếu mã thông báo.'), 422);
+        }
+
+        $idCondition = $operation === 'read_all' ? '' : ' AND n.id=' . $notificationId;
+        $dismissedValue = $operation === 'dismiss' ? 'NOW()' : 'NULL';
+        $sql = "INSERT INTO tms_notification_receipts (notification_id,user_id,read_at,dismissed_at,created_at,updated_at)
+            SELECT n.id,{$userId},NOW(),{$dismissedValue},NOW(),NOW() FROM tms_notifications n
+            WHERE {$scope}{$idCondition}
+            ON DUPLICATE KEY UPDATE read_at=NOW(),dismissed_at=" . ($operation === 'dismiss' ? 'NOW()' : 'dismissed_at') . ",updated_at=NOW()";
+        if (!$db->query($sql)) jsonResponse(array('success' => false, 'message' => 'Không thể cập nhật trạng thái thông báo: '.$db->error), 500);
+        if ($operation !== 'read_all' && $db->affected_rows < 1) {
+            jsonResponse(array('success' => false, 'message' => 'Thông báo không tồn tại hoặc không thuộc phạm vi của bạn.'), 404);
+        }
+        jsonResponse(array('success' => true, 'message' => $operation === 'dismiss' ? 'Đã ẩn thông báo.' : 'Đã cập nhật trạng thái đã đọc.'));
+    }
+
+    jsonResponse(array('success' => false, 'message' => 'Phương thức không được hỗ trợ cho thông báo.'), 405);
+}
+
+if (strpos($action, 'marketing-') === 0) {
+    requireAdmin();
+    $controller->requireRbacPermission('marketing', $requestMethod === 'GET' ? 'view' : 'update');
+    $marketingController->handle(substr($action, strlen('marketing-')));
 }
 
 if ($action === 'permissions') {
@@ -563,7 +1069,23 @@ if ($action === 'permissions') {
     jsonResponse(array('success'=>false, 'message'=>'Phương thức không được hỗ trợ cho ma trận phân quyền.'), 405);
 }
 
+if ($action === 'my-permissions') {
+    if ($requestMethod === 'GET') $controller->myPermissions();
+    jsonResponse(array('success'=>false, 'message'=>'Phương thức không được hỗ trợ cho quyền hiện tại.'), 405);
+}
+
+if ($action === 'account-permissions') {
+    requireAdmin();
+    $controller->requireRbacPermission('users', $requestMethod === 'GET' ? 'view' : 'update');
+    if ($requestMethod === 'GET') $controller->accountPermissions();
+    if ($requestMethod === 'POST' || $requestMethod === 'PUT') $controller->saveAccountPermissions();
+    jsonResponse(array('success'=>false,'message'=>'Phương thức không được hỗ trợ cho quyền tài khoản.'),405);
+}
+
 if ($action === 'users') {
+    requireAdmin();
+    $userPermissionAction = $requestMethod === 'GET' ? 'view' : ($requestMethod === 'DELETE' || isset($_GET['delete']) ? 'delete' : (!empty($_GET['id']) ? 'update' : 'create'));
+    $controller->requireRbacPermission('users', $userPermissionAction);
     if ($requestMethod === 'GET') {
         $controller->listUsers();
     }
@@ -579,7 +1101,51 @@ if ($action === 'users') {
     jsonResponse(array('success' => false, 'message' => 'Phương thức không được hỗ trợ cho users.'), 405);
 }
 
+if ($action === 'identity-directory') {
+    requireAdmin();
+    $controller->requireRbacPermission('users', 'view');
+    if ($requestMethod === 'GET') $controller->identityDirectory();
+    jsonResponse(array('success' => false, 'message' => 'Phương thức không được hỗ trợ cho danh bạ tài khoản.'), 405);
+}
+
+if ($action === 'cinema-customers') {
+    requireAdmin();
+    $controller->requireRbacPermission('customers', 'view');
+    if ($requestMethod === 'GET') $controller->cinemaCustomers();
+    jsonResponse(array('success' => false, 'message' => 'Phương thức không được hỗ trợ cho danh sách khách hàng.'), 405);
+}
+
+if ($action === 'customer-commerce-profile') {
+    requireAdmin();
+    $controller->requireRbacPermission('customers', 'view');
+    if ($requestMethod === 'GET') $controller->customerCommerceProfile();
+    jsonResponse(array('success' => false, 'message' => 'Phương thức không được hỗ trợ cho hồ sơ khách hàng.'), 405);
+}
+
+if ($action === 'cinema-booking-history') {
+    requireAdmin();
+    $controller->requireRbacPermission('booking_history', 'view');
+    if ($requestMethod === 'GET') $controller->cinemaBookingHistory();
+    jsonResponse(array('success' => false, 'message' => 'Phương thức không được hỗ trợ cho lịch sử đặt vé.'), 405);
+}
+
+if ($action === 'cinema-booking-detail') {
+    requireAdmin();
+    $controller->requireRbacPermission('booking_history', 'view');
+    if ($requestMethod === 'GET') $controller->cinemaBookingDetail();
+    jsonResponse(array('success' => false, 'message' => 'Phương thức không được hỗ trợ cho chi tiết booking.'), 405);
+}
+
+if ($action === 'identity-status') {
+    requireAdmin();
+    $controller->requireRbacPermission('users', 'update');
+    if ($requestMethod === 'POST' || $requestMethod === 'PUT') $controller->updateIdentityStatus();
+    jsonResponse(array('success' => false, 'message' => 'Phương thức không được hỗ trợ cho trạng thái tài khoản.'), 405);
+}
+
 if ($action === 'customer-account-status') {
+    requireAdmin();
+    $controller->requireRbacPermission('customers', 'update');
     if ($requestMethod === 'POST' || $requestMethod === 'PUT') $controller->updateCustomerStatus();
     jsonResponse(array('success' => false, 'message' => 'Phương thức không được hỗ trợ cho trạng thái customer.'), 405);
 }
@@ -591,13 +1157,24 @@ if ($action === 'dashboard') {
 }
 
 if ($action === 'cinema-schedule-board') {
+    requireAdmin();
+    $controller->requireRbacPermission('schedules', 'view');
     if ($requestMethod === 'GET') $controller->cinemaScheduleBoard();
     jsonResponse(array('success' => false, 'message' => 'Phương thức không được hỗ trợ cho bảng điều phối lịch chiếu.'), 405);
 }
 
 if ($action === 'schedule-movies') {
+    requireAdmin();
+    $controller->requireRbacPermission('schedules', 'view');
     if ($requestMethod === 'GET') $controller->scheduleMovies();
     jsonResponse(array('success' => false, 'message' => 'Phương thức không được hỗ trợ cho danh sách phim lập lịch.'), 405);
+}
+
+if ($action === 'schedule-theaters') {
+    requireAdmin();
+    $controller->requireRbacPermission('schedules', 'view');
+    if ($requestMethod === 'GET') $controller->scheduleTheaters();
+    jsonResponse(array('success' => false, 'message' => 'Phương thức không được hỗ trợ cho danh sách rạp lập lịch.'), 405);
 }
 
 if ($action === 'schedule-availability') {
@@ -609,18 +1186,33 @@ if ($action === 'schedule-availability') {
     jsonResponse(array('success' => false, 'message' => 'Phương thức không được hỗ trợ cho kiểm tra khung giờ trống.'), 405);
 }
 
+if ($action === 'schedule-auto-draft') {
+    if ($requestMethod === 'POST') {
+        requireAdmin();
+        $controller->requireRbacPermission('schedules', true);
+        $controller->scheduleAutoDraft();
+    }
+    jsonResponse(array('success'=>false,'message'=>'Phương thức không được hỗ trợ cho xếp lịch tự động.'),405);
+}
+
 if ($action === 'movie-plan-detail') {
+    requireAdmin();
+    $controller->requireRbacPermission('movies', $requestMethod === 'GET' ? 'view' : 'update');
     if ($requestMethod === 'GET') $controller->moviePlanDetail();
     if ($requestMethod === 'POST' || $requestMethod === 'PUT') $controller->updateMoviePlanTask();
     jsonResponse(array('success' => false, 'message' => 'Phương thức không được hỗ trợ cho chi tiết kế hoạch.'), 405);
 }
 
 if ($action === 'movie-plan-action') {
+    requireAdmin();
+    $controller->requireRbacPermission('movies', 'approve');
     if ($requestMethod === 'POST') $controller->executeMoviePlanAction();
     jsonResponse(array('success' => false, 'message' => 'Phương thức không được hỗ trợ cho thao tác triển khai.'), 405);
 }
 
 if ($action === 'movie-plan-screen-preparation') {
+    requireAdmin();
+    $controller->requireRbacPermission('movies', $requestMethod === 'GET' ? 'view' : 'update');
     if ($requestMethod === 'GET' || $requestMethod === 'POST') $controller->moviePlanScreenPreparation();
     jsonResponse(array('success' => false, 'message' => 'Phương thức không được hỗ trợ cho chuẩn bị phòng chiếu.'), 405);
 }
@@ -631,7 +1223,7 @@ if ($action === 'revenue') {
 
 if ($action === 'transactions') {
     requireAdmin();
-    $controller->requireRbacPermission('transactions_refunds', $requestMethod !== 'GET');
+    $controller->requireRbacPermission('transactions_refunds', $requestMethod === 'GET' ? 'view' : 'create');
     if ($requestMethod === 'POST') {
         $controller->createTransaction();
     }
@@ -640,7 +1232,7 @@ if ($action === 'transactions') {
 
 if ($action === 'refunds') {
     requireAdmin();
-    $controller->requireRbacPermission('transactions_refunds', $requestMethod !== 'GET');
+    $controller->requireRbacPermission('transactions_refunds', $requestMethod === 'GET' ? 'view' : ($requestMethod === 'PUT' ? 'approve' : 'create'));
     if ($requestMethod === 'POST' || $requestMethod === 'PUT') {
         $controller->updateRefund();
     }
@@ -652,23 +1244,51 @@ if ($action === 'seats') {
 }
 
 if ($action === 'screen-seat-map') {
+    requireAdmin();
+    $controller->requireRbacPermission('screens', $requestMethod === 'GET' ? 'view' : 'update');
     if ($requestMethod === 'GET') $controller->screenSeatMap();
     if ($requestMethod === 'POST' || $requestMethod === 'PUT') $controller->updateShowtimeSeatLocks();
     jsonResponse(array('success' => false, 'message' => 'Phương thức không được hỗ trợ cho sơ đồ ghế.'), 405);
 }
 
 if ($action === 'cinema-system-overview' && $requestMethod === 'GET') {
+    requireAdmin();
+    $controller->requireRbacPermission('screens', 'view');
     $controller->cinemaSystemOverview();
 }
 
 if ($action === 'report' || $action === 'reports') {
     requireAdmin();
     $controller->requireRbacPermission('reports', false);
-    $controller->report();
+    $reportController->index();
+}
+
+if ($action === 'report-export' && $requestMethod === 'POST') {
+    requireAdmin();
+    $controller->requireRbacPermission('reports', 'export');
+    $reportController->logExport();
+}
+
+if ($action === 'pos-devices') {
+    requireAdmin();
+    $controller->requireRbacPermission('pos_devices', $requestMethod === 'GET' ? 'view' : (!empty($_GET['id']) ? 'update' : 'create'));
+    $posDeviceController->index();
+}
+
+if ($action === 'pos-device-heartbeat' && $requestMethod === 'POST') {
+    $posDeviceController->heartbeat();
+}
+
+if ($action === 'audit-log-workspace') {
+    requireAdmin();
+    $controller->requireRbacPermission('audit_logs', 'view');
+    if ($requestMethod === 'GET') $auditLogController->index();
+    jsonResponse(array('success'=>false,'message'=>'Audit Log là nhật ký bất biến và chỉ hỗ trợ tra cứu.'), 405);
 }
 
 if ($action === 'movies-import' && $requestMethod === 'POST') {
     $user = requireAdmin();
+    $controller->requireRbacPermission('movies', 'create');
     if (AdminController::normalizeRole($user['role']) !== 'super_admin') jsonResponse(array('success' => false, 'message' => 'Chỉ Admin Tổng được nhập danh sách phim.'), 403);
     $input = requestJson(); $rows = isset($input['movies']) && is_array($input['movies']) ? $input['movies'] : array();
     if (!$rows || count($rows) > 150) jsonResponse(array('success' => false, 'message' => 'File phải có từ 1 đến 150 dòng phim.'), 400);
@@ -712,17 +1332,25 @@ if ($action === 'movies-import' && $requestMethod === 'POST') {
     jsonResponse(array('success' => true, 'message' => 'Đã tạo thành công '.$added.' phim vào kho hệ thống.', 'data' => array('added' => $added)));
 }
 
-$resources = array('movies', 'screens', 'schedules', 'staff', 'ticket-types', 'products', 'vouchers', 'customers', 'theaters', 'promotions', 'audit-logs', 'system-configs', 'transactions', 'refunds', 'movie-plans', 'movie-allocations');
+if ($action === 'movie-management') {
+    requireAdmin();
+    $controller->requireRbacPermission('movies', $requestMethod === 'GET' ? 'view' : 'update');
+    $controller->movieManagement();
+}
+
+$resources = array('movies', 'screens', 'schedules', 'staff', 'ticket-types', 'products', 'vouchers', 'customers', 'theaters', 'promotions', 'transactions', 'refunds', 'movie-allocations');
 if (in_array($action, $resources, true)) {
     $rbacResourceKeys = array(
         'movies'=>'movies', 'screens'=>'screens', 'schedules'=>'schedules', 'staff'=>'staff',
         'ticket-types'=>'ticket_types', 'products'=>'products', 'vouchers'=>'vouchers',
         'promotions'=>'vouchers', 'customers'=>'customers', 'transactions'=>'transactions_refunds',
-        'refunds'=>'transactions_refunds', 'system-configs'=>'settings', 'audit-logs'=>'settings'
+        'refunds'=>'transactions_refunds', 'theaters'=>'screens',
+        'movie-allocations'=>'movies'
     );
     if (isset($rbacResourceKeys[$action])) {
         requireAdmin();
-        $controller->requireRbacPermission($rbacResourceKeys[$action], $requestMethod !== 'GET');
+        $permissionAction = $requestMethod === 'GET' ? 'view' : ($requestMethod === 'DELETE' ? 'delete' : (!empty($_GET['id']) ? 'update' : 'create'));
+        $controller->requireRbacPermission($rbacResourceKeys[$action], $permissionAction);
     }
     if ($requestMethod === 'GET') {
         $controller->listResource($action);

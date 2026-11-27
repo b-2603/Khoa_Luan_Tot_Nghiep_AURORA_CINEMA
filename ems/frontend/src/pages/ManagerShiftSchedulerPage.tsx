@@ -509,116 +509,145 @@ export const ManagerShiftSchedulerPage: React.FC = () => {
   });
 
   return (
-    <div className="space-y-4">
-      <div className="bg-white border border-slate-200 rounded-2xl p-4 shadow-sm flex flex-col sm:flex-row sm:items-center justify-between gap-3">
-        <h2 className="text-lg font-black text-slate-900">
-          Quản Lý Phân Ca ({weekDays[0]?.dayNum} – {weekDays[6]?.dayNum})
-        </h2>
+    <div className="space-y-5">
+      {/* Header */}
+      <div className="bg-white border border-slate-200/80 rounded-2xl shadow-xs overflow-hidden">
+        <div className="px-6 pt-5 pb-4 flex flex-col lg:flex-row lg:items-center justify-between gap-4">
+          <div className="flex items-center gap-3.5">
+            <div className="w-11 h-11 rounded-2xl bg-slate-900 text-amber-400 flex items-center justify-center shrink-0">
+              <LayoutGrid className="w-5 h-5" />
+            </div>
+            <div>
+              <h2 className="text-lg font-bold text-slate-900 tracking-tight">Xếp Lịch & Duyệt Ca</h2>
+              <p className="text-sm text-slate-500 mt-0.5">
+                Tuần {weekDays[0]?.dayNum} – {weekDays[6]?.dayNum} • Tự động xếp ca theo lịch rảnh nhân viên
+              </p>
+            </div>
+          </div>
 
-        <div className="inline-flex bg-slate-100 p-1 rounded-xl border border-slate-200">
-          <button
-            onClick={() => {
-              setWeekOffset(0);
-              setViewDate(currentWeekDays[0]?.date || today);
-              cancelEdit();
-            }}
-            className={`px-3 py-1.5 rounded-lg text-xs font-bold transition cursor-pointer ${
-              weekOffset === 0
-                ? 'bg-white text-slate-900 shadow-xs'
-                : 'text-slate-600 hover:text-slate-900'
-            }`}
-          >
-            Tuần Này ({currentWeekDays[0]?.dayNum} – {currentWeekDays[6]?.dayNum})
-          </button>
-          <button
-            onClick={() => {
-              setWeekOffset(1);
-              setViewDate(nextWeekDays[0]?.date || today);
-              cancelEdit();
-            }}
-            className={`px-3 py-1.5 rounded-lg text-xs font-bold transition cursor-pointer ${
-              weekOffset === 1
-                ? 'bg-white text-purple-700 shadow-xs'
-                : 'text-slate-600 hover:text-slate-900'
-            }`}
-          >
-            Tuần Tiếp Theo ({nextWeekDays[0]?.dayNum} – {nextWeekDays[6]?.dayNum})
-          </button>
+          <div className="flex flex-wrap items-center gap-2.5">
+            <button
+              type="button"
+              onClick={handleToggleGate}
+              className={`flex items-center gap-1.5 px-3.5 py-2 border text-xs font-semibold rounded-xl transition cursor-pointer ${
+                registrationGateStatus === 'open'
+                  ? 'bg-emerald-50 text-emerald-700 border-emerald-200 hover:bg-emerald-100'
+                  : 'bg-rose-50 text-rose-700 border-rose-200 hover:bg-rose-100'
+              }`}
+              title="Bấm để đóng / mở cổng đăng ký ca"
+            >
+              {registrationGateStatus === 'open' ? <Unlock className="w-3.5 h-3.5" /> : <Lock className="w-3.5 h-3.5" />}
+              <span>Cổng đăng ký: {registrationGateStatus === 'open' ? 'Đang mở' : 'Đã khóa'}</span>
+            </button>
+
+            <div className="inline-flex bg-slate-100 p-1 rounded-xl border border-slate-200/80">
+              <button
+                onClick={() => {
+                  setWeekOffset(0);
+                  setViewDate(currentWeekDays[0]?.date || today);
+                  cancelEdit();
+                }}
+                className={`px-3.5 py-1.5 rounded-lg text-xs font-semibold transition cursor-pointer ${
+                  weekOffset === 0 ? 'bg-white text-slate-900 shadow-xs' : 'text-slate-500 hover:text-slate-800'
+                }`}
+              >
+                Tuần này
+              </button>
+              <button
+                onClick={() => {
+                  setWeekOffset(1);
+                  setViewDate(nextWeekDays[0]?.date || today);
+                  cancelEdit();
+                }}
+                className={`px-3.5 py-1.5 rounded-lg text-xs font-semibold transition cursor-pointer ${
+                  weekOffset === 1 ? 'bg-white text-slate-900 shadow-xs' : 'text-slate-500 hover:text-slate-800'
+                }`}
+              >
+                Tuần sau
+              </button>
+            </div>
+          </div>
+        </div>
+
+        {/* Underline tabs */}
+        <div className="px-6 border-t border-slate-100 flex items-center gap-2 overflow-x-auto">
+          {[
+            { key: 'monthly', icon: Sparkles, label: 'Lịch Tháng Tự Động', badge: null as number | null },
+            { key: 'published', icon: LayoutGrid, label: 'Lịch Tuần', badge: weekSchedules.length },
+            { key: 'registrations', icon: ClipboardList, label: 'Duyệt Đăng Ký', badge: pendingRegs.length },
+          ].map(tab => {
+            const isActive = activeTab === tab.key;
+            return (
+              <button
+                key={tab.key}
+                onClick={() => setActiveTab(tab.key as any)}
+                className={`flex items-center gap-2 px-4 py-3.5 text-sm font-semibold border-b-2 transition whitespace-nowrap cursor-pointer ${
+                  isActive
+                    ? 'border-amber-500 text-slate-900'
+                    : 'border-transparent text-slate-500 hover:text-slate-800 hover:border-slate-300'
+                }`}
+              >
+                <tab.icon className={`w-4 h-4 ${isActive ? 'text-amber-600' : 'text-slate-400'}`} />
+                <span>{tab.label}</span>
+                {tab.badge !== null && tab.badge > 0 && (
+                  <span
+                    className={`px-2 py-0.5 rounded-full text-xs font-bold ${
+                      tab.key === 'registrations' ? 'bg-rose-100 text-rose-700' : 'bg-slate-100 text-slate-600'
+                    }`}
+                  >
+                    {tab.badge}
+                  </span>
+                )}
+              </button>
+            );
+          })}
         </div>
       </div>
 
       {toast && (
-        <div className={`flex items-center justify-between gap-2.5 p-3 rounded-xl text-xs font-semibold border shadow-sm ${
-          toast.type === 'success' ? 'bg-emerald-50 border-emerald-200 text-emerald-800' :
-          toast.type === 'info' ? 'bg-blue-50 border-blue-200 text-blue-800' :
-          'bg-rose-50 border-rose-200 text-rose-800'
-        }`}>
-          <div className="flex items-center gap-2">
-            {toast.type === 'success' ? <CheckCircle2 className="w-4 h-4 shrink-0 text-emerald-600" /> :
-             toast.type === 'info' ? <AlertCircle className="w-4 h-4 shrink-0 text-blue-600" /> :
-             <XCircle className="w-4 h-4 shrink-0 text-rose-600" />}
+        <div
+          className={`flex items-center justify-between gap-2.5 px-5 py-3 rounded-xl text-sm font-medium border ${
+            toast.type === 'success'
+              ? 'bg-emerald-50 border-emerald-200 text-emerald-900'
+              : toast.type === 'info'
+              ? 'bg-slate-900 border-slate-700 text-white'
+              : 'bg-rose-50 border-rose-200 text-rose-900'
+          }`}
+        >
+          <div className="flex items-center gap-2.5">
+            {toast.type === 'success' ? (
+              <CheckCircle2 className="w-4.5 h-4.5 shrink-0 text-emerald-600" />
+            ) : toast.type === 'info' ? (
+              <AlertCircle className="w-4.5 h-4.5 shrink-0 text-amber-400" />
+            ) : (
+              <XCircle className="w-4.5 h-4.5 shrink-0 text-rose-600" />
+            )}
             <span>{toast.msg}</span>
           </div>
-          <button onClick={() => setToast(null)} className="text-slate-400 hover:text-slate-600 cursor-pointer">
+          <button onClick={() => setToast(null)} className="opacity-60 hover:opacity-100 cursor-pointer">
             <X className="w-4 h-4" />
           </button>
         </div>
       )}
 
-      <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
-        <StatCard
-          label="Ca Đã Xếp Trong Tuần"
-          value={weekSchedules.length}
-          unit="ca trực"
-          color="emerald"
-          icon={<BarChart3 className="w-4 h-4" />}
-        />
-        <StatCard
-          label="Đơn Chờ Duyệt"
-          value={pendingRegs.length}
-          unit="đơn"
-          color="amber"
-          icon={<Inbox className="w-4 h-4" />}
-        />
-        <StatCard
-          label="Đăng Ký Thiếu Ca"
-          value={staffUnderMinRegs.length}
-          unit={`/${users.length} người`}
-          color={staffUnderMinRegs.length > 0 ? 'red' : 'emerald'}
-          icon={<Bell className="w-4 h-4" />}
-        />
-        <StatCard
-          label="Tổng Nhân Sự"
-          value={users.length}
-          unit="nhân viên"
-          color="purple"
-          icon={<ShieldCheck className="w-4 h-4" />}
-        />
-      </div>
-
-      <div className="flex flex-wrap gap-1.5 bg-slate-200/70 p-1.5 rounded-2xl">
+      {/* KPI */}
+      <div className="grid grid-cols-2 lg:grid-cols-4 gap-3.5">
         {[
-          { key: 'monthly', icon: <Sparkles className="w-4 h-4" />, label: 'Lịch Tháng Tự Động', badge: null },
-          { key: 'published', icon: <LayoutGrid className="w-4 h-4" />, label: 'Bảng Lịch Cả Tuần (7 Ngày)', badge: weekSchedules.length },
-          { key: 'registrations', icon: <ClipboardList className="w-4 h-4" />, label: 'Duyệt Đăng Ký Ca', badge: pendingRegs.length },
-        ].map(tab => (
-          <button
-            key={tab.key}
-            onClick={() => setActiveTab(tab.key as any)}
-            className={`flex-1 min-w-[160px] flex items-center justify-center gap-2 px-3 py-2.5 rounded-xl text-xs font-bold transition cursor-pointer ${
-              activeTab === tab.key
-                ? 'bg-white text-slate-900 shadow-sm'
-                : 'text-slate-600 hover:text-slate-900 hover:bg-white/50'
-            }`}
-          >
-            {tab.icon}
-            <span>{tab.label}</span>
-            {tab.badge !== null && tab.badge > 0 && (
-              <span className="px-2 py-0.5 rounded-full text-[10px] font-bold bg-amber-100 text-amber-800">
-                {tab.badge}
-              </span>
-            )}
-          </button>
+          { label: 'Ca đã xếp trong tuần', value: weekSchedules.length, sub: `${fillPct}% so với nhu cầu (${totalSlotsNeededWeek})`, icon: BarChart3, iconCls: 'bg-emerald-50 text-emerald-600', valCls: 'text-slate-900' },
+          { label: 'Đơn chờ duyệt', value: pendingRegs.length, sub: pendingRegs.length > 0 ? 'Cần xử lý' : 'Đã xử lý hết', icon: Inbox, iconCls: 'bg-amber-50 text-amber-600', valCls: pendingRegs.length > 0 ? 'text-amber-700' : 'text-slate-900' },
+          { label: 'Đăng ký thiếu ca', value: staffUnderMinRegs.length, sub: `trên ${users.length} nhân viên`, icon: Bell, iconCls: staffUnderMinRegs.length > 0 ? 'bg-rose-50 text-rose-600' : 'bg-emerald-50 text-emerald-600', valCls: staffUnderMinRegs.length > 0 ? 'text-rose-600' : 'text-slate-900' },
+          { label: 'Tổng nhân sự', value: users.length, sub: 'Nhân viên ca trực', icon: ShieldCheck, iconCls: 'bg-slate-100 text-slate-600', valCls: 'text-slate-900' },
+        ].map((k, i) => (
+          <div key={i} className="bg-white border border-slate-200/80 rounded-2xl p-4 shadow-xs flex items-center gap-3.5">
+            <div className={`w-11 h-11 rounded-xl flex items-center justify-center shrink-0 ${k.iconCls}`}>
+              <k.icon className="w-5 h-5" />
+            </div>
+            <div className="min-w-0">
+              <div className={`text-2xl font-bold leading-none ${k.valCls}`}>{k.value}</div>
+              <div className="text-xs font-semibold text-slate-700 mt-1">{k.label}</div>
+              <div className="text-[11px] text-slate-400 truncate">{k.sub}</div>
+            </div>
+          </div>
         ))}
       </div>
 
@@ -634,7 +663,44 @@ export const ManagerShiftSchedulerPage: React.FC = () => {
       )}
 
       {activeTab === 'published' && (
-        <div className="bg-white border border-slate-200 rounded-2xl overflow-hidden shadow-sm">
+        <div className="space-y-4">
+          {/* Action bar for weekly AI scheduling + legend */}
+          <div className="bg-white border border-slate-200/80 rounded-2xl px-5 py-3.5 shadow-xs flex flex-wrap items-center justify-between gap-3">
+            <div className="flex flex-wrap items-center gap-3 text-xs text-slate-500">
+              <span className="inline-flex items-center gap-1.5">
+                <span className="w-2.5 h-2.5 rounded bg-amber-400" /> Ca Sáng (08:00–16:00)
+              </span>
+              <span className="inline-flex items-center gap-1.5">
+                <span className="w-2.5 h-2.5 rounded bg-purple-500" /> Ca Chiều (15:30–23:00)
+              </span>
+              <span className="inline-flex items-center gap-1.5">
+                <span className="w-2.5 h-2.5 rounded bg-slate-800" /> Ca Đêm (22:00–02:00)
+              </span>
+            </div>
+            <div className="flex flex-wrap items-center gap-2">
+              <button
+                type="button"
+                onClick={() => handleRunSmartWeeklyScheduler()}
+                disabled={isAiLoading}
+                className="px-4 py-2 bg-slate-900 hover:bg-slate-800 disabled:opacity-50 text-white text-xs font-semibold rounded-xl flex items-center gap-1.5 transition cursor-pointer"
+              >
+                <Sparkles className={`w-3.5 h-3.5 text-amber-400 ${isAiLoading ? 'animate-spin' : ''}`} />
+                <span>{isAiLoading ? 'Đang xếp lịch...' : 'Xếp lịch tuần tự động'}</span>
+              </button>
+              <button
+                type="button"
+                onClick={handleRegeneratePlan}
+                disabled={isAiLoading}
+                className="px-3.5 py-2 bg-slate-100 hover:bg-slate-200 text-slate-700 text-xs font-semibold rounded-xl flex items-center gap-1.5 transition cursor-pointer"
+                title="Tạo phương án phân ca tuần khác"
+              >
+                <RefreshCw className="w-3.5 h-3.5" />
+                <span>Đổi phương án (#{planVersion})</span>
+              </button>
+            </div>
+          </div>
+
+          <div className="bg-white border border-slate-200/80 rounded-2xl overflow-hidden shadow-xs">
           <div className="overflow-x-auto">
             <table className="w-full text-xs">
               <thead className="bg-slate-50 border-b border-slate-200">
@@ -772,6 +838,7 @@ export const ManagerShiftSchedulerPage: React.FC = () => {
               </tbody>
             </table>
           </div>
+        </div>
         </div>
       )}
 

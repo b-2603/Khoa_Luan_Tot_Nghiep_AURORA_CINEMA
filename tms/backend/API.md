@@ -23,6 +23,7 @@ Các tài khoản local được seed bởi `database/seed_tms_admin_users.sql`;
 | `cinema_admin` | Điều hành cụm rạp, lịch chiếu, nhân sự và vận hành |
 | `supervisor` | Theo dõi ca trực, phòng chiếu và nghiệp vụ cần giám sát |
 | `accounting` | Đối soát, giá vé, giao dịch và hoàn tiền |
+| `marketing_manager` | Lập kế hoạch phim, chiến dịch, CTKM, voucher, nội dung và báo cáo Marketing |
 
 Session được đối chiếu lại với bảng `users` trong `aurora_db` ở mỗi request cần đăng nhập. Chỉ tài khoản có `status = 'active'` mới đăng nhập và tiếp tục sử dụng TMS được. Tài khoản có trạng thái `locked` hoặc `inactive` bị từ chối đăng nhập; nếu đang đăng nhập khi bị khóa/ngừng hoạt động thì phiên và cookie nhận diện bị vô hiệu hóa ở request tiếp theo. Sửa hồ sơ không gửi trường `status` sẽ giữ nguyên trạng thái hiện tại của tài khoản.
 
@@ -33,15 +34,20 @@ Thời gian TMS dùng múi giờ Việt Nam (`Asia/Ho_Chi_Minh`, UTC+07:00); cá
 - `GET ?action=dashboard&date=YYYY-MM-DD` — KPI vận hành từ `orders`, `bookings`, `booking_seats`, `showtimes`, `screens` và `staff_shifts`; Admin Rạp/Giám sát chỉ nhận dữ liệu thuộc `theater_id` được gán trong `aurora_db`.
 - `GET ?action=cinema-schedule-board&date=YYYY-MM-DD` — sơ đồ phòng và suất chiếu theo thời gian, kèm tổng ghế, công suất, đơn đã thanh toán và doanh thu của rạp đang phụ trách.
 - `GET ?action=revenue` — doanh thu thực tế theo ngày từ booking/order đã thanh toán.
-- `GET ?action=report&from=YYYY-MM-DD&to=YYYY-MM-DD` — tổng hợp doanh thu, kênh và phương thức thanh toán.
+- `GET ?action=reports&report={key}&from=YYYY-MM-DD&to=YYYY-MM-DD&theater_id={id}&channel=all|pos|website|app|ota` — trung tâm 15 báo cáo. Hỗ trợ thêm `group_by=day|week|month|quarter|year`, `movie_id`, `screen_id`, `employee_id`, `payment_method`, `record_status` và `category`. `report` nhận `overview`, `theaters`, `movies`, `trends`, `showtimes`, `channels`, `fnb`, `products`, `modifiers`, `inventory`, `transactions`, `reconciliation`, `promotions`, `employees`, `feedback`. Backend kiểm tra ngày, giá trị danh mục, đối tượng có tồn tại, quyền theo vai trò, phạm vi rạp/phòng/nhân viên, sau đó chỉ trả tập dữ liệu của báo cáo đã được cấp quyền. Response có `export_meta` (mã/tên báo cáo, người lập, vai trò, nguồn `aurora_db`, mức bảo mật, tiền tệ và múi giờ) để frontend tạo biểu mẫu PDF/Excel thống nhất và có thể truy xuất nguồn gốc.
+- `POST ?action=report-export` — ghi nhật ký một lần xuất PDF/Excel vào `audit_logs`; backend kiểm tra quyền xem báo cáo và chỉ lưu metadata an toàn gồm báo cáo, định dạng, kỳ, rạp, kênh và số bản ghi.
 - `GET ?action=transactions`, `GET ?action=refunds`, `POST|PUT ?action=refunds` — giao dịch và hoàn tiền.
 - `GET ?action=seats&screen_id={id}` — sơ đồ ghế.
 - `GET ?action=roles` — ma trận phân quyền.
 - `GET|POST|PUT ?action=schedules` — lịch chiếu dùng `aurora_db.showtimes` làm nguồn dữ liệu. Database lưu `OPEN`, `CLOSED`, `CANCELLED`; API trả `scheduled`, `running`, `finished`, `cancelled`, trong đó `running` và `finished` được xác định theo `starts_at`, `ends_at` thay vì cho người dùng đặt thủ công.
   - Frontend hiển thị ngày theo `DD/MM/YYYY`, còn API nhận và lưu `show_date` theo ISO `YYYY-MM-DD` để ghép chính xác vào `starts_at`/`ends_at`.
   - Suất mới mặc định ngày kế tiếp theo giờ Việt Nam; backend kiểm tra ngày lịch thực, thời gian tương lai, phân bổ phim và xung đột phòng trước khi ghi.
+- `POST ?action=schedule-auto-draft` — đọc yêu cầu hoặc tạo bản nháp, chưa ghi database. Body cơ bản gồm `movie_id`, `allocation_id`, `show_date`, `ticket_type_ids` và `theater_id` khi Admin Tổng lập lịch. Gửi `preview_only=true` để lấy `minimum_count`, `existing_count` và giới hạn nhập; gửi `requested_count` để xếp tổng số suất mong muốn. Backend bắt buộc `requested_count >= movie_allocations.min_screenings_per_day`, trừ số suất không bị hủy đã có, rồi tìm phòng/giờ trống theo quy tắc vận hành và bảng giá trong `aurora_db`.
+  - Khi lưu các suất đã xem trước qua `POST ?action=schedules`, gửi `auto_schedule` gồm `allocation_id`, `expected_count` (tổng chỉ tiêu/ngày) và `expected_new_count` (số suất mới). Backend kiểm tra lại số đã có cộng số mới đúng bằng chỉ tiêu trước khi ghi.
 - `GET ?action=users&account_type=internal` — tài khoản vận hành TMS; chỉ trả về `super_admin`, `cinema_admin`, `supervisor`, `accounting`.
 - `GET ?action=users&account_type=customer` — hồ sơ customer, hạng thành viên, điểm, số lượt đặt vé, tổng chi tiêu và OAuth; chỉ Admin Tổng được truy cập.
+- `GET ?action=cinema-booking-history&timeline=all|today|upcoming|past&page=1&limit=20&sort=showtime_desc` — sổ lịch sử đặt vé lấy trực tiếp từ `bookings`, `booking_seats`, `orders`, `showtimes` và các bảng vé điện tử trong `aurora_db`. Hỗ trợ `q`, `status`, `channel`, `payment_method`, `movie_id`, `screen_id`, `from`, `to`; `limit` nhận `20|50|100`, `sort` nhận `showtime_desc|showtime_asc|created_desc|amount_desc`. Admin Tổng được truyền thêm `theater_id`, còn tài khoản vận hành luôn bị giới hạn ở rạp được gán. Response gồm KPI booking/vé/doanh thu/soát vé, phân trang và danh mục bộ lọc rạp/phòng/phim/kênh bán/thanh toán.
+- `GET ?action=cinema-booking-detail&id={booking_id}&theater_id={theater_id}` — chi tiết chỉ đọc của một booking: khách hàng, suất chiếu, ghế/vé điện tử, hóa đơn, thanh toán, sản phẩm đi kèm và trạng thái đổi vé. `theater_id` chỉ có hiệu lực với Admin Tổng; các vai trò khác được kiểm tra theo rạp trong session.
 - `POST|PUT ?action=users` — tạo/cập nhật tài khoản nội bộ. API từ chối tạo hoặc chuyển đổi sang vai trò `customer`.
 - `POST|PUT ?action=customer-account-status` — khóa, ngừng hoặc mở lại quyền truy cập customer; ghi thay đổi vào `users` và nhật ký `tms_user_activity_logs` trong `aurora_db`.
 - `DELETE ?action=users&id={id}` — xóa tài khoản nội bộ; API không cho phép xóa customer qua nghiệp vụ này.
@@ -50,7 +56,101 @@ Thời gian TMS dùng múi giờ Việt Nam (`Asia/Ho_Chi_Minh`, UTC+07:00); cá
 - `GET|POST|PUT ?action=pos-work-schedules` — lập ca với quầy và các khu vực nghiệp vụ được chọn cho từng ca.
 - `GET|POST|PUT ?action=pos-sessions` — cấp/mở, tạm dừng, tiếp tục hoặc kết phiên. Quầy và quyền thao tác được lưu theo phiên trong `pos_shifts`, không gắn cố định với tài khoản nhân viên.
 
+### Trung tâm thông báo
+
+- `GET ?action=notifications&filter=all|unread|actionable&limit=50` — đồng bộ và đọc hộp thư theo đúng tài khoản, vai trò và `theater_id`. Nguồn hiện có gồm hoàn tiền, yêu cầu hủy giao dịch, kế hoạch phim, phân bố hàng hóa, KPI hàng hóa và phê duyệt Marketing.
+- `POST ?action=notifications` với body `{ "operation": "read", "notification_id": 1 }`, `{ "operation": "dismiss", "notification_id": 1 }` hoặc `{ "operation": "read_all" }` — lưu trạng thái riêng cho từng người dùng trong `tms_notification_receipts`.
+- Phân bố hàng hóa dùng `entity_type=product_distribution_assignment` và chỉ gửi đến Admin Rạp của đúng rạp nhận. Thông báo còn hiệu lực khi phân bố ở trạng thái `published` và tự đóng khi rạp xác nhận.
+- `summary` trả `unread`, `actionable`, `priority`, `total`, thời điểm đồng bộ và xác nhận nguồn `aurora_db`. Frontend tự làm mới mỗi 10 giây và khi tab trình duyệt được kích hoạt lại.
+
+Schema có thể triển khai độc lập bằng `database/tms_notifications.sql`; API cũng tự tạo hai bảng theo cách idempotent trên môi trường hiện hữu.
+
+### Quy trình kế hoạch phim Marketing
+
+- `GET ?action=marketing-movies` — Danh sách phim dùng chung tương ứng với màn “Danh sách phim” của Admin Tổng. Phim `draft` không được trả trong danh sách; mỗi phim có `can_edit = 1` chỉ khi thuộc kế hoạch đã duyệt của tài khoản Marketing hiện tại. `meta.permissions` mô tả quyền hiệu lực, `meta.approved_candidates` chỉ chứa phim thuộc kế hoạch của chính tài khoản đã được Admin Tổng duyệt; `meta.audio_languages` và `meta.subtitle_options` là danh mục lựa chọn đang hoạt động lấy từ `aurora_db`.
+- `PUT ?action=marketing-movies&operation=publish-approved` — body `{ "id": plan_id }`. Thêm phim đã duyệt vào danh sách và chuyển trạng thái phim từ `draft` sang `coming_soon`. Backend từ chối nếu kế hoạch chưa duyệt, không thuộc Marketing hiện tại hoặc phim đã được công bố.
+- `PUT ?action=marketing-movies&operation=update&id={movie_id}` — cập nhật hồ sơ/media của phim do tài khoản Marketing hiện tại lập kế hoạch và đã được duyệt. Phim của Admin Tổng hoặc tài khoản khác trả `403`; Marketing không có API tạo trực tiếp, nhập Excel hoặc xóa phim dùng chung. Thao tác hợp lệ được ghi vào `audit_logs`.
+- `GET ?action=marketing-movie-plans` — danh sách, KPI trạng thái, kho phim, danh sách rạp, lịch sử phê duyệt và hai danh mục `meta.audio_languages`/`meta.subtitle_options` dùng cho bước Media & phiên bản phim.
+- `POST ?action=marketing-movie-plans` — Marketing tạo bản nháp qua quy trình 5 bước. Có thể chọn phim trong kho bằng `movie_id`, hoặc gửi `movie_mode: "new"` cùng `movie_profile` để tạo hồ sơ phim nháp. Kế hoạch hỗ trợ thời gian, lý do đề xuất, số vé/doanh thu mục tiêu, suất chiếu, rạp, chiến dịch, ngân sách Marketing, đề xuất khuyến mãi, quyền phát hành và trạng thái phân loại.
+  - `movie_profile.genre` nhận mảng tối đa 8 thể loại, ví dụ `["Hành động", "Khoa học viễn tưởng"]`. Backend loại bỏ giá trị rỗng/trùng và lưu dạng chuỗi phân cách bằng dấu phẩy trong cột `aurora_db.movies.genre` hiện có. `GET marketing-movie-plans` trả `meta.genres` được tổng hợp từ dữ liệu phim trong database để frontend dựng bộ chọn nhiều lựa chọn.
+  - `movie_profile.audio_language` và `movie_profile.subtitle` phải thuộc danh mục đang hoạt động trong `aurora_db.movie_audio_languages` và `aurora_db.movie_subtitle_options`. Backend trả `422` nếu frontend gửi giá trị ngoài danh mục.
+  - `recommendation_reason_codes` nhận một mảng gồm 1–8 mã đang hoạt động từ `aurora_db.movie_plan_reason_options`; `recommendation_reason_detail` là phần phân tích chi tiết bắt buộc. API đồng thời duy trì `recommendation_reason` dạng tổng hợp để tương thích với hồ sơ và quy trình duyệt cũ.
+- `PUT ?action=marketing-movie-plans&id={id}` — cập nhật kế hoạch ở trạng thái `draft` hoặc `revision_requested`.
+- `PUT ?action=marketing-movie-plans&id={id}&operation=submit` — gửi kế hoạch đến Admin Tổng.
+- `PUT ?action=marketing-movie-plans&id={id}&operation=withdraw` — thu hồi kế hoạch đang chờ duyệt.
+- `PUT ?action=marketing-movie-plans&id={id}&operation=publish-movie` — sau khi được duyệt, Marketing đưa phim vào Danh sách phim (`coming_soon`).
+- `DELETE ?action=marketing-movie-plans&id={id}` — xóa bản nháp hoặc kế hoạch đang được yêu cầu sửa.
+
+### Quản lý vòng đời phim Admin Tổng
+
+- `GET ?action=movie-management` — trung tâm điều hành riêng biệt với kho hồ sơ `movies`: tổng hợp trạng thái phát hành, mức ưu tiên, phim nổi bật, độ phủ rạp, phân bổ, suất chiếu, vé đã ghi nhận và cảnh báo vận hành từ `aurora_db`. Hỗ trợ `q`, `status`, `priority` và `attention=1`.
+- `PUT ?action=movie-management&id={movie_id}` — cập nhật có kiểm soát `status`, `management_priority`, `is_hot`, `release_date`, `expected_end_date` và `management_note`; không thay đổi hồ sơ nội dung phim. Chỉ Admin Tổng có quyền và mọi thay đổi được ghi Audit Log.
+- `GET ?action=marketing-plan-approvals` — Admin Tổng xem hàng đợi phê duyệt.
+- `PUT ?action=marketing-plan-approvals` — Admin Tổng duyệt hoặc trả sửa. Body hỗ trợ phản hồi theo hạng mục: `{ "id": 1, "decision": "revision_requested", "note": "Ý kiến chung", "review_items": [{ "section_key": "revenue", "field_label": "Mục tiêu doanh thu", "comment": "Cần bổ sung căn cứ" }] }`.
+  - Khi duyệt, backend từ chối kế hoạch đã hết hạn, thiếu rạp hoặc chứa mã rạp không còn tồn tại.
+  - Phê duyệt và tạo `movie_allocations` chạy trong cùng transaction; chỉ thành công khi số phân bổ bằng đúng số rạp đề xuất. Phản hồi trả `data.allocation_count` để giao diện xác nhận kết quả.
+
+Khi được duyệt, kế hoạch chuyển sang `published` và tạo bản ghi `movie_allocations` cho từng rạp đề xuất để Admin Rạp lên lịch chiếu. Các phản hồi được lưu trong `marketing_movie_plan_review_items`; khi Marketing gửi lại, phản hồi đang mở chuyển thành `resolved`. Mọi lần tạo, cập nhật, gửi, thu hồi, duyệt và công bố phim được ghi trong `marketing_movie_plan_history` của `aurora_db`.
+
+Hồ sơ phim do Marketing tạo được lưu trong `movies` với `status = 'draft'` và `marketing_owner_id`. Phim chỉ chuyển sang `coming_soon` khi kế hoạch đã được Admin Tổng duyệt và Marketing thực hiện thao tác `publish-movie`.
+
+### CMS Customer Website
+
+- `GET|POST|PUT|DELETE ?action=marketing-contents` — quản lý nội dung theo vị trí `home_hero`, `home_announcement`, `home_offer`, `home_featured` và các vùng quảng cáo `home_ad_top|middle|bottom`; hỗ trợ nháp, lịch hiển thị, công bố và ẩn nội dung.
+- Màn `mkt-contents` nhúng nguyên trang Customer với `cms_editor=1`. Các vùng được chọn gửi sự kiện `aurora-cms-select` về TMS để mở đúng hồ sơ hoặc tạo nội dung mới tại đúng vị trí.
+- `PUT ?action=marketing-contents&operation=reorder` — lưu thứ tự kéo-thả bằng body `{ "ids": [3, 1, 2] }`.
+- `POST ?action=marketing-content-media` — upload ảnh CMS (JPG/PNG/GIF/WebP, tối đa 10 MB), lưu metadata trong `aurora_db.marketing_content_assets`.
+- Customer API `?action=website_contents` chỉ trả nội dung `published`, được bật hiển thị và đang nằm trong khoảng `starts_at`–`ends_at`. Mọi lần tạo/sửa/xóa được ghi trong `marketing_content_history`.
+
+## Trung tâm CTKM Admin Tổng
+
+- Trong TMS Admin Tổng, duyệt và quản lý CTKM được gộp trong mục “CTKM & Khuyến mãi”, gồm tab “Duyệt kế hoạch” và “Quản lý CTKM hệ thống”. “Kế hoạch rạp” chỉ dành cho kế hoạch phim.
+- `GET ?action=marketing-promotions&approval_status=pending_approval` — đọc hàng đợi và thống kê trực tiếp từ `aurora_db.marketing_promotions`; `q` tìm mã/tên/mô tả. Thông tin người lập lấy từ `users`, thông tin phát hành/lượt dùng từ `vouchers`; response có `meta.source = aurora_db`.
+- `PUT ?action=marketing-promotions` với body `{ "id": 1, "operation": "review", "decision": "approved|revision_requested", "note": "..." }` — chỉ Admin Tổng được quyết định hồ sơ đang chờ duyệt. Yêu cầu chỉnh sửa bắt buộc có `note`. Cập nhật trạng thái và ghi lịch sử vào `marketing_promotions` cùng `marketing_promotion_history` trong một transaction; lỗi database trả HTTP `500`, hồ sơ đã được xử lý đồng thời trả HTTP `409`.
+- Migration idempotent tạo các cột trạng thái, người gửi/người duyệt, phản hồi và bảng lịch sử trong `aurora_db` là `database/apply_promotion_workflow.php`.
+
+## Chương trình khuyến mãi và triển khai POS
+
+- `GET|POST|PUT|DELETE ?action=marketing-promotions` — Marketing lập kế hoạch, gửi duyệt, thu hồi, phát hành hoặc tạm dừng; Admin Tổng dùng `operation=review` để duyệt/yêu cầu sửa.
+- Khi Marketing dùng `operation=publish`, backend tạo/cập nhật `vouchers`, hiển thị chương trình trên Customer và tạo một `promotion_theater_deployments` trạng thái `pending` cho từng rạp.
+- `GET ?action=theater-promotions` — Admin Rạp đọc các kế hoạch được gửi đúng `theater_id` của tài khoản.
+- `PUT ?action=theater-promotions` — hỗ trợ `operation=receive|save_button|activate|pause`. `save_button` nhận `pos_button_label`, `pos_button_color`, `pos_button_icon`, `applies_to=all|ticket|combo` và `pos_sort_order`.
+- POS chỉ nhận nút khi kế hoạch đang phát hành, voucher còn hiệu lực và Admin Rạp đã bật `pos_enabled`. Mỗi lượt áp dụng được ghi vào `orders.voucher_code`, `orders.promotion_discount_amount`, bộ đếm voucher và bộ đếm triển khai tại rạp trong cùng transaction.
+
+Migration idempotent: `database/apply_promotion_workflow.php`.
+
+## Danh mục hàng hóa dùng chung
+
+- `GET ?action=product-catalog-workflow` — đọc hàng hóa và các nhóm sản phẩm trực tiếp từ `aurora_db`.
+- Hỗ trợ `q={từ khóa}` để tìm theo SKU, tên hoặc nhóm và `category={mã nhóm}` để lọc chính xác theo nhóm đang hoạt động.
+- `meta.categories` trả về cấu hình nhóm cùng `product_count`; `meta.filters` phản ánh bộ lọc đã áp dụng; `summary.filtered` là số hàng hóa khớp bộ lọc.
+- Mã nhóm không tồn tại hoặc đã ngừng sử dụng trả HTTP `422`; Admin Rạp chỉ nhận hàng hóa đang phát hành.
+- `POST ?action=product-catalog-workflow` — Admin Tổng tạo hàng hóa nháp; SKU được sinh tự động theo nhóm.
+- `PUT ?action=product-catalog-workflow` — cập nhật hàng hóa khi còn ở trạng thái `draft`.
+- `DELETE ?action=product-catalog-workflow&id={id}` — xóa hàng hóa nháp chưa nằm trong kế hoạch.
+- `POST ?action=product-product-image` — tải ảnh JPG/PNG/WebP tối đa 5 MB và trả URL ảnh trên máy chủ.
+- `GET ?action=product-plans` — Admin Tổng xem toàn bộ kế hoạch; Admin Rạp chỉ xem kế hoạch đã gửi đúng rạp mình phụ trách.
+- `POST/PUT ?action=product-plans` — tạo hoặc sửa kế hoạch nháp, gồm hàng hóa, chỉ tiêu mỗi rạp trong một tháng và danh sách rạp nhận.
+- `PUT ?action=product-plans` với `operation=send` — phát hành hàng hóa, gửi kế hoạch và cấp tồn kho theo rạp trong cùng một transaction.
+- `PUT ?action=product-plans` với `operation=acknowledge` — Admin Rạp xác nhận đã tiếp nhận kế hoạch.
+- `DELETE ?action=product-plans&id={id}` — xóa kế hoạch khi còn ở trạng thái nháp.
+
+Schema nghiệp vụ nằm tại `database/product_planning.sql`. Có thể áp dụng và kiểm tra idempotent bằng PHP CLI của WAMP:
+
+```powershell
+& '..\..\bin\php\php5.2.6\php.exe' tms\backend\database\apply_product_planning.php
+```
+
 Các resource `movies`, `screens`, `schedules`, `staff`, `ticket-types`, `products`, `vouchers`, `customers`, `theaters`, `promotions`, `movie-plans`, `movie-allocations` hỗ trợ `GET`; resource được cấp quyền hỗ trợ thêm `POST`, `PUT`, `DELETE` theo nghiệp vụ.
+
+## Vòng đời kế hoạch phim tại rạp
+
+- `GET ?action=movie-plans&lifecycle=active|history|all` — lọc kế hoạch theo ngày máy chủ của `aurora_db`.
+- `GET ?action=movie-allocations&theater_id={id}&lifecycle=active|history|all` — đọc phân bổ theo rạp; mỗi dòng trả thêm `server_date`, `lifecycle_status`, `remaining_days` và `schedule_count`.
+- Khi `expected_end_date` hoặc `allocated_end_date` đã qua, backend giữ nguyên bản ghi nhưng chuyển kế hoạch sang `completed` và phân bổ sang `expired`. Đây là nguồn dữ liệu cho màn “Lịch sử kế hoạch”.
+- `GET ?action=schedule-movies` chỉ trả kế hoạch đã xác nhận, chưa hết hạn và còn thuộc thời gian phân bổ. API tạo suất chiếu cũng kiểm tra lại điều kiện này để không thể lách bằng request thủ công.
+
+Migration chuẩn hóa dữ liệu hiện hữu nằm tại `database/movie_plan_lifecycle.sql`; ứng dụng cũng đồng bộ trạng thái theo cách idempotent khi khởi tạo module kế hoạch.
 
 ## Quy ước phản hồi
 

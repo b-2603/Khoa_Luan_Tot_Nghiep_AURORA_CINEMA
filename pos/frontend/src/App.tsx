@@ -45,12 +45,9 @@ export default function App() {
   }
 
   useEffect(() => {
-    let alive = true;
-    fetch(`${API_URL}?action=me`, { credentials: 'include' })
-      .then(response => response.ok ? response.json() : Promise.reject(new Error('No session')))
-      .then(async result => { if (!result.success) throw new Error('No session'); if (!alive) return; await refreshDashboard(); if (alive) setView('dashboard'); })
-      .catch(() => { if (alive) setView('login'); });
-    return () => { alive = false; };
+    // Mỗi lần mở chương trình đều yêu cầu thao tác đăng nhập rõ ràng. Cookie
+    // cũ không được phép tự đưa tài khoản vào màn hình bán hàng.
+    setView('login');
   }, []);
 
   async function handleLogin(event: FormEvent<HTMLFormElement>) {

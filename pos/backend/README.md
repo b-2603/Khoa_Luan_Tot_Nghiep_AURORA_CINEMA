@@ -34,7 +34,8 @@ pos/backend/
 ## Mục đích
 
 - Xử lý đăng nhập POS bằng tài khoản nhân sự trong `aurora_db.pos_users`
-- Mở/đóng ca, ghi lịch sử xác thực và giữ session tại máy chủ
+- Sử dụng phiên bán hàng do Admin Rạp/Supervisor cấp rõ ràng từ TMS; POS không tự tạo hoặc tự tiếp tục phiên
+- Đóng ca, ghi lịch sử xác thực và giữ session tại máy chủ
 - Cung cấp API cho frontend React
 - Tách biệt logic nghiệp vụ và controller
 - Dễ mở rộng cho quản lý hóa đơn, nhân viên, hàng hóa
@@ -61,17 +62,22 @@ DB_PASSWORD=
 - `POST ?action=logout`
 - `GET ?action=dashboard`
 - `POST ?action=close_shift` (`cash_at_close`)
+- `GET ?action=pos_promotions` — trả các nút CTKM đang được Admin Rạp bật cho đúng rạp và còn hiệu lực.
+- `POST ?action=sales_order` / `POST ?action=product_order` — nhận thêm `promotion_deployment_id`; backend kiểm tra lại phạm vi, đối tượng, giá trị đơn tối thiểu, giới hạn lượt dùng và tự tính số tiền giảm.
 
 ## Bước chạy
 
 1. Khởi tạo database `aurora_db` bằng schema chính ở thư mục gốc.
 2. Chạy SQL trong `database/schema.sql` (hoặc `database/pos_auth_schema.sql`) để bổ sung các bảng POS còn thiếu.
-3. Truy cập frontend POS và đăng nhập bằng tài khoản demo.
+3. Trong TMS, cấp phiên cho một tài khoản Thu ngân/Supervisor và chọn đúng quầy.
+4. Truy cập frontend POS và đăng nhập bằng chính tài khoản đã được cấp phiên đang hoạt động.
 
 ## Tài khoản demo
 
 - Thu ngân: `0328754062` / `8888`
-- Quản lý ca trực: `admin` / `admin123`
+
+Tài khoản hệ thống `admin` không phải nhân viên POS và bị từ chối đăng nhập. Mỗi
+lần mở frontend đều hiển thị form đăng nhập; cookie cũ không tự mở màn hình bán hàng.
 
 Mỗi lượt đăng nhập được lưu tại `pos_login_events`; mỗi ca làm việc được lưu
 tại `pos_shifts`. API không còn xác thực fallback ở frontend/backend.

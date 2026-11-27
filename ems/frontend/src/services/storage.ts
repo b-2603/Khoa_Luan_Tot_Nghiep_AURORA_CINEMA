@@ -612,6 +612,37 @@ export const dismissShiftReminder = (userId: string): void => {
   setItem(KEYS.SHIFT_REMINDERS, updated);
 };
 
+export interface ChatAttachment {
+  id: string;
+  kind: 'image' | 'video' | 'audio' | 'file';
+  name: string;
+  mimeType: string;
+  size: number;
+  mediaId: string;
+  dataUrl?: string;       // Fallback nhỏ gọn cho file < 180KB
+  durationSec?: number;   // Thời lượng ghi âm / âm thanh (giây)
+  isVoiceNote?: boolean;
+}
+
+export interface ChatReplyRef {
+  id: string;
+  senderName: string;
+  previewText: string;
+}
+
+export interface ChatSticker {
+  id: string;
+  emoji: string;
+  label: string;
+  bg: string;
+}
+
+export interface ChatReaction {
+  emoji: string;
+  userIds: string[];
+  userNames: string[];
+}
+
 export interface InternalChatMessage {
   id: string;
   threadStaffId: string;
@@ -622,6 +653,12 @@ export interface InternalChatMessage {
   senderDepartment?: string;
   content: string;
   topicTag?: string;
+  attachments?: ChatAttachment[];
+  sticker?: ChatSticker;
+  replyTo?: ChatReplyRef;
+  reactions?: ChatReaction[];
+  pinned?: boolean;
+  recalled?: boolean;
   createdAt: string;
   readByManager: boolean;
   readByStaff: boolean;
@@ -681,7 +718,98 @@ export const sendChatMessage = (
   };
 
   const updated = [...list, created];
-  setItem(KEYS.INTERNAL_CHAT, updated);
+  try {
+    setItem(KEYS.INTERNAL_CHAT, updated);
+  } catch {
+    // Nếu localStorage đầy, bỏ dataUrl inline ở các tin nhắn cũ (media vẫn còn trong IndexedDB) rồi lưu lại
+    const compacted = updated.map(m =>
+      m.attachments
+        ? { ...m, attachments: m.attachments.map(({ dataUrl: _omit, ...rest }) => rest) }
+        : m
+    );
+    try {
+      setItem(KEYS.INTERNAL_CHAT, compacted);
+    } catch {
+      // ignore if still blocked
+    }
+    return compacted;
+  }
+  return updated;
+};
+
+export const recallChatMessage = (messageId: string): InternalChatMessage[] => {
+  const list = getChatMessages();
+  const updated = list.map(m =>
+    m.id === messageId
+      ? {
+          ...m,
+          recalled: true,
+          content: '',
+          attachments: undefined,
+          sticker: undefined,
+          topicTag: undefined,
+          pinned: false,
+          reactions: undefined,
+        }
+      : m
+  );
+  try {
+    setItem(KEYS.INTERNAL_CHAT, updated);
+  } catch {
+    // ignore
+  }
+  return updated;
+};
+
+export const toggleChatReaction = (
+  messageId: string,
+  emoji: string,
+  userId: string,
+  userName: string
+): InternalChatMessage[] => {
+  const list = getChatMessages();
+  const clean = (id: string) => String(id).replace('usr-', '').trim();
+  const myClean = clean(userId);
+
+  const updated = list.map(m => {
+    if (m.id !== messageId || m.recalled) return m;
+    const current = m.reactions ? [...m.reactions] : [];
+    const idx = current.findIndex(r => r.emoji === emoji);
+    if (idx === -1) {
+      current.push({ emoji, userIds: [myClean], userNames: [userName] });
+    } else {
+      const target = current[idx];
+      const uIdx = target.userIds.findIndex(id => clean(id) === myClean);
+      if (uIdx !== -1) {
+        const nextIds = target.userIds.filter((_, i) => i !== uIdx);
+        const nextNames = target.userNames.filter((_, i) => i !== uIdx);
+        if (nextIds.length === 0) current.splice(idx, 1);
+        else current[idx] = { emoji, userIds: nextIds, userNames: nextNames };
+      } else {
+        current[idx] = {
+          emoji,
+          userIds: [...target.userIds, myClean],
+          userNames: [...target.userNames, userName],
+        };
+      }
+    }
+    return { ...m, reactions: current };
+  });
+
+  try {
+    setItem(KEYS.INTERNAL_CHAT, updated);
+  } catch {}
+  return updated;
+};
+
+export const toggleChatPin = (messageId: string): InternalChatMessage[] => {
+  const list = getChatMessages();
+  const updated = list.map(m =>
+    m.id === messageId && !m.recalled ? { ...m, pinned: !m.pinned } : m
+  );
+  try {
+    setItem(KEYS.INTERNAL_CHAT, updated);
+  } catch {}
   return updated;
 };
 

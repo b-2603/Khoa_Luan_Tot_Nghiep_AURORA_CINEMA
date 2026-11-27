@@ -9,6 +9,20 @@ class AuthController
         $this->db = $database;
     }
 
+    private function verifyPassword($password, $storedHash)
+    {
+        if ($storedHash === '') return false;
+        if (function_exists('password_verify') && password_verify($password, $storedHash)) return true;
+        if (strpos($storedHash, 'sha256:') === 0) {
+            $parts = explode(':', $storedHash, 3);
+            if (count($parts) === 3 && hash('sha256', $parts[1] . ':' . $password) === $parts[2]) return true;
+        }
+        // PHP 5.2 installations use crypt() for passwords created from the
+        // account dialog; newer installations transparently use bcrypt above.
+        if (strpos($storedHash, '$2') !== 0 && crypt($password, $storedHash) === $storedHash) return true;
+        return false;
+    }
+
     private function ensureTheaterScopeSchema()
     {
         $column = $this->db->query("SHOW COLUMNS FROM tms_users LIKE 'theater_id'");
@@ -31,8 +45,10 @@ class AuthController
             ), 400);
         }
 
-        // Truy vấn trực tiếp từ bảng tms_users trong database MySQL aurora_db
-        $stmt = $this->db->prepare("SELECT tu.id, tu.username, tu.password_hash, tu.full_name, tu.phone, tu.role, tu.status, COALESCE(tu.theater_id, u.theater_id) AS theater_id, t.name AS theater_name FROM tms_users tu LEFT JOIN users u ON u.username=tu.username LEFT JOIN theaters t ON t.id=COALESCE(tu.theater_id, u.theater_id) WHERE tu.username = ? LIMIT 1");
+        // users là nguồn định danh duy nhất của TMS. Điều này bảo đảm tài khoản
+        // được Admin Tổng tạo (bao gồm Marketing) đăng nhập được ngay và id
+        // trong session luôn trùng với id mà requireAdmin() xác minh.
+        $stmt = $this->db->prepare("SELECT u.id, u.username, u.password_hash, u.full_name, u.phone, u.email, u.role, u.status, u.theater_id, t.name AS theater_name FROM users u LEFT JOIN theaters t ON t.id=u.theater_id WHERE u.username = ? AND u.role <> 'customer' LIMIT 1");
         if (!$stmt) {
             jsonResponse(array(
                 'success' => false,
@@ -53,15 +69,7 @@ class AuthController
         }
 
         // Kiểm tra mật khẩu (hỗ trợ password_verify hoặc fallback an toàn)
-        $passwordValid = false;
-        if (function_exists('password_verify')) {
-            $passwordValid = password_verify($password, $user['password_hash']);
-        }
-        
-        // Hỗ trợ kiểm tra mật khẩu mẫu dự phòng nếu hash chưa tương thích
-        if (!$passwordValid && ($password === '8888' || $password === 'admin123')) {
-            $passwordValid = true;
-        }
+        $passwordValid = $this->verifyPassword($password, $user['password_hash']);
 
         if (!$passwordValid) {
             jsonResponse(array(
@@ -78,13 +86,14 @@ class AuthController
         }
 
         // Cập nhật last_login trong database
-        $this->db->query("UPDATE tms_users SET last_login = NOW() WHERE id = " . (int)$user['id']);
+        $this->db->query("UPDATE users SET last_login = NOW() WHERE id = " . (int)$user['id']);
 
         $userData = array(
             'id' => (int) $user['id'],
             'username' => $user['username'],
             'full_name' => $user['full_name'],
             'phone' => $user['phone'],
+            'email' => isset($user['email']) ? $user['email'] : '',
             'role' => $user['role'],
             'theater_id' => !empty($user['theater_id']) ? (int)$user['theater_id'] : 0,
             'theater_name' => !empty($user['theater_name']) ? $user['theater_name'] : '',

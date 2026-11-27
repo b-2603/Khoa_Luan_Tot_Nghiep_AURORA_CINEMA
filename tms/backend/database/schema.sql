@@ -23,7 +23,7 @@ CREATE TABLE IF NOT EXISTS `users` (
   `last_login` DATETIME NULL,
   `created_at` TIMESTAMP NULL DEFAULT CURRENT_TIMESTAMP,
   `updated_at` DATETIME NULL DEFAULT NULL
-) ENGINE=InnoDB DEFAULT CHARSET=utf8 COLLATE=utf8_unicode_ci;
+) ENGINE=InnoDB DEFAULT CHARSET=utf8 COLLATE=utf8_general_ci;
 
 -- 2. Rạp
 CREATE TABLE IF NOT EXISTS `theaters` (
@@ -136,10 +136,19 @@ CREATE TABLE IF NOT EXISTS `products` (
   `id` BIGINT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
   `name` VARCHAR(150) NOT NULL,
   `sku` VARCHAR(50) NOT NULL UNIQUE,
-  `category` VARCHAR(80) NOT NULL DEFAULT 'Concession',
-  `price` DECIMAL(12,2) NOT NULL DEFAULT 0,
+  `category` VARCHAR(80) NOT NULL DEFAULT 'Popcorn',
+  `description` TEXT NULL,
+  `unit` VARCHAR(40) NOT NULL DEFAULT 'Sản phẩm',
+  `cost_price` DECIMAL(12,2) NOT NULL DEFAULT 0,
+  `price` DECIMAL(12,2) NOT NULL DEFAULT 0 COMMENT 'Giá bán thực tế và giá thành viên Aurora',
+  `customer_price` DECIMAL(12,2) NOT NULL DEFAULT 0 COMMENT 'Giá website = price + 10000',
+  `pos_price` DECIMAL(12,2) NOT NULL DEFAULT 0 COMMENT 'Giá tại quầy cho khách thường = price + 10000',
+  `member_price` DECIMAL(12,2) NOT NULL DEFAULT 0 COMMENT 'Giá POS thành viên = price',
   `stock_quantity` INT UNSIGNED NOT NULL DEFAULT 0,
-  `status` ENUM('active','inactive') NOT NULL DEFAULT 'active',
+  `status` VARCHAR(20) NOT NULL DEFAULT 'active',
+  `image_url` VARCHAR(500) NULL,
+  `created_by` BIGINT UNSIGNED NULL,
+  `updated_by` BIGINT UNSIGNED NULL,
   `created_at` TIMESTAMP NULL DEFAULT CURRENT_TIMESTAMP,
   `updated_at` DATETIME NULL DEFAULT NULL
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8 COLLATE=utf8_unicode_ci;
@@ -216,12 +225,28 @@ CREATE TABLE IF NOT EXISTS `revenue_logs` (
 -- 14. Log hệ thống / audit
 CREATE TABLE IF NOT EXISTS `audit_logs` (
   `id` BIGINT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
+  `user_id` BIGINT UNSIGNED NULL,
   `username` VARCHAR(80) NOT NULL,
+  `role` VARCHAR(40) NULL,
   `action` VARCHAR(80) NOT NULL,
+  `module` VARCHAR(60) NULL,
+  `entity_type` VARCHAR(80) NULL,
+  `entity_id` VARCHAR(120) NULL,
   `details` TEXT NULL,
+  `severity` VARCHAR(20) NOT NULL DEFAULT 'info',
+  `status_code` SMALLINT UNSIGNED NULL,
+  `http_method` VARCHAR(10) NULL,
+  `request_path` VARCHAR(255) NULL,
   `ip_address` VARCHAR(45) NULL,
-  `created_at` TIMESTAMP NULL DEFAULT CURRENT_TIMESTAMP
-) ENGINE=InnoDB DEFAULT CHARSET=utf8 COLLATE=utf8_unicode_ci;
+  `user_agent` VARCHAR(500) NULL,
+  `metadata_json` TEXT NULL,
+  `event_hash` CHAR(64) NULL,
+  `created_at` TIMESTAMP NULL DEFAULT CURRENT_TIMESTAMP,
+  KEY `idx_audit_created` (`created_at`),
+  KEY `idx_audit_action` (`action`),
+  KEY `idx_audit_user` (`username`),
+  KEY `idx_audit_module` (`module`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8 COLLATE=utf8_general_ci;
 
 -- 15. Cấu hình hệ thống
 CREATE TABLE IF NOT EXISTS `system_configs` (
@@ -232,9 +257,65 @@ CREATE TABLE IF NOT EXISTS `system_configs` (
   `updated_at` DATETIME NULL DEFAULT NULL
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8 COLLATE=utf8_unicode_ci;
 
+-- 16. Tùy chọn giao diện TMS theo tài khoản
+CREATE TABLE IF NOT EXISTS `tms_user_preferences` (
+  `user_id` BIGINT UNSIGNED NOT NULL PRIMARY KEY,
+  `menu_position` VARCHAR(12) NOT NULL DEFAULT 'left',
+  `background_theme` VARCHAR(20) NOT NULL DEFAULT 'cloud',
+  `accent_color` VARCHAR(20) NOT NULL DEFAULT 'aurora',
+  `interface_density` VARCHAR(20) NOT NULL DEFAULT 'comfortable',
+  `font_scale` VARCHAR(12) NOT NULL DEFAULT 'medium',
+  `sidebar_default` VARCHAR(12) NOT NULL DEFAULT 'expanded',
+  `content_width` VARCHAR(12) NOT NULL DEFAULT 'contained',
+  `sidebar_theme` VARCHAR(12) NOT NULL DEFAULT 'navy',
+  `topbar_style` VARCHAR(12) NOT NULL DEFAULT 'light',
+  `card_style` VARCHAR(12) NOT NULL DEFAULT 'elevated',
+  `corner_style` VARCHAR(12) NOT NULL DEFAULT 'soft',
+  `table_style` VARCHAR(12) NOT NULL DEFAULT 'clean',
+  `scrollbar_style` VARCHAR(12) NOT NULL DEFAULT 'slim',
+  `reduce_motion` TINYINT(1) NOT NULL DEFAULT 0,
+  `high_contrast` TINYINT(1) NOT NULL DEFAULT 0,
+  `show_footer` TINYINT(1) NOT NULL DEFAULT 1,
+  `sticky_topbar` TINYINT(1) NOT NULL DEFAULT 0,
+  `show_notifications` TINYINT(1) NOT NULL DEFAULT 1,
+  `show_greeting` TINYINT(1) NOT NULL DEFAULT 1,
+  `show_role_badge` TINYINT(1) NOT NULL DEFAULT 1,
+  `remember_last_view` TINYINT(1) NOT NULL DEFAULT 1,
+  `highlight_focus` TINYINT(1) NOT NULL DEFAULT 1,
+  `created_at` DATETIME NOT NULL,
+  `updated_at` DATETIME NOT NULL,
+  KEY `idx_tms_preferences_updated` (`updated_at`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8 COLLATE=utf8_unicode_ci;
+
 -- ========================================================
 -- SEED DATA MẪU CƠ BẢN
 -- ========================================================
+CREATE TABLE IF NOT EXISTS `aurora_internal_messages` (
+  `id` BIGINT UNSIGNED NOT NULL AUTO_INCREMENT PRIMARY KEY,
+  `sender_system` VARCHAR(8) NOT NULL, `sender_user_id` BIGINT UNSIGNED NOT NULL,
+  `recipient_system` VARCHAR(8) NOT NULL, `recipient_user_id` BIGINT UNSIGNED NOT NULL,
+  `content` TEXT NOT NULL, `topic_tag` VARCHAR(80) NULL,
+  `reply_to_id` BIGINT UNSIGNED NULL, `message_type` VARCHAR(16) NOT NULL DEFAULT 'text',
+  `read_at` DATETIME NULL,
+  `created_at` DATETIME NOT NULL, `updated_at` DATETIME NOT NULL,
+  KEY `idx_message_sender` (`sender_system`,`sender_user_id`,`created_at`),
+  KEY `idx_message_recipient` (`recipient_system`,`recipient_user_id`,`read_at`,`created_at`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8 COLLATE=utf8_unicode_ci;
+
+CREATE TABLE IF NOT EXISTS `aurora_message_attachments` (
+  `id` BIGINT UNSIGNED NOT NULL AUTO_INCREMENT PRIMARY KEY,
+  `message_id` BIGINT UNSIGNED NOT NULL, `original_name` VARCHAR(255) NOT NULL,
+  `stored_name` VARCHAR(255) NOT NULL, `mime_type` VARCHAR(120) NOT NULL,
+  `size_bytes` BIGINT UNSIGNED NOT NULL, `created_at` DATETIME NOT NULL,
+  UNIQUE KEY `uq_attachment_message` (`message_id`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8 COLLATE=utf8_unicode_ci;
+
+CREATE TABLE IF NOT EXISTS `aurora_message_reactions` (
+  `message_id` BIGINT UNSIGNED NOT NULL, `actor_system` VARCHAR(8) NOT NULL,
+  `actor_user_id` BIGINT UNSIGNED NOT NULL, `emoji` VARCHAR(16) NOT NULL,
+  `created_at` DATETIME NOT NULL,
+  PRIMARY KEY (`message_id`,`actor_system`,`actor_user_id`,`emoji`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8 COLLATE=utf8_unicode_ci;
 
 INSERT INTO `users` (`username`, `password_hash`, `full_name`, `phone`, `email`, `role`, `status`)
 VALUES
@@ -272,11 +353,12 @@ VALUES
 ('Trẻ em', 'CHILD', 70000, 'active')
 ON DUPLICATE KEY UPDATE `price` = VALUES(`price`);
 
-INSERT INTO `products` (`name`, `sku`, `category`, `price`, `stock_quantity`, `status`)
+INSERT INTO `products` (`name`, `sku`, `category`, `cost_price`, `price`, `customer_price`, `pos_price`, `member_price`, `stock_quantity`, `status`)
 VALUES
-('Bắp rang bơ', 'POPCORN_LARGE', 'Concession', 60000, 200, 'active'),
-('Nước ngọt', 'SODA_330', 'Concession', 25000, 300, 'active')
-ON DUPLICATE KEY UPDATE `price` = VALUES(`price`);
+('Bắp rang bơ', 'POPCORN_LARGE', 'Popcorn', 30000, 50000, 60000, 60000, 50000, 200, 'active'),
+('Nước ngọt', 'SODA_330', 'Beverages', 10000, 15000, 25000, 25000, 15000, 300, 'active'),
+('Combo bắp nước', 'COMBO_POPCORN_DRINK', 'Combo', 45000, 70000, 80000, 80000, 70000, 100, 'active')
+ON DUPLICATE KEY UPDATE `cost_price`=VALUES(`cost_price`),`price`=VALUES(`price`),`customer_price`=VALUES(`customer_price`),`pos_price`=VALUES(`pos_price`),`member_price`=VALUES(`member_price`);
 
 INSERT INTO `vouchers` (`code`, `name`, `discount_type`, `discount_value`, `starts_at`, `ends_at`, `usage_limit`, `status`)
 VALUES
@@ -302,5 +384,8 @@ INSERT INTO `system_configs` (`config_key`, `config_value`, `description`)
 VALUES
 ('cinema_name', 'Aurora Cinema', 'Tên rạp'),
 ('default_currency', 'VND', 'Đơn vị tiền tệ mặc định'),
-('booking_close_minutes', '15', 'Thời gian đóng đặt vé trước giờ chiếu')
+('booking_close_minutes', '15', 'Thời gian đóng đặt vé trước giờ chiếu'),
+('schedule_same_screen_gap_minutes', '15', 'Khoảng đệm sau khi phim kết thúc nếu xếp tiếp cùng phòng'),
+('schedule_cross_screen_stagger_minutes', '5', 'Độ lệch giờ bắt đầu giữa các phòng trong cùng đợt tạo lịch'),
+('schedule_operating_start_time', '09:00', 'Giờ bắt đầu vận hành mặc định của lịch chiếu')
 ON DUPLICATE KEY UPDATE `config_value` = VALUES(`config_value`);

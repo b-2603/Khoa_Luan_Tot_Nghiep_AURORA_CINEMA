@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from 'react';
 import {
   MapPin, Search, Bell, Trophy, ChevronDown,
-  PlayCircle, Gift, Ticket, Film, Send, ExternalLink, Smartphone, ChevronLeft, ChevronRight,
+  PlayCircle, Gift, Ticket, Film, Smartphone, ChevronLeft, ChevronRight,
   CreditCard, Percent, Phone, Check
 } from 'lucide-react';
 import AuthModal from './components/customer/AuthModal';
@@ -16,8 +16,15 @@ import MoviesPage from './components/customer/MoviesPage';
 import TicketPricingPage from './components/customer/TicketPricingPage';
 import CustomerHome from './components/customer/CustomerHome';
 import PromotionsPage from './components/customer/PromotionsPage';
+import SafeAvatar from './components/customer/SafeAvatar';
+import MembershipPage from './components/customer/MembershipPage';
+import SupportPage from './components/customer/SupportPage';
+import VnpayResultPage from './components/customer/VnpayResultPage';
+import AuroraAssistant from './components/customer/AuroraAssistant';
 
-const API_URL = 'http://localhost/AURORA%20CINEMA/customer/backend/public/api.php';
+const VITE_ENV = (import.meta as ImportMeta & { env?: Record<string, string | undefined> }).env;
+const API_URL = VITE_ENV?.VITE_CUSTOMER_API_URL?.trim()
+  || `${window.location.protocol}//${window.location.hostname}/AURORA%20CINEMA/customer/backend/public/api.php`;
 
 /* ─── DATA ──────────────────────────────────────────────────── */
 
@@ -41,18 +48,13 @@ function LanguageSwitcher({ language, onChange }: { language: Language; onChange
     <button type="button" onClick={() => setOpen(value => !value)} aria-haspopup="menu" aria-expanded={open} style={{ display: 'flex', alignItems: 'center', gap: 4, padding: '4px 2px', border: 0, background: 'transparent', color: '#dce8f5', cursor: 'pointer', fontSize: 12 }}>
       <span>{language === 'vi' ? 'VN' : 'EN'}</span><ChevronDown size={12} style={{ transform: open ? 'rotate(180deg)' : 'none', transition: 'transform .15s' }} />
     </button>
-    {open && <div role="menu" style={{ position: 'absolute', top: 'calc(100% + 8px)', right: 0, zIndex: 120, minWidth: 132, padding: 5, border: '1px solid #253c59', borderRadius: 8, background: '#10233a', boxShadow: '0 10px 24px rgba(0,0,0,.28)' }}>
-      {([{ key: 'vi', label: 'Tiếng Việt', code: 'VN' }, { key: 'en', label: 'English', code: 'EN' }] as const).map(option => <button key={option.key} type="button" role="menuitem" onClick={() => { onChange(option.key); setOpen(false); }} style={{ width: '100%', display: 'flex', justifyContent: 'space-between', alignItems: 'center', border: 0, borderRadius: 5, padding: '8px 9px', background: language === option.key ? '#1d3858' : 'transparent', color: language === option.key ? '#f4c04a' : '#dce8f5', cursor: 'pointer', fontSize: 12, textAlign: 'left' }}>
+    {open && <div role="menu" style={{ position: 'absolute', top: 'calc(100% + 8px)', right: 0, zIndex: 120, minWidth: 132, padding: 5, border: '1px solid #0d1b2e', borderRadius: 8, background: '#0d1b2e', boxShadow: '0 10px 24px rgba(0,0,0,.28)' }}>
+      {([{ key: 'vi', label: 'Tiếng Việt', code: 'VN' }, { key: 'en', label: 'English', code: 'EN' }] as const).map(option => <button key={option.key} type="button" role="menuitem" onClick={() => { onChange(option.key); setOpen(false); }} style={{ width: '100%', display: 'flex', justifyContent: 'space-between', alignItems: 'center', border: 0, borderRadius: 5, padding: '8px 9px', background: language === option.key ? '#0d1b2e' : 'transparent', color: language === option.key ? '#f4c04a' : '#dce8f5', cursor: 'pointer', fontSize: 12, textAlign: 'left' }}>
         <span>{option.label}</span><small style={{ color: '#8aa0b8' }}>{option.code}</small>
       </button>)}
     </div>}
   </div>;
 }
-
-const CHATBOT_ITEMS = {
-  vi: ['Tư vấn phim phù hợp', 'Tìm suất chiếu', 'Tư vấn giá vé', 'Sơ đồ ghế & vị trí đẹp', 'Hỗ trợ đặt vé', 'Ưu đãi thành viên'],
-  en: ['Find a suitable movie', 'Find showtimes', 'Ticket price advice', 'Seat map & best seats', 'Booking support', 'Member offers'],
-};
 
 const BOTTOM_FEATURES = {
   vi: [
@@ -65,7 +67,7 @@ const BOTTOM_FEATURES = {
 
 function ratingBg(r: string) {
   if (r === 'P') return '#27ae60';
-  if (r === 'K') return '#f39c12';
+  if (r === 'K') return '#f4c04a';
   if (r === 'T13') return '#e67e22';
   if (r === 'T16') return '#ea580c';
   if (r === 'T18') return '#e74c3c';
@@ -116,9 +118,10 @@ export default function App() {
   const [movieTab, setMovieTab] = useState<'NOW_SHOWING' | 'COMING_SOON' | 'SPECIAL_SHOWING'>('NOW_SHOWING');
   const [heroSlide, setHeroSlide] = useState(0);
   const [heroPaused, setHeroPaused] = useState(false);
-  const [chatMsg, setChatMsg] = useState('');
+  const [assistantOpen, setAssistantOpen] = useState(false);
   const [authMode, setAuthMode] = useState<'login' | 'register' | null>(null);
-  const [authUser, setAuthUser] = useState<{ fullName: string; email: string; membershipLevel?: string; points?: number; avatarUrl?: string | null } | null>(null);
+  const [authUser, setAuthUser] = useState<{ id?: number; fullName: string; email: string; membershipLevel?: string; points?: number; avatarUrl?: string | null } | null>(null);
+  const [authChecked, setAuthChecked] = useState(false);
   const [oauthError, setOauthError] = useState('');
   const [oauthNotice, setOauthNotice] = useState('');
   const [moviesList, setMoviesList] = useState<any[]>([]);
@@ -143,7 +146,7 @@ export default function App() {
   const [showUserMenu, setShowUserMenu] = useState<boolean>(false);
   const [showAccount, setShowAccount] = useState<boolean>(false);
   const [accountTab, setAccountTab] = useState('info');
-  const [currentPage, setCurrentPage] = useState<'home' | 'schedule' | 'movies' | 'theaters' | 'ticket-prices' | 'offers'>('home');
+  const [currentPage, setCurrentPage] = useState<'home' | 'schedule' | 'movies' | 'theaters' | 'ticket-prices' | 'offers' | 'membership' | 'support'>('home');
   const [footerPage, setFooterPage] = useState<'faq' | 'booking-guide' | 'privacy' | 'terms' | null>(null);
   const copy = COPY[language];
   const t = (vi: string, en: string) => language === 'en' ? en : vi;
@@ -210,12 +213,38 @@ export default function App() {
     setPendingBooking({ movie, showtime, theater });
   }
 
-  function confirmBooking() {
+  function openPendingBooking() {
     if (!pendingBooking) return;
     setSelectedTheater(pendingBooking.theater);
     setSelectedTheaterId(pendingBooking.showtime.theater_id);
     setBooking({ movie: pendingBooking.movie, showtime: pendingBooking.showtime });
     setPendingBooking(null);
+  }
+
+  async function confirmBooking() {
+    if (!pendingBooking) return;
+
+    let currentUser = authUser;
+    if (!authChecked) {
+      try {
+        const response = await fetch(`${API_URL}?action=me`, { credentials: 'include', cache: 'no-store' });
+        const result = await response.json();
+        currentUser = result.user || null;
+        setAuthUser(currentUser);
+      } catch {
+        currentUser = null;
+        setAuthUser(null);
+      } finally {
+        setAuthChecked(true);
+      }
+    }
+
+    if (!currentUser) {
+      setAuthMode('login');
+      setOauthError('');
+      return;
+    }
+    openPendingBooking();
   }
 
   const featuredMovies = moviesList
@@ -308,13 +337,14 @@ export default function App() {
     fetch(`${API_URL}?action=me`, { credentials: 'include' })
       .then(response => response.json())
       .then(result => setAuthUser(result.user))
-      .catch(() => setAuthUser(null));
+      .catch(() => setAuthUser(null))
+      .finally(() => setAuthChecked(true));
 
-    // Lấy dữ liệu phim trực tiếp từ MySQL Database aurora_db
-    fetch(`${API_URL}?action=movies&_=${Date.now()}`, { cache: 'no-store' })
+    // Refresh the shared catalog so date-driven status changes appear without a page reload.
+    const refreshMovies = () => fetch(`${API_URL}?action=movies&_=${Date.now()}`, { cache: 'no-store' })
       .then(response => response.json())
       .then(result => {
-        if (result && result.movies && result.movies.length > 0) {
+        if (result && Array.isArray(result.movies)) {
           setMoviesList(result.movies.map((m: any) => ({
             id: m.id,
             title: m.title,
@@ -340,6 +370,8 @@ export default function App() {
         }
       })
       .catch(() => {});
+    refreshMovies();
+    const moviesRefreshTimer = window.setInterval(refreshMovies, 60_000);
 
     loadPromotions();
 
@@ -355,6 +387,7 @@ export default function App() {
         }
       })
       .catch(() => {});
+    return () => window.clearInterval(moviesRefreshTimer);
   }, []);
 
   useEffect(() => {
@@ -440,6 +473,36 @@ export default function App() {
     scrollContentToTop();
   }
 
+  function handleGoMembership() {
+    setAuthMode(null); setShowAccount(false); setDetailMovie(null); setShowTheaterMenu(false); setShowUserMenu(false);
+    setCurrentPage('membership'); setFooterPage(null); scrollContentToTop();
+  }
+
+  function handleGoSupport() {
+    setAuthMode(null); setShowAccount(false); setDetailMovie(null); setShowTheaterMenu(false); setShowUserMenu(false);
+    setCurrentPage('support'); setFooterPage(null); scrollContentToTop();
+  }
+
+  function handleAssistantNavigate(destination: string) {
+    setBooking(null);
+    if (destination === 'schedule') handleGoSchedule();
+    else if (destination === 'ticket-prices') handleGoTicketPrices();
+    else if (destination === 'offers') handleGoOffers();
+    else if (destination === 'membership') handleGoMembership();
+    else if (destination === 'support') handleGoSupport();
+    else handleGoMovies();
+  }
+
+  function handleAssistantMovie(movie: any) {
+    setBooking(null);
+    setAuthMode(null);
+    setShowAccount(false);
+    setFooterPage(null);
+    setCurrentPage('movies');
+    setDetailMovie(moviesList.find((item: any) => Number(item.id) === Number(movie.id)) || movie);
+    scrollContentToTop();
+  }
+
   function openFooterPage(page: 'faq' | 'booking-guide' | 'privacy' | 'terms') {
     setAuthMode(null);
     setShowAccount(false);
@@ -459,31 +522,44 @@ export default function App() {
   }
 
   /* ── Trang đặt vé – render toàn trang, thay thế toàn bộ layout thông thường ── */
+  const urlSearchParams = new URLSearchParams(window.location.search);
+  if (urlSearchParams.get('vnp_TxnRef') && urlSearchParams.get('vnp_SecureHash')) {
+    window.location.replace(`${API_URL}?action=vnpay_return&${window.location.search.slice(1)}`);
+    return null;
+  }
+  const paymentResult = urlSearchParams.get('vnpay_result');
+  const paymentTxnRef = urlSearchParams.get('txn_ref') || '';
+  if(paymentResult)return <VnpayResultPage apiBase={API_URL} result={paymentResult} txnRef={paymentTxnRef} language={language} onHome={()=>{window.history.replaceState({},'',window.location.pathname);window.location.reload();}}/>;
+
   if (booking) {
     return (
-      <BookingPage
-        movie={booking.movie}
-        showtime={booking.showtime}
-        theater={selectedTheater}
-        user={authUser}
-        language={language}
-        onClose={() => {
-          setBooking(null);
-          scrollContentToTop();
-        }}
-        onRequireLogin={() => {
-          setBooking(null);
-          setAuthMode('login');
-        }}
-      />
+      <>
+        <BookingPage
+          movie={booking.movie}
+          showtime={booking.showtime}
+          theater={selectedTheater}
+          user={authUser}
+          language={language}
+          onClose={() => {
+            setBooking(null);
+            scrollContentToTop();
+          }}
+          onRequireLogin={() => {
+            setPendingBooking({ movie: booking.movie, showtime: booking.showtime, theater: selectedTheater });
+            setBooking(null);
+            setAuthMode('login');
+          }}
+        />
+        <AuroraAssistant apiUrl={API_URL} language={language} user={authUser} page="booking" open={assistantOpen} onOpenChange={setAssistantOpen} onNavigate={handleAssistantNavigate} onMovieSelect={handleAssistantMovie} />
+      </>
     );
   }
 
   return (
-    <div style={{ height: '100vh', display: 'flex', flexDirection: 'column', overflow: 'hidden', background: '#eef0f4', fontFamily: "'Inter','Segoe UI',Arial,sans-serif", color: '#1a2332' }}>
+    <div style={{ height: '100vh', display: 'flex', flexDirection: 'column', overflow: 'hidden', background: '#eef0f4', fontFamily: "'Inter','Segoe UI',Arial,sans-serif", color: '#0d1b2e' }}>
 
       {oauthNotice && (
-        <div role="status" style={{ position: 'fixed', top: 18, left: '50%', transform: 'translateX(-50%)', zIndex: 1000, display: 'flex', alignItems: 'center', gap: 9, padding: '11px 17px', borderRadius: 10, background: '#ecfdf5', border: '1px solid #86efac', color: '#166534', boxShadow: '0 12px 30px rgba(15,23,42,.18)', fontSize: 13, fontWeight: 700 }}>
+        <div role="status" style={{ position: 'fixed', top: 18, left: '50%', transform: 'translateX(-50%)', zIndex: 1000, display: 'flex', alignItems: 'center', gap: 9, padding: '11px 17px', borderRadius: 10, background: '#ecfdf5', border: '1px solid #86efac', color: '#166534', boxShadow: '0 12px 30px rgba(13,27,46,.18)', fontSize: 13, fontWeight: 700 }}>
           <Check size={17} /> {oauthNotice}
         </div>
       )}
@@ -573,7 +649,7 @@ export default function App() {
                 borderRadius: 20,
                 padding: '5px 12px',
                 fontSize: 13,
-                color: '#1a2332',
+                color: '#0d1b2e',
                 fontWeight: 700,
                 cursor: 'pointer',
                 flexShrink: 0,
@@ -625,7 +701,7 @@ export default function App() {
                       }}
                     >
                       <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 3 }}>
-                        <div style={{ fontSize: 13, fontWeight: selectedTheater === t.name ? 900 : 700, color: selectedTheater === t.name ? '#b8860b' : '#0d1b2e', display: 'flex', alignItems: 'center', gap: 6 }}>
+                        <div style={{ fontSize: 13, fontWeight: selectedTheater === t.name ? 900 : 700, color: selectedTheater === t.name ? '#f4c04a' : '#0d1b2e', display: 'flex', alignItems: 'center', gap: 6 }}>
                           <MapPin size={12} color={selectedTheater === t.name ? '#f4c04a' : '#94a3b8'} />
                           {t.name}
                         </div>
@@ -653,7 +729,9 @@ export default function App() {
                 (i === 2 && currentPage === 'movies' && !authMode && !footerPage && !showAccount && !detailMovie) ||
                 (i === 3 && currentPage === 'theaters' && !authMode && !footerPage && !showAccount && !detailMovie) ||
                 (i === 4 && currentPage === 'ticket-prices' && !authMode && !footerPage && !showAccount && !detailMovie) ||
-                (i === 5 && currentPage === 'offers' && !authMode && !footerPage && !showAccount && !detailMovie);
+                (i === 5 && currentPage === 'offers' && !authMode && !footerPage && !showAccount && !detailMovie) ||
+                (i === 6 && currentPage === 'membership' && !authMode && !footerPage && !showAccount && !detailMovie) ||
+                (i === 7 && currentPage === 'support' && !authMode && !footerPage && !showAccount && !detailMovie);
 
               const handleClick =
                 i === 0 ? handleGoHome :
@@ -661,11 +739,14 @@ export default function App() {
                 i === 2 ? handleGoMovies :
                 i === 3 ? handleGoTheaters :
                 i === 4 ? handleGoTicketPrices :
-                i === 5 ? handleGoOffers : undefined;
+                i === 5 ? handleGoOffers :
+                i === 6 ? handleGoMembership :
+                i === 7 ? handleGoSupport : undefined;
 
               return (
                 <button
                   key={item}
+                  data-aurora-tour={i === 1 ? 'schedule' : i === 2 ? 'movies' : i === 5 ? 'offers' : undefined}
                   onClick={handleClick}
                   style={{
                     fontSize: 11.5,
@@ -688,36 +769,40 @@ export default function App() {
           <div style={{ display: 'flex', alignItems: 'center', gap: 10, flexShrink: 0 }}>
             <button
               type="button"
+              data-aurora-tour="search"
               aria-label={t('Tìm kiếm phim', 'Search movies')}
               title={t('Tìm kiếm phim', 'Search movies')}
               onClick={() => { setShowUserMenu(false); setIsSearchOpen(true); }}
-              style={{ width: 36, height: 36, borderRadius: '50%', border: isSearchOpen ? '1px solid #e8a020' : '1px solid #d5dee9', background: isSearchOpen ? '#fff8e7' : '#f3f6fa', display: 'flex', alignItems: 'center', justifyContent: 'center', cursor: 'pointer', boxShadow: isSearchOpen ? '0 0 0 3px rgba(244,192,74,.18)' : 'none', transition: 'all .18s ease' }}>
+              style={{ width: 36, height: 36, borderRadius: '50%', border: isSearchOpen ? '1px solid #f4c04a' : '1px solid #d5dee9', background: isSearchOpen ? '#fff8e7' : '#f3f6fa', display: 'flex', alignItems: 'center', justifyContent: 'center', cursor: 'pointer', boxShadow: isSearchOpen ? '0 0 0 3px rgba(244,192,74,.18)' : 'none', transition: 'all .18s ease' }}>
               <Search size={16} color="#4a637a" />
             </button>
             {authUser ? (
               <div style={{ position: 'relative' }}>
                 {/* Trigger button */}
                 <button
+                  data-aurora-tour="account"
                   onClick={() => setShowUserMenu(v => !v)}
                   style={{
-                    display: 'flex', alignItems: 'center', gap: 8,
+                    minHeight: 44, display: 'flex', alignItems: 'center', gap: 9,
                     background: showUserMenu ? '#f1f5f9' : '#fff',
-                    border: '1px solid #d5dee9',
-                    borderRadius: 24, padding: '6px 14px 6px 8px',
+                    border: showUserMenu ? '1px solid #b9cbe0' : '1px solid #d5dee9',
+                    borderRadius: 24, padding: '5px 13px 5px 6px',
                     cursor: 'pointer', transition: 'all 0.2s',
-                    boxShadow: showUserMenu ? '0 0 0 3px rgba(244,192,74,0.2)' : 'none'
+                    boxShadow: showUserMenu ? '0 0 0 3px rgba(29,95,174,0.12)' : '0 2px 7px rgba(13,27,46,.05)'
                   }}
                 >
                   {/* Avatar */}
                   <div style={{
-                    width: 30, height: 30, borderRadius: '50%',
-                    background: 'linear-gradient(135deg, #f4c04a 0%, #e8a020 100%)',
-                    display: 'flex', alignItems: 'center', justifyContent: 'center',
-                    fontSize: 13, fontWeight: 800, color: '#0d1b2e', flexShrink: 0
+                    width: 32, height: 32, borderRadius: '50%', overflow: 'hidden',
+                    background: 'linear-gradient(135deg, #f4c04a 0%, #f4c04a 100%)',
+                    display: 'grid', placeItems: 'center',
+                    fontSize: 13, fontWeight: 800, color: '#0d1b2e', flexShrink: 0,
+                    border: '2px solid #fff', outline: '1px solid #cbd8e6',
+                    boxShadow: '0 3px 8px rgba(13,27,46,.16)'
                   }}>
-                    {authUser.avatarUrl ? <img src={authUser.avatarUrl} alt="Ảnh đại diện" style={{width:'100%',height:'100%',objectFit:'cover'}}/> : authUser.fullName.charAt(0).toUpperCase()}
+                    <SafeAvatar url={authUser.avatarUrl} name={authUser.fullName} />
                   </div>
-                  <span style={{ fontSize: 13, fontWeight: 600, color: '#1a2332', maxWidth: 110, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                  <span style={{ fontSize: 13, fontWeight: 700, color: '#0d1b2e', maxWidth: 110, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', lineHeight: 1 }}>
                     {authUser.fullName.split(' ').slice(-1)[0]}
                   </span>
                   <ChevronDown size={13} color="#7a8fa6" style={{ transform: showUserMenu ? 'rotate(180deg)' : 'none', transition: 'transform 0.2s' }} />
@@ -752,7 +837,7 @@ export default function App() {
                           padding: 13px 18px;
                           font-size: 13.5px;
                           font-weight: 500;
-                          color: #1a2332;
+                          color: #0d1b2e;
                           cursor: pointer;
                           border: none;
                           background: transparent;
@@ -788,20 +873,20 @@ export default function App() {
                       {/* Header section */}
                       <div style={{
                         padding: '16px 18px 14px',
-                        background: 'linear-gradient(135deg, #0d1b2e 0%, #1a3050 100%)',
+                        background: 'linear-gradient(135deg, #0d1b2e 0%, #0d1b2e 100%)',
                         position: 'relative', overflow: 'hidden'
                       }}>
                         {/* Gold accent */}
                         <div style={{ position: 'absolute', top: -20, right: -20, width: 80, height: 80, borderRadius: '50%', background: 'rgba(244,192,74,0.12)' }} />
                         <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
                           <div style={{
-                            width: 42, height: 42, borderRadius: '50%',
-                            background: 'linear-gradient(135deg, #f4c04a 0%, #e8a020 100%)',
-                            display: 'flex', alignItems: 'center', justifyContent: 'center',
+                            width: 42, height: 42, borderRadius: '50%', overflow: 'hidden',
+                            background: 'linear-gradient(135deg, #f4c04a 0%, #f4c04a 100%)',
+                            display: 'grid', placeItems: 'center',
                             fontSize: 18, fontWeight: 800, color: '#0d1b2e',
                             border: '2px solid rgba(244,192,74,0.5)', flexShrink: 0
                           }}>
-                            {authUser.avatarUrl ? <img src={authUser.avatarUrl} alt="Ảnh đại diện" style={{width:'100%',height:'100%',objectFit:'cover'}}/> : authUser.fullName.charAt(0).toUpperCase()}
+                            <SafeAvatar url={authUser.avatarUrl} name={authUser.fullName} />
                           </div>
                           <div style={{ flex: 1, minWidth: 0 }}>
                             <div style={{ fontSize: 14, fontWeight: 700, color: '#fff', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
@@ -813,7 +898,7 @@ export default function App() {
                             <div style={{ marginTop: 5, display: 'flex', alignItems: 'center', gap: 5 }}>
                               <span style={{
                                 fontSize: 10, fontWeight: 800, padding: '2px 8px',
-                                borderRadius: 20, background: 'linear-gradient(135deg, #f4c04a, #e8a020)',
+                                borderRadius: 20, background: 'linear-gradient(135deg, #f4c04a, #f4c04a)',
                                 color: '#0d1b2e', letterSpacing: 0.5, display: 'flex', alignItems: 'center', gap: 4
                               }}>
                                 ⭐ THÀNH VIÊN
@@ -842,7 +927,7 @@ export default function App() {
                             </svg>
                           </span>
                           {t('Thẻ thành viên', 'Membership card')}
-                          <span style={{ marginLeft: 'auto', fontSize: 10, fontWeight: 700, padding: '2px 7px', borderRadius: 10, background: 'linear-gradient(135deg,#f4c04a,#e8a020)', color: '#0d1b2e' }}>{authUser.membershipLevel || 'STANDARD'}</span>
+                          <span style={{ marginLeft: 'auto', fontSize: 10, fontWeight: 700, padding: '2px 7px', borderRadius: 10, background: 'linear-gradient(135deg,#f4c04a,#f4c04a)', color: '#0d1b2e' }}>{authUser.membershipLevel || 'STANDARD'}</span>
                         </button>
 
                         <button className="aurora-menu-item" onClick={() => openAccountTab('history')}>
@@ -901,7 +986,7 @@ export default function App() {
               </div>
             ) : (
               <>
-                <button onClick={() => setAuthMode('login')} style={{ padding: '8px 18px', borderRadius: 8, border: '1px solid #cdd7e2', background: authMode === 'login' ? '#f1f5f9' : '#fff', fontSize: 13, fontWeight: 600, cursor: 'pointer', color: '#1a2332' }}>{copy.login}</button>
+                <button onClick={() => setAuthMode('login')} style={{ padding: '8px 18px', borderRadius: 8, border: '1px solid #cdd7e2', background: authMode === 'login' ? '#f1f5f9' : '#fff', fontSize: 13, fontWeight: 600, cursor: 'pointer', color: '#0d1b2e' }}>{copy.login}</button>
                 <button onClick={() => setAuthMode('register')} style={{ padding: '8px 18px', borderRadius: 8, border: 'none', background: '#f4c04a', fontSize: 13, fontWeight: 700, cursor: 'pointer', color: '#0d1b2e', boxShadow: '0 4px 12px rgba(244,192,74,0.35)' }}>{copy.register}</button>
               </>
             )}
@@ -915,10 +1000,10 @@ export default function App() {
           aria-modal="true"
           aria-label={t('Tìm kiếm phim', 'Movie search')}
           onMouseDown={event => { if (event.target === event.currentTarget) closeMovieSearch(); }}
-          style={{ position: 'fixed', inset: 0, zIndex: 250, background: 'rgba(8, 23, 42, .52)', backdropFilter: 'blur(5px)', padding: 'clamp(84px, 13vh, 132px) 18px 24px', overflowY: 'auto' }}
+          style={{ position: 'fixed', inset: 0, zIndex: 250, background: 'rgba(13,27,46,.52)', backdropFilter: 'blur(5px)', padding: 'clamp(84px, 13vh, 132px) 18px 24px', overflowY: 'auto' }}
         >
-          <section style={{ width: 'min(720px, 100%)', margin: '0 auto', borderRadius: 20, overflow: 'hidden', background: '#fff', boxShadow: '0 28px 75px rgba(3,16,34,.32)', border: '1px solid rgba(255,255,255,.7)' }}>
-            <div style={{ padding: '20px 22px 16px', background: 'linear-gradient(135deg, #0d1b2e 0%, #17355b 100%)', color: '#fff' }}>
+          <section style={{ width: 'min(720px, 100%)', margin: '0 auto', borderRadius: 20, overflow: 'hidden', background: '#fff', boxShadow: '0 28px 75px rgba(13,27,46,.32)', border: '1px solid rgba(255,255,255,.7)' }}>
+            <div style={{ padding: '20px 22px 16px', background: 'linear-gradient(135deg, #0d1b2e 0%, #0d1b2e 100%)', color: '#fff' }}>
               <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 16, marginBottom: 14 }}>
                 <div>
                   <div style={{ fontSize: 11, letterSpacing: 1.1, fontWeight: 800, color: '#f4c04a' }}>AURORA CINEMA</div>
@@ -934,16 +1019,16 @@ export default function App() {
                   onChange={event => setSearchQuery(event.target.value)}
                   onKeyDown={event => { if (event.key === 'Escape') closeMovieSearch(); if (event.key === 'Enter' && searchResults.length === 1) selectSearchMovie(searchResults[0]); }}
                   placeholder={t('Nhập tên phim, thể loại hoặc nội dung...', 'Type a movie title, genre, or keyword...')}
-                  style={{ minWidth: 0, flex: 1, height: '100%', border: 'none', outline: 'none', color: '#10233e', fontSize: 14, background: 'transparent' }}
+                  style={{ minWidth: 0, flex: 1, height: '100%', border: 'none', outline: 'none', color: '#0d1b2e', fontSize: 14, background: 'transparent' }}
                 />
-                {searchLoading && <span style={{ color: '#e8a020', fontSize: 12, fontWeight: 700 }}>{t('Đang tìm...', 'Searching...')}</span>}
+                {searchLoading && <span style={{ color: '#f4c04a', fontSize: 12, fontWeight: 700 }}>{t('Đang tìm...', 'Searching...')}</span>}
               </div>
             </div>
             <div style={{ minHeight: 210, maxHeight: 'min(55vh, 470px)', overflowY: 'auto', padding: 10, background: '#f7f9fc' }}>
               {searchQuery.trim().length < 2 ? (
                 <div style={{ padding: '38px 22px 34px', textAlign: 'center', color: '#70849a' }}>
-                  <div style={{ width: 52, height: 52, margin: '0 auto 13px', borderRadius: 16, display: 'flex', alignItems: 'center', justifyContent: 'center', background: 'linear-gradient(135deg, #fff1c7, #ffe19a)', boxShadow: '0 8px 20px rgba(219,153,20,.16)' }}><Film size={25} color="#b97708" /></div>
-                  <div style={{ fontSize: 16, fontWeight: 800, color: '#193653' }}>{t('Bạn muốn xem phim gì hôm nay?', 'What would you like to watch today?')}</div>
+                  <div style={{ width: 52, height: 52, margin: '0 auto 13px', borderRadius: 16, display: 'flex', alignItems: 'center', justifyContent: 'center', background: 'linear-gradient(135deg, #fff1c7, #f4c04a)', boxShadow: '0 8px 20px rgba(244,192,74,.16)' }}><Film size={25} color="#f4c04a" /></div>
+                  <div style={{ fontSize: 16, fontWeight: 800, color: '#0d1b2e' }}>{t('Bạn muốn xem phim gì hôm nay?', 'What would you like to watch today?')}</div>
                   <div style={{ marginTop: 6, fontSize: 12.5, lineHeight: 1.55 }}>{t('Nhập tên phim hoặc thể loại để xem suất chiếu phù hợp.', 'Search by movie title or genre to find a suitable showtime.')}</div>
                   <div style={{ display: 'flex', justifyContent: 'center', flexWrap: 'wrap', gap: 7, marginTop: 17 }}>
                     {['Avatar', 'Hành động', 'Tình cảm'].map(keyword => <button key={keyword} type="button" onClick={() => setSearchQuery(keyword)} style={{ border: '1px solid #d8e2ec', borderRadius: 99, padding: '6px 11px', color: '#42627e', background: '#fff', fontSize: 11.5, fontWeight: 700, cursor: 'pointer' }}>{keyword}</button>)}
@@ -957,16 +1042,16 @@ export default function App() {
                   <div style={{ marginTop: 5, fontSize: 12 }}>{t('Thử thay đổi từ khóa hoặc tên phim.', 'Try another keyword or movie title.')}</div>
                 </div>
               ) : searchResults.map(movie => (
-                <button key={movie.id} type="button" onClick={() => selectSearchMovie(movie)} style={{ display: 'flex', width: '100%', alignItems: 'center', gap: 14, padding: 12, border: '1px solid transparent', borderRadius: 12, background: '#fff', cursor: 'pointer', textAlign: 'left', marginBottom: 8, boxShadow: '0 1px 2px rgba(14,38,66,.05)', transition: 'border-color .15s, transform .15s' }}>
+                <button key={movie.id} type="button" onClick={() => selectSearchMovie(movie)} style={{ display: 'flex', width: '100%', alignItems: 'center', gap: 14, padding: 12, border: '1px solid transparent', borderRadius: 12, background: '#fff', cursor: 'pointer', textAlign: 'left', marginBottom: 8, boxShadow: '0 1px 2px rgba(13,27,46,.05)', transition: 'border-color .15s, transform .15s' }}>
                   <div style={{ width: 48, height: 64, flexShrink: 0, borderRadius: 7, overflow: 'hidden', background: '#e7edf4' }}>
                     {movie.posterUrl ? <img src={normalizeMediaUrl(movie.posterUrl)} alt="" style={{ width: '100%', height: '100%', objectFit: 'cover' }} /> : <Film size={22} color="#7890a8" style={{ margin: '21px 13px' }} />}
                   </div>
                   <div style={{ minWidth: 0, flex: 1 }}>
-                    <div style={{ display: 'flex', alignItems: 'center', gap: 7, minWidth: 0 }}><span style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', color: '#132a45', fontSize: 15, fontWeight: 800 }}>{movie.title}</span><span style={{ flexShrink: 0, padding: '2px 6px', borderRadius: 5, background: '#fff0c5', color: '#995d00', fontSize: 10, fontWeight: 800 }}>{normalizeAgeRating(movie.ageRating)}</span></div>
+                    <div style={{ display: 'flex', alignItems: 'center', gap: 7, minWidth: 0 }}><span style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', color: '#0d1b2e', fontSize: 15, fontWeight: 800 }}>{movie.title}</span><span style={{ flexShrink: 0, padding: '2px 6px', borderRadius: 5, background: '#fff0c5', color: '#f4c04a', fontSize: 10, fontWeight: 800 }}>{normalizeAgeRating(movie.ageRating)}</span></div>
                     <div style={{ marginTop: 5, color: '#71859a', fontSize: 12 }}>{movie.genre || movie.format || '2D Digital'} · {movie.durationMinutes} {t('phút', 'min')}</div>
                     <div style={{ marginTop: 6, color: movie.upcomingShowtimeCount > 0 ? '#15803d' : '#8090a1', fontSize: 11, fontWeight: 700 }}>{movie.upcomingShowtimeCount > 0 ? `${movie.upcomingShowtimeCount} ${t('suất sắp chiếu', 'upcoming sessions')}` : t('Chưa có suất đang mở bán', 'No session currently on sale')}</div>
                   </div>
-                  <span style={{ color: '#d38a0a', fontSize: 20, fontWeight: 400 }}>›</span>
+                  <span style={{ color: '#f4c04a', fontSize: 20, fontWeight: 400 }}>›</span>
                 </button>
               ))}
             </div>
@@ -983,12 +1068,17 @@ export default function App() {
         <AuthModal
           mode={authMode}
           initialError={oauthError}
+          notice={pendingBooking
+            ? t('Đăng nhập hoặc đăng ký tài khoản để xem sơ đồ ghế và tiếp tục đặt vé.', 'Sign in or create an account to view the seat map and continue booking.')
+            : undefined}
           onClose={() => { setAuthMode(null); setOauthError(''); }}
           onSwitchMode={newMode => { setAuthMode(newMode); setOauthError(''); }}
           onAuthenticated={account => {
             setAuthUser(account);
+            setAuthChecked(true);
             setAuthMode(null);
             setOauthError('');
+            if (pendingBooking) openPendingBooking();
           }}
         />
       ) : showAccount ? (
@@ -1002,7 +1092,6 @@ export default function App() {
           movie={detailMovie}
           theaters={theatersList}
           theater={selectedTheater}
-          showtimes={showtimesList.filter((showtime: any) => showtime.movie_id === detailMovie.id)}
           date={scheduleDate}
           onBack={() => setDetailMovie(null)}
           onBook={(showtime, theaterName) => {
@@ -1055,6 +1144,20 @@ export default function App() {
           onRetry={loadPromotions}
           onBook={handleGoSchedule}
         />
+      ) : currentPage === 'membership' ? (
+        <MembershipPage
+          language={language}
+          user={authUser}
+          onRegister={() => setAuthMode(authUser ? null : 'register')}
+          onOpenAccount={() => openAccountTab('member')}
+          onOpenOffers={handleGoOffers}
+        />
+      ) : currentPage === 'support' ? (
+        <SupportPage
+          language={language}
+          user={authUser}
+          onLogin={() => setAuthMode('login')}
+        />
       ) : currentPage === 'home' ? (
         <CustomerHome
           language={language}
@@ -1070,7 +1173,6 @@ export default function App() {
           onBook={(movie, showtime, theaterName) => requestBooking(movie, showtime, theaterName)}
           onOpenSchedule={handleGoSchedule}
           onOpenMovies={handleGoMovies}
-          onOpenPrices={handleGoTicketPrices}
           onOpenOffers={handleGoOffers}
           onOpenAccount={() => openAccountTab('member')}
           onRegister={() => setAuthMode('register')}
@@ -1099,7 +1201,7 @@ export default function App() {
                     {t('ĐĂNG KÝ NGAY', 'REGISTER NOW')}
                   </button>
                 </div>
-                <div style={{ background: '#fff8e8', border: '1px solid #f0d990', borderRadius: 14, padding: '16px' }}>
+                <div style={{ background: '#fff8e8', border: '1px solid #f4c04a', borderRadius: 14, padding: '16px' }}>
                   <h3 style={{ margin: '0 0 4px', fontSize: 13, fontWeight: 900, color: '#0d1b2e', textTransform: 'uppercase' }}>{t('Tải app Aurora', 'Get the Aurora app')}</h3>
                   <p style={{ margin: '0 0 10px', fontSize: 11.5, color: '#6b7f94' }}>{t('Đặt vé dễ dàng và nhận nhiều ưu đãi', 'Book easily and enjoy more offers')}</p>
                   <div style={{ width: 64, height: 64, background: '#0d1b2e', borderRadius: 8, margin: '0 auto 12px', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
@@ -1128,11 +1230,11 @@ export default function App() {
                     } else handleGoOffers();
                   };
                   const goToSlide = (direction: number) => setHeroSlide(current => (current + direction + heroSlides.length) % heroSlides.length);
-                  return <div onMouseEnter={() => setHeroPaused(true)} onMouseLeave={() => setHeroPaused(false)} style={{ boxSizing: 'border-box', height: 300, borderRadius: 16, overflow: 'hidden', background: slide.type === 'promotion' ? 'linear-gradient(110deg,#0f2742 0%,#71501b 62%,#d09016 100%)' : 'linear-gradient(110deg,#071628 0%,#0d2849 58%,#123455 100%)', position: 'relative', padding: '28px 32px', display: 'flex', alignItems: 'center', isolation: 'isolate' }}>
-                    {slide.banner && <div style={{ position: 'absolute', inset: 0, backgroundImage: `linear-gradient(90deg, #071628 0%, rgba(7,22,40,.93) 43%, rgba(7,22,40,.35) 100%), url("${slide.banner}")`, backgroundSize: 'cover', backgroundPosition: 'center 28%', opacity: .92, zIndex: -1 }} />}
+                  return <div onMouseEnter={() => setHeroPaused(true)} onMouseLeave={() => setHeroPaused(false)} style={{ boxSizing: 'border-box', height: 300, borderRadius: 16, overflow: 'hidden', background: slide.type === 'promotion' ? 'linear-gradient(110deg,#0d1b2e 0%,#f4c04a 62%,#f4c04a 100%)' : 'linear-gradient(110deg,#0d1b2e 0%,#0d1b2e 58%,#0d1b2e 100%)', position: 'relative', padding: '28px 32px', display: 'flex', alignItems: 'center', isolation: 'isolate' }}>
+                    {slide.banner && <div style={{ position: 'absolute', inset: 0, backgroundImage: `linear-gradient(90deg, #0d1b2e 0%, rgba(13,27,46,.93) 43%, rgba(13,27,46,.35) 100%), url("${slide.banner}")`, backgroundSize: 'cover', backgroundPosition: 'center 28%', opacity: .92, zIndex: -1 }} />}
                     <div style={{ position: 'absolute', top: -50, right: '16%', width: 260, height: 260, background: 'radial-gradient(circle,rgba(244,192,74,.18) 0%,transparent 66%)', pointerEvents: 'none' }} />
                     <div style={{ zIndex: 1, flex: 1, maxWidth: '62%' }}>
-                      <div style={{ display: 'inline-flex', alignItems: 'center', gap: 6, padding: '5px 10px', marginBottom: 9, background: 'rgba(244,192,74,.15)', border: '1px solid rgba(244,192,74,.42)', borderRadius: 99, fontSize: 10.5, fontWeight: 900, letterSpacing: .5, color: '#f8cf6c' }}>
+                      <div style={{ display: 'inline-flex', alignItems: 'center', gap: 6, padding: '5px 10px', marginBottom: 9, background: 'rgba(244,192,74,.15)', border: '1px solid rgba(244,192,74,.42)', borderRadius: 99, fontSize: 10.5, fontWeight: 900, letterSpacing: .5, color: '#f4c04a' }}>
                         {slide.type === 'promotion' ? <Gift size={13} /> : <Film size={13} />}{slide.label}
                       </div>
                       <div style={{ fontSize: 26, fontWeight: 900, color: '#fff', textTransform: 'uppercase', lineHeight: 1.14, marginBottom: 9, maxWidth: 480, display: '-webkit-box', WebkitBoxOrient: 'vertical', WebkitLineClamp: 2, overflow: 'hidden' }}>{slide.title}</div>
@@ -1144,15 +1246,15 @@ export default function App() {
                         </button>}
                       </div>
                     </div>
-                    <div style={{ position: 'absolute', right: 26, top: '50%', transform: 'translateY(-50%)', width: 132, height: 172, borderRadius: 12, overflow: 'hidden', border: '2px solid rgba(244,192,74,.75)', boxShadow: '0 16px 30px rgba(0,0,0,.42)', background: '#122b46' }}>
-                      {slide.poster ? <img src={slide.poster} alt={slide.title} style={{ width: '100%', height: '100%', objectFit: 'cover' }} /> : <div style={{ height: '100%', display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', gap: 10, padding: 12, textAlign: 'center', background: 'linear-gradient(160deg,#f4c04a,#bd7900)', color: '#0d1b2e' }}><Gift size={42} /><strong style={{ fontSize: 13 }}>{t('ƯU ĐÃI ĐẶC BIỆT', 'SPECIAL OFFER')}</strong></div>}
+                    <div style={{ position: 'absolute', right: 26, top: '50%', transform: 'translateY(-50%)', width: 132, height: 172, borderRadius: 12, overflow: 'hidden', border: '2px solid rgba(244,192,74,.75)', boxShadow: '0 16px 30px rgba(0,0,0,.42)', background: '#0d1b2e' }}>
+                      {slide.poster ? <img src={slide.poster} alt={slide.title} style={{ width: '100%', height: '100%', objectFit: 'cover' }} /> : <div style={{ height: '100%', display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', gap: 10, padding: 12, textAlign: 'center', background: 'linear-gradient(160deg,#f4c04a,#f4c04a)', color: '#0d1b2e' }}><Gift size={42} /><strong style={{ fontSize: 13 }}>{t('ƯU ĐÃI ĐẶC BIỆT', 'SPECIAL OFFER')}</strong></div>}
                     </div>
                     <div style={{ position: 'absolute', bottom: 13, left: 32, display: 'flex', gap: 7 }}>
                       {heroSlides.map((_: any, index: number) => <button key={index} type="button" aria-label={`${t('Xem quảng cáo', 'View slide')} ${index + 1}`} onClick={() => setHeroSlide(index)} style={{ width: index === heroSlide ? 22 : 7, height: 7, padding: 0, border: 'none', borderRadius: 99, background: index === heroSlide ? '#f4c04a' : 'rgba(255,255,255,.38)', cursor: 'pointer', transition: 'all .2s' }} />)}
                     </div>
                     {heroSlides.length > 1 && <div style={{ position: 'absolute', right: 15, bottom: 12, display: 'flex', gap: 6 }}>
-                      <button type="button" aria-label={t('Quảng cáo trước', 'Previous slide')} onClick={() => goToSlide(-1)} style={{ width: 27, height: 27, padding: 0, border: '1px solid rgba(255,255,255,.3)', borderRadius: '50%', background: 'rgba(7,22,40,.48)', color: '#fff', cursor: 'pointer', display: 'grid', placeItems: 'center' }}><ChevronLeft size={16} /></button>
-                      <button type="button" aria-label={t('Quảng cáo tiếp theo', 'Next slide')} onClick={() => goToSlide(1)} style={{ width: 27, height: 27, padding: 0, border: '1px solid rgba(255,255,255,.3)', borderRadius: '50%', background: 'rgba(7,22,40,.48)', color: '#fff', cursor: 'pointer', display: 'grid', placeItems: 'center' }}><ChevronRight size={16} /></button>
+                      <button type="button" aria-label={t('Quảng cáo trước', 'Previous slide')} onClick={() => goToSlide(-1)} style={{ width: 27, height: 27, padding: 0, border: '1px solid rgba(255,255,255,.3)', borderRadius: '50%', background: 'rgba(13,27,46,.48)', color: '#fff', cursor: 'pointer', display: 'grid', placeItems: 'center' }}><ChevronLeft size={16} /></button>
+                      <button type="button" aria-label={t('Quảng cáo tiếp theo', 'Next slide')} onClick={() => goToSlide(1)} style={{ width: 27, height: 27, padding: 0, border: '1px solid rgba(255,255,255,.3)', borderRadius: '50%', background: 'rgba(13,27,46,.48)', color: '#fff', cursor: 'pointer', display: 'grid', placeItems: 'center' }}><ChevronRight size={16} /></button>
                     </div>}
                   </div>;
                 })()}
@@ -1175,7 +1277,7 @@ export default function App() {
                         <label style={{ display: 'block', fontSize: 10.5, fontWeight: 700, color: '#6b7f94', marginBottom: 5, textTransform: 'uppercase' }}>{f.label}</label>
                         <div 
                           onClick={f.action}
-                          style={{ border: '1px solid #d5dee9', borderRadius: 8, padding: '8px 12px', background: '#f8fafc', display: 'flex', alignItems: 'center', justifyContent: 'space-between', cursor: 'pointer', fontSize: 12.5, color: '#1a2332', fontWeight: f.action ? 700 : 500 }}
+                          style={{ border: '1px solid #d5dee9', borderRadius: 8, padding: '8px 12px', background: '#f8fafc', display: 'flex', alignItems: 'center', justifyContent: 'space-between', cursor: 'pointer', fontSize: 12.5, color: '#0d1b2e', fontWeight: f.action ? 700 : 500 }}
                         >
                           <span style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{f.val}</span>{f.icon}
                         </div>
@@ -1276,7 +1378,7 @@ export default function App() {
                               {/* Poster phim */}
                               <div style={{
                                 position: 'relative',
-                                background: m.poster ? `url("${m.poster}") center/cover no-repeat` : 'linear-gradient(160deg,#1e293b 0%,#0f172a 100%)',
+                                background: m.poster ? `url("${m.poster}") center/cover no-repeat` : 'linear-gradient(160deg,#0d1b2e 0%,#0d1b2e 100%)',
                                 height: 210,
                                 display: 'flex',
                                 alignItems: 'center',
@@ -1323,7 +1425,7 @@ export default function App() {
                                     position: 'absolute',
                                     bottom: 8,
                                     left: 8,
-                                    background: 'rgba(13, 27, 46, 0.88)',
+                                    background: 'rgba(13,27,46,0.88)',
                                     color: '#f4c04a',
                                     fontSize: 9,
                                     fontWeight: 700,
@@ -1343,7 +1445,7 @@ export default function App() {
                                   style={{
                                     fontSize: 12.5,
                                     fontWeight: 700,
-                                    color: '#0f172a',
+                                    color: '#0d1b2e',
                                     lineHeight: 1.35,
                                     minHeight: 34,
                                     overflow: 'hidden',
@@ -1380,7 +1482,7 @@ export default function App() {
                                   </div>
                                   <div style={{ display: 'flex', flexWrap: 'wrap', gap: 4 }}>
                                     {showtimesList.filter((showtime: any) => showtime.movie_id === m.id).map((showtime: any) => (
-                                      <span key={showtime.id} style={{ background: '#fff8e8', border: '1px solid #f4c04a', color: '#9a6700', borderRadius: 5, padding: '3px 5px', fontSize: 10, fontWeight: 800 }}>
+                                      <span key={showtime.id} style={{ background: '#fff8e8', border: '1px solid #f4c04a', color: '#f4c04a', borderRadius: 5, padding: '3px 5px', fontSize: 10, fontWeight: 800 }}>
                                         {new Date(showtime.starts_at.replace(' ', 'T')).toLocaleTimeString('vi-VN', { hour: '2-digit', minute: '2-digit' })}
                                       </span>
                                     ))}
@@ -1453,43 +1555,21 @@ export default function App() {
                   <div style={{ fontSize: 12, color: '#9ab5cc', marginBottom: 2 }}>Hạng <strong style={{ color: '#f4c04a' }}>GOLD</strong></div>
                   <div style={{ fontSize: 11.5, color: '#9ab5cc', marginBottom: 8 }}>1.250 / 2.000 điểm</div>
                   <div style={{ height: 7, background: 'rgba(255,255,255,.12)', borderRadius: 99, overflow: 'hidden', marginBottom: 12 }}>
-                    <div style={{ width: '62.5%', height: '100%', background: 'linear-gradient(90deg,#f4c04a,#e8a020)', borderRadius: 99 }} />
+                    <div style={{ width: '62.5%', height: '100%', background: 'linear-gradient(90deg,#f4c04a,#f4c04a)', borderRadius: 99 }} />
                   </div>
                   <button style={{ width: '100%', padding: '8px 0', background: 'rgba(255,255,255,.08)', border: '1px solid rgba(255,255,255,.15)', borderRadius: 8, color: '#f0f4f9', fontWeight: 700, fontSize: 12, cursor: 'pointer' }}>
                     {t('XEM CHI TIẾT', 'VIEW DETAILS')}
                   </button>
                 </div>
 
-                <div style={{ background: '#0d1b2e', borderRadius: 14, padding: '14px 16px', color: '#f0f4f9', flex: 1, display: 'flex', flexDirection: 'column' }}>
-                  <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 12 }}>
-                    <div style={{ width: 34, height: 34, borderRadius: '50%', background: '#1a2d45', border: '2px solid #f4c04a', display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 }}>
-                      <Film size={15} color="#f4c04a" />
-                    </div>
-                    <div>
-                      <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
-                        <span style={{ fontSize: 12.5, fontWeight: 800 }}>AURORA AI Chatbot</span>
-                        <span style={{ fontSize: 9, fontWeight: 700, background: '#2563eb', color: '#fff', borderRadius: 4, padding: '1px 5px' }}>BETA</span>
-                      </div>
-                      <div style={{ fontSize: 11, color: '#9ab5cc' }}>Xin chào! Tôi có thể hỗ trợ bạn:</div>
-                    </div>
+                <div style={{ position: 'relative', overflow: 'hidden', background: 'linear-gradient(145deg,#0d1b2e,#173a5d)', borderRadius: 14, padding: '15px 16px', color: '#f0f4f9', flex: 1, display: 'flex', flexDirection: 'column', justifyContent: 'space-between', minHeight: 170 }}>
+                  <div style={{ position: 'relative', zIndex: 1, maxWidth: '67%' }}>
+                    <div style={{ display: 'inline-flex', alignItems: 'center', gap: 5, color: '#f4c04a', fontSize: 9, fontWeight: 900, letterSpacing: '.08em' }}>✦ AURORA AI</div>
+                    <div style={{ marginTop: 7, fontSize: 15, fontWeight: 900, lineHeight: 1.3 }}>{t('Chọn phim hợp gu, nhanh hơn.', 'Find your perfect movie, faster.')}</div>
+                    <div style={{ marginTop: 6, color: '#a9bfd3', fontSize: 9.5, lineHeight: 1.5 }}>{t('Gợi ý từ phim và lịch chiếu đang mở bán.', 'Suggestions from live movies and showtimes.')}</div>
                   </div>
-                  <div style={{ display: 'flex', flexDirection: 'column', gap: 5, marginBottom: 12 }}>
-                    {CHATBOT_ITEMS[language].map((item, i) => (
-                      <div key={item} onClick={() => setChatMsg(item)} style={{ display: 'flex', alignItems: 'center', gap: 7, padding: '7px 9px', background: 'rgba(255,255,255,.05)', border: '1px solid rgba(255,255,255,.08)', borderRadius: 8, cursor: 'pointer', fontSize: 11.5, color: '#c8d8e8' }}>
-                        <div style={{ width: 15, height: 15, borderRadius: 4, border: '1px solid rgba(255,255,255,.15)', background: 'rgba(255,255,255,.05)', display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 }}>
-                          {i < 4 && <Check size={9} color="#f4c04a" strokeWidth={3} />}
-                        </div>
-                        {item}
-                      </div>
-                    ))}
-                  </div>
-                  <div style={{ display: 'flex', alignItems: 'center', gap: 7, background: '#1a2d45', border: '1px solid rgba(255,255,255,.12)', borderRadius: 9, padding: '8px 11px', marginBottom: 7 }}>
-                    <input value={chatMsg} onChange={e => setChatMsg(e.target.value)} placeholder={t('Nhập câu hỏi của bạn...', 'Type your question...')} style={{ flex: 1, background: 'none', border: 'none', outline: 'none', color: '#c8d8e8', fontSize: 12, fontFamily: 'inherit' }} />
-                    <button style={{ background: 'none', border: 'none', cursor: 'pointer', display: 'flex', alignItems: 'center' }}><Send size={14} color="#f4c04a" /></button>
-                  </div>
-                  <button style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 4, background: 'none', border: 'none', color: '#7a8fa6', fontSize: 11.5, cursor: 'pointer', padding: '2px 0' }}>
-                    <ExternalLink size={12} />Mở chat đầy đủ
-                  </button>
+                  <img src="/assets/aurora-assistant/aurora-advisor.png" alt="Aurora" style={{ position: 'absolute', right: -17, bottom: -21, width: 142, height: 142, objectFit: 'contain', filter: 'drop-shadow(0 9px 14px rgba(0,0,0,.24))' }} />
+                  <button type="button" onClick={() => setAssistantOpen(true)} style={{ position: 'relative', zIndex: 2, alignSelf: 'flex-start', padding: '8px 11px', border: 0, borderRadius: 8, background: '#f4c04a', color: '#0d1b2e', fontSize: 9.5, fontWeight: 900, cursor: 'pointer' }}>{t('HỎI AURORA NGAY', 'ASK AURORA')}</button>
                 </div>
               </div>
             </div>
@@ -1512,7 +1592,8 @@ export default function App() {
       )}
       <SiteFooter language={language} onNavigate={openFooterPage} />
       </div>
-      {pendingBooking && <BookingConfirmationModal
+      <AuroraAssistant apiUrl={API_URL} language={language} user={authUser} page={authMode ? `auth-${authMode}` : footerPage ? `footer-${footerPage}` : showAccount ? 'account' : detailMovie ? 'movie-detail' : currentPage} open={assistantOpen} onOpenChange={setAssistantOpen} onNavigate={handleAssistantNavigate} onMovieSelect={handleAssistantMovie} />
+      {pendingBooking && !authMode && <BookingConfirmationModal
         movie={pendingBooking.movie}
         showtime={pendingBooking.showtime}
         theater={pendingBooking.theater}
@@ -1528,7 +1609,7 @@ export default function App() {
 function SiteFooter({ language, onNavigate }: { language: Language; onNavigate: (page: 'faq' | 'booking-guide' | 'privacy' | 'terms') => void }) {
   const t = (vi: string, en: string) => language === 'en' ? en : vi;
   return (
-    <footer style={{ background: '#071526', color: '#e2e8f0', borderTop: '3px solid #f4c04a', padding: '16px 20px 10px' }}>
+    <footer style={{ background: '#0d1b2e', color: '#e2e8f0', borderTop: '3px solid #f4c04a', padding: '16px 20px 10px' }}>
       <div style={{ maxWidth: 1320, margin: '0 auto', display: 'grid', gridTemplateColumns: '1.45fr .9fr 1.1fr .9fr', gap: 20, alignItems: 'start' }}>
         <div>
           <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 6 }}>
@@ -1598,13 +1679,13 @@ function FooterInfoPage({ page, onBack }: { page: 'faq' | 'booking-guide' | 'pri
   return <main style={{ flex: 1, background: 'linear-gradient(180deg,#f3f6fa 0%,#eef0f4 100%)', padding: '34px 20px 58px' }}>
     <div style={{ maxWidth: 900, margin: '0 auto' }}>
       <button onClick={onBack} style={{ border: 0, background: 'transparent', color: '#64748b', cursor: 'pointer', padding: 0, fontSize: 13, fontWeight: 700, marginBottom: 20 }}>← Về trang chủ</button>
-      <div style={{ background: 'linear-gradient(135deg,#0d1b2e,#1d3a5c)', borderRadius: 20, padding: '34px 32px', color: '#fff', marginBottom: 18, boxShadow: '0 10px 30px rgba(13,27,46,.16)' }}>
+      <div style={{ background: 'linear-gradient(135deg,#0d1b2e,#0d1b2e)', borderRadius: 20, padding: '34px 32px', color: '#fff', marginBottom: 18, boxShadow: '0 10px 30px rgba(13,27,46,.16)' }}>
         <div style={{ color: '#f4c04a', fontSize: 11, fontWeight: 900, letterSpacing: 1.5, marginBottom: 8 }}>{content.eyebrow}</div>
         <h1 style={{ margin: 0, fontSize: 30 }}>{content.title}</h1>
         <p style={{ margin: '10px 0 0', color: '#c8d6e5', lineHeight: 1.6, fontSize: 14 }}>{content.intro}</p>
       </div>
       <div style={{ display: 'grid', gap: 12 }}>{content.sections.map(([title, text]) => <section key={title} style={{ background: '#fff', border: '1px solid #e2e8f0', borderRadius: 14, padding: '20px 22px' }}><h2 style={{ margin: '0 0 8px', color: '#0d1b2e', fontSize: 16 }}>{title}</h2><p style={{ margin: 0, color: '#64748b', lineHeight: 1.7, fontSize: 13.5 }}>{text}</p></section>)}</div>
-      <div style={{ marginTop: 20, padding: 18, borderRadius: 12, background: '#fff7dd', color: '#7c5a13', fontSize: 13 }}>Cần hỗ trợ thêm? Gọi hotline <strong>1900 1234</strong> hoặc email <strong>support@auroracinema.vn</strong>.</div>
+      <div style={{ marginTop: 20, padding: 18, borderRadius: 12, background: '#fff7dd', color: '#f4c04a', fontSize: 13 }}>Cần hỗ trợ thêm? Gọi hotline <strong>1900 1234</strong> hoặc email <strong>support@auroracinema.vn</strong>.</div>
     </div>
   </main>;
 }

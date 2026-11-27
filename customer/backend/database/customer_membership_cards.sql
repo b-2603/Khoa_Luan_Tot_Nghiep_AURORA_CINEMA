@@ -3,7 +3,7 @@
 CREATE TABLE IF NOT EXISTS customer_membership_cards (
   id BIGINT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
   user_id BIGINT UNSIGNED NOT NULL,
-  card_number VARCHAR(32) NOT NULL,
+  card_number BIGINT UNSIGNED NOT NULL,
   activated_at DATETIME NOT NULL,
   expires_at DATE NOT NULL,
   created_at DATETIME NOT NULL,

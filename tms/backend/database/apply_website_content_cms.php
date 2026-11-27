@@ -1,0 +1,14 @@
+<?php
+$databaseDir=dirname(__FILE__);$config=require dirname($databaseDir).'/config/app.php';$database=$config['db'];
+$db=new mysqli($database['host'],$database['username'],$database['password'],$database['database'],(int)$database['port']);
+if($db->connect_errno){fwrite(STDERR,"Khong the ket noi aurora_db: {$db->connect_error}\n");exit(1);}$db->set_charset('utf8');
+function cmsAddColumn($db,$table,$column,$definition){$result=$db->query("SHOW COLUMNS FROM `{$table}` LIKE '{$column}'");if($result&&$result->num_rows>0)return true;return(bool)$db->query("ALTER TABLE `{$table}` ADD COLUMN `{$column}` {$definition}");}
+$columns=array('placement_key'=>"VARCHAR(50) NOT NULL DEFAULT 'home_hero'",'eyebrow'=>'VARCHAR(140) NULL','body_text'=>'TEXT NULL','button_label'=>'VARCHAR(80) NULL','button_url'=>'VARCHAR(500) NULL','alt_text'=>'VARCHAR(255) NULL','sort_order'=>'INT NOT NULL DEFAULT 0','is_visible'=>'TINYINT(1) NOT NULL DEFAULT 1','starts_at'=>'DATETIME NULL','ends_at'=>'DATETIME NULL','published_at'=>'DATETIME NULL','published_by'=>'VARCHAR(120) NULL');
+foreach($columns as $column=>$definition)if(!cmsAddColumn($db,'marketing_contents',$column,$definition)){fwrite(STDERR,"Loi marketing_contents.{$column}: {$db->error}\n");exit(1);}
+$queries=array(
+"CREATE TABLE IF NOT EXISTS marketing_content_history (id BIGINT UNSIGNED AUTO_INCREMENT PRIMARY KEY,content_id BIGINT UNSIGNED NOT NULL,action_name VARCHAR(40) NOT NULL,snapshot_json TEXT NULL,actor_id BIGINT UNSIGNED NULL,actor_name VARCHAR(120) NULL,created_at DATETIME NOT NULL,KEY idx_content_history(content_id,created_at)) ENGINE=InnoDB DEFAULT CHARSET=utf8 COLLATE=utf8_unicode_ci",
+"CREATE TABLE IF NOT EXISTS marketing_content_assets (id BIGINT UNSIGNED AUTO_INCREMENT PRIMARY KEY,content_id BIGINT UNSIGNED NULL,file_name VARCHAR(180) NOT NULL,original_name VARCHAR(255) NOT NULL,mime_type VARCHAR(80) NOT NULL,file_size INT UNSIGNED NOT NULL,public_url VARCHAR(500) NOT NULL,uploaded_by BIGINT UNSIGNED NULL,created_at DATETIME NOT NULL,KEY idx_content_asset(content_id),KEY idx_content_asset_uploader(uploaded_by,created_at)) ENGINE=InnoDB DEFAULT CHARSET=utf8 COLLATE=utf8_unicode_ci"
+);foreach($queries as $query)if(!$db->query($query)){fwrite(STDERR,"Khong the tao bang CMS: {$db->error}\n");exit(1);}
+$db->query("UPDATE marketing_contents SET placement_key=CASE WHEN content_type='featured_movie' THEN 'home_featured' WHEN content_type='news' THEN 'home_announcement' ELSE 'home_hero' END WHERE placement_key IS NULL OR placement_key='' OR (placement_key='home_hero' AND placement<>'Hero trang chủ')");
+$db->query("UPDATE marketing_contents SET starts_at=publish_at WHERE starts_at IS NULL AND publish_at IS NOT NULL");$db->query("UPDATE marketing_contents SET sort_order=id WHERE sort_order=0");
+echo "Da nang cap CMS Customer Website trong aurora_db.\n";

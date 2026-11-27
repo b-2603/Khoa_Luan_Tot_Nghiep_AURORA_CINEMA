@@ -10,7 +10,7 @@ CREATE UNIQUE INDEX uq_pos_users_theater_employee ON pos_users (theater_id, empl
 
 ALTER TABLE pos_shifts ADD COLUMN expected_cash DECIMAL(12,2) NULL;
 ALTER TABLE pos_shifts ADD COLUMN cash_difference DECIMAL(12,2) NULL;
-ALTER TABLE pos_shifts ADD COLUMN sales_areas VARCHAR(255) NOT NULL DEFAULT 'box_office';
+ALTER TABLE pos_shifts ADD COLUMN sales_areas VARCHAR(255) NOT NULL DEFAULT 'box_ticket';
 ALTER TABLE pos_shifts ADD COLUMN close_note TEXT NULL;
 ALTER TABLE pos_shifts ADD COLUMN closed_by VARCHAR(120) NULL;
 ALTER TABLE pos_shifts ADD COLUMN work_schedule_id BIGINT UNSIGNED NULL;

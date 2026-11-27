@@ -1,5 +1,11 @@
 <?php
 
+// Keep mysqli error behavior compatible with PHP 5.x/7.x fallback branches
+// (e.g., `if ($stmt) ... else ...`) when running under XAMPP PHP 8.2+.
+if (function_exists('mysqli_report') && defined('MYSQLI_REPORT_OFF')) {
+    mysqli_report(MYSQLI_REPORT_OFF);
+}
+
 // Compatibility endpoint for WAMP installations that still run an old PHP version.
 // It reads the same aurora_db used by the Laravel API and does not contain seed data.
 
@@ -17,7 +23,13 @@ header('Content-Type: application/json; charset=utf-8');
 // về danh sách cũ sau khi Admin Tổng vừa thêm hoặc sửa phim.
 header('Cache-Control: no-store, no-cache, must-revalidate, max-age=0');
 header('Pragma: no-cache');
-header('Access-Control-Allow-Origin: ' . (isset($_SERVER['HTTP_ORIGIN']) && in_array($_SERVER['HTTP_ORIGIN'], array('http://localhost:3000', 'http://localhost:5173', 'http://127.0.0.1:5173'), true) ? $_SERVER['HTTP_ORIGIN'] : 'http://localhost:3000'));
+$requestOrigin = isset($_SERVER['HTTP_ORIGIN']) ? trim((string)$_SERVER['HTTP_ORIGIN']) : '';
+$allowedOrigins = array('http://localhost:3000', 'http://localhost:5173', 'http://127.0.0.1:5173');
+$serverHost = isset($_SERVER['HTTP_HOST']) ? strtolower(preg_replace('/:\d+$/', '', (string)$_SERVER['HTTP_HOST'])) : '';
+$originHost = $requestOrigin !== '' ? strtolower((string)parse_url($requestOrigin, PHP_URL_HOST)) : '';
+$corsOrigin = in_array($requestOrigin, $allowedOrigins, true) || ($originHost !== '' && $serverHost !== '' && $originHost === $serverHost)
+    ? $requestOrigin : 'http://localhost:3000';
+header('Access-Control-Allow-Origin: ' . $corsOrigin);
 header('Access-Control-Allow-Credentials: true');
 header('Access-Control-Allow-Headers: Content-Type');
 header('Access-Control-Allow-Methods: GET, POST, OPTIONS');
@@ -58,6 +70,29 @@ function aurora_require_user() {
     return $id;
 }
 
+// Customer booking endpoints must not trust the session id alone. The account
+// is checked against aurora_db on every protected request so deleted, locked or
+// internal employee accounts cannot read seat maps or reserve customer seats.
+function aurora_require_customer($db, $message) {
+    $id = aurora_user_id();
+    if (!$id) aurora_response(array('message' => $message), 401);
+
+    $stmt = $db->prepare("SELECT id FROM users WHERE id=? AND role='customer' AND status='active' LIMIT 1");
+    if (!$stmt) aurora_response(array('message' => 'Không thể xác minh tài khoản khách hàng.'), 500);
+    $stmt->bind_param('i', $id);
+    $stmt->execute();
+    $customerId = null;
+    $stmt->bind_result($customerId);
+    $valid = $stmt->fetch();
+    $stmt->close();
+
+    if (!$valid) {
+        unset($_SESSION['aurora_user_id']);
+        aurora_response(array('message' => $message), 401);
+    }
+    return (int)$customerId;
+}
+
 function aurora_valid_date($value) {
     if (!is_string($value) || !preg_match('/^\\d{4}-\\d{2}-\\d{2}$/', $value)) return false;
     $parts = explode('-', $value);
@@ -90,6 +125,12 @@ function aurora_schedule_dates() {
 function aurora_vietnam_now() {
     $now = new DateTime('now', new DateTimeZone('Asia/Ho_Chi_Minh'));
     return $now->format('Y-m-d H:i:s');
+}
+
+function aurora_sync_movie_statuses($db) {
+    $today = substr(aurora_vietnam_now(), 0, 10);
+    $todayEsc = $db->real_escape_string($today);
+    return $db->query("UPDATE movies SET status=CASE WHEN release_date>'{$todayEsc}' THEN 'coming_soon' ELSE 'now_showing' END WHERE UPPER(status) IN ('COMING_SOON','NOW_SHOWING') AND release_date IS NOT NULL AND status<>CASE WHEN release_date>'{$todayEsc}' THEN 'coming_soon' ELSE 'now_showing' END");
 }
 
 // Search interactions are retained in aurora_db for reporting without
@@ -186,15 +227,15 @@ function aurora_calculate_seat_price($seatType, $basePrice, $rules) {
 function aurora_public_seat_pricing($basePrice, $rules) {
     return array(
         'STANDARD'=>aurora_calculate_seat_price('STANDARD', $basePrice, $rules),
-        'VIP'=>aurora_calculate_seat_price('VIP', $basePrice, $rules),
+        'VIP'=>(float)$basePrice,
         'COUPLE'=>aurora_calculate_seat_price('COUPLE', $basePrice, $rules)
     );
 }
 
-// Resolve the sell price from Aurora DB's audited ticket-price matrix. A
+// Resolve the final sell price from Aurora DB's audited ticket-price matrix. A
 // showtime-specific snapshot wins so a later policy edit cannot rewrite the
-// price of a showtime that TMS already published. Legacy/seed showtimes use
-// the active matrix row for their date and start time instead.
+// price of a showtime that TMS already published. TMS prices are final: seat
+// presentation must not add a second VIP surcharge on top of this snapshot.
 function aurora_showtime_seat_pricing($db, $showtimeId, $startsAt, $fallbackBase, $rules) {
     $ticketPrices = array();
     $showtimeId = (int)$showtimeId;
@@ -231,7 +272,7 @@ function aurora_showtime_seat_pricing($db, $showtimeId, $startsAt, $fallbackBase
     $standard = isset($ticketPrices['TICKET_REGULAR']) ? $ticketPrices['TICKET_REGULAR'] : (float)$fallbackBase;
     return array(
         'STANDARD'=>$standard,
-        'VIP'=>aurora_calculate_seat_price('VIP', $standard, $rules),
+        'VIP'=>$standard,
         'COUPLE'=>isset($ticketPrices['TICKET_COUPLE']) ? $ticketPrices['TICKET_COUPLE'] : aurora_calculate_seat_price('COUPLE', $standard, $rules)
     );
 }
@@ -357,6 +398,161 @@ function aurora_db() {
     return $db;
 }
 
+// Administrative units used by the customer profile are database-backed.
+// Importing is idempotent and only happens when the tables are empty.
+function aurora_ensure_administrative_catalog($db) {
+    $provinceTable = $db->query("CREATE TABLE IF NOT EXISTS administrative_provinces (
+        code CHAR(2) NOT NULL PRIMARY KEY,
+        name VARCHAR(100) NOT NULL,
+        full_name VARCHAR(150) NOT NULL,
+        code_name VARCHAR(100) NOT NULL,
+        dataset_version VARCHAR(30) NOT NULL,
+        sort_order SMALLINT UNSIGNED NOT NULL DEFAULT 0,
+        is_active TINYINT(1) NOT NULL DEFAULT 1,
+        created_at TIMESTAMP NULL DEFAULT CURRENT_TIMESTAMP,
+        updated_at DATETIME NULL,
+        UNIQUE KEY uq_administrative_province_name (name),
+        KEY idx_administrative_province_active (is_active, sort_order)
+    ) ENGINE=InnoDB DEFAULT CHARSET=utf8");
+    if (!$provinceTable) return false;
+
+    $districtTable = $db->query("CREATE TABLE IF NOT EXISTS administrative_districts (
+        code CHAR(3) NOT NULL PRIMARY KEY,
+        province_code CHAR(2) NOT NULL,
+        name VARCHAR(120) NOT NULL,
+        full_name VARCHAR(160) NOT NULL,
+        code_name VARCHAR(120) NOT NULL,
+        dataset_version VARCHAR(30) NOT NULL,
+        sort_order SMALLINT UNSIGNED NOT NULL DEFAULT 0,
+        is_active TINYINT(1) NOT NULL DEFAULT 1,
+        created_at TIMESTAMP NULL DEFAULT CURRENT_TIMESTAMP,
+        updated_at DATETIME NULL,
+        UNIQUE KEY uq_administrative_district_name (province_code, full_name),
+        KEY idx_administrative_district_province (province_code, is_active, sort_order),
+        CONSTRAINT fk_administrative_district_province FOREIGN KEY (province_code)
+            REFERENCES administrative_provinces(code) ON UPDATE CASCADE ON DELETE RESTRICT
+    ) ENGINE=InnoDB DEFAULT CHARSET=utf8");
+    if (!$districtTable) return false;
+
+    $countResult = $db->query('SELECT (SELECT COUNT(*) FROM administrative_provinces) AS province_total, (SELECT COUNT(*) FROM administrative_districts) AS district_total');
+    $countRow = $countResult ? $countResult->fetch_assoc() : false;
+    if ($countRow && (int)$countRow['province_total'] >= 63 && (int)$countRow['district_total'] >= 696) return true;
+
+    $catalogPath = dirname(dirname(__FILE__)).DIRECTORY_SEPARATOR.'database'.DIRECTORY_SEPARATOR.'vietnam_provinces_districts_v2.4.1.json';
+    if (!is_file($catalogPath)) return false;
+    $catalog = json_decode(file_get_contents($catalogPath), true);
+    if (!is_array($catalog) || count($catalog) < 63) return false;
+
+    $provinceSql = "INSERT INTO administrative_provinces
+        (code,name,full_name,code_name,dataset_version,sort_order,is_active,updated_at)
+        VALUES (?,?,?,?,?,?,1,NOW())
+        ON DUPLICATE KEY UPDATE name=VALUES(name),full_name=VALUES(full_name),code_name=VALUES(code_name),
+            dataset_version=VALUES(dataset_version),sort_order=VALUES(sort_order),is_active=1,updated_at=NOW()";
+    $districtSql = "INSERT INTO administrative_districts
+        (code,province_code,name,full_name,code_name,dataset_version,sort_order,is_active,updated_at)
+        VALUES (?,?,?,?,?,?,?,1,NOW())
+        ON DUPLICATE KEY UPDATE province_code=VALUES(province_code),name=VALUES(name),full_name=VALUES(full_name),
+            code_name=VALUES(code_name),dataset_version=VALUES(dataset_version),sort_order=VALUES(sort_order),is_active=1,updated_at=NOW()";
+    $provinceStmt = $db->prepare($provinceSql);
+    $districtStmt = $db->prepare($districtSql);
+    if (!$provinceStmt || !$districtStmt) return false;
+
+    $datasetVersion = 'VN-63-v2.4.1';
+    $provinceCode = $provinceName = $provinceFullName = $provinceCodeName = '';
+    $provinceOrder = 0;
+    $districtCode = $districtProvinceCode = $districtName = $districtFullName = $districtCodeName = '';
+    $districtOrder = 0;
+    $provinceStmt->bind_param('sssssi', $provinceCode, $provinceName, $provinceFullName, $provinceCodeName, $datasetVersion, $provinceOrder);
+    $districtStmt->bind_param('ssssssi', $districtCode, $districtProvinceCode, $districtName, $districtFullName, $districtCodeName, $datasetVersion, $districtOrder);
+
+    $db->autocommit(false);
+    foreach ($catalog as $province) {
+        $provinceCode = isset($province['code']) ? (string)$province['code'] : '';
+        $provinceName = isset($province['name']) ? (string)$province['name'] : '';
+        $provinceFullName = isset($province['fullName']) ? (string)$province['fullName'] : $provinceName;
+        $provinceCodeName = isset($province['codeName']) ? (string)$province['codeName'] : '';
+        $provinceOrder = isset($province['sortOrder']) ? (int)$province['sortOrder'] : 0;
+        if ($provinceCode === '' || $provinceName === '' || !$provinceStmt->execute()) {
+            $db->rollback(); $db->autocommit(true); $provinceStmt->close(); $districtStmt->close(); return false;
+        }
+        $districtProvinceCode = $provinceCode;
+        $districts = isset($province['districts']) && is_array($province['districts']) ? $province['districts'] : array();
+        foreach ($districts as $district) {
+            $districtCode = isset($district['code']) ? (string)$district['code'] : '';
+            $districtName = isset($district['name']) ? (string)$district['name'] : '';
+            $districtFullName = isset($district['fullName']) ? (string)$district['fullName'] : $districtName;
+            $districtCodeName = isset($district['codeName']) ? (string)$district['codeName'] : '';
+            $districtOrder = isset($district['sortOrder']) ? (int)$district['sortOrder'] : 0;
+            if ($districtCode === '' || $districtName === '' || !$districtStmt->execute()) {
+                $db->rollback(); $db->autocommit(true); $provinceStmt->close(); $districtStmt->close(); return false;
+            }
+        }
+    }
+    $provinceStmt->close();
+    $districtStmt->close();
+    $db->commit();
+    $db->autocommit(true);
+    return true;
+}
+
+function aurora_canonical_province($db, $city) {
+    $candidate = trim((string)$city);
+    if ($candidate === 'TP. Hồ Chí Minh') $candidate = 'Hồ Chí Minh';
+    if ($candidate === 'Thừa Thiên Huế') $candidate = 'Huế';
+    $stmt = $db->prepare('SELECT code,name FROM administrative_provinces WHERE is_active=1 AND (name=? OR full_name=?) LIMIT 1');
+    if (!$stmt) return false;
+    $stmt->bind_param('ss', $candidate, $candidate);
+    $stmt->execute();
+    $code = $name = null;
+    $stmt->bind_result($code, $name);
+    $found = $stmt->fetch();
+    $stmt->close();
+    if ($found) return array('code'=>(string)$code, 'name'=>(string)$name);
+
+    // Gracefully recover values previously damaged by latin1 columns, such
+    // as "Ti?n Giang", without accepting arbitrary free text.
+    if (strpos($candidate, '?') !== false) {
+        if (strpos($candidate, 'TP. ') === 0) $candidate = substr($candidate, 4);
+        $pattern = str_replace('?', '_', $candidate);
+        $fallback = $db->prepare('SELECT code,name FROM administrative_provinces WHERE is_active=1 AND (name LIKE ? OR full_name LIKE ?) ORDER BY code LIMIT 2');
+        if (!$fallback) return false;
+        $fallback->bind_param('ss', $pattern, $pattern);
+        $fallback->execute();
+        $fallbackCode = $fallbackName = null; $matches = array();
+        $fallback->bind_result($fallbackCode, $fallbackName);
+        while ($fallback->fetch()) $matches[] = array('code'=>(string)$fallbackCode, 'name'=>(string)$fallbackName);
+        $fallback->close();
+        if (count($matches) === 1) return $matches[0];
+    }
+    return false;
+}
+
+function aurora_canonical_district($db, $provinceCode, $district) {
+    $candidate = trim((string)$district);
+    $stmt = $db->prepare('SELECT full_name FROM administrative_districts WHERE province_code=? AND is_active=1 AND (full_name=? OR name=?) LIMIT 1');
+    if (!$stmt) return false;
+    $stmt->bind_param('sss', $provinceCode, $candidate, $candidate);
+    $stmt->execute();
+    $fullName = null;
+    $stmt->bind_result($fullName);
+    $found = $stmt->fetch();
+    $stmt->close();
+    if ($found) return (string)$fullName;
+    if (strpos($candidate, '?') !== false) {
+        $pattern = str_replace('?', '_', $candidate);
+        $fallback = $db->prepare('SELECT full_name FROM administrative_districts WHERE province_code=? AND is_active=1 AND (full_name LIKE ? OR name LIKE ?) ORDER BY code LIMIT 2');
+        if (!$fallback) return false;
+        $fallback->bind_param('sss', $provinceCode, $pattern, $pattern);
+        $fallback->execute();
+        $fallbackName = null; $matches = array();
+        $fallback->bind_result($fallbackName);
+        while ($fallback->fetch()) $matches[] = (string)$fallbackName;
+        $fallback->close();
+        if (count($matches) === 1) return $matches[0];
+    }
+    return false;
+}
+
 function aurora_ensure_sales_orders($db) {
     return $db->query("CREATE TABLE IF NOT EXISTS orders (
         id BIGINT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
@@ -373,6 +569,9 @@ function aurora_ensure_sales_orders($db) {
         amount_received DECIMAL(12,2) NOT NULL DEFAULT 0,
         change_amount DECIMAL(12,2) NOT NULL DEFAULT 0,
         status VARCHAR(20) NOT NULL DEFAULT 'PAID',
+        loyalty_points_redeemed INT UNSIGNED NOT NULL DEFAULT 0,
+        loyalty_discount_amount DECIMAL(12,2) NOT NULL DEFAULT 0,
+        loyalty_points_earned INT UNSIGNED NOT NULL DEFAULT 0,
         created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
         updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
         INDEX idx_orders_channel (channel),
@@ -381,9 +580,67 @@ function aurora_ensure_sales_orders($db) {
     ) ENGINE=InnoDB DEFAULT CHARSET=utf8");
 }
 
+function aurora_ensure_product_channel_prices($db) {
+    static $ready = false;
+    if ($ready) return true;
+    $columns = array('customer_price', 'pos_price', 'member_price');
+    foreach ($columns as $column) {
+        $check = $db->query("SHOW COLUMNS FROM products LIKE '{$column}'");
+        if (!$check || $check->num_rows < 1) {
+            if (!$db->query("ALTER TABLE products ADD COLUMN `{$column}` DECIMAL(12,2) NOT NULL DEFAULT 0")) return false;
+        }
+    }
+    if (!$db->query("UPDATE products SET customer_price=price+10000,pos_price=price+10000,member_price=price WHERE customer_price<=0 OR pos_price<=0 OR member_price<=0")) return false;
+    $ready = true;
+    return true;
+}
+
+/** Persist one independently scannable cinema ticket for every booked seat. */
+function aurora_ensure_booking_tickets($db) {
+    return $db->query("CREATE TABLE IF NOT EXISTS customer_booking_tickets (
+        id BIGINT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
+        booking_id BIGINT UNSIGNED NOT NULL,
+        booking_seat_id BIGINT UNSIGNED NOT NULL,
+        ticket_code VARCHAR(32) NOT NULL,
+        qr_token VARCHAR(64) NOT NULL,
+        status ENUM('VALID','USED','CANCELLED') NOT NULL DEFAULT 'VALID',
+        issued_at DATETIME NOT NULL,
+        checked_in_at DATETIME NULL,
+        created_at TIMESTAMP NULL DEFAULT CURRENT_TIMESTAMP,
+        UNIQUE KEY uq_customer_ticket_code (ticket_code),
+        UNIQUE KEY uq_customer_ticket_token (qr_token),
+        UNIQUE KEY uq_customer_ticket_seat (booking_seat_id),
+        KEY idx_customer_ticket_booking (booking_id),
+        CONSTRAINT fk_customer_ticket_booking FOREIGN KEY (booking_id) REFERENCES bookings(id) ON DELETE CASCADE,
+        CONSTRAINT fk_customer_ticket_booking_seat FOREIGN KEY (booking_seat_id) REFERENCES booking_seats(id) ON DELETE CASCADE
+    ) ENGINE=InnoDB DEFAULT CHARSET=utf8") !== false;
+}
+
+function aurora_issue_booking_tickets($db, $bookingId, $bookingCode, $bookingStatus) {
+    if (!aurora_ensure_booking_tickets($db)) return false;
+    $bookingId = (int)$bookingId;
+    if ($bookingStatus !== 'PAID') {
+        if (in_array($bookingStatus, array('CANCELLED','EXPIRED'), true)) $db->query("UPDATE customer_booking_tickets SET status='CANCELLED' WHERE booking_id={$bookingId} AND status='VALID'");
+        return true;
+    }
+    $rows = $db->query("SELECT bs.id FROM booking_seats bs WHERE bs.booking_id={$bookingId} ORDER BY bs.id");
+    if (!$rows) return false;
+    while ($seat = $rows->fetch_assoc()) {
+        $bookingSeatId = (int)$seat['id'];
+        $ticketCode = 'AUR-' . strtoupper(substr(sha1($bookingCode.'-'.$bookingSeatId), 0, 12));
+        $token = strtoupper(sha1(uniqid((string)mt_rand(), true).'-'.$bookingCode.'-'.$bookingSeatId));
+        $codeEsc = $db->real_escape_string($ticketCode); $tokenEsc = $db->real_escape_string($token);
+        if (!$db->query("INSERT IGNORE INTO customer_booking_tickets (booking_id,booking_seat_id,ticket_code,qr_token,status,issued_at) VALUES ({$bookingId},{$bookingSeatId},'{$codeEsc}','{$tokenEsc}','VALID',NOW())")) return false;
+    }
+    return true;
+}
+
 function aurora_concession_catalog($db) {
     $catalog = array();
-    $result = $db->query("SELECT sku, name, price, category FROM products WHERE status='active' AND stock_quantity > 0 ORDER BY name");
+    if (!aurora_ensure_product_channel_prices($db)) return $catalog;
+    // Customer chỉ được mua combo. Giá luôn lấy từ cột dành riêng cho
+    // website, không tin giá do trình duyệt gửi lên.
+    $result = $db->query("SELECT sku,name,COALESCE(NULLIF(customer_price,0),price+10000) price,category FROM products WHERE status='active' AND stock_quantity>0 AND LOWER(TRIM(category))='combo' ORDER BY name");
     if ($result) while ($row = $result->fetch_assoc()) {
         $catalog[$row['sku']] = array('name' => $row['name'], 'price' => (float)$row['price'], 'description' => $row['category']);
     }
@@ -395,7 +652,7 @@ function aurora_ensure_vouchers($db) {
 }
 
 function aurora_ensure_online_payments($db) {
-    return $db->query("CREATE TABLE IF NOT EXISTS payments (
+    $legacyReady=$db->query("CREATE TABLE IF NOT EXISTS payments (
         id BIGINT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
         order_id BIGINT UNSIGNED NOT NULL,
         method VARCHAR(20) NOT NULL,
@@ -405,6 +662,325 @@ function aurora_ensure_online_payments($db) {
         INDEX idx_payments_order (order_id),
         UNIQUE KEY uq_payments_reference (reference_code)
     ) ENGINE=InnoDB DEFAULT CHARSET=utf8");
+    if(!$legacyReady)return false;
+    $transactionReady=$db->query("CREATE TABLE IF NOT EXISTS online_payment_transactions (
+        id BIGINT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
+        booking_id BIGINT UNSIGNED NOT NULL,
+        order_id BIGINT UNSIGNED NOT NULL,
+        user_id BIGINT UNSIGNED NOT NULL,
+        provider VARCHAR(20) NOT NULL DEFAULT 'VNPAY',
+        txn_ref VARCHAR(100) NOT NULL,
+        amount DECIMAL(12,2) NOT NULL,
+        status VARCHAR(20) NOT NULL DEFAULT 'PENDING',
+        provider_transaction_no VARCHAR(40) NULL,
+        bank_code VARCHAR(30) NULL,
+        card_type VARCHAR(30) NULL,
+        response_code VARCHAR(10) NULL,
+        transaction_status VARCHAR(10) NULL,
+        pay_date VARCHAR(20) NULL,
+        raw_response TEXT NULL,
+        expires_at DATETIME NOT NULL,
+        paid_at DATETIME NULL,
+        failed_at DATETIME NULL,
+        created_at DATETIME NOT NULL,
+        updated_at DATETIME NOT NULL,
+        UNIQUE KEY uq_online_payment_txn_ref(txn_ref),
+        KEY idx_online_payment_booking(booking_id),
+        KEY idx_online_payment_status(status,expires_at)
+    ) ENGINE=InnoDB DEFAULT CHARSET=utf8");
+    if(!$transactionReady)return false;
+    $extraColumns=array(
+        'tmn_code'=>"VARCHAR(30) NULL",
+        'request_ip'=>"VARCHAR(45) NULL",
+        'order_info'=>"VARCHAR(255) NULL",
+        'return_received_at'=>"DATETIME NULL",
+        'ipn_received_at'=>"DATETIME NULL",
+        'last_callback_at'=>"DATETIME NULL",
+        'callback_count'=>"INT UNSIGNED NOT NULL DEFAULT 0"
+    );
+    foreach($extraColumns as $column=>$definition){$check=$db->query("SHOW COLUMNS FROM online_payment_transactions LIKE '{$column}'");if(!$check||$check->num_rows<1){if(!$db->query("ALTER TABLE online_payment_transactions ADD COLUMN `{$column}` {$definition}"))return false;}}
+    if(!$db->query("CREATE TABLE IF NOT EXISTS online_payment_callback_logs (
+        id BIGINT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
+        transaction_id BIGINT UNSIGNED NULL,
+        txn_ref VARCHAR(100) NOT NULL,
+        callback_type VARCHAR(20) NOT NULL,
+        signature_valid TINYINT(1) NOT NULL DEFAULT 0,
+        response_code VARCHAR(10) NULL,
+        transaction_status VARCHAR(10) NULL,
+        source_ip VARCHAR(45) NULL,
+        payload TEXT NOT NULL,
+        processing_result VARCHAR(80) NULL,
+        received_at DATETIME NOT NULL,
+        KEY idx_vnpay_callback_txn(transaction_id),
+        KEY idx_vnpay_callback_ref(txn_ref,received_at)
+    ) ENGINE=InnoDB DEFAULT CHARSET=utf8"))return false;
+    return true;
+}
+
+function aurora_vnpay_config() {
+    $mode=strtolower(trim((string)aurora_env('VNPAY_MODE','sandbox')));if($mode!=='production')$mode='sandbox';
+    $scheme=(!empty($_SERVER['HTTPS'])&&$_SERVER['HTTPS']!=='off')?'https':'http';$host=isset($_SERVER['HTTP_HOST'])?$_SERVER['HTTP_HOST']:'localhost';$script=isset($_SERVER['SCRIPT_NAME'])?$_SERVER['SCRIPT_NAME']:'/AURORA%20CINEMA/customer/backend/public/api.php';$defaultIpn=$scheme.'://'.$host.$script.'?action=vnpay_ipn';$defaultReturn=$scheme.'://'.$host.$script.'?action=vnpay_return';
+    return array(
+        'mode'=>$mode,
+        'tmn_code'=>trim((string)aurora_env('VNPAY_TMN_CODE','')),
+        'hash_secret'=>trim((string)aurora_env('VNPAY_HASH_SECRET','')),
+        'payment_url'=>trim((string)aurora_env('VNPAY_PAYMENT_URL',$mode==='production'?'https://pay.vnpay.vn/vpcpay.html':'https://sandbox.vnpayment.vn/paymentv2/vpcpay.html')),
+        'return_url'=>trim((string)aurora_env('VNPAY_RETURN_URL',$defaultReturn)),
+        'ipn_url'=>trim((string)aurora_env('VNPAY_IPN_URL',$defaultIpn)),
+        'confirm_on_return'=>strtolower(trim((string)aurora_env('VNPAY_CONFIRM_ON_RETURN',$mode==='sandbox'?'true':'false')))==='true',
+        'frontend_url'=>rtrim((string)aurora_env('CUSTOMER_FRONTEND_URL','http://localhost:3000'),'/')
+    );
+}
+
+function aurora_vietqr_config() {
+    $bankId=strtoupper(trim((string)aurora_env('VIETQR_BANK_ID','MB')));
+    $accountNo=trim((string)aurora_env('VIETQR_ACCOUNT_NO','0328754062'));
+    $accountName=trim((string)aurora_env('VIETQR_ACCOUNT_NAME','AURORA CINEMA'));
+    $template=trim((string)aurora_env('VIETQR_TEMPLATE','compact2'));
+    $sepayToken=trim((string)aurora_env('SEPAY_API_TOKEN',''));
+    $sepaySecret=trim((string)aurora_env('SEPAY_WEBHOOK_SECRET',''));
+    return array(
+        'bank_id'=>$bankId,
+        'account_no'=>$accountNo,
+        'account_name'=>$accountName,
+        'template'=>$template!==''?$template:'compact2',
+        'sepay_token'=>$sepayToken,
+        'sepay_secret'=>$sepaySecret,
+        'sepay_enabled'=>$sepayToken!==''||$sepaySecret!==''
+    );
+}
+
+function aurora_momo_config() {
+    $mode=strtolower(trim((string)aurora_env('MOMO_MODE','sepay_qr')));
+    if(!in_array($mode,array('production','sandbox','sepay_qr'),true))$mode='sepay_qr';
+    $scheme=(!empty($_SERVER['HTTPS'])&&$_SERVER['HTTPS']!=='off')?'https':'http';$host=isset($_SERVER['HTTP_HOST'])?$_SERVER['HTTP_HOST']:'localhost';$script=isset($_SERVER['SCRIPT_NAME'])?$_SERVER['SCRIPT_NAME']:'/AURORA%20CINEMA/customer/backend/public/api.php';
+    return array(
+        'mode'=>$mode,
+        'partner_code'=>trim((string)aurora_env('MOMO_PARTNER_CODE','')),
+        'access_key'=>trim((string)aurora_env('MOMO_ACCESS_KEY','')),
+        'secret_key'=>trim((string)aurora_env('MOMO_SECRET_KEY','')),
+        'request_type'=>trim((string)aurora_env('MOMO_REQUEST_TYPE',$mode==='production'?'captureWallet':'payWithATM')),
+        'endpoint'=>trim((string)aurora_env('MOMO_ENDPOINT',$mode==='production'?'https://payment.momo.vn/v2/gateway/api/create':'https://test-payment.momo.vn/v2/gateway/api/create')),
+        'return_url'=>trim((string)aurora_env('MOMO_RETURN_URL',$scheme.'://'.$host.$script.'?action=momo_return')),
+        'ipn_url'=>trim((string)aurora_env('MOMO_IPN_URL',$scheme.'://'.$host.$script.'?action=momo_ipn')),
+        'frontend_url'=>rtrim((string)aurora_env('CUSTOMER_FRONTEND_URL','http://localhost:3000'),'/')
+    );
+}
+
+function aurora_payment_simulation_enabled() {
+    $raw=strtolower(trim((string)aurora_env('PAYMENT_ALLOW_SANDBOX_SIMULATION','true')));
+    return $raw!=='false'&&$raw!=='0'&&$raw!=='off';
+}
+
+function aurora_vietqr_image_url($txnRef,$amount,$templateOverride=null) {
+    $cfg=aurora_vietqr_config();
+    $bank=rawurlencode($cfg['bank_id']);
+    $acc=rawurlencode($cfg['account_no']);
+    $tpl=rawurlencode($templateOverride!==null&&$templateOverride!==''?$templateOverride:$cfg['template']);
+    $qs=http_build_query(array('amount'=>(int)round($amount),'addInfo'=>$txnRef,'accountName'=>$cfg['account_name']));
+    return "https://img.vietqr.io/image/{$bank}-{$acc}-{$tpl}.png?{$qs}";
+}
+
+function aurora_momo_create_payment($txnRef,$amount,$orderInfo) {
+    $cfg=aurora_momo_config();
+    if($cfg['partner_code']===''||$cfg['access_key']===''||$cfg['secret_key']==='')return false;
+    $requestId=$txnRef.'_'.time();
+    $requestType=$cfg['request_type']!==''?$cfg['request_type']:'payWithATM';
+    $extraData='';
+    $amountStr=(string)(int)round($amount);
+    $rawHash="accessKey={$cfg['access_key']}&amount={$amountStr}&extraData={$extraData}&ipnUrl={$cfg['ipn_url']}&orderId={$txnRef}&orderInfo={$orderInfo}&partnerCode={$cfg['partner_code']}&redirectUrl={$cfg['return_url']}&requestId={$requestId}&requestType={$requestType}";
+    $signature=hash_hmac('sha256',$rawHash,$cfg['secret_key']);
+    $payload=array(
+        'partnerCode'=>$cfg['partner_code'],'partnerName'=>'Aurora Cinema','storeId'=>'AuroraCinema',
+        'requestId'=>$requestId,'amount'=>(int)round($amount),'orderId'=>$txnRef,'orderInfo'=>$orderInfo,
+        'redirectUrl'=>$cfg['return_url'],'ipnUrl'=>$cfg['ipn_url'],'lang'=>'vi','extraData'=>$extraData,
+        'requestType'=>$requestType,'signature'=>$signature
+    );
+    if(!function_exists('curl_init'))return false;
+    $ch=curl_init($cfg['endpoint']);
+    curl_setopt($ch,CURLOPT_POST,true);
+    curl_setopt($ch,CURLOPT_POSTFIELDS,json_encode($payload));
+    curl_setopt($ch,CURLOPT_HTTPHEADER,array('Content-Type: application/json'));
+    curl_setopt($ch,CURLOPT_RETURNTRANSFER,true);
+    curl_setopt($ch,CURLOPT_TIMEOUT,12);
+    $res=curl_exec($ch);
+    curl_close($ch);
+    if(!$res)return false;
+    $decoded=json_decode($res,true);
+    if(!is_array($decoded)||empty($decoded['payUrl']))return false;
+    return array('payUrl'=>$decoded['payUrl'],'qrCodeUrl'=>isset($decoded['qrCodeUrl'])?$decoded['qrCodeUrl']:'');
+}
+
+function aurora_finalize_online_payment($db,$txnRef,$paidAmount,$meta=array()) {
+    $safe=$db->real_escape_string($txnRef);
+    $db->autocommit(false);
+    try {
+        $result=$db->query("SELECT pt.id,pt.booking_id,pt.order_id,pt.user_id,pt.provider,pt.amount,pt.status,b.booking_code FROM online_payment_transactions pt INNER JOIN bookings b ON b.id=pt.booking_id WHERE pt.txn_ref='{$safe}' LIMIT 1 FOR UPDATE");
+        if(!$result||!($row=$result->fetch_assoc()))throw new Exception('ORDER_NOT_FOUND');
+        if($paidAmount>0&&abs((float)$row['amount']-(float)$paidAmount)>1)throw new Exception('INVALID_AMOUNT');
+        $bookingId=(int)$row['booking_id'];
+        if($row['status']==='PAID'){
+            aurora_issue_booking_tickets($db,$bookingId,$row['booking_code'],'PAID');
+            $db->commit();$db->autocommit(true);
+            return array('ok'=>true,'already'=>true,'status'=>'PAID','booking_id'=>$bookingId);
+        }
+        if($row['status']!=='PENDING'){
+            $db->commit();$db->autocommit(true);
+            return array('ok'=>false,'already'=>true,'status'=>$row['status'],'booking_id'=>$bookingId);
+        }
+        $id=(int)$row['id'];$orderId=(int)$row['order_id'];$userId=(int)$row['user_id'];
+        $now=$db->real_escape_string(aurora_vietnam_now());
+        $transactionNo=$db->real_escape_string(isset($meta['provider_transaction_no'])?(string)$meta['provider_transaction_no']:'AUTO'.date('ymdHis'));
+        $bank=$db->real_escape_string(isset($meta['bank_code'])?(string)$meta['bank_code']:$row['provider']);
+        $card=$db->real_escape_string(isset($meta['card_type'])?(string)$meta['card_type']:'AUTO');
+        $responseEsc=$db->real_escape_string(isset($meta['response_code'])?(string)$meta['response_code']:'00');
+        $statusEsc=$db->real_escape_string(isset($meta['transaction_status'])?(string)$meta['transaction_status']:'00');
+        $payDate=$db->real_escape_string(isset($meta['pay_date'])?(string)$meta['pay_date']:date('YmdHis'));
+        $raw=$db->real_escape_string(json_encode($meta));
+        if(!$db->query("UPDATE online_payment_transactions SET status='PAID',provider_transaction_no='{$transactionNo}',bank_code='{$bank}',card_type='{$card}',response_code='{$responseEsc}',transaction_status='{$statusEsc}',pay_date='{$payDate}',raw_response='{$raw}',paid_at='{$now}',ipn_received_at=COALESCE(ipn_received_at,'{$now}'),last_callback_at='{$now}',callback_count=callback_count+1,updated_at='{$now}' WHERE id={$id} AND status='PENDING'")||$db->affected_rows!==1)throw new Exception('UPDATE_FAILED');
+        if(!$db->query("UPDATE bookings SET status='PAID',updated_at='{$now}' WHERE id={$bookingId}"))throw new Exception('UPDATE_FAILED');
+        if(!$db->query("UPDATE orders SET status='PAID',amount_received=total_amount,updated_at='{$now}' WHERE id={$orderId}"))throw new Exception('UPDATE_FAILED');
+        $providerUpper=strtoupper((string)$row['provider']);
+        $method=$providerUpper==='VIETQR'?'VIETQR':($providerUpper==='MOMO'?'MOMO':'QR_VNPAY');
+        $finalAmount=(float)$row['amount'];
+        $stmt=$db->prepare('INSERT IGNORE INTO payments(order_id,method,amount,reference_code,created_at) VALUES(?,?,?,?,?)');
+        if($stmt){$stmt->bind_param('isdss',$orderId,$method,$finalAmount,$txnRef,$now);$stmt->execute();$stmt->close();}
+        // Tự động phát hành vé điện tử (QR check-in) ngay lập tức khi nhận được tiền
+        if(!aurora_issue_booking_tickets($db,$bookingId,$row['booking_code'],'PAID'))throw new Exception('TICKET_ISSUE_FAILED');
+        aurora_award_booking_points($db,$userId,$bookingId,$finalAmount);
+        $db->commit();$db->autocommit(true);
+        if(file_exists(__DIR__.'/aurora_mailer.php')){require_once __DIR__.'/aurora_mailer.php';@aurora_send_booking_eticket_email($db,$bookingId);}
+        return array('ok'=>true,'already'=>false,'status'=>'PAID','booking_id'=>$bookingId);
+    }catch(Exception $exception){
+        $db->rollback();$db->autocommit(true);throw $exception;
+    }
+}
+
+function aurora_sepay_poll_match($db,$txnRef,$expectedAmount) {
+    $cfg=aurora_vietqr_config();
+    if($cfg['sepay_token']===''||!function_exists('curl_init'))return false;
+    $url='https://my.sepay.vn/userapi/transactions/list?account_number='.rawurlencode($cfg['account_no']).'&limit=20';
+    $ch=curl_init($url);
+    curl_setopt($ch,CURLOPT_HTTPHEADER,array('Authorization: Bearer '.$cfg['sepay_token'],'Accept: application/json'));
+    curl_setopt($ch,CURLOPT_RETURNTRANSFER,true);
+    curl_setopt($ch,CURLOPT_TIMEOUT,4);
+    $res=curl_exec($ch);
+    $httpCode=(int)curl_getinfo($ch,CURLINFO_HTTP_CODE);
+    curl_close($ch);
+    if(!$res||$httpCode<200||$httpCode>=300)return false;
+    $decoded=json_decode($res,true);
+    $items=isset($decoded['transactions'])&&is_array($decoded['transactions'])?$decoded['transactions']:array();
+    $needle=strtoupper($txnRef);
+    foreach($items as $tx){
+        $amountIn=isset($tx['amount_in'])?(float)$tx['amount_in']:0;
+        $content=strtoupper((string)(isset($tx['transaction_content'])?$tx['transaction_content']:''));
+        if($amountIn>=$expectedAmount-1&&strpos($content,$needle)!==false){
+            aurora_finalize_online_payment($db,$txnRef,$amountIn,array(
+                'source'=>'SEPAY_AUTO_POLL',
+                'provider_transaction_no'=>isset($tx['id'])?'SEPAY-'.$tx['id']:'SEPAY-'.date('ymdHis'),
+                'bank_code'=>isset($tx['bank_brand_name'])?$tx['bank_brand_name']:$cfg['bank_id'],
+                'card_type'=>'VIETQR',
+                'pay_date'=>isset($tx['transaction_date'])?$tx['transaction_date']:aurora_vietnam_now(),
+                'raw_tx'=>$tx
+            ));
+            return true;
+        }
+    }
+    return false;
+}
+
+function aurora_booking_tickets_list($db,$bookingId) {
+    $bookingId=(int)$bookingId;
+    $ticketsBySeat=array();
+    $ticketResult=$db->query("SELECT booking_seat_id,ticket_code,qr_token,status,issued_at,checked_in_at FROM customer_booking_tickets WHERE booking_id={$bookingId} ORDER BY id");
+    while($ticketResult&&($ticket=$ticketResult->fetch_assoc()))$ticketsBySeat[(int)$ticket['booking_seat_id']]=$ticket;
+    $tickets=array();
+    $seatResult=$db->query("SELECT bs.id booking_seat_id,bs.price,se.seat_row,se.seat_number,se.seat_type FROM booking_seats bs INNER JOIN seats se ON se.id=bs.seat_id WHERE bs.booking_id={$bookingId} ORDER BY se.seat_row,se.seat_number");
+    while($seatResult&&($seat=$seatResult->fetch_assoc())){
+        $seatId=(int)$seat['booking_seat_id'];
+        if(isset($ticketsBySeat[$seatId])){
+            $ticket=$ticketsBySeat[$seatId];
+            $tickets[]=array(
+                'code'=>$ticket['ticket_code'],
+                'seat'=>$seat['seat_row'].$seat['seat_number'],
+                'seatType'=>$seat['seat_type'],
+                'price'=>(float)$seat['price'],
+                'status'=>$ticket['status'],
+                'issuedAt'=>$ticket['issued_at'],
+                'checkedInAt'=>$ticket['checked_in_at'],
+                'qrPayload'=>'AURORA|TICKET|'.$ticket['ticket_code'].'|'.$ticket['qr_token']
+            );
+        }
+    }
+    return $tickets;
+}
+
+function aurora_vnpay_client_ip() {
+    $ip=isset($_SERVER['REMOTE_ADDR'])?trim((string)$_SERVER['REMOTE_ADDR']):'127.0.0.1';
+    if($ip==='::1')$ip='127.0.0.1';
+    return substr($ip,0,45);
+}
+
+function aurora_vnpay_log_callback($db,$params,$type,$signatureValid,$processingResult) {
+    if(!aurora_ensure_online_payments($db))return;
+    $txnRef=isset($params['vnp_TxnRef'])?substr(trim((string)$params['vnp_TxnRef']),0,100):'';$safe=$db->real_escape_string($txnRef);$transactionId=0;$found=$db->query("SELECT id FROM online_payment_transactions WHERE txn_ref='{$safe}' LIMIT 1");if($found&&($row=$found->fetch_assoc()))$transactionId=(int)$row['id'];
+    $callbackType=substr(strtoupper((string)$type),0,20);$response=isset($params['vnp_ResponseCode'])?substr((string)$params['vnp_ResponseCode'],0,10):'';$status=isset($params['vnp_TransactionStatus'])?substr((string)$params['vnp_TransactionStatus'],0,10):'';$sourceIp=aurora_vnpay_client_ip();$payload=json_encode($params);if($payload===false)$payload='{}';$result=substr((string)$processingResult,0,80);$now=aurora_vietnam_now();$valid=$signatureValid?1:0;
+    $stmt=$db->prepare('INSERT INTO online_payment_callback_logs(transaction_id,txn_ref,callback_type,signature_valid,response_code,transaction_status,source_ip,payload,processing_result,received_at) VALUES(NULLIF(?,0),?,?,?,?,?,?,?,?,?)');if($stmt){$stmt->bind_param('ississssss',$transactionId,$txnRef,$callbackType,$valid,$response,$status,$sourceIp,$payload,$result,$now);$stmt->execute();$stmt->close();}
+    if($transactionId>0){$field=$callbackType==='IPN'?'ipn_received_at':'return_received_at';$db->query("UPDATE online_payment_transactions SET {$field}='".$db->real_escape_string($now)."',last_callback_at='".$db->real_escape_string($now)."',callback_count=callback_count+1 WHERE id={$transactionId}");}
+}
+
+function aurora_vnpay_query($params) {
+    ksort($params);$parts=array();foreach($params as $key=>$value)if($value!==''&&$value!==null)$parts[]=urlencode($key).'='.urlencode((string)$value);return implode('&',$parts);
+}
+
+function aurora_vnpay_signature($params,$secret) {
+    $filtered=array();foreach($params as $k=>$v){if(strpos((string)$k,'vnp_')===0&&$k!=='vnp_SecureHash'&&$k!=='vnp_SecureHashType')$filtered[$k]=$v;}return hash_hmac('sha512',aurora_vnpay_query($filtered),$secret);
+}
+
+function aurora_vnpay_verified($params,$secret) {
+    if($secret===''||!isset($params['vnp_SecureHash']))return false;$received=strtolower((string)$params['vnp_SecureHash']);$expected=strtolower(aurora_vnpay_signature($params,$secret));return function_exists('hash_equals')?hash_equals($expected,$received):$expected===$received;
+}
+
+function aurora_vnpay_payment_url($txnRef,$amount,$expiresAt) {
+    $config=aurora_vnpay_config();if($config['tmn_code']===''||$config['hash_secret']===''||$config['return_url']==='')return false;
+    $ip=aurora_vnpay_client_ip();$now=aurora_vietnam_now();
+    $params=array('vnp_Version'=>'2.1.0','vnp_Command'=>'pay','vnp_TmnCode'=>$config['tmn_code'],'vnp_Amount'=>(string)round($amount*100),'vnp_CurrCode'=>'VND','vnp_TxnRef'=>$txnRef,'vnp_OrderInfo'=>'Thanh toan ve Aurora Cinema '.$txnRef,'vnp_OrderType'=>'other','vnp_Locale'=>'vn','vnp_ReturnUrl'=>$config['return_url'],'vnp_IpAddr'=>$ip,'vnp_CreateDate'=>date('YmdHis',strtotime($now)),'vnp_ExpireDate'=>date('YmdHis',strtotime($expiresAt)));
+    $query=aurora_vnpay_query($params);$signature=hash_hmac('sha512',$query,$config['hash_secret']);return $config['payment_url'].'?'.$query.'&vnp_SecureHash='.$signature;
+}
+
+function aurora_vnpay_complete($db,$params) {
+    $txnRef=isset($params['vnp_TxnRef'])?trim((string)$params['vnp_TxnRef']):'';$amount=isset($params['vnp_Amount'])?((float)$params['vnp_Amount']/100):0;$response=isset($params['vnp_ResponseCode'])?(string)$params['vnp_ResponseCode']:'';$transactionStatus=isset($params['vnp_TransactionStatus'])?(string)$params['vnp_TransactionStatus']:'';
+    $safe=$db->real_escape_string($txnRef);$db->autocommit(false);
+    try{$result=$db->query("SELECT pt.id,pt.booking_id,pt.order_id,pt.user_id,pt.amount,pt.status,o.voucher_code FROM online_payment_transactions pt INNER JOIN orders o ON o.id=pt.order_id WHERE pt.txn_ref='{$safe}' LIMIT 1 FOR UPDATE");if(!$result||!($row=$result->fetch_assoc()))throw new Exception('ORDER_NOT_FOUND');if(abs((float)$row['amount']-$amount)>0.001)throw new Exception('INVALID_AMOUNT');
+        if($row['status']==='PAID'){$db->commit();$db->autocommit(true);return array('ok'=>true,'already'=>true,'status'=>'PAID','booking_id'=>(int)$row['booking_id']);}
+        if($row['status']!=='PENDING'){$db->commit();$db->autocommit(true);return array('ok'=>false,'already'=>true,'status'=>$row['status'],'booking_id'=>(int)$row['booking_id']);}
+        $id=(int)$row['id'];$bookingId=(int)$row['booking_id'];$orderId=(int)$row['order_id'];$userId=(int)$row['user_id'];$raw=$db->real_escape_string(json_encode($params));$transactionNo=$db->real_escape_string(isset($params['vnp_TransactionNo'])?(string)$params['vnp_TransactionNo']:'');$bank=$db->real_escape_string(isset($params['vnp_BankCode'])?(string)$params['vnp_BankCode']:'');$card=$db->real_escape_string(isset($params['vnp_CardType'])?(string)$params['vnp_CardType']:'');$payDate=$db->real_escape_string(isset($params['vnp_PayDate'])?(string)$params['vnp_PayDate']:'');$responseEsc=$db->real_escape_string($response);$statusEsc=$db->real_escape_string($transactionStatus);
+        if($response==='00'&&$transactionStatus==='00'){
+            $bookingCodeRow=$db->query("SELECT booking_code FROM bookings WHERE id={$bookingId} LIMIT 1");
+            $bookingCodeVal=($bookingCodeRow&&($bc=$bookingCodeRow->fetch_assoc()))?$bc['booking_code']:$txnRef;
+            $now=$db->real_escape_string(aurora_vietnam_now());
+            if(!$db->query("UPDATE online_payment_transactions SET status='PAID',provider_transaction_no='{$transactionNo}',bank_code='{$bank}',card_type='{$card}',response_code='{$responseEsc}',transaction_status='{$statusEsc}',pay_date='{$payDate}',raw_response='{$raw}',paid_at='{$now}',updated_at='{$now}' WHERE id={$id} AND status='PENDING'")||$db->affected_rows!==1)throw new Exception('UPDATE_FAILED');
+            if(!$db->query("UPDATE bookings SET status='PAID',updated_at='{$now}' WHERE id={$bookingId}"))throw new Exception('UPDATE_FAILED');
+            if(!$db->query("UPDATE orders SET status='PAID',amount_received=total_amount,updated_at='{$now}' WHERE id={$orderId}"))throw new Exception('UPDATE_FAILED');
+            $method='QR_VNPAY';$reference=$txnRef;$paidAmount=(float)$row['amount'];
+            $stmt=$db->prepare('INSERT IGNORE INTO payments(order_id,method,amount,reference_code,created_at) VALUES(?,?,?,?,?)');
+            if(!$stmt)throw new Exception('UPDATE_FAILED');
+            $stmt->bind_param('isdss',$orderId,$method,$paidAmount,$reference,$now);
+            if(!$stmt->execute()){ $stmt->close();throw new Exception('UPDATE_FAILED');}
+            $stmt->close();
+            if(!aurora_issue_booking_tickets($db,$bookingId,$bookingCodeVal,'PAID'))throw new Exception('TICKET_ISSUE_FAILED');
+            aurora_award_booking_points($db,$userId,$bookingId,$paidAmount);
+            $db->commit();$db->autocommit(true);
+            if(file_exists(__DIR__.'/aurora_mailer.php')){require_once __DIR__.'/aurora_mailer.php';@aurora_send_booking_eticket_email($db,$bookingId);}
+            return array('ok'=>true,'already'=>false,'status'=>'PAID','booking_id'=>$bookingId);
+        }
+        $now=$db->real_escape_string(aurora_vietnam_now());$db->query("UPDATE online_payment_transactions SET status='FAILED',provider_transaction_no='{$transactionNo}',bank_code='{$bank}',card_type='{$card}',response_code='{$responseEsc}',transaction_status='{$statusEsc}',pay_date='{$payDate}',raw_response='{$raw}',failed_at='{$now}',updated_at='{$now}' WHERE id={$id}");$db->query("UPDATE bookings SET status='CANCELLED',updated_at='{$now}' WHERE id={$bookingId}");$db->query("UPDATE orders SET status='CANCELLED',updated_at='{$now}' WHERE id={$orderId}");if($row['voucher_code']!==null&&$row['voucher_code']!==''){$voucher=$db->real_escape_string($row['voucher_code']);$db->query("UPDATE vouchers SET used_count=GREATEST(0,used_count-1),updated_at=NOW() WHERE code='{$voucher}'");}$db->commit();$db->autocommit(true);return array('ok'=>false,'already'=>false,'status'=>'FAILED','booking_id'=>$bookingId);
+    }catch(Exception $exception){$db->rollback();$db->autocommit(true);throw $exception;}
+}
+
+function aurora_expire_vnpay_transactions($db) {
+    $table=$db->query("SHOW TABLES LIKE 'online_payment_transactions'");if(!$table||!$table->num_rows)return;$now=$db->real_escape_string(aurora_vietnam_now());$rows=$db->query("SELECT pt.id,pt.booking_id,pt.order_id,o.voucher_code FROM online_payment_transactions pt INNER JOIN orders o ON o.id=pt.order_id WHERE pt.status='PENDING' AND pt.expires_at<='{$now}'");if(!$rows)return;
+    while($row=$rows->fetch_assoc()){$id=(int)$row['id'];$booking=(int)$row['booking_id'];$order=(int)$row['order_id'];$db->query("UPDATE online_payment_transactions SET status='EXPIRED',failed_at='{$now}',updated_at='{$now}' WHERE id={$id} AND status='PENDING'");if($db->affected_rows===1){$db->query("UPDATE bookings SET status='EXPIRED',updated_at='{$now}' WHERE id={$booking} AND status='PENDING'");$db->query("UPDATE orders SET status='EXPIRED',updated_at='{$now}' WHERE id={$order} AND status='PENDING'");if($row['voucher_code']!==null&&$row['voucher_code']!==''){$voucher=$db->real_escape_string($row['voucher_code']);$db->query("UPDATE vouchers SET used_count=GREATEST(0,used_count-1),updated_at=NOW() WHERE code='{$voucher}'");}}}
 }
 
 function aurora_ensure_order_voucher_column($db) {
@@ -430,6 +1006,16 @@ function aurora_promotion_payload($row) {
         'imageUrl' => $row['image_url'],
         'discountType' => $row['discount_type'],
         'discountValue' => (float)$row['discount_value'],
+        'benefitType' => $row['benefit_type'],
+        'benefitTitle' => $row['benefit_title'],
+        'benefitDescription' => $row['benefit_description'],
+        'giftProductId' => $row['gift_product_id'] === null ? null : (int)$row['gift_product_id'],
+        'giftProductName' => isset($row['gift_product_name']) ? $row['gift_product_name'] : null,
+        'giftQuantity' => (int)$row['gift_quantity'],
+        'buyQuantity' => (int)$row['buy_quantity'],
+        'getQuantity' => (int)$row['get_quantity'],
+        'applicationScope' => $row['application_scope'],
+        'redemptionInstructions' => $row['redemption_instructions'],
         'minOrderAmount' => (float)$row['min_order_amount'],
         'maxDiscount' => (float)$row['max_discount'],
         'startsAt' => $row['starts_at'],
@@ -440,6 +1026,8 @@ function aurora_promotion_payload($row) {
         'isFeatured' => (bool)$row['is_featured']
     );
 }
+
+require_once dirname(__FILE__).'/../src/ai_assistant.php';
 
 function aurora_route() {
     $path = isset($_SERVER['PATH_INFO']) ? $_SERVER['PATH_INFO'] : '';
@@ -455,12 +1043,80 @@ $db = aurora_db();
 $parts = explode('/', aurora_route());
 $resource = isset($parts[0]) && $parts[0] !== '' ? $parts[0] : (isset($_GET['action']) ? $_GET['action'] : '');
 
+aurora_ai_handle($db, $resource);
+
 if ($resource === 'health') {
     $db->query('SELECT 1');
     aurora_response(array('status' => 'ok', 'service' => 'aurora-customer-api', 'database' => $db->errno ? 'error' : 'ok'), 200);
 }
 
+// Public CMS feed. Only content explicitly published by Marketing, enabled and
+// inside its Vietnam-time display window can reach the Customer Website.
+if ($resource === 'website_contents') {
+    aurora_method('GET');
+    $table = $db->query("SHOW TABLES LIKE 'marketing_contents'");
+    if (!$table || !$table->num_rows) aurora_response(array('contents'=>array(),'source'=>'aurora_db'), 200);
+    $required = array('placement_key','eyebrow','body_text','button_label','button_url','alt_text','sort_order','is_visible','starts_at','ends_at');
+    foreach ($required as $columnName) {
+        $columnEsc = $db->real_escape_string($columnName);
+        $column = $db->query("SHOW COLUMNS FROM marketing_contents LIKE '{$columnEsc}'");
+        if (!$column || !$column->num_rows) aurora_response(array('contents'=>array(),'source'=>'aurora_db','message'=>'CMS đang được nâng cấp.'), 200);
+    }
+    $nowEsc = $db->real_escape_string(aurora_vietnam_now());
+    $result = $db->query("SELECT id,title,content_type,placement_key,eyebrow,summary,body_text,media_url,alt_text,button_label,button_url,starts_at,ends_at,sort_order
+        FROM marketing_contents
+        WHERE status='published' AND is_visible=1
+          AND (starts_at IS NULL OR starts_at<='{$nowEsc}')
+          AND (ends_at IS NULL OR ends_at>='{$nowEsc}')
+        ORDER BY FIELD(placement_key,'home_hero','home_announcement','home_offer','home_ad_top','home_featured','home_ad_middle','home_ad_bottom'),sort_order,id");
+    if (!$result) aurora_response(array('message'=>'Không thể tải nội dung Customer Website: '.$db->error),500);
+    $contents=array();
+    while($row=$result->fetch_assoc())$contents[]=array(
+        'id'=>(int)$row['id'],'title'=>$row['title'],'type'=>$row['content_type'],'placementKey'=>$row['placement_key'],
+        'eyebrow'=>$row['eyebrow'],'summary'=>$row['summary'],'bodyText'=>$row['body_text'],'mediaUrl'=>$row['media_url'],
+        'altText'=>$row['alt_text'],'buttonLabel'=>$row['button_label'],'buttonUrl'=>$row['button_url'],
+        'startsAt'=>$row['starts_at'],'endsAt'=>$row['ends_at'],'sortOrder'=>(int)$row['sort_order']
+    );
+    aurora_response(array('contents'=>$contents,'source'=>'aurora_db','serverTime'=>$nowEsc),200);
+}
+
+if ($resource === 'address_provinces') {
+    aurora_method('GET');
+    if (!aurora_ensure_administrative_catalog($db)) aurora_response(array('message'=>'Không thể chuẩn bị danh mục tỉnh/thành trong aurora_db.'), 500);
+    $result = $db->query('SELECT code,name,full_name FROM administrative_provinces WHERE is_active=1 ORDER BY sort_order,name');
+    if (!$result) aurora_response(array('message'=>'Không thể tải danh mục tỉnh/thành.'), 500);
+    $provinces = array();
+    while ($row = $result->fetch_assoc()) {
+        $aliases = array();
+        if ($row['name'] === 'Hồ Chí Minh') $aliases[] = 'TP. Hồ Chí Minh';
+        if ($row['name'] === 'Huế') $aliases[] = 'Thừa Thiên Huế';
+        $provinces[] = array('code'=>$row['code'], 'name'=>$row['name'], 'fullName'=>$row['full_name'], 'aliases'=>$aliases);
+    }
+    aurora_response(array('provinces'=>$provinces, 'source'=>'aurora_db', 'datasetVersion'=>'VN-63-v2.4.1'), 200);
+}
+
+if ($resource === 'address_districts') {
+    aurora_method('GET');
+    if (!aurora_ensure_administrative_catalog($db)) aurora_response(array('message'=>'Không thể chuẩn bị danh mục quận/huyện trong aurora_db.'), 500);
+    $provinceCode = isset($_GET['province_code']) ? trim((string)$_GET['province_code']) : '';
+    if (!preg_match('/^\d{2}$/', $provinceCode)) aurora_response(array('message'=>'Mã tỉnh/thành không hợp lệ.'), 422);
+    $provinceCodeEsc = $db->real_escape_string($provinceCode);
+    $provinceResult = $db->query("SELECT code FROM administrative_provinces WHERE code='{$provinceCodeEsc}' AND is_active=1 LIMIT 1");
+    if (!$provinceResult || !$provinceResult->num_rows) aurora_response(array('message'=>'Không tìm thấy tỉnh/thành đã chọn.'), 404);
+    $stmt = $db->prepare('SELECT code,full_name FROM administrative_districts WHERE province_code=? AND is_active=1 ORDER BY sort_order,full_name');
+    if (!$stmt) aurora_response(array('message'=>'Không thể tải danh mục quận/huyện.'), 500);
+    $stmt->bind_param('s', $provinceCode);
+    $stmt->execute();
+    $code = $fullName = null;
+    $stmt->bind_result($code, $fullName);
+    $districts = array();
+    while ($stmt->fetch()) $districts[] = array('code'=>(string)$code, 'name'=>(string)$fullName);
+    $stmt->close();
+    aurora_response(array('provinceCode'=>$provinceCode, 'districts'=>$districts, 'source'=>'aurora_db'), 200);
+}
+
 if ($resource === 'movies') {
+    if (!aurora_sync_movie_statuses($db)) aurora_response(array('message'=>'Không thể tự đồng bộ trạng thái phim theo ngày khởi chiếu trong aurora_db.'), 500);
     $status = isset($_GET['status']) ? strtoupper(trim((string)$_GET['status'])) : '';
     $allowedStatuses = array('COMING_SOON', 'NOW_SHOWING', 'SPECIAL_SHOWING', 'ENDED');
     $catalogNow = $db->real_escape_string(aurora_vietnam_now());
@@ -694,14 +1350,14 @@ if ($resource === 'promotions' || $resource === 'promotion_detail') {
     $detailId = $resource === 'promotion_detail' && isset($_GET['id']) ? (int)$_GET['id'] : 0;
     if ($resource === 'promotion_detail' && $detailId < 1) aurora_response(array('message' => 'Ưu đãi không hợp lệ.'), 422);
     $detailWhere = $detailId > 0 ? ' AND id=' . $detailId : '';
-    $sql = "SELECT id, name, code, short_description, details, terms_text, category, audience,
-                   badge_text, theme_color, image_url, discount_type, discount_value,
+    $sql = "SELECT v.id, v.name, v.code, v.short_description, v.details, v.terms_text, v.category, v.audience,
+                   v.badge_text, v.theme_color, v.image_url, v.discount_type, v.discount_value,v.benefit_type,v.benefit_title,v.benefit_description,v.gift_product_id,v.gift_quantity,v.buy_quantity,v.get_quantity,v.application_scope,v.redemption_instructions,gift.name gift_product_name,
                    min_order_amount, max_discount, starts_at, ends_at, usage_limit,
                    used_count, is_featured
-            FROM vouchers
-            WHERE status='active' AND starts_at <= NOW() AND ends_at >= NOW()
-              AND (usage_limit=0 OR used_count < usage_limit)" . $detailWhere . "
-            ORDER BY is_featured DESC, sort_order ASC, ends_at ASC, id DESC";
+            FROM vouchers v LEFT JOIN products gift ON gift.id=v.gift_product_id
+            WHERE v.status='active' AND v.starts_at <= NOW() AND v.ends_at >= NOW()
+              AND (v.usage_limit=0 OR v.used_count < v.usage_limit)" . str_replace('id=','v.id=',$detailWhere) . "
+            ORDER BY v.is_featured DESC, v.sort_order ASC, v.ends_at ASC, v.id DESC";
     $result = $db->query($sql);
     if (!$result) aurora_response(array('message' => $db->error), 500);
     $promotions = array();
@@ -896,7 +1552,7 @@ if ($resource === 'theater_detail_event') {
 }
 
 function aurora_ensure_seat_holds($db) {
-    return $db->query("CREATE TABLE IF NOT EXISTS seat_holds (
+    $holdsReady = $db->query("CREATE TABLE IF NOT EXISTS seat_holds (
         id BIGINT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
         showtime_id BIGINT UNSIGNED NOT NULL,
         seat_id BIGINT UNSIGNED NOT NULL,
@@ -909,6 +1565,19 @@ function aurora_ensure_seat_holds($db) {
         KEY idx_seat_hold_expiry (expires_at),
         KEY idx_seat_hold_session (session_key, showtime_id),
         CONSTRAINT fk_seat_holds_showtime FOREIGN KEY (showtime_id) REFERENCES showtimes(id) ON DELETE CASCADE
+    ) ENGINE=InnoDB DEFAULT CHARSET=utf8");
+    if (!$holdsReady) return false;
+    return $db->query("CREATE TABLE IF NOT EXISTS seat_hold_sessions (
+        id BIGINT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
+        showtime_id BIGINT UNSIGNED NOT NULL,
+        session_key VARCHAR(128) NOT NULL,
+        user_id BIGINT UNSIGNED NULL,
+        expires_at DATETIME NOT NULL,
+        created_at DATETIME NOT NULL,
+        updated_at DATETIME NOT NULL,
+        UNIQUE KEY uq_seat_hold_session (showtime_id, session_key),
+        KEY idx_seat_hold_session_expiry (expires_at),
+        CONSTRAINT fk_seat_hold_session_showtime FOREIGN KEY (showtime_id) REFERENCES showtimes(id) ON DELETE CASCADE
     ) ENGINE=InnoDB DEFAULT CHARSET=utf8");
 }
 
@@ -929,7 +1598,9 @@ function aurora_ensure_showtime_seat_locks($db) {
 }
 
 function aurora_cleanup_seat_holds($db) {
-    $db->query("DELETE FROM seat_holds WHERE expires_at <= '".$db->real_escape_string(aurora_vietnam_now())."'");
+    $nowEsc=$db->real_escape_string(aurora_vietnam_now());
+    $db->query("DELETE FROM seat_holds WHERE expires_at <= '{$nowEsc}'");
+    $db->query("DELETE FROM seat_hold_sessions WHERE expires_at <= '{$nowEsc}'");
 }
 
 // Loyalty data is owned by aurora_db.  The ledger makes every point balance
@@ -939,38 +1610,67 @@ function aurora_ensure_loyalty_schema($db) {
         id BIGINT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
         user_id BIGINT UNSIGNED NOT NULL,
         booking_id BIGINT UNSIGNED NULL,
+        order_id BIGINT UNSIGNED NULL,
         points_change INT NOT NULL,
+        ticket_amount DECIMAL(12,2) NOT NULL DEFAULT 0,
+        product_amount DECIMAL(12,2) NOT NULL DEFAULT 0,
+        ticket_rate DECIMAL(5,2) NOT NULL DEFAULT 0,
+        product_rate DECIMAL(5,2) NOT NULL DEFAULT 0,
+        point_value_vnd INT UNSIGNED NOT NULL DEFAULT 1,
         balance_after INT UNSIGNED NOT NULL,
         transaction_type VARCHAR(30) NOT NULL,
         description VARCHAR(255) NOT NULL,
         created_at DATETIME NOT NULL,
-        UNIQUE KEY uq_loyalty_booking (booking_id),
+        UNIQUE KEY uq_loyalty_order_type (order_id, transaction_type),
+        KEY idx_loyalty_booking (booking_id),
         KEY idx_loyalty_user_created (user_id, created_at)
     ) ENGINE=InnoDB DEFAULT CHARSET=utf8");
 }
 
 function aurora_membership_level($points) {
     $points = (int)$points;
-    if ($points >= 5000) return 'PLATINUM';
-    if ($points >= 2000) return 'GOLD';
-    if ($points >= 500) return 'SILVER';
+    if ($points >= 5000000) return 'VIP';
+    if ($points >= 2000000) return 'GOLD';
+    if ($points >= 500000) return 'SILVER';
     return 'STANDARD';
 }
 
 // A membership card is a durable record in aurora_db, not a number assembled
 // in the browser. It is created lazily for existing customers.
 function aurora_ensure_membership_card_schema($db) {
-    return $db->query("CREATE TABLE IF NOT EXISTS customer_membership_cards (
+    $created = $db->query("CREATE TABLE IF NOT EXISTS customer_membership_cards (
         id BIGINT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
         user_id BIGINT UNSIGNED NOT NULL,
-        card_number VARCHAR(32) NOT NULL,
+        card_number BIGINT UNSIGNED NOT NULL,
         activated_at DATETIME NOT NULL,
         expires_at DATE NOT NULL,
         created_at DATETIME NOT NULL,
         updated_at DATETIME NOT NULL,
         UNIQUE KEY uq_membership_card_user (user_id),
         UNIQUE KEY uq_membership_card_number (card_number)
-    ) ENGINE=InnoDB DEFAULT CHARSET=utf8") !== false;
+    ) ENGINE=InnoDB DEFAULT CHARSET=utf8");
+    if (!$created) return false;
+
+    // Older installations stored values such as AUR26100000016EB3E2. Convert
+    // every existing card to a stable 19-digit number before enforcing a
+    // numeric database column. Format: YYMM + 13-digit user id + 2 checksums.
+    $columnResult = $db->query("SHOW COLUMNS FROM customer_membership_cards LIKE 'card_number'");
+    $column = $columnResult ? $columnResult->fetch_assoc() : false;
+    $columnType = $column && isset($column['Type']) ? strtolower((string)$column['Type']) : '';
+    if (strpos($columnType, 'bigint') !== 0) {
+        $numberSql = "CONCAT(DATE_FORMAT(activated_at,'%y%m'),LPAD(user_id,13,'0'),LPAD(MOD(CRC32(CONCAT('aurora-member-',DATE_FORMAT(activated_at,'%y%m'),LPAD(user_id,13,'0'))),100),2,'0'))";
+        if (!$db->query("UPDATE customer_membership_cards SET card_number={$numberSql}, updated_at=NOW()")) return false;
+        if (!$db->query('ALTER TABLE customer_membership_cards MODIFY card_number BIGINT UNSIGNED NOT NULL')) return false;
+    }
+    return true;
+}
+
+function aurora_numeric_membership_number($userId) {
+    $userPart = str_pad((string)(int)$userId, 13, '0', STR_PAD_LEFT);
+    if (strlen($userPart) > 13) $userPart = substr($userPart, -13);
+    $base = date('ym').$userPart;
+    $crc = sprintf('%u', crc32('aurora-member-'.$base));
+    return $base.str_pad(substr($crc, -2), 2, '0', STR_PAD_LEFT);
 }
 
 function aurora_membership_card_for_user($db, $userId) {
@@ -978,31 +1678,114 @@ function aurora_membership_card_for_user($db, $userId) {
     if (!aurora_ensure_membership_card_schema($db)) return null;
     $existing = $db->query("SELECT card_number, activated_at, expires_at FROM customer_membership_cards WHERE user_id={$userId} LIMIT 1");
     if ($existing && ($card = $existing->fetch_assoc())) return $card;
-    for ($attempt = 0; $attempt < 5; $attempt++) {
-        $number = 'AUR' . date('ym') . str_pad((string)$userId, 7, '0', STR_PAD_LEFT) . strtoupper(substr(sha1(uniqid((string)mt_rand(), true)), 0, 5));
-        $safeNumber = $db->real_escape_string($number);
-        $inserted = $db->query("INSERT IGNORE INTO customer_membership_cards (user_id, card_number, activated_at, expires_at, created_at, updated_at) VALUES ({$userId}, '{$safeNumber}', NOW(), DATE_ADD(CURDATE(), INTERVAL 5 YEAR), NOW(), NOW())");
-        if ($inserted !== false) {
-            $created = $db->query("SELECT card_number, activated_at, expires_at FROM customer_membership_cards WHERE user_id={$userId} LIMIT 1");
-            if ($created && ($card = $created->fetch_assoc())) return $card;
-        }
+    $number = aurora_numeric_membership_number($userId);
+    $safeNumber = $db->real_escape_string($number);
+    $inserted = $db->query("INSERT IGNORE INTO customer_membership_cards (user_id, card_number, activated_at, expires_at, created_at, updated_at) VALUES ({$userId}, '{$safeNumber}', NOW(), DATE_ADD(CURDATE(), INTERVAL 5 YEAR), NOW(), NOW())");
+    if ($inserted !== false) {
+        $created = $db->query("SELECT card_number, activated_at, expires_at FROM customer_membership_cards WHERE user_id={$userId} LIMIT 1");
+        if ($created && ($card = $created->fetch_assoc())) return $card;
     }
     return null;
 }
 
+function aurora_ensure_membership_tiers($db) {
+    $created = $db->query("CREATE TABLE IF NOT EXISTS customer_membership_tiers (
+        id INT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
+        tier_code VARCHAR(20) NOT NULL UNIQUE,
+        tier_name VARCHAR(60) NOT NULL,
+        min_points INT UNSIGNED NOT NULL DEFAULT 0,
+        theme_color VARCHAR(20) NOT NULL,
+        benefits_json TEXT NOT NULL,
+        sort_order SMALLINT UNSIGNED NOT NULL DEFAULT 0,
+        is_active TINYINT(1) NOT NULL DEFAULT 1,
+        created_at DATETIME NOT NULL,
+        updated_at DATETIME NOT NULL
+    ) ENGINE=InnoDB DEFAULT CHARSET=utf8");
+    if (!$created) return false;
+    return $db->query("INSERT IGNORE INTO customer_membership_tiers (tier_code,tier_name,min_points,theme_color,benefits_json,sort_order,is_active,created_at,updated_at) VALUES
+        ('STANDARD','Standard',0,'#50708f','[\"Tích 5% tiền vé\",\"Tích 10% tiền hàng hóa\",\"Dùng điểm tại POS\"]',1,1,NOW(),NOW()),
+        ('SILVER','Silver',500000,'#7891a8','[\"Tích 5% tiền vé\",\"Tích 10% tiền hàng hóa\",\"Quà sinh nhật Aurora\"]',2,1,NOW(),NOW()),
+        ('GOLD','Gold',2000000,'#d69b26','[\"Tích 5% tiền vé\",\"Tích 10% tiền hàng hóa\",\"Ưu đãi combo độc quyền\"]',3,1,NOW(),NOW()),
+        ('VIP','VIP',5000000,'#0d1b2e','[\"Cộng thêm 3% tích điểm cho vé\",\"Cộng thêm 3% tích điểm cho hàng hóa\",\"Dùng điểm trực tiếp tại POS\"]',4,1,NOW(),NOW())");
+}
+
+function aurora_ensure_support_schema($db) {
+    $ok = $db->query("CREATE TABLE IF NOT EXISTS customer_support_categories (
+        id INT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
+        category_code VARCHAR(30) NOT NULL UNIQUE,
+        category_name VARCHAR(100) NOT NULL,
+        description VARCHAR(255) NOT NULL DEFAULT '',
+        icon_name VARCHAR(40) NOT NULL DEFAULT 'help',
+        sort_order SMALLINT UNSIGNED NOT NULL DEFAULT 0,
+        is_active TINYINT(1) NOT NULL DEFAULT 1
+    ) ENGINE=InnoDB DEFAULT CHARSET=utf8");
+    if (!$ok) return false;
+    $ok = $db->query("CREATE TABLE IF NOT EXISTS customer_support_faqs (
+        id BIGINT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
+        category_code VARCHAR(30) NOT NULL,
+        question VARCHAR(255) NOT NULL,
+        answer_text TEXT NOT NULL,
+        sort_order SMALLINT UNSIGNED NOT NULL DEFAULT 0,
+        is_active TINYINT(1) NOT NULL DEFAULT 1,
+        created_at DATETIME NOT NULL,
+        updated_at DATETIME NOT NULL,
+        KEY idx_support_faq_category (category_code,is_active,sort_order)
+    ) ENGINE=InnoDB DEFAULT CHARSET=utf8");
+    if (!$ok) return false;
+    $ok = $db->query("CREATE TABLE IF NOT EXISTS customer_support_tickets (
+        id BIGINT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
+        ticket_code VARCHAR(24) NOT NULL UNIQUE,
+        user_id BIGINT UNSIGNED NULL,
+        session_key VARCHAR(128) NOT NULL,
+        full_name VARCHAR(120) NOT NULL,
+        email VARCHAR(150) NOT NULL,
+        phone VARCHAR(30) NOT NULL DEFAULT '',
+        category_code VARCHAR(30) NOT NULL,
+        subject VARCHAR(180) NOT NULL,
+        message_text TEXT NOT NULL,
+        status VARCHAR(20) NOT NULL DEFAULT 'NEW',
+        priority VARCHAR(20) NOT NULL DEFAULT 'NORMAL',
+        created_at DATETIME NOT NULL,
+        updated_at DATETIME NOT NULL,
+        KEY idx_support_ticket_user (user_id,created_at),
+        KEY idx_support_ticket_status (status,created_at)
+    ) ENGINE=InnoDB DEFAULT CHARSET=utf8");
+    if (!$ok) return false;
+    $db->query("INSERT IGNORE INTO customer_support_categories (category_code,category_name,description,icon_name,sort_order,is_active) VALUES
+        ('BOOKING','Đặt vé & ghế ngồi','Hỗ trợ chọn suất, ghế và mã đặt vé.','ticket',1,1),
+        ('PAYMENT','Thanh toán & hoàn tiền','Kiểm tra giao dịch, thanh toán và hoàn tiền.','credit-card',2,1),
+        ('MEMBERSHIP','Thành viên & điểm','Thẻ thành viên, điểm thưởng và hạng thẻ.','star',3,1),
+        ('TECHNICAL','Tài khoản & kỹ thuật','Đăng nhập, cập nhật hồ sơ và lỗi website.','settings',4,1)");
+    $countResult = $db->query("SELECT COUNT(*) total FROM customer_support_faqs");
+    $countRow = $countResult ? $countResult->fetch_assoc() : array('total'=>0);
+    if ((int)$countRow['total'] === 0) {
+        $db->query("INSERT INTO customer_support_faqs (category_code,question,answer_text,sort_order,is_active,created_at,updated_at) VALUES
+            ('BOOKING','Làm sao để đổi ghế sau khi đặt?','Ghế đã thanh toán không thể tự đổi trên website. Hãy gửi yêu cầu kèm mã đặt vé để Aurora kiểm tra trước giờ chiếu.',1,1,NOW(),NOW()),
+            ('BOOKING','Tôi nên đến rạp trước bao lâu?','Aurora khuyến nghị đến rạp trước ít nhất 15 phút để nhận vé, mua bắp nước và vào phòng đúng giờ.',2,1,NOW(),NOW()),
+            ('PAYMENT','Thanh toán bị trừ tiền nhưng chưa có vé?','Hãy kiểm tra lịch sử đặt vé trong tài khoản. Nếu chưa có mã vé sau 10 phút, gửi yêu cầu kèm mã giao dịch.',1,1,NOW(),NOW()),
+            ('PAYMENT','Khi nào tôi nhận được tiền hoàn?','Thời gian hoàn tiền phụ thuộc phương thức thanh toán và thường mất 3 đến 10 ngày làm việc.',2,1,NOW(),NOW()),
+            ('MEMBERSHIP','Điểm Aurora được tính như thế nào?','Vé tích 5%, hàng hóa mua kèm tích 10%. Giá trị thưởng được quy đổi theo 1 điểm bằng 1.000 đồng; thành viên VIP được cộng thêm 3% cho mỗi loại.',1,1,NOW(),NOW()),
+            ('TECHNICAL','Tôi quên mật khẩu thì làm gì?','Chọn Quên mật khẩu tại màn hình đăng nhập và làm theo hướng dẫn gửi đến email đã đăng ký.',1,1,NOW(),NOW())");
+    }
+    return true;
+}
+
 function aurora_award_booking_points($db, $userId, $bookingId, $amount) {
-    $earned = max(0, (int)floor(((float)$amount) / 1000));
-    if ($earned < 1) return 0;
     $userId = (int)$userId; $bookingId = (int)$bookingId;
-    $existing = $db->query("SELECT id FROM loyalty_point_transactions WHERE booking_id={$bookingId} LIMIT 1");
+    $orderId=0;$orderResult=$db->query("SELECT id FROM orders WHERE booking_id={$bookingId} ORDER BY id DESC LIMIT 1");if($orderResult&&($orderRow=$orderResult->fetch_assoc()))$orderId=(int)$orderRow['id'];
+    $userLevelResult=$db->query("SELECT membership_level FROM users WHERE id={$userId} LIMIT 1");$levelRow=$userLevelResult?$userLevelResult->fetch_assoc():null;$bonus=$levelRow&&in_array($levelRow['membership_level'],array('VIP','PLATINUM'),true)?3:0;$rate=5+$bonus;
+    $earned = max(0, (int)floor(((float)$amount) * $rate / 100));
+    if ($earned < 1) return 0;
+    $existing = $db->query("SELECT id FROM loyalty_point_transactions WHERE booking_id={$bookingId} AND transaction_type='ONLINE_EARN' LIMIT 1");
     if ($existing && $existing->num_rows) return 0;
     $current = $db->query("SELECT points FROM users WHERE id={$userId} FOR UPDATE");
     if (!$current || !($row = $current->fetch_assoc())) throw new Exception('Không tìm thấy tài khoản thành viên để cộng điểm.');
     $newBalance = (int)$row['points'] + $earned;
-    $level = aurora_membership_level($newBalance);
+    $lifetimeResult=$db->query("SELECT COALESCE(SUM(CASE WHEN points_change>0 THEN points_change ELSE 0 END),0) total FROM loyalty_point_transactions WHERE user_id={$userId}");$lifetimeRow=$lifetimeResult?$lifetimeResult->fetch_assoc():array('total'=>0);$level = aurora_membership_level((int)$lifetimeRow['total']+$earned);
     if (!$db->query("UPDATE users SET points={$newBalance}, membership_level='{$level}', updated_at=NOW() WHERE id={$userId}")) throw new Exception('Không thể cập nhật điểm thành viên.');
     $description = $db->real_escape_string('Tích điểm từ đơn đặt vé #' . $bookingId);
-    if (!$db->query("INSERT INTO loyalty_point_transactions (user_id, booking_id, points_change, balance_after, transaction_type, description, created_at) VALUES ({$userId}, {$bookingId}, {$earned}, {$newBalance}, 'BOOKING_EARN', '{$description}', NOW())")) throw new Exception('Không thể ghi nhận lịch sử điểm.');
+    if (!$db->query("INSERT INTO loyalty_point_transactions (user_id, booking_id, order_id, points_change, ticket_amount, product_amount, ticket_rate, product_rate, point_value_vnd, balance_after, transaction_type, description, created_at) VALUES ({$userId}, {$bookingId}, ".($orderId>0?$orderId:'NULL').", {$earned}, ".(float)$amount.", 0, {$rate}, 10, 1, {$newBalance}, 'ONLINE_EARN', '{$description}', NOW())")) throw new Exception('Không thể ghi nhận lịch sử điểm.');
+    if($orderId>0)$db->query("UPDATE orders SET loyalty_points_earned={$earned} WHERE id={$orderId}");
     return $earned;
 }
 
@@ -1090,6 +1873,9 @@ if ($resource === 'theater_schedule_event') {
 }
 
 if ($resource === 'showtime_seats') {
+    aurora_method('GET');
+    aurora_require_customer($db, 'Vui lòng đăng nhập tài khoản khách hàng để xem sơ đồ ghế và đặt vé.');
+    aurora_expire_vnpay_transactions($db);
     $showtimeId = isset($_GET['showtime_id']) ? (int)$_GET['showtime_id'] : 0;
     if ($showtimeId < 1) aurora_response(array('message' => 'Suất chiếu không hợp lệ.'), 422);
     if (!aurora_ensure_seat_holds($db) || !aurora_ensure_showtime_seat_locks($db)) aurora_response(array('message' => 'Không thể khởi tạo trạng thái ghế.'), 500);
@@ -1102,7 +1888,9 @@ if ($resource === 'showtime_seats') {
     if (!$stmt->fetch()) { $stmt->close(); aurora_response(array('message' => 'Suất chiếu đã bắt đầu hoặc không còn mở bán.'), 404); }
     $stmt->close();
     $seatPricing = aurora_showtime_seat_pricing($db, $showtimeId, $startsAt, $ticketPrice, $seatPriceRules);
-    $nowEsc = $db->real_escape_string($now); $sessionEsc = $db->real_escape_string(session_id());
+    $nowEsc = $db->real_escape_string($now); $sessionEsc = $db->real_escape_string(session_id());$userId=aurora_user_id();$newExpiry=date('Y-m-d H:i:s',strtotime($now.' +10 minutes'));
+    if (!$db->query("INSERT IGNORE INTO seat_hold_sessions(showtime_id,session_key,user_id,expires_at,created_at,updated_at) VALUES ({$showtimeId},'{$sessionEsc}',".($userId?$userId:'NULL').",'{$newExpiry}','{$nowEsc}','{$nowEsc}')")) aurora_response(array('message'=>'Không thể khởi tạo thời gian giữ ghế.'),500);
+    $holdSession=$db->query("SELECT expires_at FROM seat_hold_sessions WHERE showtime_id={$showtimeId} AND session_key='{$sessionEsc}' LIMIT 1");$holdExpires=$newExpiry;if($holdSession&&($holdSessionRow=$holdSession->fetch_assoc()))$holdExpires=$holdSessionRow['expires_at'];$holdSeconds=max(0,strtotime($holdExpires)-strtotime($now));
     $sql = "SELECT seats.id, seats.seat_row, seats.seat_number, seats.seat_type,
             CASE WHEN EXISTS (SELECT 1 FROM booking_seats bs INNER JOIN bookings b ON b.id=bs.booking_id WHERE bs.seat_id=seats.id AND b.showtime_id=".(int)$showtimeId." AND b.status NOT IN ('CANCELLED','EXPIRED')) OR EXISTS (SELECT 1 FROM seat_holds h WHERE h.showtime_id=".(int)$showtimeId." AND h.seat_id=seats.id AND h.expires_at > '".$nowEsc."' AND h.session_key <> '".$sessionEsc."') OR EXISTS (SELECT 1 FROM tms_showtime_seat_locks sl WHERE sl.showtime_id=".(int)$showtimeId." AND sl.seat_id=seats.id) THEN 0 ELSE 1 END AS is_available,
             CASE WHEN EXISTS (SELECT 1 FROM seat_holds h WHERE h.showtime_id=".(int)$showtimeId." AND h.seat_id=seats.id AND h.expires_at > '".$nowEsc."' AND h.session_key = '".$sessionEsc."') THEN 1 ELSE 0 END AS held_by_you
@@ -1112,20 +1900,31 @@ if ($resource === 'showtime_seats') {
             ORDER BY seats.seat_row, seats.seat_number";
     $stmt = $db->query($sql);
     if (!$stmt) aurora_response(array('message' => 'Không thể tải sơ đồ ghế.'), 500);
-    $seats = array();
-    while ($seat = $stmt->fetch_assoc()) $seats[] = array('id'=>(int)$seat['id'], 'seat_row'=>$seat['seat_row'], 'seat_number'=>(int)$seat['seat_number'], 'seat_type'=>$seat['seat_type'], 'price'=>aurora_resolved_seat_price($seat['seat_type'], $seatPricing), 'is_available'=>(int)$seat['is_available'], 'held_by_you'=>(int)$seat['held_by_you']);
-    $stmt->free(); aurora_response(array('showtime_id'=>$showtimeId, 'hold_seconds'=>600, 'pricing'=>$seatPricing, 'pricing_source'=>'aurora_db', 'seats'=>$seats), 200);
+    $seats = array(); $layoutRows = array(); $layoutColumns = 0;
+    while ($seat = $stmt->fetch_assoc()) {
+        $seatType = strtoupper((string)$seat['seat_type']);
+        if ($seatType === 'DOUBLE') $seatType = 'COUPLE';
+        $seatNumber = (int)$seat['seat_number']; $seatSpan = $seatType === 'COUPLE' ? 2 : 1;
+        $layoutColumns = max($layoutColumns, $seatNumber * $seatSpan);
+        if (!isset($layoutRows[$seat['seat_row']])) $layoutRows[$seat['seat_row']] = array('row'=>$seat['seat_row'],'seat_count'=>0,'seat_type'=>$seatType);
+        $layoutRows[$seat['seat_row']]['seat_count']++;
+        $seats[] = array('id'=>(int)$seat['id'], 'seat_row'=>$seat['seat_row'], 'seat_number'=>$seatNumber, 'seat_type'=>$seatType, 'price'=>aurora_resolved_seat_price($seatType, $seatPricing), 'is_available'=>(int)$seat['is_available'], 'held_by_you'=>(int)$seat['held_by_you']);
+    }
+    if ($layoutColumns < 1) $layoutColumns = 12;
+    $layout = array('version'=>1,'columns'=>$layoutColumns,'aisle_after'=>(int)floor($layoutColumns/2),'rows'=>array_values($layoutRows));
+    $stmt->free(); aurora_response(array('showtime_id'=>$showtimeId,'expires_at'=>$holdExpires,'hold_seconds'=>$holdSeconds,'pricing'=>$seatPricing,'pricing_source'=>'aurora_db','layout'=>$layout,'seats'=>$seats),200);
 }
 
 if ($resource === 'seat_hold') {
     aurora_method('POST');
+    $userId = aurora_require_customer($db, 'Vui lòng đăng nhập tài khoản khách hàng để chọn và giữ ghế.');
     $body = aurora_body(); $showtimeId = isset($body['showtimeId']) ? (int)$body['showtimeId'] : 0;
     $seatIds = isset($body['seatIds']) && is_array($body['seatIds']) ? array_values(array_unique(array_map('intval', $body['seatIds']))) : array();
     if ($showtimeId < 1 || count($seatIds) > 12) aurora_response(array('message' => 'Dữ liệu giữ ghế không hợp lệ.'), 422);
     if (!aurora_ensure_seat_holds($db) || !aurora_ensure_showtime_seat_locks($db)) aurora_response(array('message' => 'Không thể khởi tạo trạng thái ghế.'), 500);
     aurora_cleanup_seat_holds($db); $now = aurora_vietnam_now(); $nowEsc = $db->real_escape_string($now); $sessionEsc = $db->real_escape_string(session_id());
     $validIds = array(); foreach ($seatIds as $seatId) if ($seatId > 0) $validIds[] = $seatId; $seatIds = $validIds;
-    $expiresAt = date('Y-m-d H:i:s', strtotime($now.' +10 minutes')); $userId = isset($_SESSION['aurora_user_id']) ? (int)$_SESSION['aurora_user_id'] : 0;
+    $newExpiry = date('Y-m-d H:i:s', strtotime($now.' +10 minutes'));$expiresAt=$newExpiry;
     $db->autocommit(false);
     try {
         // Lock the parent showtime inside the same transaction. A concurrent
@@ -1133,6 +1932,8 @@ if ($resource === 'seat_hold') {
         // stale customer request can never recreate an orphan seat_holds row.
         $showtime = $db->query("SELECT screen_id FROM showtimes WHERE id={$showtimeId} AND status='OPEN' AND starts_at > '{$nowEsc}' FOR UPDATE");
         if (!$showtime || !($showtimeRow = $showtime->fetch_assoc())) throw new Exception('Suất chiếu đã bắt đầu hoặc không còn mở bán.');
+        if (!$db->query("INSERT IGNORE INTO seat_hold_sessions(showtime_id,session_key,user_id,expires_at,created_at,updated_at) VALUES ({$showtimeId},'{$sessionEsc}',".($userId?$userId:'NULL').",'{$newExpiry}','{$nowEsc}','{$nowEsc}')")) throw new Exception('Không thể khởi tạo thời gian giữ ghế.');
+        $holdSession=$db->query("SELECT expires_at FROM seat_hold_sessions WHERE showtime_id={$showtimeId} AND session_key='{$sessionEsc}' FOR UPDATE");if(!$holdSession||!($holdSessionRow=$holdSession->fetch_assoc()))throw new Exception('Không thể đọc thời gian giữ ghế.');$expiresAt=$holdSessionRow['expires_at'];$remainingSeconds=max(0,strtotime($expiresAt)-strtotime($now));if($remainingSeconds<1)throw new Exception('Thời gian giữ ghế đã hết. Vui lòng chọn lại suất chiếu.');
         $db->query("DELETE FROM seat_holds WHERE showtime_id={$showtimeId} AND session_key='{$sessionEsc}'");
         if (count($seatIds)) {
             $idSql = implode(',', $seatIds); $valid=$db->query("SELECT id FROM seats WHERE screen_id=".(int)$showtimeRow['screen_id']." AND id IN ({$idSql})");
@@ -1145,7 +1946,7 @@ if ($resource === 'seat_hold') {
             if ($locked && $locked->num_rows) throw new Exception('Một hoặc nhiều ghế đã được rạp khóa cho suất chiếu này.');
             foreach ($seatIds as $seatId) if (!$db->query("INSERT INTO seat_holds (showtime_id,seat_id,session_key,user_id,expires_at,created_at,updated_at) VALUES ({$showtimeId},{$seatId},'{$sessionEsc}',".($userId ? $userId : 'NULL').",'{$expiresAt}','{$nowEsc}','{$nowEsc}')")) throw new Exception('Không thể giữ ghế đã chọn.');
         }
-        $db->commit(); $db->autocommit(true); aurora_response(array('seat_ids'=>$seatIds,'expires_at'=>$expiresAt,'hold_seconds'=>600),200);
+        $db->commit(); $db->autocommit(true); aurora_response(array('seat_ids'=>$seatIds,'expires_at'=>$expiresAt,'hold_seconds'=>$remainingSeconds),200);
     } catch (Exception $exception) { $db->rollback(); $db->autocommit(true); aurora_response(array('message'=>$exception->getMessage()),409); }
 }
 
@@ -1155,8 +1956,9 @@ if ($resource === 'seat_hold') {
 function aurora_password_hash($password) {
     $chars = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789./';
     $salt = '';
+    $bytes = function_exists('openssl_random_pseudo_bytes') ? openssl_random_pseudo_bytes(22) : false;
     for ($i = 0; $i < 22; $i++) {
-        $salt .= $chars[mt_rand(0, 63)];
+        $salt .= $chars[$bytes !== false ? (ord($bytes[$i]) % 64) : mt_rand(0, 63)];
     }
     return crypt($password, '$2y$10$' . $salt);
 }
@@ -1165,9 +1967,167 @@ function aurora_password_verify($password, $hash) {
     return crypt($password, $hash) === $hash;
 }
 
+function aurora_ensure_password_reset_schema($db) {
+    $created = $db->query("CREATE TABLE IF NOT EXISTS customer_password_reset_requests (
+        id BIGINT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
+        user_id BIGINT UNSIGNED NULL,
+        selector CHAR(40) NOT NULL,
+        lookup_hash CHAR(64) NOT NULL,
+        code_hash CHAR(64) NOT NULL,
+        reset_token_hash CHAR(64) NULL,
+        status ENUM('pending','verified','used','expired','locked') NOT NULL DEFAULT 'pending',
+        attempts_remaining TINYINT UNSIGNED NOT NULL DEFAULT 5,
+        delivery_status ENUM('development','sent','failed','not_applicable') NOT NULL DEFAULT 'not_applicable',
+        ip_address_hash CHAR(64) NOT NULL,
+        user_agent VARCHAR(255) NULL,
+        expires_at DATETIME NOT NULL,
+        verified_until DATETIME NULL,
+        requested_at DATETIME NOT NULL,
+        verified_at DATETIME NULL,
+        completed_at DATETIME NULL,
+        UNIQUE KEY uq_password_reset_selector (selector),
+        KEY idx_password_reset_lookup (lookup_hash, requested_at),
+        KEY idx_password_reset_user (user_id, status, requested_at),
+        KEY idx_password_reset_ip (ip_address_hash, requested_at),
+        CONSTRAINT fk_password_reset_user FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
+    ) ENGINE=InnoDB DEFAULT CHARSET=utf8 COLLATE=utf8_unicode_ci");
+    if (!$created) return false;
+    $column = $db->query("SHOW COLUMNS FROM users LIKE 'password_changed_at'");
+    if ((!$column || !$column->num_rows) && !$db->query('ALTER TABLE users ADD COLUMN password_changed_at DATETIME NULL')) return false;
+    return true;
+}
+
+function aurora_password_reset_hash($value, $selector) {
+    $pepper = aurora_env('APP_KEY', 'aurora-cinema-password-reset');
+    return hash_hmac('sha256', (string)$selector.'|'.(string)$value, $pepper);
+}
+
+function aurora_password_reset_code() {
+    if (function_exists('openssl_random_pseudo_bytes')) {
+        $bytes = openssl_random_pseudo_bytes(4);
+        if ($bytes !== false) {
+            $parts = unpack('Nvalue', $bytes);
+            return str_pad((string)($parts['value'] % 1000000), 6, '0', STR_PAD_LEFT);
+        }
+    }
+    return str_pad((string)mt_rand(0, 999999), 6, '0', STR_PAD_LEFT);
+}
+
+function aurora_password_reset_send_email($email, $name, $code, $isConfirmation) {
+    if (!filter_var($email, FILTER_VALIDATE_EMAIL)) return false;
+    $from = aurora_env('MAIL_FROM_ADDRESS', 'no-reply@auroracinema.local');
+    if (!filter_var($from, FILTER_VALIDATE_EMAIL)) $from = 'no-reply@auroracinema.local';
+    $headers = "From: Aurora Cinema <".$from.">\r\n";
+    $headers .= "Reply-To: ".$from."\r\n";
+    $headers .= "Content-Type: text/plain; charset=UTF-8\r\n";
+    if ($isConfirmation) {
+        $subject = 'Aurora Cinema - Mat khau da duoc thay doi';
+        $message = "Xin chao ".$name.",\r\n\r\nMat khau Aurora cua ban vua duoc thay doi thanh cong.\r\nNeu ban khong thuc hien thao tac nay, vui long lien he Aurora Cinema ngay.\r\n\r\nAurora Cinema";
+    } else {
+        $subject = 'Aurora Cinema - Ma xac minh dat lai mat khau';
+        $message = "Xin chao ".$name.",\r\n\r\nMa xac minh dat lai mat khau cua ban la: ".$code."\r\nMa co hieu luc trong 10 phut va chi duoc su dung mot lan.\r\nNeu ban khong yeu cau, hay bo qua email nay.\r\n\r\nAurora Cinema";
+    }
+    return @mail($email, $subject, wordwrap($message, 70, "\r\n"), $headers);
+}
+
+function aurora_ensure_profile_schema($db) {
+    static $ready = null;
+    if ($ready !== null) return $ready;
+
+    $schemaResult = $db->query("SELECT DEFAULT_CHARACTER_SET_NAME AS charset_name FROM information_schema.SCHEMATA WHERE SCHEMA_NAME='aurora_db' LIMIT 1");
+    $schemaRow = $schemaResult ? $schemaResult->fetch_assoc() : false;
+    if (!$schemaRow || strtolower((string)$schemaRow['charset_name']) !== 'utf8') {
+        if (!$db->query('ALTER DATABASE aurora_db CHARACTER SET utf8 COLLATE utf8_general_ci')) { $ready = false; return false; }
+    }
+    $tableStatus = $db->query("SHOW TABLE STATUS LIKE 'users'");
+    $tableRow = $tableStatus ? $tableStatus->fetch_assoc() : false;
+    $collation = $tableRow && isset($tableRow['Collation']) ? strtolower((string)$tableRow['Collation']) : '';
+    if (strpos($collation, 'utf8') !== 0 && !$db->query('ALTER TABLE users CONVERT TO CHARACTER SET utf8 COLLATE utf8_general_ci')) {
+        $ready = false; return false;
+    }
+
+    $definitions = array(
+        'phone' => 'VARCHAR(20) NULL',
+        'id_number' => 'VARCHAR(30) NULL',
+        'birthday' => 'DATE NULL',
+        'gender' => "ENUM('male','female','other') NULL",
+        'city' => 'VARCHAR(100) CHARACTER SET utf8 COLLATE utf8_general_ci NULL',
+        'district' => 'VARCHAR(100) CHARACTER SET utf8 COLLATE utf8_general_ci NULL',
+        'address' => 'VARCHAR(255) CHARACTER SET utf8 COLLATE utf8_general_ci NULL',
+        'avatar_url' => 'VARCHAR(500) CHARACTER SET utf8 COLLATE utf8_general_ci NULL'
+    );
+    foreach ($definitions as $columnName => $definition) {
+        $column = $db->query("SHOW COLUMNS FROM users LIKE '".$db->real_escape_string($columnName)."'");
+        if ((!$column || !$column->num_rows) && !$db->query("ALTER TABLE users ADD COLUMN {$columnName} {$definition}")) {
+            $ready = false; return false;
+        }
+    }
+
+    $cityColumn = $db->query("SHOW FULL COLUMNS FROM users LIKE 'city'");
+    $cityRow = $cityColumn ? $cityColumn->fetch_assoc() : false;
+    $birthdayColumn = $db->query("SHOW COLUMNS FROM users LIKE 'birthday'");
+    $birthdayRow = $birthdayColumn ? $birthdayColumn->fetch_assoc() : false;
+    if (!$cityRow || strpos(strtolower((string)$cityRow['Collation']), 'utf8') !== 0 || strtoupper((string)$cityRow['Null']) !== 'YES' || !$birthdayRow || strtoupper((string)$birthdayRow['Null']) !== 'YES') {
+        $normalized = $db->query("ALTER TABLE users
+            MODIFY full_name VARCHAR(120) CHARACTER SET utf8 COLLATE utf8_general_ci NOT NULL,
+            MODIFY phone VARCHAR(20) NULL,
+            MODIFY id_number VARCHAR(30) NULL,
+            MODIFY birthday DATE NULL,
+            MODIFY gender ENUM('male','female','other') NULL,
+            MODIFY city VARCHAR(100) CHARACTER SET utf8 COLLATE utf8_general_ci NULL,
+            MODIFY district VARCHAR(100) CHARACTER SET utf8 COLLATE utf8_general_ci NULL,
+            MODIFY address VARCHAR(255) CHARACTER SET utf8 COLLATE utf8_general_ci NULL,
+            MODIFY avatar_url VARCHAR(500) CHARACTER SET utf8 COLLATE utf8_general_ci NULL,
+            MODIFY updated_at DATETIME NULL");
+        if (!$normalized) { $ready = false; return false; }
+    }
+
+    // Recover values damaged by the legacy latin1 columns from aurora_db's
+    // authoritative administrative catalogue. These statements are safe to
+    // run repeatedly and do not invent location names.
+    if (aurora_ensure_administrative_catalog($db)) {
+        $db->query("UPDATE users u INNER JOIN administrative_provinces p ON p.code='79' SET u.city=p.name WHERE u.city LIKE 'TP. H? Ch%'");
+        $db->query("UPDATE users u INNER JOIN administrative_provinces p ON p.code='82' SET u.city=p.name WHERE u.city='Ti?n Giang'");
+        $db->query("UPDATE users u INNER JOIN administrative_districts d ON d.code='760' SET u.district=d.full_name WHERE u.district='Qu?n 1'");
+        $db->query("UPDATE users u INNER JOIN administrative_districts d ON d.code_name='cho_gao' SET u.district=d.full_name WHERE u.district='Huy?n Ch? G?o'");
+    }
+    $ready = true;
+    return true;
+}
+
+function aurora_public_asset_url($value) {
+    $url = trim((string)$value);
+    if ($url === '' || preg_match('#^(https?:)?//#i', $url) || preg_match('#^(data|blob):#i', $url)) return $url;
+
+    $https = isset($_SERVER['HTTPS']) && $_SERVER['HTTPS'] !== '' && strtolower((string)$_SERVER['HTTPS']) !== 'off';
+    $scheme = $https ? 'https' : 'http';
+    $host = isset($_SERVER['HTTP_HOST']) ? trim((string)$_SERVER['HTTP_HOST']) : 'localhost';
+    if ($host === '' || !preg_match('/^[A-Za-z0-9.\-:\[\]]+$/', $host)) $host = 'localhost';
+    return $scheme.'://'.$host.'/'.ltrim($url, '/');
+}
+
+function aurora_profile_for_user($db, $id) {
+    if (!aurora_ensure_profile_schema($db)) return null;
+    $stmt = $db->prepare('SELECT id,full_name,email,phone,id_number,birthday,gender,city,district,address,avatar_url,membership_level,points,created_at FROM users WHERE id=? LIMIT 1');
+    if (!$stmt) return null;
+    $stmt->bind_param('i', $id);
+    $stmt->execute();
+    $uid = $fullName = $email = $phone = $idNumber = $birthday = $gender = $city = $district = $address = $avatarUrl = $membershipLevel = $points = $createdAt = null;
+    $stmt->bind_result($uid,$fullName,$email,$phone,$idNumber,$birthday,$gender,$city,$district,$address,$avatarUrl,$membershipLevel,$points,$createdAt);
+    $found = $stmt->fetch();
+    $stmt->close();
+    if (!$found) return null;
+    return array(
+        'id'=>(int)$uid, 'fullName'=>$fullName, 'email'=>$email, 'phone'=>$phone,
+        'idNumber'=>$idNumber, 'birthday'=>$birthday, 'gender'=>$gender, 'city'=>$city,
+        'district'=>$district, 'address'=>$address, 'avatarUrl'=>aurora_public_asset_url($avatarUrl),
+        'membershipLevel'=>$membershipLevel, 'points'=>(int)$points, 'createdAt'=>$createdAt
+    );
+}
+
 function aurora_public_user($db, $id) {
-    aurora_ensure_profile_avatar_schema($db);
-    $stmt = $db->prepare('SELECT id, full_name, email, membership_level, points, avatar_url FROM users WHERE id = ?');
+    aurora_ensure_profile_schema($db);
+    $stmt = $db->prepare("SELECT id, full_name, email, membership_level, points, avatar_url FROM users WHERE id = ? AND role='customer' AND status='active' LIMIT 1");
     if (!$stmt) return null;
     $stmt->bind_param('i', $id);
     $stmt->execute();
@@ -1182,19 +2142,70 @@ function aurora_public_user($db, $id) {
         'email'           => $email,
         'membershipLevel' => $membershipLevel,
         'points'          => (int) $points,
-        'avatarUrl'       => $avatarUrl,
+        'avatarUrl'       => aurora_public_asset_url($avatarUrl),
     );
 }
 
 // Avatar URLs are profile data stored in aurora_db; the image file itself is
 // kept outside the database in a public, user-scoped upload directory.
 function aurora_ensure_profile_avatar_schema($db) {
-    static $ready = null;
-    if ($ready !== null) return $ready;
-    $column = $db->query("SHOW COLUMNS FROM users LIKE 'avatar_url'");
-    if ($column && $column->num_rows > 0) { $ready = true; return true; }
-    $ready = (bool)$db->query("ALTER TABLE users ADD COLUMN avatar_url VARCHAR(500) NULL");
-    return $ready;
+    return aurora_ensure_profile_schema($db);
+}
+
+function aurora_ensure_avatar_upload_schema($db) {
+    $created = $db->query("CREATE TABLE IF NOT EXISTS customer_avatar_uploads (
+        id BIGINT UNSIGNED NOT NULL AUTO_INCREMENT,
+        user_id BIGINT UNSIGNED NOT NULL,
+        avatar_url VARCHAR(500) NOT NULL,
+        storage_name VARCHAR(255) NOT NULL,
+        original_name VARCHAR(255) NOT NULL,
+        mime_type VARCHAR(50) NOT NULL,
+        byte_size INT UNSIGNED NOT NULL,
+        image_width INT UNSIGNED NOT NULL,
+        image_height INT UNSIGNED NOT NULL,
+        source_width INT UNSIGNED NULL,
+        source_height INT UNSIGNED NULL,
+        crop_offset_x DECIMAL(7,4) NULL,
+        crop_offset_y DECIMAL(7,4) NULL,
+        crop_zoom DECIMAL(7,4) NULL,
+        crop_output_size INT UNSIGNED NULL,
+        status ENUM('ACTIVE','REPLACED','DELETED') NOT NULL DEFAULT 'ACTIVE',
+        created_at DATETIME NOT NULL,
+        deleted_at DATETIME NULL,
+        PRIMARY KEY (id),
+        KEY idx_customer_avatar_user_status (user_id, status),
+        CONSTRAINT fk_customer_avatar_user FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
+    ) ENGINE=InnoDB DEFAULT CHARSET=utf8 COLLATE=utf8_unicode_ci");
+    if (!$created) return false;
+    $definitions = array(
+        'source_width' => 'INT UNSIGNED NULL',
+        'source_height' => 'INT UNSIGNED NULL',
+        'crop_offset_x' => 'DECIMAL(7,4) NULL',
+        'crop_offset_y' => 'DECIMAL(7,4) NULL',
+        'crop_zoom' => 'DECIMAL(7,4) NULL',
+        'crop_output_size' => 'INT UNSIGNED NULL'
+    );
+    foreach ($definitions as $columnName => $definition) {
+        $column = $db->query("SHOW COLUMNS FROM customer_avatar_uploads LIKE '".$db->real_escape_string($columnName)."'");
+        if ((!$column || !$column->num_rows) && !$db->query("ALTER TABLE customer_avatar_uploads ADD COLUMN {$columnName} {$definition}")) return false;
+    }
+    return true;
+}
+
+function aurora_avatar_upload_error($code) {
+    if ($code === UPLOAD_ERR_INI_SIZE || $code === UPLOAD_ERR_FORM_SIZE) return 'Ảnh vượt quá giới hạn 5 MB.';
+    if ($code === UPLOAD_ERR_PARTIAL) return 'Ảnh chỉ được tải lên một phần. Vui lòng thử lại.';
+    if ($code === UPLOAD_ERR_NO_FILE) return 'Vui lòng chọn một ảnh đại diện.';
+    if ($code === UPLOAD_ERR_NO_TMP_DIR) return 'Máy chủ thiếu thư mục tạm để nhận ảnh.';
+    if ($code === UPLOAD_ERR_CANT_WRITE) return 'Máy chủ không thể ghi tệp ảnh.';
+    if (defined('UPLOAD_ERR_EXTENSION') && $code === UPLOAD_ERR_EXTENSION) return 'Tải ảnh bị chặn bởi cấu hình PHP.';
+    return 'Tải ảnh lên không thành công. Vui lòng thử lại.';
+}
+
+function aurora_avatar_storage_path($avatarUrl, $directory) {
+    $path = parse_url((string)$avatarUrl, PHP_URL_PATH);
+    if (!$path || !preg_match('/\/uploads\/avatars\/(avatar_[0-9]+_[A-Za-z0-9]+\.(jpg|png))$/i', $path, $matches)) return '';
+    return $directory.DIRECTORY_SEPARATOR.$matches[1];
 }
 
 // ── OAuth helpers (Google/Facebook) ──────────────────────────────────────────
@@ -1243,9 +2254,6 @@ function aurora_oauth_config($provider, $db = null) {
         global $db;
     }
     $provider = strtolower((string) $provider);
-    $sandboxSetting = $db ? aurora_get_system_config($db, 'oauth_sandbox_enabled', '1') : aurora_env('OAUTH_SANDBOX_ENABLED', '1');
-    $sandboxEnabled = ($sandboxSetting === '1' || $sandboxSetting === 'true' || $sandboxSetting === true || $sandboxSetting === 1);
-
     if ($provider === 'google') {
         $clientId = trim((string) ($db ? aurora_get_system_config($db, 'oauth_google_client_id', '') : aurora_env('GOOGLE_CLIENT_ID', '')));
         $clientSecret = trim((string) ($db ? aurora_get_system_config($db, 'oauth_google_client_secret', '') : aurora_env('GOOGLE_CLIENT_SECRET', '')));
@@ -1268,27 +2276,32 @@ function aurora_oauth_config($provider, $db = null) {
         );
     }
     if ($provider === 'facebook') {
-        $clientId = $db ? aurora_get_system_config($db, 'oauth_facebook_client_id', '') : aurora_env('FACEBOOK_CLIENT_ID', '');
-        $clientSecret = $db ? aurora_get_system_config($db, 'oauth_facebook_client_secret', '') : aurora_env('FACEBOOK_CLIENT_SECRET', '');
-        $redirectUri = $db ? aurora_get_system_config($db, 'oauth_facebook_redirect_uri', '') : aurora_env('FACEBOOK_REDIRECT_URI', '');
+        $clientId = trim((string) ($db ? aurora_get_system_config($db, 'oauth_facebook_client_id', '') : aurora_env('FACEBOOK_CLIENT_ID', '')));
+        $clientSecret = trim((string) ($db ? aurora_get_system_config($db, 'oauth_facebook_client_secret', '') : aurora_env('FACEBOOK_CLIENT_SECRET', '')));
+        $redirectUri = trim((string) ($db ? aurora_get_system_config($db, 'oauth_facebook_redirect_uri', '') : aurora_env('FACEBOOK_REDIRECT_URI', '')));
         if ($redirectUri === '') {
             $redirectUri = 'http://localhost/AURORA%20CINEMA/customer/backend/public/api.php?action=oauth_callback&provider=facebook';
         }
-        $version = preg_match('/^v[0-9]+\.[0-9]+$/', aurora_env('FACEBOOK_GRAPH_VERSION', 'v25.0'))
-            ? aurora_env('FACEBOOK_GRAPH_VERSION', 'v25.0') : 'v25.0';
-        $isLive = ($clientId !== '' && $clientSecret !== '' && strpos($clientId, 'demo') === false);
-        $isSandbox = !$isLive && $sandboxEnabled;
+        $configuredVersion = $db
+            ? aurora_get_system_config($db, 'oauth_facebook_graph_version', aurora_env('FACEBOOK_GRAPH_VERSION', 'v25.0'))
+            : aurora_env('FACEBOOK_GRAPH_VERSION', 'v25.0');
+        $version = preg_match('/^v[0-9]+\.[0-9]+$/', (string) $configuredVersion) ? (string) $configuredVersion : 'v25.0';
+        // Meta App IDs are numeric. Requiring a non-trivial secret prevents demo values
+        // from accidentally enabling a fake or unusable Facebook login flow.
+        $isLive = (bool) preg_match('/^[0-9]{6,30}$/', $clientId) && strlen($clientSecret) >= 16;
 
         return array(
             'client_id' => $clientId,
             'client_secret' => $clientSecret,
             'redirect_uri' => $redirectUri,
+            'graph_version' => $version,
             'is_live' => $isLive,
-            'is_sandbox' => $isSandbox,
-            'configured' => $isLive || $isSandbox,
-            'authorization_url' => $isLive ? ('https://www.facebook.com/' . $version . '/dialog/oauth') : 'http://localhost/AURORA%20CINEMA/customer/backend/public/api.php?action=oauth_consent&provider=facebook',
+            'is_sandbox' => false,
+            'configured' => $isLive,
+            'authorization_url' => 'https://www.facebook.com/' . $version . '/dialog/oauth',
             'token_url' => 'https://graph.facebook.com/' . $version . '/oauth/access_token',
             'profile_url' => 'https://graph.facebook.com/' . $version . '/me',
+            'debug_token_url' => 'https://graph.facebook.com/' . $version . '/debug_token',
         );
     }
     return null;
@@ -1431,6 +2444,27 @@ function aurora_oauth_http($url, $method, $fields, $accessToken) {
         return array('ok' => false, 'data' => $decoded, 'message' => $providerMessage);
     }
     return array('ok' => true, 'data' => $decoded);
+}
+
+function aurora_verify_facebook_access_token($config, $accessToken) {
+    $appAccessToken = $config['client_id'] . '|' . $config['client_secret'];
+    $result = aurora_oauth_http($config['debug_token_url'], 'GET', array(
+        'input_token' => $accessToken,
+        'access_token' => $appAccessToken,
+    ), '');
+    if (!$result['ok'] || empty($result['data']['data']) || !is_array($result['data']['data'])) {
+        return array('ok' => false, 'message' => 'Facebook không thể xác minh access token.');
+    }
+    $tokenData = $result['data']['data'];
+    $tokenAppId = isset($tokenData['app_id']) ? (string) $tokenData['app_id'] : '';
+    $tokenUserId = isset($tokenData['user_id']) ? (string) $tokenData['user_id'] : '';
+    if (empty($tokenData['is_valid']) || !aurora_oauth_safe_equals((string) $config['client_id'], $tokenAppId) || $tokenUserId === '') {
+        return array('ok' => false, 'message' => 'Access token Facebook không hợp lệ hoặc không thuộc Meta App Aurora.');
+    }
+    if (isset($tokenData['expires_at']) && (int) $tokenData['expires_at'] > 0 && (int) $tokenData['expires_at'] <= time()) {
+        return array('ok' => false, 'message' => 'Access token Facebook đã hết hạn.');
+    }
+    return array('ok' => true, 'user_id' => $tokenUserId);
 }
 
 function aurora_ensure_oauth_schema($db) {
@@ -1658,14 +2692,81 @@ if ($resource === 'loyalty') {
     $userId = aurora_require_user();
     if (!aurora_ensure_loyalty_schema($db)) aurora_response(array('message' => 'Không thể khởi tạo sổ điểm Aurora.'), 500);
     $history = array();
-    $result = $db->query("SELECT id, booking_id, points_change, balance_after, transaction_type, description, created_at FROM loyalty_point_transactions WHERE user_id=".(int)$userId." ORDER BY id DESC LIMIT 30");
+    $result = $db->query("SELECT id,booking_id,order_id,points_change,ticket_amount,product_amount,ticket_rate,product_rate,point_value_vnd,balance_after,transaction_type,description,created_at FROM loyalty_point_transactions WHERE user_id=".(int)$userId." ORDER BY id DESC LIMIT 30");
     if (!$result) aurora_response(array('message' => 'Không thể tải lịch sử điểm.'), 500);
     while ($row = $result->fetch_assoc()) {
         $row['id'] = (int)$row['id']; $row['booking_id'] = $row['booking_id'] !== null ? (int)$row['booking_id'] : null;
-        $row['points_change'] = (int)$row['points_change']; $row['balance_after'] = (int)$row['balance_after'];
+        $row['points_change'] = (int)$row['points_change']; $row['balance_after'] = (int)$row['balance_after'];$row['order_id']=$row['order_id']!==null?(int)$row['order_id']:null;$row['ticket_amount']=(float)$row['ticket_amount'];$row['product_amount']=(float)$row['product_amount'];$row['ticket_rate']=(float)$row['ticket_rate'];$row['product_rate']=(float)$row['product_rate'];$row['point_value_vnd']=(int)$row['point_value_vnd'];
         $history[] = $row;
     }
     aurora_response(array('member' => aurora_public_user($db, $userId), 'history' => $history), 200);
+}
+
+// ── /membership_overview (GET) ──────────────────────────────────────────────
+if ($resource === 'membership_overview') {
+    aurora_method('GET');
+    if (!aurora_ensure_membership_tiers($db)) aurora_response(array('message'=>'Không thể tải cấu hình thành viên từ aurora_db.'),500);
+    $tiers = array();
+    $tierResult = $db->query("SELECT tier_code,tier_name,min_points,theme_color,benefits_json FROM customer_membership_tiers WHERE is_active=1 ORDER BY sort_order,id");
+    while ($tierResult && ($tier = $tierResult->fetch_assoc())) {
+        $tiers[] = array('code'=>$tier['tier_code'],'name'=>$tier['tier_name'],'minPoints'=>(int)$tier['min_points'],'color'=>$tier['theme_color'],'benefits'=>aurora_json_list($tier['benefits_json']));
+    }
+    $member = null; $history = array(); $userId = aurora_user_id();
+    if ($userId > 0) {
+        $card = aurora_membership_card_for_user($db,$userId);
+        $userResult = $db->query("SELECT full_name,membership_level,points FROM users WHERE id=".(int)$userId." LIMIT 1");
+        if ($card && $userResult && ($user=$userResult->fetch_assoc())) {
+            $points = max(0,(int)$user['points']);$lifetimeResult=$db->query("SELECT COALESCE(SUM(CASE WHEN points_change>0 THEN points_change ELSE 0 END),0) total FROM loyalty_point_transactions WHERE user_id=".(int)$userId);$lifetimeRow=$lifetimeResult?$lifetimeResult->fetch_assoc():array('total'=>$points);$lifetime=max($points,(int)$lifetimeRow['total']); $level = $user['membership_level'] ? $user['membership_level'] : aurora_membership_level($lifetime);
+            $thresholds=array('STANDARD'=>500000,'SILVER'=>2000000,'GOLD'=>5000000); $nextNames=array('STANDARD'=>'SILVER','SILVER'=>'GOLD','GOLD'=>'VIP');
+            $nextThreshold=isset($thresholds[$level])?$thresholds[$level]:null;
+            $member=array('fullName'=>$user['full_name'],'cardNumber'=>$card['card_number'],'level'=>$level,'points'=>$points,'lifetimePoints'=>$lifetime,'pointValueVnd'=>1,'redeemableValue'=>$points,'ticketRate'=>in_array($level,array('VIP','PLATINUM'),true)?8:5,'productRate'=>in_array($level,array('VIP','PLATINUM'),true)?13:10,'activatedAt'=>$card['activated_at'],'expiresAt'=>$card['expires_at'],'nextLevel'=>isset($nextNames[$level])?$nextNames[$level]:null,'nextThreshold'=>$nextThreshold,'pointsToNext'=>$nextThreshold===null?0:max(0,$nextThreshold-$lifetime));
+            if (aurora_ensure_loyalty_schema($db)) {
+                $historyResult=$db->query("SELECT id,order_id,points_change,ticket_amount,product_amount,ticket_rate,product_rate,point_value_vnd,balance_after,transaction_type,description,created_at FROM loyalty_point_transactions WHERE user_id=".(int)$userId." ORDER BY id DESC LIMIT 12");
+                while ($historyResult && ($row=$historyResult->fetch_assoc())) { $row['id']=(int)$row['id'];$row['points_change']=(int)$row['points_change'];$row['balance_after']=(int)$row['balance_after'];$history[]=$row; }
+            }
+        }
+    }
+    aurora_response(array('tiers'=>$tiers,'member'=>$member,'history'=>$history,'rules'=>array('ticketRate'=>5,'productRate'=>10,'vipBonus'=>3,'pointValueVnd'=>1,'redeemAt'=>'POS','source'=>'aurora_db')),200);
+}
+
+// ── /support_center (GET) ──────────────────────────────────────────────────
+if ($resource === 'support_center') {
+    aurora_method('GET');
+    if (!aurora_ensure_support_schema($db)) aurora_response(array('message'=>'Không thể chuẩn bị trung tâm hỗ trợ trong aurora_db.'),500);
+    $categories=array();$faqs=array();$tickets=array();
+    $categoryResult=$db->query("SELECT category_code,category_name,description,icon_name FROM customer_support_categories WHERE is_active=1 ORDER BY sort_order,id");
+    while ($categoryResult && ($row=$categoryResult->fetch_assoc())) $categories[]=array('code'=>$row['category_code'],'name'=>$row['category_name'],'description'=>$row['description'],'icon'=>$row['icon_name']);
+    $faqResult=$db->query("SELECT id,category_code,question,answer_text FROM customer_support_faqs WHERE is_active=1 ORDER BY category_code,sort_order,id");
+    while ($faqResult && ($row=$faqResult->fetch_assoc())) $faqs[]=array('id'=>(int)$row['id'],'categoryCode'=>$row['category_code'],'question'=>$row['question'],'answer'=>$row['answer_text']);
+    $userId=aurora_user_id();
+    if ($userId>0) {
+        $ticketResult=$db->query("SELECT ticket_code,category_code,subject,status,priority,created_at,updated_at FROM customer_support_tickets WHERE user_id=".(int)$userId." ORDER BY id DESC LIMIT 20");
+        while ($ticketResult && ($row=$ticketResult->fetch_assoc())) $tickets[]=array('code'=>$row['ticket_code'],'categoryCode'=>$row['category_code'],'subject'=>$row['subject'],'status'=>$row['status'],'priority'=>$row['priority'],'createdAt'=>$row['created_at'],'updatedAt'=>$row['updated_at']);
+    }
+    aurora_response(array('categories'=>$categories,'faqs'=>$faqs,'tickets'=>$tickets,'contact'=>array('hotline'=>'1900 1234','email'=>'support@auroracinema.vn','hours'=>'08:00 – 23:00 mỗi ngày')),200);
+}
+
+// ── /support_ticket (POST) ─────────────────────────────────────────────────
+if ($resource === 'support_ticket') {
+    aurora_method('POST');
+    if (!aurora_ensure_support_schema($db)) aurora_response(array('message'=>'Không thể chuẩn bị dữ liệu hỗ trợ trong aurora_db.'),500);
+    $input=aurora_body();$userId=aurora_user_id();
+    $fullName=trim(isset($input['fullName'])?(string)$input['fullName']:'');$email=strtolower(trim(isset($input['email'])?(string)$input['email']:''));$phone=trim(isset($input['phone'])?(string)$input['phone']:'');
+    $category=strtoupper(trim(isset($input['categoryCode'])?(string)$input['categoryCode']:''));$subject=trim(isset($input['subject'])?(string)$input['subject']:'');$message=trim(isset($input['message'])?(string)$input['message']:'');
+    if ($userId>0) { $userResult=$db->query("SELECT full_name,email,phone FROM users WHERE id=".(int)$userId." LIMIT 1"); if ($userResult && ($user=$userResult->fetch_assoc())) { if ($fullName==='')$fullName=$user['full_name'];if ($email==='')$email=$user['email'];if ($phone==='')$phone=$user['phone']; } }
+    if (strlen($fullName)<2||strlen($fullName)>120||!filter_var($email,FILTER_VALIDATE_EMAIL)||strlen($phone)>30) aurora_response(array('message'=>'Vui lòng nhập thông tin liên hệ hợp lệ.'),422);
+    $categoryCheck=preg_match('/^[A-Z_]{3,30}$/',$category)?$db->query("SELECT id FROM customer_support_categories WHERE category_code='".$db->real_escape_string($category)."' AND is_active=1 LIMIT 1"):false;
+    if (!$categoryCheck||$categoryCheck->num_rows<1) aurora_response(array('message'=>'Nhóm hỗ trợ không hợp lệ.'),422);
+    if (strlen($subject)<5||strlen($subject)>180||strlen($message)<20||strlen($message)>3000) aurora_response(array('message'=>'Tiêu đề cần 5–180 ký tự và nội dung cần 20–3.000 ký tự.'),422);
+    $sessionEsc=$db->real_escape_string(session_id());$userSql=$userId>0?(string)$userId:'NULL';
+    $recentResult=$db->query("SELECT id FROM customer_support_tickets WHERE ".($userId>0?'user_id='.(int)$userId:"session_key='{$sessionEsc}'")." AND created_at>=DATE_SUB(NOW(),INTERVAL 1 DAY)");
+    $recent=$recentResult?$recentResult->num_rows:0;
+    if ($recent>=5) aurora_response(array('message'=>'Bạn đã gửi tối đa 5 yêu cầu trong 24 giờ. Vui lòng liên hệ hotline nếu khẩn cấp.'),429);
+    $code='AUR'.date('ymd').strtoupper(substr(sha1(session_id().'|'.microtime(true).'|'.$email),0,6));
+    $codeEsc=$db->real_escape_string($code);$nameEsc=$db->real_escape_string($fullName);$emailEsc=$db->real_escape_string($email);$phoneEsc=$db->real_escape_string($phone);$categoryEsc=$db->real_escape_string($category);$subjectEsc=$db->real_escape_string($subject);$messageEsc=$db->real_escape_string($message);
+    $inserted=$db->query("INSERT INTO customer_support_tickets (ticket_code,user_id,session_key,full_name,email,phone,category_code,subject,message_text,status,priority,created_at,updated_at) VALUES ('{$codeEsc}',{$userSql},'{$sessionEsc}','{$nameEsc}','{$emailEsc}','{$phoneEsc}','{$categoryEsc}','{$subjectEsc}','{$messageEsc}','NEW','NORMAL',NOW(),NOW())");
+    if (!$inserted) aurora_response(array('message'=>'Không thể ghi yêu cầu hỗ trợ vào aurora_db.'),500);
+    aurora_response(array('message'=>'Yêu cầu đã được tiếp nhận. Aurora sẽ phản hồi sớm nhất có thể.','ticket'=>array('code'=>$code,'status'=>'NEW','createdAt'=>aurora_vietnam_now())),201);
 }
 
 // ── /logout ───────────────────────────────────────────────────────────────────
@@ -1711,6 +2812,7 @@ if ($resource === 'oauth_configs') {
         $allowed = array(
             'oauth_google_client_id', 'oauth_google_client_secret', 'oauth_google_redirect_uri',
             'oauth_facebook_client_id', 'oauth_facebook_client_secret', 'oauth_facebook_redirect_uri',
+            'oauth_facebook_graph_version',
             'oauth_sandbox_enabled'
         );
         $stmt = $db->prepare("INSERT INTO system_configs (config_key, config_value, description, updated_at) VALUES (?, ?, '', NOW()) ON DUPLICATE KEY UPDATE config_value=VALUES(config_value), updated_at=NOW()");
@@ -1746,11 +2848,11 @@ if ($resource === 'oauth_start') {
         'state' => $state,
         'created_at' => time(),
         'attempt_id' => $attemptId,
-        'is_sandbox' => !empty($config['is_sandbox'])
+        'is_sandbox' => false,
+        'intent' => isset($_GET['intent']) && $_GET['intent'] === 'register' ? 'register' : 'login',
     );
 
-    if (!empty($config['is_live'])) {
-        if ($provider === 'google') {
+    if ($provider === 'google') {
             $pending['code_verifier'] = aurora_oauth_random_token();
             $parameters = array(
                 'client_id' => $config['client_id'],
@@ -1762,35 +2864,26 @@ if ($resource === 'oauth_start') {
                 'code_challenge_method' => 'S256',
                 'prompt' => 'select_account',
             );
-        } else {
+    } else {
             $parameters = array(
                 'client_id' => $config['client_id'],
                 'redirect_uri' => $config['redirect_uri'],
                 'response_type' => 'code',
                 'scope' => 'email,public_profile',
                 'state' => $state,
+                'return_scopes' => 'true',
             );
-        }
-        $_SESSION['aurora_oauth_' . $provider] = $pending;
-        aurora_response(array('provider' => $provider, 'authorizationUrl' => $config['authorization_url'] . '?' . http_build_query($parameters, '', '&')), 200);
-    } else {
-        $_SESSION['aurora_oauth_' . $provider] = $pending;
-        $parameters = array(
-            'action' => 'oauth_consent',
-            'provider' => $provider,
-            'state' => $state,
-        );
-        $consentUrl = 'http://localhost/AURORA%20CINEMA/customer/backend/public/api.php?' . http_build_query($parameters, '', '&');
-        aurora_response(array('provider' => $provider, 'authorizationUrl' => $consentUrl), 200);
     }
+    $_SESSION['aurora_oauth_' . $provider] = $pending;
+    aurora_response(array('provider' => $provider, 'authorizationUrl' => $config['authorization_url'] . '?' . http_build_query($parameters, '', '&')), 200);
 }
 
 // ── /oauth_consent ───────────────────────────────────────────────────────────
 if ($resource === 'oauth_consent') {
     aurora_method('GET');
     $provider = isset($_GET['provider']) ? strtolower(trim((string) $_GET['provider'])) : '';
-    if ($provider === 'google') {
-        aurora_oauth_redirect_error($provider, 'Đăng nhập Google yêu cầu xác thực trực tiếp qua Google OAuth 2.0.');
+    if (in_array($provider, array('google', 'facebook'), true)) {
+        aurora_oauth_redirect_error($provider, 'Aurora chỉ chấp nhận tài khoản ' . ucfirst($provider) . ' thật qua OAuth. Chế độ đăng nhập giả lập đã bị vô hiệu hóa.');
     }
     if ($provider !== 'facebook') {
         aurora_oauth_redirect_error('', 'Nhà cung cấp OAuth không hợp lệ.');
@@ -2141,8 +3234,8 @@ if ($resource === 'oauth_consent') {
 if ($resource === 'oauth_consent_confirm') {
     aurora_method('POST');
     $provider = isset($_POST['provider']) ? strtolower(trim((string) $_POST['provider'])) : '';
-    if ($provider === 'google') {
-        aurora_oauth_redirect_error($provider, 'Không chấp nhận hồ sơ Google giả lập. Vui lòng xác thực trực tiếp qua Google.');
+    if (in_array($provider, array('google', 'facebook'), true)) {
+        aurora_oauth_redirect_error($provider, 'Không chấp nhận hồ sơ ' . ucfirst($provider) . ' giả lập. Vui lòng xác thực bằng tài khoản thật.');
     }
     $state = isset($_POST['state']) ? (string) $_POST['state'] : '';
     $name = isset($_POST['name']) ? trim((string) $_POST['name']) : '';
@@ -2200,8 +3293,17 @@ if ($resource === 'oauth_callback') {
         aurora_oauth_redirect_error($provider, 'Đăng nhập ' . ucfirst($provider) . ' chưa được cấu hình trên máy chủ.');
     }
     if (isset($_GET['error'])) {
-        aurora_oauth_attempt_finish($db, $attemptId, 'failed', 0, '', 'access_denied', 'Khách hàng hủy hoặc từ chối đăng nhập.');
-        aurora_oauth_redirect_error($provider, 'Bạn đã hủy hoặc từ chối yêu cầu đăng nhập.');
+        $providerError = preg_replace('/[^a-zA-Z0-9_-]/', '', (string) $_GET['error']);
+        $providerError = $providerError !== '' ? substr($providerError, 0, 60) : 'oauth_rejected';
+        $providerDescription = isset($_GET['error_description'])
+            ? trim(preg_replace('/[\x00-\x1F\x7F]/', ' ', strip_tags((string) $_GET['error_description'])))
+            : '';
+        $isDenied = $providerError === 'access_denied' || (isset($_GET['error_code']) && (string) $_GET['error_code'] === '200');
+        $auditMessage = $providerDescription !== '' ? substr($providerDescription, 0, 220) : 'Nhà cung cấp OAuth từ chối yêu cầu.';
+        aurora_oauth_attempt_finish($db, $attemptId, 'failed', 0, '', $providerError, $auditMessage);
+        aurora_oauth_redirect_error($provider, $isDenied
+            ? 'Bạn đã hủy hoặc chưa cấp quyền đăng nhập cho Aurora.'
+            : ucfirst($provider) . ' từ chối yêu cầu xác thực. Vui lòng kiểm tra cấu hình OAuth và thử lại.');
     }
     $state = isset($_GET['state']) ? (string) $_GET['state'] : '';
     $code = isset($_GET['code']) ? (string) $_GET['code'] : '';
@@ -2242,13 +3344,17 @@ if ($resource === 'oauth_callback') {
             'grant_type' => 'authorization_code',
         );
         if ($provider === 'google' && !empty($pending['code_verifier'])) $tokenFields['code_verifier'] = $pending['code_verifier'];
-        $tokenResult = aurora_oauth_http($config['token_url'], 'POST', $tokenFields, '');
+        $tokenResult = aurora_oauth_http($config['token_url'], $provider === 'facebook' ? 'GET' : 'POST', $tokenFields, '');
         if (!$tokenResult['ok'] || empty($tokenResult['data']['access_token'])) {
-            $tokenErrorCode = !empty($tokenResult['data']['error']) && preg_match('/^[a-zA-Z0-9_-]{1,60}$/', (string)$tokenResult['data']['error'])
-                ? (string)$tokenResult['data']['error'] : 'token_exchange_failed';
-            $tokenErrorDetail = !empty($tokenResult['data']['error_description'])
-                ? (string)$tokenResult['data']['error_description']
-                : (!empty($tokenResult['message']) ? (string)$tokenResult['message'] : '');
+            $rawTokenError = isset($tokenResult['data']['error']) ? $tokenResult['data']['error'] : null;
+            $tokenErrorCode = is_array($rawTokenError) && isset($rawTokenError['code'])
+                ? 'facebook_' . preg_replace('/[^0-9]/', '', (string) $rawTokenError['code'])
+                : (is_string($rawTokenError) && preg_match('/^[a-zA-Z0-9_-]{1,60}$/', $rawTokenError) ? $rawTokenError : 'token_exchange_failed');
+            $tokenErrorDetail = is_array($rawTokenError) && !empty($rawTokenError['message'])
+                ? (string) $rawTokenError['message']
+                : (!empty($tokenResult['data']['error_description'])
+                    ? (string)$tokenResult['data']['error_description']
+                    : (!empty($tokenResult['message']) ? (string)$tokenResult['message'] : ''));
             $tokenErrorDetail = trim(preg_replace('/[\x00-\x1F\x7F]/', ' ', strip_tags($tokenErrorDetail)));
             $tokenErrorDetail = substr($tokenErrorDetail, 0, 180);
 
@@ -2260,6 +3366,8 @@ if ($resource === 'oauth_callback') {
                 $userMessage = 'Mã đăng nhập Google không còn hợp lệ (invalid_grant). Hãy bắt đầu đăng nhập mới; nếu vẫn lỗi, kiểm tra redirect URI và tạo lại Client Secret của đúng OAuth client.';
             } elseif ($provider === 'google' && $tokenErrorCode === 'unauthorized_client') {
                 $userMessage = 'OAuth Client chưa được Google cho phép dùng luồng này (unauthorized_client). Hãy xác nhận Client ID thuộc loại Web application và cấu hình Google Auth Platform.';
+            } elseif ($provider === 'facebook') {
+                $userMessage = 'Facebook không cấp quyền đăng nhập (' . $tokenErrorCode . '). Kiểm tra App ID, App Secret và Valid OAuth Redirect URI trong Meta for Developers.';
             } else {
                 $userMessage = 'Google không cấp access token (' . $tokenErrorCode . ').';
             }
@@ -2270,12 +3378,23 @@ if ($resource === 'oauth_callback') {
         }
         $accessToken = (string) $tokenResult['data']['access_token'];
 
+        $verifiedFacebookUserId = '';
+        if ($provider === 'facebook') {
+            $verification = aurora_verify_facebook_access_token($config, $accessToken);
+            if (!$verification['ok']) {
+                aurora_oauth_attempt_finish($db, $attemptId, 'failed', 0, '', 'invalid_facebook_token', $verification['message']);
+                aurora_oauth_redirect_error($provider, 'Phiên xác thực Facebook không hợp lệ. Vui lòng đăng nhập lại.');
+            }
+            $verifiedFacebookUserId = (string) $verification['user_id'];
+        }
+
         if ($provider === 'google') {
             $profileResult = aurora_oauth_http($config['profile_url'], 'GET', array(), $accessToken);
         } else {
             $profileResult = aurora_oauth_http($config['profile_url'], 'GET', array(
                 'fields' => 'id,name,email,picture.type(large)',
                 'access_token' => $accessToken,
+                'appsecret_proof' => hash_hmac('sha256', $accessToken, $config['client_secret']),
             ), '');
         }
         if (!$profileResult['ok']) {
@@ -2283,6 +3402,17 @@ if ($resource === 'oauth_callback') {
             aurora_oauth_redirect_error($provider, 'Không thể lấy thông tin tài khoản từ nhà cung cấp. Vui lòng thử lại.');
         }
         $data = $profileResult['data'];
+        if ($provider === 'facebook') {
+            $facebookProfileId = isset($data['id']) ? (string) $data['id'] : '';
+            if ($facebookProfileId === '' || !aurora_oauth_safe_equals($verifiedFacebookUserId, $facebookProfileId)) {
+                aurora_oauth_attempt_finish($db, $attemptId, 'failed', 0, $facebookProfileId, 'facebook_identity_mismatch', 'Facebook profile không khớp với access token đã xác minh.');
+                aurora_oauth_redirect_error($provider, 'Không thể xác minh danh tính Facebook. Vui lòng đăng nhập lại.');
+            }
+            if (empty($data['email']) || !filter_var((string) $data['email'], FILTER_VALIDATE_EMAIL)) {
+                aurora_oauth_attempt_finish($db, $attemptId, 'failed', 0, $facebookProfileId, 'facebook_email_missing', 'Facebook không cung cấp email cho tài khoản này.');
+                aurora_oauth_redirect_error($provider, 'Facebook chưa cung cấp email cho Aurora. Hãy dùng tài khoản Facebook có email đã xác minh và cấp quyền email.');
+            }
+        }
         if ($provider === 'google' && empty($data['email_verified'])) {
             aurora_oauth_attempt_finish($db, $attemptId, 'failed', 0, isset($data['sub']) ? $data['sub'] : '', 'email_unverified', 'Email Google chưa được xác minh.');
             aurora_oauth_redirect_error($provider, 'Email Google chưa được xác minh.');
@@ -2312,6 +3442,167 @@ if ($resource === 'oauth_callback') {
     }
 }
 
+// ── /password_reset_request ──────────────────────────────────────────────────
+if ($resource === 'password_reset_request') {
+    aurora_method('POST');
+    if (!aurora_ensure_password_reset_schema($db)) aurora_response(array('message'=>'Không thể chuẩn bị dữ liệu khôi phục mật khẩu trong aurora_db.'), 500);
+    $body = aurora_body();
+    $identifier = isset($body['identifier']) ? strtolower(trim((string)$body['identifier'])) : '';
+    if ($identifier === '' || strlen($identifier) > 180) aurora_response(array('message'=>'Vui lòng nhập email hoặc số điện thoại hợp lệ.'), 422);
+
+    $now = aurora_vietnam_now();
+    $expiresAt = date('Y-m-d H:i:s', strtotime($now.' +10 minutes'));
+    $windowStart = date('Y-m-d H:i:s', strtotime($now.' -15 minutes'));
+    $pepper = aurora_env('APP_KEY', 'aurora-cinema-password-reset');
+    $lookupHash = hash_hmac('sha256', $identifier, $pepper);
+    $ip = isset($_SERVER['REMOTE_ADDR']) ? (string)$_SERVER['REMOTE_ADDR'] : '';
+    $ipHash = hash_hmac('sha256', $ip, $pepper);
+    $agent = isset($_SERVER['HTTP_USER_AGENT']) ? substr((string)$_SERVER['HTTP_USER_AGENT'], 0, 255) : '';
+
+    $stmt = $db->prepare('SELECT COUNT(*) FROM customer_password_reset_requests WHERE lookup_hash=? AND requested_at>=?');
+    $stmt->bind_param('ss', $lookupHash, $windowStart); $stmt->execute();
+    $lookupCount = 0; $stmt->bind_result($lookupCount); $stmt->fetch(); $stmt->close();
+    $stmt = $db->prepare('SELECT COUNT(*) FROM customer_password_reset_requests WHERE ip_address_hash=? AND requested_at>=?');
+    $stmt->bind_param('ss', $ipHash, $windowStart); $stmt->execute();
+    $ipCount = 0; $stmt->bind_result($ipCount); $stmt->fetch(); $stmt->close();
+    if ((int)$lookupCount >= 3 || (int)$ipCount >= 12) {
+        aurora_response(array('message'=>'Bạn đã yêu cầu quá nhiều mã. Vui lòng thử lại sau 15 phút.'), 429);
+    }
+
+    $userId = 0; $accountName = 'Quý khách'; $accountEmail = '';
+    if (filter_var($identifier, FILTER_VALIDATE_EMAIL)) {
+        $stmt = $db->prepare("SELECT id,full_name,email FROM users WHERE email=? AND role='customer' AND status='active' LIMIT 1");
+        $stmt->bind_param('s', $identifier);
+    } else {
+        $phone = preg_replace('/[\s\.\-\(\)]/', '', $identifier);
+        $stmt = $db->prepare("SELECT id,full_name,email FROM users WHERE phone=? AND role='customer' AND status='active' LIMIT 1");
+        $stmt->bind_param('s', $phone);
+    }
+    $stmt->execute();
+    $foundId = null; $foundName = null; $foundEmail = null;
+    $stmt->bind_result($foundId, $foundName, $foundEmail);
+    if ($stmt->fetch() && filter_var((string)$foundEmail, FILTER_VALIDATE_EMAIL)) {
+        $userId = (int)$foundId;
+        $accountName = trim((string)$foundName) !== '' ? (string)$foundName : 'Quý khách';
+        $accountEmail = strtolower((string)$foundEmail);
+    }
+    $stmt->close();
+
+    $selector = substr(aurora_oauth_random_token(), 0, 40);
+    $code = aurora_password_reset_code();
+    $codeHash = aurora_password_reset_hash($code, $selector);
+    $db->query("UPDATE customer_password_reset_requests SET status='expired' WHERE status IN ('pending','verified') AND expires_at<'".$db->real_escape_string($now)."'");
+    $stmt = $db->prepare("INSERT INTO customer_password_reset_requests (user_id,selector,lookup_hash,code_hash,status,attempts_remaining,delivery_status,ip_address_hash,user_agent,expires_at,requested_at) VALUES (NULLIF(?,0),?,?,?,'pending',5,'not_applicable',?,?,?,?)");
+    $stmt->bind_param('isssssss', $userId, $selector, $lookupHash, $codeHash, $ipHash, $agent, $expiresAt, $now);
+    if (!$stmt->execute()) { $stmt->close(); aurora_response(array('message'=>'Không thể tạo yêu cầu khôi phục mật khẩu.'), 500); }
+    $requestId = (int)$stmt->insert_id; $stmt->close();
+
+    $environment = strtolower((string)aurora_env('APP_ENV', 'production'));
+    $deliveryStatus = 'not_applicable';
+    if ($userId > 0) {
+        if ($environment === 'local' || $environment === 'development') {
+            $deliveryStatus = 'development';
+        } else {
+            $deliveryStatus = aurora_password_reset_send_email($accountEmail, $accountName, $code, false) ? 'sent' : 'failed';
+        }
+    }
+    $stmt = $db->prepare('UPDATE customer_password_reset_requests SET delivery_status=? WHERE id=?');
+    $stmt->bind_param('si', $deliveryStatus, $requestId); $stmt->execute(); $stmt->close();
+
+    $response = array(
+        'message'=>'Nếu thông tin khớp với tài khoản Aurora, mã xác minh đã được gửi và có hiệu lực trong 10 phút.',
+        'requestId'=>$selector,
+        'expiresIn'=>600,
+        'delivery'=>$environment === 'local' || $environment === 'development' ? 'development' : 'email'
+    );
+    // WAMP local has no SMTP server. Expose a test code only in local mode so
+    // the complete flow remains testable; production never returns the code.
+    if ($environment === 'local' || $environment === 'development') $response['developmentCode'] = $code;
+    aurora_response($response, 200);
+}
+
+// ── /password_reset_verify ───────────────────────────────────────────────────
+if ($resource === 'password_reset_verify') {
+    aurora_method('POST');
+    if (!aurora_ensure_password_reset_schema($db)) aurora_response(array('message'=>'Không thể chuẩn bị dữ liệu khôi phục mật khẩu.'), 500);
+    $body = aurora_body();
+    $selector = isset($body['requestId']) ? strtolower(trim((string)$body['requestId'])) : '';
+    $code = isset($body['code']) ? trim((string)$body['code']) : '';
+    if (!preg_match('/^[a-f0-9]{40}$/', $selector) || !preg_match('/^[0-9]{6}$/', $code)) aurora_response(array('message'=>'Mã xác minh không hợp lệ hoặc đã hết hạn.'), 422);
+
+    $now = aurora_vietnam_now();
+    $db->autocommit(false);
+    $stmt = $db->prepare('SELECT id,user_id,code_hash,status,attempts_remaining,expires_at FROM customer_password_reset_requests WHERE selector=? LIMIT 1 FOR UPDATE');
+    $stmt->bind_param('s', $selector); $stmt->execute();
+    $rowId = null; $userId = null; $storedHash = null; $status = null; $attempts = null; $expiresAt = null;
+    $stmt->bind_result($rowId, $userId, $storedHash, $status, $attempts, $expiresAt);
+    $found = $stmt->fetch(); $stmt->close();
+    $valid = $found && $status === 'pending' && (int)$attempts > 0 && strtotime($expiresAt) >= strtotime($now)
+        && aurora_oauth_safe_equals((string)$storedHash, aurora_password_reset_hash($code, $selector)) && (int)$userId > 0;
+    if (!$valid) {
+        if ($found) {
+            $remaining = max(0, (int)$attempts - 1);
+            $nextStatus = strtotime($expiresAt) < strtotime($now) ? 'expired' : ($remaining <= 0 ? 'locked' : (string)$status);
+            $stmt = $db->prepare('UPDATE customer_password_reset_requests SET attempts_remaining=?,status=? WHERE id=?');
+            $stmt->bind_param('isi', $remaining, $nextStatus, $rowId); $stmt->execute(); $stmt->close();
+        }
+        $db->commit(); $db->autocommit(true);
+        aurora_response(array('message'=>'Mã xác minh không đúng, đã hết hạn hoặc đã được sử dụng.'), 422);
+    }
+
+    $resetToken = aurora_oauth_random_token();
+    $resetTokenHash = aurora_password_reset_hash($resetToken, $selector);
+    $verifiedUntil = date('Y-m-d H:i:s', strtotime($now.' +10 minutes'));
+    $stmt = $db->prepare("UPDATE customer_password_reset_requests SET status='verified',reset_token_hash=?,verified_until=?,verified_at=? WHERE id=?");
+    $stmt->bind_param('sssi', $resetTokenHash, $verifiedUntil, $now, $rowId);
+    $ok = $stmt->execute(); $stmt->close();
+    if (!$ok) { $db->rollback(); $db->autocommit(true); aurora_response(array('message'=>'Không thể xác minh yêu cầu đặt lại mật khẩu.'), 500); }
+    $db->commit(); $db->autocommit(true);
+    aurora_response(array('message'=>'Xác minh thành công. Bạn có thể tạo mật khẩu mới.', 'resetToken'=>$resetToken, 'expiresIn'=>600), 200);
+}
+
+// ── /password_reset_complete ─────────────────────────────────────────────────
+if ($resource === 'password_reset_complete') {
+    aurora_method('POST');
+    if (!aurora_ensure_password_reset_schema($db)) aurora_response(array('message'=>'Không thể chuẩn bị dữ liệu khôi phục mật khẩu.'), 500);
+    $body = aurora_body();
+    $selector = isset($body['requestId']) ? strtolower(trim((string)$body['requestId'])) : '';
+    $resetToken = isset($body['resetToken']) ? trim((string)$body['resetToken']) : '';
+    $newPassword = isset($body['password']) ? (string)$body['password'] : '';
+    $confirmPassword = isset($body['confirmPassword']) ? (string)$body['confirmPassword'] : '';
+    if (!preg_match('/^[a-f0-9]{40}$/', $selector) || strlen($resetToken) < 40) aurora_response(array('message'=>'Phiên đặt lại mật khẩu không hợp lệ.'), 422);
+    if ($newPassword !== $confirmPassword) aurora_response(array('message'=>'Mật khẩu xác nhận không khớp.'), 422);
+    if (strlen($newPassword) < 8 || strlen($newPassword) > 72 || !preg_match('/[A-Z]/', $newPassword) || !preg_match('/[a-z]/', $newPassword) || !preg_match('/[0-9]/', $newPassword)) {
+        aurora_response(array('message'=>'Mật khẩu mới cần 8–72 ký tự, gồm chữ hoa, chữ thường và số.'), 422);
+    }
+
+    $now = aurora_vietnam_now();
+    $db->autocommit(false);
+    $stmt = $db->prepare("SELECT r.id,r.user_id,r.reset_token_hash,r.status,r.verified_until,u.password_hash,u.full_name,u.email FROM customer_password_reset_requests r INNER JOIN users u ON u.id=r.user_id WHERE r.selector=? AND u.role='customer' AND u.status='active' LIMIT 1 FOR UPDATE");
+    $stmt->bind_param('s', $selector); $stmt->execute();
+    $rowId = null; $userId = null; $storedTokenHash = null; $status = null; $verifiedUntil = null; $oldPasswordHash = null; $accountName = null; $accountEmail = null;
+    $stmt->bind_result($rowId, $userId, $storedTokenHash, $status, $verifiedUntil, $oldPasswordHash, $accountName, $accountEmail);
+    $found = $stmt->fetch(); $stmt->close();
+    $valid = $found && $status === 'verified' && strtotime($verifiedUntil) >= strtotime($now)
+        && aurora_oauth_safe_equals((string)$storedTokenHash, aurora_password_reset_hash($resetToken, $selector));
+    if (!$valid) { $db->rollback(); $db->autocommit(true); aurora_response(array('message'=>'Phiên đặt lại mật khẩu đã hết hạn hoặc đã được sử dụng.'), 422); }
+    if (aurora_password_verify($newPassword, $oldPasswordHash)) { $db->rollback(); $db->autocommit(true); aurora_response(array('message'=>'Mật khẩu mới phải khác mật khẩu hiện tại.'), 422); }
+
+    $newHash = aurora_password_hash($newPassword);
+    $stmt = $db->prepare('UPDATE users SET password_hash=?,password_changed_at=?,updated_at=? WHERE id=?');
+    $stmt->bind_param('sssi', $newHash, $now, $now, $userId);
+    $savedUser = $stmt->execute(); $stmt->close();
+    $stmt = $db->prepare("UPDATE customer_password_reset_requests SET status='used',completed_at=? WHERE id=?");
+    $stmt->bind_param('si', $now, $rowId); $savedRequest = $stmt->execute(); $stmt->close();
+    $stmt = $db->prepare("UPDATE customer_password_reset_requests SET status='expired' WHERE user_id=? AND id<>? AND status IN ('pending','verified')");
+    $stmt->bind_param('ii', $userId, $rowId); $invalidated = $stmt->execute(); $stmt->close();
+    if (!$savedUser || !$savedRequest || !$invalidated) { $db->rollback(); $db->autocommit(true); aurora_response(array('message'=>'Không thể cập nhật mật khẩu trong aurora_db.'), 500); }
+    $db->commit(); $db->autocommit(true);
+    if (isset($_SESSION['aurora_user_id']) && (int)$_SESSION['aurora_user_id'] === (int)$userId) unset($_SESSION['aurora_user_id']);
+    if (strtolower((string)aurora_env('APP_ENV', 'production')) === 'production') aurora_password_reset_send_email($accountEmail, $accountName, '', true);
+    aurora_response(array('message'=>'Mật khẩu đã được cập nhật thành công. Vui lòng đăng nhập lại.'), 200);
+}
+
 // ── /register ─────────────────────────────────────────────────────────────────
 if ($resource === 'register') {
     if ($_SERVER['REQUEST_METHOD'] !== 'POST') {
@@ -2328,8 +3619,8 @@ if ($resource === 'register') {
     if (!filter_var($email, FILTER_VALIDATE_EMAIL)) {
         aurora_response(array('message' => 'Email không đúng định dạng.'), 422);
     }
-    if (strlen($password) < 6) {
-        aurora_response(array('message' => 'Mật khẩu cần ít nhất 6 ký tự.'), 422);
+    if (strlen($password) < 8 || strlen($password) > 72 || !preg_match('/[A-Z]/', $password) || !preg_match('/[a-z]/', $password) || !preg_match('/[0-9]/', $password)) {
+        aurora_response(array('message' => 'Mật khẩu cần 8–72 ký tự, gồm chữ hoa, chữ thường và số.'), 422);
     }
 
     // Check duplicate email (PHP 5.2 compatible: bind_result + fetch)
@@ -2346,8 +3637,10 @@ if ($resource === 'register') {
 
     $hash = aurora_password_hash($password);
     $now  = date('Y-m-d H:i:s');
-    $stmt = $db->prepare('INSERT INTO users (full_name, email, password_hash, created_at, updated_at) VALUES (?, ?, ?, ?, ?)');
-    $stmt->bind_param('sssss', $fullName, $email, $hash, $now, $now);
+    $role = 'customer';
+    $status = 'active';
+    $stmt = $db->prepare('INSERT INTO users (full_name, email, password_hash, role, status, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?)');
+    $stmt->bind_param('sssssss', $fullName, $email, $hash, $role, $status, $now, $now);
     if (!$stmt->execute()) {
         $stmt->close();
         aurora_response(array('message' => 'Không thể tạo tài khoản: ' . $db->error), 500);
@@ -2374,7 +3667,7 @@ if ($resource === 'login') {
     }
 
     // PHP 5.2 compatible: bind_result + fetch
-    $stmt = $db->prepare('SELECT id, password_hash FROM users WHERE email = ?');
+    $stmt = $db->prepare("SELECT id, password_hash FROM users WHERE email = ? AND role='customer' AND status='active' LIMIT 1");
     $stmt->bind_param('s', $email);
     $stmt->execute();
     $rowId = null; $rowHash = null;
@@ -2392,16 +3685,274 @@ if ($resource === 'login') {
     aurora_response(array('user' => aurora_public_user($db, $userId)), 200);
 }
 
+// ── Cổng thanh toán tự động: VietQR (SePay), VNPAY 2.1.0 & MoMo API v2 ───────
+if($resource==='vnpay_config'||$resource==='payment_config'){
+    aurora_method('GET');
+    $vnpay=aurora_vnpay_config();
+    $vietqr=aurora_vietqr_config();
+    $momo=aurora_momo_config();
+    $sim=aurora_payment_simulation_enabled();
+    $vnpayCreds=$vnpay['tmn_code']!==''&&$vnpay['hash_secret']!=='';
+    $vnpayUrls=$vnpay['return_url']!==''&&$vnpay['ipn_url']!=='';
+    $vnpayHttps=$vnpay['mode']!=='production'||(strpos($vnpay['return_url'],'https://')===0&&strpos($vnpay['ipn_url'],'https://')===0);
+    $vnpayGatewayReady=$vnpayCreds&&$vnpayUrls&&$vnpayHttps;
+    $momoGatewayReady=$momo['partner_code']!==''&&$momo['access_key']!==''&&$momo['secret_key']!=='';
+    $vietqrReady=$vietqr['bank_id']!==''&&$vietqr['account_no']!=='';
+    aurora_response(array(
+        'enabled'=>$vnpayGatewayReady||$sim,
+        'mode'=>$vnpayGatewayReady?$vnpay['mode']:($sim?'sandbox_inline':'unavailable'),
+        'provider'=>'VNPAY',
+        'currency'=>'VND',
+        'returnUrl'=>$vnpay['return_url'],
+        'ipnUrl'=>$vnpay['ipn_url'],
+        'credentialsConfigured'=>$vnpayCreds,
+        'httpsReady'=>$vnpayHttps,
+        'simulationEnabled'=>$sim,
+        'gateways'=>array(
+            'vietqr'=>array(
+                'enabled'=>$vietqrReady,
+                'autoBankSync'=>$vietqr['sepay_enabled'],
+                'bankId'=>$vietqr['bank_id'],
+                'accountNo'=>$vietqr['account_no'],
+                'accountName'=>$vietqr['account_name'],
+                'mode'=>$vietqr['sepay_enabled']?'sepay_live':($sim?'vietqr_sandbox':'manual')
+            ),
+            'vnpay'=>array(
+                'enabled'=>$vnpayGatewayReady||$vietqr['sepay_enabled']||$sim,
+                'redirectGateway'=>$vnpayGatewayReady,
+                'autoBankSync'=>$vietqr['sepay_enabled'],
+                'mode'=>$vnpayGatewayReady?$vnpay['mode']:($vietqr['sepay_enabled']?'sepay_qr_live':($sim?'sandbox_inline':'unavailable'))
+            ),
+            'momo'=>array(
+                'enabled'=>$momoGatewayReady||$vietqr['sepay_enabled']||$sim,
+                'redirectGateway'=>$momoGatewayReady,
+                'autoBankSync'=>$vietqr['sepay_enabled'],
+                'mode'=>$momoGatewayReady?$momo['mode']:($vietqr['sepay_enabled']?'sepay_qr_live':($sim?'sandbox_inline':'unavailable'))
+            )
+        )
+    ),200);
+}
+
+if($resource==='vnpay_return'||$resource==='vnpay_ipn'){
+    aurora_method('GET');$config=aurora_vnpay_config();$isIpn=$resource==='vnpay_ipn';$callbackType=$isIpn?'IPN':'RETURN';$txnRef=isset($_GET['vnp_TxnRef'])?trim((string)$_GET['vnp_TxnRef']):'';
+    $signatureValid=aurora_vnpay_verified($_GET,$config['hash_secret']);$merchantValid=isset($_GET['vnp_TmnCode'])&&((string)$_GET['vnp_TmnCode']===$config['tmn_code']);$referenceValid=$txnRef!==''&&strlen($txnRef)<=100&&preg_match('/^[A-Za-z0-9_-]+$/',$txnRef);$amountValid=isset($_GET['vnp_Amount'])&&ctype_digit((string)$_GET['vnp_Amount']);
+    if(!$signatureValid||!$merchantValid){aurora_vnpay_log_callback($db,$_GET,$callbackType,false,!$signatureValid?'INVALID_CHECKSUM':'INVALID_MERCHANT');if($isIpn)aurora_response(array('RspCode'=>'97','Message'=>'Invalid Checksum'),200);header('Location: '.$config['frontend_url'].'?vnpay_result=invalid&txn_ref='.urlencode($txnRef));exit;}
+    if(!$referenceValid){aurora_vnpay_log_callback($db,$_GET,$callbackType,true,'INVALID_REFERENCE');if($isIpn)aurora_response(array('RspCode'=>'01','Message'=>'Order not found'),200);header('Location: '.$config['frontend_url'].'?vnpay_result=error&txn_ref='.urlencode($txnRef));exit;}
+    if(!$amountValid){aurora_vnpay_log_callback($db,$_GET,$callbackType,true,'INVALID_AMOUNT');if($isIpn)aurora_response(array('RspCode'=>'04','Message'=>'Invalid Amount'),200);header('Location: '.$config['frontend_url'].'?vnpay_result=error&txn_ref='.urlencode($txnRef));exit;}
+    if(!$isIpn){
+        $reportedSuccess=isset($_GET['vnp_ResponseCode'],$_GET['vnp_TransactionStatus'])&&$_GET['vnp_ResponseCode']==='00'&&$_GET['vnp_TransactionStatus']==='00';
+        // Tự động xác nhận & phát hành vé ngay trên Return URL ở môi trường sandbox/localhost (hoặc khi bật VNPAY_CONFIRM_ON_RETURN)
+        if($reportedSuccess&&$config['confirm_on_return']){
+            try{
+                $completed=aurora_vnpay_complete($db,$_GET);
+                aurora_vnpay_log_callback($db,$_GET,'RETURN',true,'AUTO_CONFIRMED_'.$completed['status']);
+                header('Location: '.$config['frontend_url'].'?vnpay_result=success&txn_ref='.urlencode($txnRef));exit;
+            }catch(Exception $e){
+                aurora_vnpay_log_callback($db,$_GET,'RETURN',true,'RETURN_AUTO_ERROR_'.$e->getMessage());
+            }
+        }
+        aurora_vnpay_log_callback($db,$_GET,'RETURN',true,$reportedSuccess?'AWAITING_IPN':'CUSTOMER_RETURNED_FAILED');
+        header('Location: '.$config['frontend_url'].'?vnpay_result='.($reportedSuccess?'pending':'failed').'&txn_ref='.urlencode($txnRef));exit;
+    }
+    try{$completed=aurora_vnpay_complete($db,$_GET);$resultCode=$completed['already']?'02':'00';aurora_vnpay_log_callback($db,$_GET,'IPN',true,$completed['already']?'ALREADY_CONFIRMED':'CONFIRMED_'.$completed['status']);aurora_response(array('RspCode'=>$resultCode,'Message'=>$completed['already']?'Order already confirmed':'Confirm Success'),200);}
+    catch(Exception $exception){$code=$exception->getMessage()==='ORDER_NOT_FOUND'?'01':($exception->getMessage()==='INVALID_AMOUNT'?'04':'99');aurora_vnpay_log_callback($db,$_GET,'IPN',true,'ERROR_'.$exception->getMessage());aurora_response(array('RspCode'=>$code,'Message'=>$exception->getMessage()),200);}
+}
+
+// ── MoMo Return URL & IPN Server-to-Server ───────────────────────────────────
+if($resource==='momo_return'||$resource==='momo_ipn'){
+    $cfg=aurora_momo_config();
+    $isIpn=$resource==='momo_ipn';
+    $params=$isIpn?aurora_body():$_GET;
+    $txnRef=isset($params['orderId'])?trim((string)$params['orderId']):'';
+    $resultCode=isset($params['resultCode'])?(string)$params['resultCode']:'-1';
+    $amount=isset($params['amount'])?(float)$params['amount']:0;
+    $transId=isset($params['transId'])?(string)$params['transId']:'';
+    $sigValid=false;
+    if($cfg['secret_key']!==''&&isset($params['signature'])){
+        $rawHash='accessKey='.$cfg['access_key']
+            .'&amount='.(isset($params['amount'])?$params['amount']:'')
+            .'&extraData='.(isset($params['extraData'])?$params['extraData']:'')
+            .'&message='.(isset($params['message'])?$params['message']:'')
+            .'&orderId='.$txnRef
+            .'&orderInfo='.(isset($params['orderInfo'])?$params['orderInfo']:'')
+            .'&orderType='.(isset($params['orderType'])?$params['orderType']:'')
+            .'&partnerCode='.(isset($params['partnerCode'])?$params['partnerCode']:'')
+            .'&payType='.(isset($params['payType'])?$params['payType']:'')
+            .'&requestId='.(isset($params['requestId'])?$params['requestId']:'')
+            .'&responseTime='.(isset($params['responseTime'])?$params['responseTime']:'')
+            .'&resultCode='.$resultCode
+            .'&transId='.$transId;
+        $expected=hash_hmac('sha256',$rawHash,$cfg['secret_key']);
+        $sigValid=function_exists('hash_equals')?hash_equals($expected,(string)$params['signature']):$expected===(string)$params['signature'];
+    }
+    if($sigValid&&$resultCode==='0'&&$txnRef!==''){
+        try{
+            aurora_finalize_online_payment($db,$txnRef,$amount,array(
+                'source'=>$isIpn?'MOMO_IPN':'MOMO_RETURN',
+                'provider_transaction_no'=>$transId!==''?'MOMO-'.$transId:'MOMO-'.date('ymdHis'),
+                'bank_code'=>'MOMO',
+                'card_type'=>isset($params['payType'])?$params['payType']:'MOMO_WALLET',
+                'response_code'=>'00',
+                'transaction_status'=>'00',
+                'raw'=>$params
+            ));
+            if($isIpn)aurora_response(array('resultCode'=>0,'message'=>'Success'),200);
+            header('Location: '.$cfg['frontend_url'].'?vnpay_result=success&provider=momo&txn_ref='.urlencode($txnRef));exit;
+        }catch(Exception $e){
+            if($isIpn)aurora_response(array('resultCode'=>99,'message'=>$e->getMessage()),200);
+        }
+    }
+    if($isIpn)aurora_response(array('resultCode'=>97,'message'=>'Invalid signature or failed payment'),200);
+    header('Location: '.$cfg['frontend_url'].'?vnpay_result=failed&provider=momo&txn_ref='.urlencode($txnRef));exit;
+}
+
+// ── SePay Webhook: Tự động nhận biến động số dư VietQR & phát hành vé ngay ──
+if($resource==='sepay_webhook'){
+    aurora_method('POST');
+    $cfg=aurora_vietqr_config();
+    if($cfg['sepay_secret']!==''){
+        $authHeader=isset($_SERVER['HTTP_AUTHORIZATION'])?trim((string)$_SERVER['HTTP_AUTHORIZATION']):'';
+        $expected='Apikey '.$cfg['sepay_secret'];
+        if(strcasecmp($authHeader,$expected)!==0){
+            aurora_response(array('success'=>false,'message'=>'Unauthorized webhook'),401);
+        }
+    }
+    $body=aurora_body();
+    $transferType=isset($body['transferType'])?strtolower((string)$body['transferType']):'in';
+    $amount=isset($body['transferAmount'])?(float)$body['transferAmount']:0;
+    $content=strtoupper((string)(isset($body['content'])?$body['content']:(isset($body['description'])?$body['description']:'')));
+    if($transferType!=='in'||$amount<=0||$content===''){
+        aurora_response(array('success'=>true,'ignored'=>true,'reason'=>'Not an incoming transfer'),200);
+    }
+    if(preg_match('/AUR[0-9]{12}[A-Z0-9]{8}/',$content,$matches)){
+        $txnRef=$matches[0];
+        try{
+            $done=aurora_finalize_online_payment($db,$txnRef,$amount,array(
+                'source'=>'SEPAY_WEBHOOK',
+                'provider_transaction_no'=>isset($body['id'])?'SEPAY-'.$body['id']:'SEPAY-'.date('ymdHis'),
+                'bank_code'=>isset($body['gateway'])?$body['gateway']:$cfg['bank_id'],
+                'card_type'=>'VIETQR',
+                'pay_date'=>isset($body['transactionDate'])?$body['transactionDate']:aurora_vietnam_now(),
+                'raw'=>$body
+            ));
+            aurora_response(array('success'=>true,'txnRef'=>$txnRef,'status'=>$done['status'],'already'=>$done['already']),200);
+        }catch(Exception $e){
+            aurora_response(array('success'=>false,'txnRef'=>$txnRef,'message'=>$e->getMessage()),200);
+        }
+    }
+    aurora_response(array('success'=>true,'ignored'=>true,'reason'=>'No Aurora reference found'),200);
+}
+
+// ── Giả lập nhận tiền tự động trên Localhost/Sandbox (tự phát hành vé thật) ──
+if($resource==='payment_simulate_paid'){
+    aurora_method('POST');
+    if(!aurora_payment_simulation_enabled())aurora_response(array('message'=>'Chế độ test thanh toán tự động đang tắt trên máy chủ.'),403);
+    $userId=aurora_require_customer($db,'Vui lòng đăng nhập để xác nhận giao dịch.');
+    $body=aurora_body();
+    $txnRef=isset($body['txnRef'])?trim((string)$body['txnRef']):'';
+    if($txnRef===''||!preg_match('/^[A-Za-z0-9_-]{6,100}$/',$txnRef))aurora_response(array('message'=>'Mã tham chiếu thanh toán không hợp lệ.'),422);
+    $safe=$db->real_escape_string($txnRef);
+    $check=$db->query("SELECT id,provider,amount,status,booking_id FROM online_payment_transactions WHERE txn_ref='{$safe}' AND user_id=".(int)$userId." LIMIT 1");
+    if(!$check||!($tx=$check->fetch_assoc()))aurora_response(array('message'=>'Không tìm thấy giao dịch thuộc tài khoản này.'),404);
+    try{
+        $provider=strtoupper((string)$tx['provider']);
+        $done=aurora_finalize_online_payment($db,$txnRef,(float)$tx['amount'],array(
+            'source'=>'LOCAL_AUTO_TEST',
+            'provider_transaction_no'=>$provider.'-AUTO-'.date('ymdHis'),
+            'bank_code'=>$provider==='VIETQR'?aurora_vietqr_config()['bank_id']:$provider,
+            'card_type'=>$provider,
+            'response_code'=>'00',
+            'transaction_status'=>'00'
+        ));
+        $tickets=aurora_booking_tickets_list($db,(int)$done['booking_id']);
+        aurora_response(array('success'=>true,'status'=>'PAID','bookingId'=>(int)$done['booking_id'],'tickets'=>$tickets),200);
+    }catch(Exception $e){
+        aurora_response(array('message'=>'Không thể hoàn tất thanh toán: '.$e->getMessage()),409);
+    }
+}
+
+if($resource==='vnpay_status'||$resource==='payment_status'){
+    aurora_method('GET');$userId=aurora_require_customer($db,'Vui lòng đăng nhập để xem kết quả thanh toán.');if(!aurora_ensure_online_payments($db))aurora_response(array('message'=>'Không thể chuẩn bị dữ liệu đối soát thanh toán.'),500);aurora_expire_vnpay_transactions($db);$txnRef=isset($_GET['txn_ref'])?trim((string)$_GET['txn_ref']):'';if($txnRef===''||strlen($txnRef)>100||!preg_match('/^[A-Za-z0-9_-]+$/',$txnRef))aurora_response(array('message'=>'Mã giao dịch không hợp lệ.'),422);$safe=$db->real_escape_string($txnRef);
+    $queryStatus="SELECT pt.provider,pt.txn_ref,pt.amount,pt.status,pt.provider_transaction_no,pt.bank_code,pt.card_type,pt.response_code,pt.transaction_status,pt.pay_date,pt.expires_at,pt.paid_at,pt.callback_count,pt.last_callback_at,pt.ipn_received_at,pt.return_received_at,b.id booking_id,b.booking_code,b.status booking_status,st.starts_at,m.title movie_title,t.name theater_name,sc.name screen_name FROM online_payment_transactions pt INNER JOIN bookings b ON b.id=pt.booking_id INNER JOIN showtimes st ON st.id=b.showtime_id INNER JOIN movies m ON m.id=st.movie_id INNER JOIN screens sc ON sc.id=st.screen_id INNER JOIN theaters t ON t.id=sc.theater_id WHERE pt.txn_ref='{$safe}' AND pt.user_id=".(int)$userId." LIMIT 1";
+    $result=$db->query($queryStatus);if(!$result||!($row=$result->fetch_assoc()))aurora_response(array('message'=>'Không tìm thấy giao dịch thuộc tài khoản này.'),404);
+    // Tự động gọi SePay đối soát biến động số dư cho giao dịch QR (VietQR / MoMo QR / VNPAY-QR) khi đã gắn SEPAY_API_TOKEN
+    $vietqrCfg=aurora_vietqr_config();
+    if($row['status']==='PENDING'&&$vietqrCfg['sepay_enabled']){
+        try{
+            if(aurora_sepay_poll_match($db,$txnRef,(float)$row['amount'])){
+                $recheck=$db->query($queryStatus);
+                if($recheck&&($updated=$recheck->fetch_assoc()))$row=$updated;
+            }
+        }catch(Exception $e){}
+    }
+    $bookingId=(int)$row['booking_id'];
+    if($row['status']==='PAID'){aurora_issue_booking_tickets($db,$bookingId,$row['booking_code'],'PAID');}
+    $seatResult=$db->query("SELECT CONCAT(s.seat_row,s.seat_number) seat_label FROM booking_seats bs INNER JOIN seats s ON s.id=bs.seat_id WHERE bs.booking_id={$bookingId} ORDER BY s.seat_row,s.seat_number");$seats=array();if($seatResult)while($seat=$seatResult->fetch_assoc())$seats[]=$seat['seat_label'];
+    $tickets=$row['status']==='PAID'?aurora_booking_tickets_list($db,$bookingId):array();
+    $usesVietqr=strtoupper((string)$row['provider'])==='VIETQR'||$vietqrCfg['sepay_enabled'];
+    aurora_response(array(
+        'payment'=>array(
+            'provider'=>$row['provider'],
+            'txnRef'=>$row['txn_ref'],
+            'amount'=>(float)$row['amount'],
+            'status'=>$row['status'],
+            'providerTransactionNo'=>$row['provider_transaction_no'],
+            'bankCode'=>$row['bank_code']?$row['bank_code']:(strtoupper((string)$row['provider'])==='VIETQR'?$vietqrCfg['bank_id']:$row['provider']),
+            'cardType'=>$row['card_type'],
+            'responseCode'=>$row['response_code'],
+            'transactionStatus'=>$row['transaction_status'],
+            'payDate'=>$row['pay_date'],
+            'expiresAt'=>$row['expires_at'],
+            'paidAt'=>$row['paid_at'],
+            'callbackCount'=>(int)$row['callback_count'],
+            'lastCallbackAt'=>$row['last_callback_at'],
+            'ipnReceivedAt'=>$row['ipn_received_at'],
+            'returnReceivedAt'=>$row['return_received_at'],
+            'vietqrUrl'=>$usesVietqr?aurora_vietqr_image_url($row['txn_ref'],(float)$row['amount'],strtoupper((string)$row['provider'])==='VIETQR'?null:'qr_only'):null,
+            'accountNo'=>$usesVietqr?$vietqrCfg['account_no']:null,
+            'accountName'=>$usesVietqr?$vietqrCfg['account_name']:null,
+            'sepayAutoSync'=>$vietqrCfg['sepay_enabled']
+        ),
+        'booking'=>array(
+            'id'=>$bookingId,
+            'code'=>$row['booking_code'],
+            'status'=>$row['booking_status'],
+            'movieTitle'=>$row['movie_title'],
+            'theaterName'=>$row['theater_name'],
+            'screenName'=>$row['screen_name'],
+            'startsAt'=>$row['starts_at'],
+            'seats'=>$seats
+        ),
+        'tickets'=>$tickets
+    ),200);
+}
+
 // ── /bookings (POST) ─────────────────────────────────────────────────────────
 if ($resource === 'bookings') {
     aurora_method('POST');
-    $userId = aurora_require_user();
+    $userId = aurora_require_customer($db, 'Vui lòng đăng nhập tài khoản khách hàng để đặt vé.');
+    aurora_expire_vnpay_transactions($db);
     $body = aurora_body();
     $showtimeId = isset($body['showtimeId']) ? (int)$body['showtimeId'] : 0;
-    $paymentMethod = isset($body['paymentMethod']) ? strtoupper(trim((string)$body['paymentMethod'])) : 'QR_VNPAY';
-    $allowedOnlinePaymentMethods = array('QR_VNPAY', 'QR_MOMO', 'QR_ZALOPAY');
+    $paymentMethod = isset($body['paymentMethod']) ? strtoupper(trim((string)$body['paymentMethod'])) : 'VIETQR';
+    $allowedOnlinePaymentMethods = array('VIETQR', 'QR_VNPAY', 'MOMO');
     if (!in_array($paymentMethod, $allowedOnlinePaymentMethods, true)) {
-        aurora_response(array('message' => 'Phương thức thanh toán không được hỗ trợ. Vui lòng chọn VNPay QR, MoMo hoặc ZaloPay.'), 422);
+        aurora_response(array('message' => 'Phương thức thanh toán không hợp lệ. Hỗ trợ: VietQR, VNPAY, MoMo.'), 422);
+    }
+    $vnpayConfig = aurora_vnpay_config();
+    $vietqrConfig = aurora_vietqr_config();
+    $momoConfig = aurora_momo_config();
+    $simEnabled = aurora_payment_simulation_enabled();
+    $vnpayHasGateway = $vnpayConfig['tmn_code']!==''&&$vnpayConfig['hash_secret']!==''&&$vnpayConfig['return_url']!==''&&$vnpayConfig['ipn_url']!=='';
+    $momoHasGateway = $momoConfig['mode']!=='sepay_qr'&&$momoConfig['partner_code']!==''&&$momoConfig['access_key']!==''&&$momoConfig['secret_key']!=='';
+    if ($paymentMethod === 'QR_VNPAY' && !$vnpayHasGateway && !$vietqrConfig['sepay_enabled'] && !$simEnabled) {
+        aurora_response(array('message' => 'Cổng VNPAY chưa được cấu hình merchant. Vui lòng chọn VietQR hoặc khai báo VNPAY_TMN_CODE & VNPAY_HASH_SECRET trong .env.'), 503);
+    }
+    if ($paymentMethod === 'MOMO' && !$momoHasGateway && !$vietqrConfig['sepay_enabled'] && !$simEnabled) {
+        aurora_response(array('message' => 'Cổng MoMo chưa được cấu hình. Vui lòng chọn VietQR hoặc khai báo MOMO_PARTNER_CODE / MOMO_ACCESS_KEY / MOMO_SECRET_KEY trong .env.'), 503);
+    }
+    if ($paymentMethod === 'VIETQR' && ($vietqrConfig['bank_id']==='' || $vietqrConfig['account_no']==='')) {
+        aurora_response(array('message' => 'Chưa cấu hình tài khoản ngân hàng VietQR (VIETQR_BANK_ID, VIETQR_ACCOUNT_NO) trong .env.'), 503);
     }
     $voucherCode = isset($body['voucherCode']) ? strtoupper(trim((string)$body['voucherCode'])) : '';
     if (strlen($voucherCode) > 40) aurora_response(array('message' => 'Mã ưu đãi không hợp lệ.'), 422);
@@ -2472,16 +4023,17 @@ if ($resource === 'bookings') {
 
         $takenSql = "SELECT COUNT(*) FROM booking_seats bs INNER JOIN bookings b ON b.id = bs.booking_id WHERE b.showtime_id = ? AND bs.seat_id IN (" . implode(',', array_fill(0, count($seatIds), '?')) . ") AND b.status NOT IN ('CANCELLED','EXPIRED')";
         $stmt = $db->prepare($takenSql);
-        $refs = array(str_repeat('i', count($seatIds) + 1), $showtimeId); foreach ($seatIds as $key => $value) $refs[] = &$seatIds[$key];
+        $refs = array(str_repeat('i', count($seatIds) + 1), &$showtimeId); foreach ($seatIds as $key => $value) $refs[] = &$seatIds[$key];
         call_user_func_array(array($stmt, 'bind_param'), $refs);
         $stmt->execute(); $taken = 0; $stmt->bind_result($taken); $stmt->fetch(); $stmt->close();
         if ((int)$taken > 0) throw new Exception('Một hoặc nhiều ghế vừa được đặt bởi khách khác.');
         $lockedSql = "SELECT COUNT(*) FROM tms_showtime_seat_locks WHERE showtime_id = ? AND seat_id IN (" . implode(',', array_fill(0, count($seatIds), '?')) . ")";
         $stmt = $db->prepare($lockedSql);
-        $refs = array(str_repeat('i', count($seatIds) + 1), $showtimeId); foreach ($seatIds as $key => $value) $refs[] = &$seatIds[$key];
+        $refs = array(str_repeat('i', count($seatIds) + 1), &$showtimeId); foreach ($seatIds as $key => $value) $refs[] = &$seatIds[$key];
         call_user_func_array(array($stmt, 'bind_param'), $refs);
         $stmt->execute(); $locked = 0; $stmt->bind_result($locked); $stmt->fetch(); $stmt->close();
         if ((int)$locked > 0) throw new Exception('Một hoặc nhiều ghế đã được rạp khóa cho suất chiếu này.');
+        $sessionEsc=$db->real_escape_string(session_id());$nowEsc=$db->real_escape_string(aurora_vietnam_now());$heldIds=implode(',',$seatIds);$holdCheck=$db->query("SELECT COUNT(*) held_count,MIN(expires_at) expires_at FROM seat_holds WHERE showtime_id=".(int)$showtimeId." AND seat_id IN ({$heldIds}) AND session_key='{$sessionEsc}' AND expires_at>'{$nowEsc}'");$holdRow=$holdCheck?$holdCheck->fetch_assoc():null;if(!$holdRow||(int)$holdRow['held_count']!==count($seatIds))throw new Exception('Phiên giữ ghế không còn hợp lệ. Vui lòng chọn lại ghế.');$paymentExpiresAt=$holdRow['expires_at'];
 
         $code = 'AUR-' . strtoupper(substr(md5(uniqid(mt_rand(), true)), 0, 10));
         $total = 0;
@@ -2504,13 +4056,14 @@ if ($resource === 'bookings') {
             $foundVoucher = $stmt->fetch(); $stmt->close();
             if (!$foundVoucher) throw new Exception('Mã ưu đãi không hợp lệ, đã hết hạn hoặc hết lượt sử dụng.');
             if ($subtotal < (float)$minimumOrder) throw new Exception('Đơn hàng chưa đạt giá trị tối thiểu của mã ưu đãi.');
-            $discount = $voucherType === 'percent' ? $subtotal * (float)$voucherValue / 100 : min((float)$voucherValue, $subtotal);
+            $discount = $voucherType === 'percent' ? $subtotal * (float)$voucherValue / 100 : ($voucherType==='amount'?min((float)$voucherValue,$subtotal):0);
             if ((float)$maximumDiscount > 0) $discount = min($discount, (float)$maximumDiscount);
             $discount = round($discount);
             $total = max(0, $subtotal - $discount);
         }
-        $now = date('Y-m-d H:i:s');
-        $stmt = $db->prepare("INSERT INTO bookings (user_id, showtime_id, booking_code, total_amount, status, created_at, updated_at) VALUES (?, ?, ?, ?, 'PAID', ?, ?)");
+        if($total<5000)throw new Exception('Số tiền thanh toán VNPAY tối thiểu là 5.000đ. Vui lòng điều chỉnh ưu đãi hoặc đơn hàng.');
+        $now = aurora_vietnam_now();
+        $stmt = $db->prepare("INSERT INTO bookings (user_id, showtime_id, booking_code, total_amount, status, created_at, updated_at) VALUES (?, ?, ?, ?, 'PENDING', ?, ?)");
         $stmt->bind_param('iisdss', $userId, $showtimeId, $code, $total, $now, $now); $stmt->execute(); $bookingId = (int)$stmt->insert_id; $stmt->close();
         $stmt = $db->prepare('INSERT INTO booking_seats (booking_id, showtime_id, seat_id, price) VALUES (?, ?, ?, ?)');
         if ($stmt) {
@@ -2541,18 +4094,41 @@ if ($resource === 'bookings') {
             }
             $stmt->close();
         }
-        $stmt = $db->prepare("INSERT INTO orders (order_code, channel, booking_id, customer_id, subtotal, discount_amount, voucher_code, total_amount, payment_method, amount_received, change_amount, status) VALUES (?, 'ONLINE', ?, ?, ?, ?, NULLIF(?, ''), ?, ?, ?, 0, 'PAID')");
+        $stmt = $db->prepare("INSERT INTO orders (order_code, channel, booking_id, customer_id, subtotal, discount_amount, voucher_code, total_amount, payment_method, amount_received, change_amount, status, created_at, updated_at) VALUES (?, 'ONLINE', ?, ?, ?, ?, NULLIF(?, ''), ?, ?, 0, 0, 'PENDING', ?, ?)");
         if (!$stmt) throw new Exception('Không thể lưu đơn hàng tổng.');
-        $stmt->bind_param('siiddsdsd', $code, $bookingId, $userId, $subtotal, $discount, $voucherCode, $total, $paymentMethod, $total);
+        $stmt->bind_param('siiddsdsss', $code, $bookingId, $userId, $subtotal, $discount, $voucherCode, $total, $paymentMethod, $now, $now);
         if (!$stmt->execute()) throw new Exception('Không thể lưu đơn hàng tổng.');
         $orderId = (int)$stmt->insert_id;
         $stmt->close();
-        $paymentReference = 'AURPAY-' . date('ymd') . '-' . strtoupper(substr(md5($code . $paymentMethod . microtime(true)), 0, 10));
-        $stmt = $db->prepare('INSERT INTO payments (order_id, method, amount, reference_code, created_at) VALUES (?, ?, ?, ?, ?)');
+        // Đồng bộ chi tiết vé & combo vào order_items để TMS Báo cáo (Kế toán / Admin) thống kê đúng Vé đã bán & Doanh thu vé/F&B
+        $oiStmt = $db->prepare('INSERT INTO order_items (order_id, item_type, item_code, item_name, quantity, unit_price, seat_id, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)');
+        if ($oiStmt) {
+            foreach ($seatIds as $sId) {
+                $st = isset($seatTypeMap[$sId]) ? $seatTypeMap[$sId] : 'STANDARD';
+                $p = aurora_resolved_seat_price($st, $seatPricing);
+                $iType = 'TICKET'; $iCode = 'TICKET_' . $st; $iName = 'Vé xem phim (' . $st . ')'; $qty = 1;
+                $oiStmt->bind_param('isssidis', $orderId, $iType, $iCode, $iName, $qty, $p, $sId, $now);
+                $oiStmt->execute();
+            }
+            foreach ($combos as $comboId => $quantity) {
+                $iType = 'COMBO'; $iCode = (string)$comboId; $iName = (string)$concessionCatalog[$comboId]['name'];
+                $iPrice = (float)$concessionCatalog[$comboId]['price']; $zeroSeat = 0;
+                $oiStmt->bind_param('isssidis', $orderId, $iType, $iCode, $iName, $quantity, $iPrice, $zeroSeat, $now);
+                $oiStmt->execute();
+            }
+            $oiStmt->close();
+        }
+        $paymentReference = 'AUR' . date('ymdHis') . strtoupper(substr(md5($code . microtime(true)), 0, 8));
+        $provider = $paymentMethod === 'VIETQR' ? 'VIETQR' : ($paymentMethod === 'MOMO' ? 'MOMO' : 'VNPAY');
+        $paymentStatus = 'PENDING';
+        $tmnCode = $provider === 'VNPAY' ? $vnpayConfig['tmn_code'] : ($provider === 'MOMO' ? $momoConfig['partner_code'] : $vietqrConfig['bank_id']);
+        $requestIp = aurora_vnpay_client_ip();
+        $orderInfo = 'Thanh toan ve Aurora Cinema ' . $paymentReference;
+        $stmt = $db->prepare('INSERT INTO online_payment_transactions(booking_id,order_id,user_id,provider,txn_ref,amount,status,tmn_code,request_ip,order_info,expires_at,created_at,updated_at) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?)');
         if (!$stmt) throw new Exception('Không thể tạo giao dịch thanh toán.');
-        $stmt->bind_param('isdss', $orderId, $paymentMethod, $total, $paymentReference, $now);
+        $stmt->bind_param('iiissdsssssss',$bookingId,$orderId,$userId,$provider,$paymentReference,$total,$paymentStatus,$tmnCode,$requestIp,$orderInfo,$paymentExpiresAt,$now,$now);
         if (!$stmt->execute()) throw new Exception('Không thể ghi nhận giao dịch thanh toán.');
-        $paymentId = (int)$stmt->insert_id;
+        $paymentId=(int)$stmt->insert_id;
         $stmt->close();
         if ($voucherCode !== '') {
             $voucherEsc = $db->real_escape_string($voucherCode);
@@ -2565,10 +4141,51 @@ if ($resource === 'bookings') {
             $holdIds = implode(',', $seatIds);
             $db->query("DELETE FROM seat_holds WHERE showtime_id=".(int)$showtimeId." AND seat_id IN ({$holdIds}) AND session_key='".$db->real_escape_string(session_id())."'");
         }
-        $pointsEarned = aurora_award_booking_points($db, $userId, $bookingId, $total);
+        $paymentPayload = array(
+            'id' => $paymentId,
+            'provider' => $provider,
+            'txnRef' => $paymentReference,
+            'amount' => $total,
+            'status' => 'PENDING',
+            'expiresAt' => $paymentExpiresAt,
+            'mode' => 'inline_qr',
+            'simulationEnabled' => $simEnabled
+        );
+        if ($provider === 'VIETQR') {
+            $paymentPayload['vietqrUrl'] = aurora_vietqr_image_url($paymentReference, $total);
+            $paymentPayload['bankId'] = $vietqrConfig['bank_id'];
+            $paymentPayload['accountNo'] = $vietqrConfig['account_no'];
+            $paymentPayload['accountName'] = $vietqrConfig['account_name'];
+            $paymentPayload['transferContent'] = $paymentReference;
+            $paymentPayload['sepayAutoSync'] = $vietqrConfig['sepay_enabled'];
+        } elseif ($provider === 'VNPAY' && $vnpayHasGateway) {
+            $paymentUrl = aurora_vnpay_payment_url($paymentReference, $total, $paymentExpiresAt);
+            if ($paymentUrl === false) throw new Exception('Không thể tạo URL thanh toán VNPAY.');
+            $paymentPayload['mode'] = 'redirect';
+            $paymentPayload['paymentUrl'] = $paymentUrl;
+        } elseif ($provider === 'MOMO' && $momoHasGateway) {
+            if ($momoConfig['request_type'] === 'payWithATM' && $total < 10000) {
+                throw new Exception('Cổng thanh toán MoMo ATM yêu cầu đơn hàng tối thiểu 10.000đ.');
+            }
+            $momoRes = aurora_momo_create_payment($paymentReference, $total, $orderInfo);
+            if ($momoRes === false || empty($momoRes['payUrl'])) {
+                throw new Exception('Không thể khởi tạo phiên thanh toán trên cổng MoMo. Vui lòng thử lại.');
+            }
+            $paymentPayload['mode'] = 'redirect';
+            $paymentPayload['paymentUrl'] = $momoRes['payUrl'];
+            $paymentPayload['qrCodeUrl'] = $momoRes['qrCodeUrl'];
+        } else {
+            // Quét bằng Ví MoMo / VNPAY-QR: dùng mã QR thuần (qr_only) để hiển thị trong khung MoMo/VNPAY riêng + tự động đối soát SePay
+            $paymentPayload['vietqrUrl'] = aurora_vietqr_image_url($paymentReference, $total, 'qr_only');
+            $paymentPayload['bankId'] = $vietqrConfig['bank_id'];
+            $paymentPayload['accountNo'] = $vietqrConfig['account_no'];
+            $paymentPayload['accountName'] = $vietqrConfig['account_name'];
+            $paymentPayload['transferContent'] = $paymentReference;
+            $paymentPayload['sepayAutoSync'] = $vietqrConfig['sepay_enabled'];
+        }
         $db->commit();
         $db->autocommit(true);
-        aurora_response(array('booking' => array('id'=>$bookingId, 'code'=>$code, 'showtimeId'=>$showtimeId, 'seatIds'=>$seatIds, 'combos'=>$combos, 'subtotal'=>$subtotal, 'discountAmount'=>$discount, 'voucherCode'=>$voucherCode, 'totalAmount'=>$total, 'status'=>'PAID', 'pointsEarned'=>$pointsEarned, 'payment'=>array('id'=>$paymentId,'method'=>$paymentMethod,'referenceCode'=>$paymentReference,'amount'=>$total,'status'=>'PAID','paidAt'=>$now)), 'member' => aurora_public_user($db, $userId)), 201);
+        aurora_response(array('booking'=>array('id'=>$bookingId,'code'=>$code,'showtimeId'=>$showtimeId,'seatIds'=>$seatIds,'totalAmount'=>$total,'status'=>'PENDING'),'payment'=>$paymentPayload),201);
     } catch (Exception $exception) {
         $db->rollback();
         $db->autocommit(true);
@@ -2580,44 +4197,10 @@ if ($resource === 'bookings') {
 
 // ── /profile (GET) ────────────────────────────────────────────────────────────
 if ($resource === 'profile') {
-    $userId = isset($_SESSION['aurora_user_id']) ? (int) $_SESSION['aurora_user_id'] : null;
-    if (!$userId) aurora_response(array('message' => 'Vui lòng đăng nhập.'), 401);
-    aurora_ensure_profile_avatar_schema($db);
-
-    $stmt = $db->prepare('SELECT id, full_name, email, phone, id_number, birthday, gender, city, district, address, avatar_url, membership_level, points, created_at FROM users WHERE id = ?');
-    if (!$stmt) {
-        // Columns might not exist yet — fall back to basic fields
-        $stmt2 = $db->prepare('SELECT id, full_name, email, membership_level, points, created_at, avatar_url FROM users WHERE id = ?');
-        $stmt2->bind_param('i', $userId);
-        $stmt2->execute();
-        $uid = null; $fullName = null; $email = null; $ml = null; $pts = null; $ca = null; $avatarFallback = null;
-        $stmt2->bind_result($uid, $fullName, $email, $ml, $pts, $ca, $avatarFallback);
-        $stmt2->fetch();
-        $stmt2->close();
-        aurora_response(array('profile' => array(
-            'id' => (int)$uid, 'fullName' => $fullName, 'email' => $email,
-            'phone' => null, 'idNumber' => null, 'birthday' => null,
-            'gender' => null, 'city' => null, 'district' => null, 'address' => null, 'avatarUrl' => $avatarFallback,
-            'membershipLevel' => $ml, 'points' => (int)$pts, 'createdAt' => $ca,
-        )), 200);
-    }
-    $stmt->bind_param('i', $userId);
-    $stmt->execute();
-    $uid = null; $fullName = null; $email = null; $phone = null; $idNumber = null;
-    $birthday = null; $gender = null; $city = null; $district = null; $address = null; $avatarUrl = null;
-    $membershipLevel = null; $points = null; $createdAt = null;
-    $stmt->bind_result($uid, $fullName, $email, $phone, $idNumber, $birthday, $gender, $city, $district, $address, $avatarUrl, $membershipLevel, $points, $createdAt);
-    $found = $stmt->fetch();
-    $stmt->close();
-    if (!$found) aurora_response(array('message' => 'Tài khoản không tồn tại.'), 404);
-
-    aurora_response(array('profile' => array(
-        'id' => (int) $uid, 'fullName' => $fullName, 'email' => $email,
-        'phone' => $phone, 'idNumber' => $idNumber, 'birthday' => $birthday,
-        'gender' => $gender, 'city' => $city, 'district' => $district,
-        'address' => $address, 'avatarUrl' => $avatarUrl, 'membershipLevel' => $membershipLevel,
-        'points' => (int) $points, 'createdAt' => $createdAt,
-    )), 200);
+    $userId = aurora_require_user();
+    $profile = aurora_profile_for_user($db, $userId);
+    if (!$profile) aurora_response(array('message'=>'Không thể tải hồ sơ từ aurora_db.'), 500);
+    aurora_response(array('profile'=>$profile), 200);
 }
 
 // ── /membership_card (GET) ─────────────────────────────────────────────────
@@ -2643,16 +4226,16 @@ if ($resource === 'membership_card') {
     }
     $available = max(0, (int)$user['points']);
     $earned = max($earned, $available + $used); // supports customers created before the ledger
-    $level = $user['membership_level'] ?: aurora_membership_level($available);
-    $thresholds = array('STANDARD'=>500, 'SILVER'=>2000, 'GOLD'=>5000);
-    $nextNames = array('STANDARD'=>'SILVER', 'SILVER'=>'GOLD', 'GOLD'=>'PLATINUM');
+    $level = $user['membership_level'] ? $user['membership_level'] : aurora_membership_level($available);
+    $thresholds = array('STANDARD'=>500000, 'SILVER'=>2000000, 'GOLD'=>5000000);
+    $nextNames = array('STANDARD'=>'SILVER', 'SILVER'=>'GOLD', 'GOLD'=>'VIP');
     $nextThreshold = isset($thresholds[$level]) ? $thresholds[$level] : null;
     aurora_response(array('card' => array(
         'cardNumber' => $card['card_number'], 'status' => 'ACTIVE', 'membershipLevel' => $level,
         'activatedAt' => $card['activated_at'], 'expiresAt' => $card['expires_at'], 'totalSpent' => $totalSpent,
         'pointsAccumulated' => $earned, 'pointsUsed' => $used, 'pointsAvailable' => $available,
         'pointsExpiring' => 0, 'nextLevel' => isset($nextNames[$level]) ? $nextNames[$level] : null,
-        'nextThreshold' => $nextThreshold, 'pointsToNextLevel' => $nextThreshold === null ? 0 : max(0, $nextThreshold - $available),
+        'nextThreshold' => $nextThreshold, 'pointsToNextLevel' => $nextThreshold === null ? 0 : max(0, $nextThreshold - $earned),
         'expiryNote' => 'Điểm chưa có lịch hết hạn.'
     )), 200);
 }
@@ -2661,42 +4244,77 @@ if ($resource === 'membership_card') {
 if ($resource === 'profile_avatar') {
     aurora_method('POST');
     $userId = aurora_require_user();
-    if (!aurora_ensure_profile_avatar_schema($db)) aurora_response(array('message'=>'Không thể chuẩn bị hồ sơ ảnh đại diện trong aurora_db.'), 500);
-    if (!isset($_FILES['avatar']) || !is_array($_FILES['avatar'])) aurora_response(array('message'=>'Vui lòng chọn một ảnh đại diện.'), 422);
+    if (!aurora_ensure_profile_avatar_schema($db) || !aurora_ensure_avatar_upload_schema($db)) aurora_response(array('message'=>'Không thể chuẩn bị dữ liệu ảnh đại diện trong aurora_db.'), 500);
+    if (!isset($_FILES['avatar']) || !is_array($_FILES['avatar'])) {
+        $contentLength = isset($_SERVER['CONTENT_LENGTH']) ? (int)$_SERVER['CONTENT_LENGTH'] : 0;
+        aurora_response(array('message'=>$contentLength > 5 * 1024 * 1024 ? 'Ảnh vượt quá giới hạn 5 MB.' : 'Vui lòng chọn một ảnh đại diện.'), 422);
+    }
     $file = $_FILES['avatar'];
-    if ((int)$file['error'] !== UPLOAD_ERR_OK) aurora_response(array('message'=>'Tải ảnh lên không thành công. Vui lòng thử lại.'), 422);
+    if ((int)$file['error'] !== UPLOAD_ERR_OK) aurora_response(array('message'=>aurora_avatar_upload_error((int)$file['error'])), 422);
     if ((int)$file['size'] < 1 || (int)$file['size'] > 5 * 1024 * 1024) aurora_response(array('message'=>'Ảnh đại diện phải nhỏ hơn hoặc bằng 5 MB.'), 422);
     $image = @getimagesize($file['tmp_name']);
     $mime = $image && isset($image['mime']) ? $image['mime'] : '';
-    $extensions = array('image/jpeg'=>'jpg', 'image/png'=>'png', 'image/webp'=>'webp');
-    if (!isset($extensions[$mime])) aurora_response(array('message'=>'Chỉ hỗ trợ ảnh JPG, PNG hoặc WebP.'), 422);
+    $extensions = array('image/jpeg'=>'jpg', 'image/png'=>'png');
+    if (!isset($extensions[$mime])) aurora_response(array('message'=>'Chỉ hỗ trợ ảnh JPG hoặc PNG hợp lệ.'), 422);
     if ((int)$image[0] < 80 || (int)$image[1] < 80 || (int)$image[0] > 6000 || (int)$image[1] > 6000) aurora_response(array('message'=>'Ảnh cần có kích thước từ 80×80 đến 6000×6000 px.'), 422);
-    $directory = __DIR__.DIRECTORY_SEPARATOR.'uploads'.DIRECTORY_SEPARATOR.'avatars';
+    $directory = dirname(__FILE__).DIRECTORY_SEPARATOR.'uploads'.DIRECTORY_SEPARATOR.'avatars';
     if (!is_dir($directory) && !@mkdir($directory, 0755, true)) aurora_response(array('message'=>'Không thể tạo thư mục lưu ảnh.'), 500);
+    if (!is_writable($directory)) aurora_response(array('message'=>'Thư mục ảnh đại diện không có quyền ghi.'), 500);
     $filename = 'avatar_'.$userId.'_'.substr(sha1(uniqid((string)$userId, true).mt_rand()), 0, 24).'.'.$extensions[$mime];
     $destination = $directory.DIRECTORY_SEPARATOR.$filename;
     if (!move_uploaded_file($file['tmp_name'], $destination)) aurora_response(array('message'=>'Không thể lưu ảnh đại diện trên máy chủ.'), 500);
     $scriptPath = isset($_SERVER['SCRIPT_NAME']) ? dirname($_SERVER['SCRIPT_NAME']) : '/AURORA%20CINEMA/customer/backend/public';
-    $avatarUrl = rtrim(str_replace('\\', '/', $scriptPath), '/').'/uploads/avatars/'.rawurlencode($filename);
+    $scriptPath = str_replace(' ', '%20', str_replace('\\', '/', $scriptPath));
+    $avatarUrl = rtrim($scriptPath, '/').'/uploads/avatars/'.rawurlencode($filename);
     $oldUrl = '';
     $old = $db->query('SELECT avatar_url FROM users WHERE id='.(int)$userId.' LIMIT 1');
     if ($old && ($oldRow = $old->fetch_assoc())) $oldUrl = isset($oldRow['avatar_url']) ? (string)$oldRow['avatar_url'] : '';
     $urlEsc = $db->real_escape_string($avatarUrl); $nowEsc = $db->real_escape_string(aurora_vietnam_now());
-    if (!$db->query("UPDATE users SET avatar_url='{$urlEsc}', updated_at='{$nowEsc}' WHERE id=".(int)$userId)) { @unlink($destination); aurora_response(array('message'=>'Không thể lưu đường dẫn ảnh trong aurora_db.'), 500); }
-    if (preg_match('/\/uploads\/avatars\/(avatar_'.(int)$userId.'_[A-Za-z0-9]+\.(jpg|png|webp))$/', $oldUrl, $matches)) {
-        $oldPath = $directory.DIRECTORY_SEPARATOR.$matches[1];
-        if (is_file($oldPath) && $oldPath !== $destination) @unlink($oldPath);
-    }
-    aurora_response(array('message'=>'Đã cập nhật ảnh đại diện.', 'avatarUrl'=>$avatarUrl, 'user'=>aurora_public_user($db, $userId)), 200);
+    $sourceName = isset($_POST['source_name']) ? (string)$_POST['source_name'] : (string)$file['name'];
+    $sourceWidth = isset($_POST['source_width']) ? max(0, min(20000, (int)$_POST['source_width'])) : (int)$image[0];
+    $sourceHeight = isset($_POST['source_height']) ? max(0, min(20000, (int)$_POST['source_height'])) : (int)$image[1];
+    $cropOffsetX = isset($_POST['crop_offset_x']) ? max(-1, min(1, (float)$_POST['crop_offset_x'])) : 0;
+    $cropOffsetY = isset($_POST['crop_offset_y']) ? max(-1, min(1, (float)$_POST['crop_offset_y'])) : 0;
+    $cropZoom = isset($_POST['crop_zoom']) ? max(1, min(3, (float)$_POST['crop_zoom'])) : 1;
+    $cropOutputSize = isset($_POST['crop_output_size']) ? max(80, min(2000, (int)$_POST['crop_output_size'])) : (int)$image[0];
+    $storageEsc = $db->real_escape_string($filename); $originalEsc = $db->real_escape_string(substr(basename($sourceName), 0, 255)); $mimeEsc = $db->real_escape_string($mime);
+    $db->autocommit(false);
+    $saved = $db->query("UPDATE users SET avatar_url='{$urlEsc}', updated_at='{$nowEsc}' WHERE id=".(int)$userId)
+        && $db->query("UPDATE customer_avatar_uploads SET status='REPLACED', deleted_at='{$nowEsc}' WHERE user_id=".(int)$userId." AND status='ACTIVE'")
+        && $db->query("INSERT INTO customer_avatar_uploads (user_id,avatar_url,storage_name,original_name,mime_type,byte_size,image_width,image_height,source_width,source_height,crop_offset_x,crop_offset_y,crop_zoom,crop_output_size,status,created_at) VALUES (".(int)$userId.",'{$urlEsc}','{$storageEsc}','{$originalEsc}','{$mimeEsc}',".(int)$file['size'].",".(int)$image[0].",".(int)$image[1].",{$sourceWidth},{$sourceHeight},{$cropOffsetX},{$cropOffsetY},{$cropZoom},{$cropOutputSize},'ACTIVE','{$nowEsc}')");
+    if (!$saved) { $db->rollback(); $db->autocommit(true); @unlink($destination); aurora_response(array('message'=>'Không thể lưu thông tin ảnh trong aurora_db.'), 500); }
+    $db->commit(); $db->autocommit(true);
+    $oldPath = aurora_avatar_storage_path($oldUrl, $directory);
+    if ($oldPath !== '' && is_file($oldPath) && $oldPath !== $destination) @unlink($oldPath);
+    aurora_response(array('message'=>'Đã cập nhật ảnh đại diện.', 'avatarUrl'=>aurora_public_asset_url($avatarUrl), 'user'=>aurora_public_user($db, $userId)), 200);
+}
+
+if ($resource === 'profile_avatar_delete') {
+    aurora_method('POST');
+    $userId = aurora_require_user();
+    if (!aurora_ensure_profile_avatar_schema($db) || !aurora_ensure_avatar_upload_schema($db)) aurora_response(array('message'=>'Không thể chuẩn bị dữ liệu ảnh đại diện trong aurora_db.'), 500);
+    $oldUrl = '';
+    $old = $db->query('SELECT avatar_url FROM users WHERE id='.(int)$userId.' LIMIT 1');
+    if ($old && ($oldRow = $old->fetch_assoc())) $oldUrl = isset($oldRow['avatar_url']) ? (string)$oldRow['avatar_url'] : '';
+    $nowEsc = $db->real_escape_string(aurora_vietnam_now());
+    $db->autocommit(false);
+    $deleted = $db->query("UPDATE users SET avatar_url=NULL, updated_at='{$nowEsc}' WHERE id=".(int)$userId)
+        && $db->query("UPDATE customer_avatar_uploads SET status='DELETED', deleted_at='{$nowEsc}' WHERE user_id=".(int)$userId." AND status='ACTIVE'");
+    if (!$deleted) { $db->rollback(); $db->autocommit(true); aurora_response(array('message'=>'Không thể xóa ảnh trong aurora_db.'), 500); }
+    $db->commit(); $db->autocommit(true);
+    $directory = dirname(__FILE__).DIRECTORY_SEPARATOR.'uploads'.DIRECTORY_SEPARATOR.'avatars';
+    $oldPath = aurora_avatar_storage_path($oldUrl, $directory);
+    if ($oldPath !== '' && is_file($oldPath)) @unlink($oldPath);
+    aurora_response(array('message'=>'Đã xóa ảnh đại diện.', 'avatarUrl'=>null, 'user'=>aurora_public_user($db, $userId)), 200);
 }
 
 // ── /profile_update (POST) ────────────────────────────────────────────────────
 if ($resource === 'profile_update') {
-    if ($_SERVER['REQUEST_METHOD'] !== 'POST') aurora_response(array('message' => 'Method Not Allowed'), 405);
-    $userId = isset($_SESSION['aurora_user_id']) ? (int) $_SESSION['aurora_user_id'] : null;
-    if (!$userId) aurora_response(array('message' => 'Vui lòng đăng nhập.'), 401);
+    aurora_method('POST');
+    $userId = aurora_require_user();
+    if (!aurora_ensure_profile_schema($db)) aurora_response(array('message'=>'Không thể chuẩn bị dữ liệu hồ sơ trong aurora_db.'), 500);
 
-    $body     = json_decode(file_get_contents('php://input'), true);
+    $body     = aurora_body();
     $fullName = isset($body['fullName']) ? trim((string) $body['fullName']) : '';
     $phone    = isset($body['phone'])    ? trim((string) $body['phone'])    : '';
     $idNumber = isset($body['idNumber']) ? trim((string) $body['idNumber']) : '';
@@ -2706,10 +4324,30 @@ if ($resource === 'profile_update') {
     $district = isset($body['district']) ? trim((string) $body['district']) : '';
     $address  = isset($body['address'])  ? trim((string) $body['address'])  : '';
 
-    if ($fullName === '') aurora_response(array('message' => 'Họ tên không được để trống.'), 422);
-    if ($gender !== '' && !in_array($gender, array('male', 'female', 'other'))) $gender = '';
+    $fullNameLength = function_exists('mb_strlen') ? mb_strlen($fullName, 'UTF-8') : strlen($fullName);
+    $addressLength = function_exists('mb_strlen') ? mb_strlen($address, 'UTF-8') : strlen($address);
+    if ($fullNameLength < 2 || $fullNameLength > 120) aurora_response(array('message'=>'Họ và tên phải có từ 2 đến 120 ký tự.'), 422);
+    $normalizedPhone = preg_replace('/[\s\.\-\(\)]/', '', $phone);
+    if ($normalizedPhone !== '' && !preg_match('/^(0[0-9]{9,10}|\+84[0-9]{9,10})$/', $normalizedPhone)) aurora_response(array('message'=>'Số điện thoại không đúng định dạng Việt Nam.'), 422);
+    if ($idNumber !== '' && !preg_match('/^[A-Za-z0-9]{6,20}$/', $idNumber)) aurora_response(array('message'=>'CMND, CCCD hoặc hộ chiếu phải có từ 6 đến 20 ký tự chữ và số.'), 422);
+    if ($birthday !== '' && (!aurora_valid_date($birthday) || $birthday < '1900-01-01' || $birthday > date('Y-m-d'))) aurora_response(array('message'=>'Ngày sinh không hợp lệ.'), 422);
+    if ($gender !== '' && !in_array($gender, array('male', 'female', 'other'), true)) aurora_response(array('message'=>'Giới tính không hợp lệ.'), 422);
+    if ($addressLength > 255) aurora_response(array('message'=>'Địa chỉ cụ thể không được vượt quá 255 ký tự.'), 422);
+    $phone = $normalizedPhone;
+    if (!aurora_ensure_administrative_catalog($db)) aurora_response(array('message'=>'Không thể kiểm tra dữ liệu địa chỉ trong aurora_db.'), 500);
+    if ($city === '' && $district !== '') aurora_response(array('message'=>'Vui lòng chọn tỉnh/thành trước khi chọn quận/huyện.'), 422);
+    if ($city !== '') {
+        $canonicalProvince = aurora_canonical_province($db, $city);
+        if (!$canonicalProvince) aurora_response(array('message'=>'Tỉnh/thành đã chọn không hợp lệ.'), 422);
+        $city = $canonicalProvince['name'];
+        if ($district !== '') {
+            $canonicalDistrict = aurora_canonical_district($db, $canonicalProvince['code'], $district);
+            if ($canonicalDistrict === false) aurora_response(array('message'=>'Quận/huyện không thuộc tỉnh/thành đã chọn.'), 422);
+            $district = $canonicalDistrict;
+        }
+    }
 
-    $now         = date('Y-m-d H:i:s');
+    $now         = aurora_vietnam_now();
     $genderVal   = $gender   !== '' ? $gender   : null;
     $birthdayVal = $birthday !== '' ? $birthday : null;
     $phoneVal    = $phone    !== '' ? $phone    : null;
@@ -2718,22 +4356,22 @@ if ($resource === 'profile_update') {
     $districtVal = $district !== '' ? $district : null;
     $addressVal  = $address  !== '' ? $address  : null;
 
-    // Try to update extended fields; fall back to name only if columns missing
     $stmt = $db->prepare('UPDATE users SET full_name=?, phone=?, id_number=?, birthday=?, gender=?, city=?, district=?, address=?, updated_at=? WHERE id=?');
-    if (!$stmt) {
-        $stmt2 = $db->prepare('UPDATE users SET full_name=?, updated_at=? WHERE id=?');
-        $stmt2->bind_param('ssi', $fullName, $now, $userId);
-        $stmt2->execute();
-        $stmt2->close();
-        aurora_response(array('message' => 'Cập nhật thành công.', 'user' => aurora_public_user($db, $userId)), 200);
-    }
+    if (!$stmt) aurora_response(array('message'=>'Không thể chuẩn bị thao tác cập nhật hồ sơ.'), 500);
+    $db->autocommit(false);
     $stmt->bind_param('sssssssssi', $fullName, $phoneVal, $idNumberVal, $birthdayVal, $genderVal, $cityVal, $districtVal, $addressVal, $now, $userId);
     if (!$stmt->execute()) {
+        $dbError = $db->error;
         $stmt->close();
-        aurora_response(array('message' => 'Không thể cập nhật: ' . $db->error), 500);
+        $db->rollback(); $db->autocommit(true);
+        error_log('Aurora profile update failed for user '.$userId.': '.$dbError);
+        aurora_response(array('message'=>'Không thể cập nhật hồ sơ trong aurora_db.'), 500);
     }
     $stmt->close();
-    aurora_response(array('message' => 'Cập nhật thành công.', 'user' => aurora_public_user($db, $userId)), 200);
+    $db->commit(); $db->autocommit(true);
+    $profile = aurora_profile_for_user($db, $userId);
+    if (!$profile) aurora_response(array('message'=>'Đã lưu nhưng không thể tải lại hồ sơ.'), 500);
+    aurora_response(array('message'=>'Cập nhật thông tin thành công.', 'profile'=>$profile, 'user'=>aurora_public_user($db, $userId)), 200);
 }
 
 // ── /change_password (POST) ───────────────────────────────────────────────────
@@ -2772,12 +4410,14 @@ if ($resource === 'change_password') {
 
 // ── /booking_history (GET) ───────────────────────────────────────────────────
 if ($resource === 'booking_history') {
-    $userId = isset($_SESSION['aurora_user_id']) ? (int) $_SESSION['aurora_user_id'] : null;
-    if (!$userId) aurora_response(array('message' => 'Vui lòng đăng nhập.'), 401);
+    $userId = aurora_require_customer($db, 'Vui lòng đăng nhập tài khoản khách hàng để xem lịch sử đặt vé.');
 
-    $sql = "SELECT b.id, b.booking_code, b.total_amount, b.status, st.starts_at,
-                   m.title, t.name, sc.name,
-                   GROUP_CONCAT(CONCAT(se.seat_row, se.seat_number) ORDER BY se.seat_row, se.seat_number SEPARATOR ', ') AS seats
+    $sql = "SELECT b.id, b.booking_code, b.total_amount, b.status, b.created_at, st.starts_at,
+                   m.title, m.poster_url, m.format, m.age_rating, t.name, sc.name,
+                   GROUP_CONCAT(CONCAT(se.seat_row, se.seat_number) ORDER BY se.seat_row, se.seat_number SEPARATOR ', ') AS seats,
+                   (SELECT o.payment_method FROM orders o WHERE o.booking_id = b.id ORDER BY o.id DESC LIMIT 1) AS payment_method,
+                   (SELECT COALESCE(NULLIF(pt.provider_transaction_no, ''), pt.txn_ref) FROM online_payment_transactions pt WHERE pt.booking_id = b.id ORDER BY pt.id DESC LIMIT 1) AS payment_ref,
+                   (SELECT COUNT(*) FROM customer_booking_tickets cbt WHERE cbt.booking_id = b.id) AS ticket_count
             FROM bookings b
             INNER JOIN showtimes st ON st.id = b.showtime_id
             INNER JOIN movies m ON m.id = st.movie_id
@@ -2786,19 +4426,32 @@ if ($resource === 'booking_history') {
             LEFT JOIN booking_seats bs ON bs.booking_id = b.id
             LEFT JOIN seats se ON se.id = bs.seat_id
             WHERE b.user_id = ?
-            GROUP BY b.id, b.booking_code, b.total_amount, b.status, st.starts_at, m.title, t.name, sc.name
-            ORDER BY st.starts_at DESC";
+            GROUP BY b.id, b.booking_code, b.total_amount, b.status, b.created_at, st.starts_at, m.title, m.poster_url, m.format, m.age_rating, t.name, sc.name
+            ORDER BY b.created_at DESC, b.id DESC";
     $stmt = $db->prepare($sql);
     if (!$stmt) aurora_response(array('message' => 'Không thể tải lịch sử đặt vé.'), 500);
     $stmt->bind_param('i', $userId);
     $stmt->execute();
-    $stmt->bind_result($id, $code, $totalAmount, $status, $startsAt, $movieTitle, $theaterName, $screenName, $seats);
+    $stmt->bind_result($id, $code, $totalAmount, $status, $createdAt, $startsAt, $movieTitle, $posterUrl, $movieFormat, $ageRating, $theaterName, $screenName, $seats, $paymentMethod, $paymentRef, $ticketCount);
     $bookings = array();
     while ($stmt->fetch()) {
         $bookings[] = array(
-            'id' => (int)$id, 'code' => $code, 'totalAmount' => (float)$totalAmount,
-            'status' => $status, 'startsAt' => $startsAt, 'movieTitle' => $movieTitle,
-            'theaterName' => $theaterName, 'screenName' => $screenName, 'seats' => $seats
+            'id' => (int)$id,
+            'code' => $code,
+            'totalAmount' => (float)$totalAmount,
+            'status' => $status,
+            'createdAt' => $createdAt,
+            'startsAt' => $startsAt,
+            'movieTitle' => $movieTitle,
+            'posterUrl' => $posterUrl,
+            'format' => $movieFormat,
+            'ageRating' => $ageRating,
+            'theaterName' => $theaterName,
+            'screenName' => $screenName,
+            'seats' => $seats,
+            'paymentMethod' => $paymentMethod,
+            'paymentRef' => $paymentRef,
+            'ticketCount' => (int)$ticketCount
         );
     }
     $stmt->close();
@@ -3031,8 +4684,8 @@ if ($resource === 'apply_voucher') {
     if ($code === '') aurora_response(array('message' => 'Vui lòng nhập mã voucher.'), 422);
 
     if (!aurora_ensure_vouchers($db)) aurora_response(array('message' => 'Không thể đọc danh mục voucher.'), 500);
-    $stmt = $db->prepare("SELECT name, discount_type, discount_value, min_order_amount, max_discount FROM vouchers WHERE code=? AND status='active' AND starts_at <= NOW() AND ends_at >= NOW() AND (usage_limit=0 OR used_count < usage_limit) LIMIT 1");
-    $stmt->bind_param('s', $code); $stmt->execute(); $stmt->bind_result($voucherName, $voucherType, $voucherValue, $minimumOrder, $maximumDiscount);
+    $stmt = $db->prepare("SELECT name, discount_type, discount_value, min_order_amount, max_discount,benefit_title,benefit_description,redemption_instructions FROM vouchers WHERE code=? AND status='active' AND starts_at <= NOW() AND ends_at >= NOW() AND (usage_limit=0 OR used_count < usage_limit) LIMIT 1");
+    $stmt->bind_param('s', $code); $stmt->execute(); $stmt->bind_result($voucherName, $voucherType, $voucherValue, $minimumOrder, $maximumDiscount,$benefitTitle,$benefitDescription,$redemptionInstructions);
     $foundVoucher = $stmt->fetch(); $stmt->close();
     if (!$foundVoucher) {
         aurora_response(array('message' => 'Mã voucher không hợp lệ hoặc đã hết hạn.'), 404);
@@ -3043,7 +4696,7 @@ if ($resource === 'apply_voucher') {
     $discount = 0;
     if ($voucherType === 'percent') {
         $discount = $total * (float)$voucherValue / 100;
-    } else {
+    } else if($voucherType==='amount') {
         $discount = min((float)$voucherValue, $total);
     }
     if ((float)$maximumDiscount > 0) $discount = min($discount, (float)$maximumDiscount);
@@ -3052,7 +4705,10 @@ if ($resource === 'apply_voucher') {
     aurora_response(array(
         'valid'    => true,
         'code'     => $code,
-        'desc'     => $voucherName,
+        'desc'     => $benefitTitle?$benefitTitle:$voucherName,
+        'benefitType'=>$voucherType,
+        'benefitDescription'=>$benefitDescription,
+        'redemptionInstructions'=>$redemptionInstructions,
         'discount' => $discount,
         'final'    => max(0, $total - $discount),
     ), 200);
@@ -3061,7 +4717,7 @@ if ($resource === 'apply_voucher') {
 // ── /booking_detail (GET) ─────────────────────────────────────────────────────
 // Chi tiết đầy đủ 1 booking (dùng sau khi đặt thành công)
 if ($resource === 'booking_detail') {
-    $userId    = aurora_require_user();
+    $userId    = aurora_require_customer($db, 'Vui lòng đăng nhập tài khoản khách hàng để xem vé.');
     $bookingId = isset($_GET['id']) ? (int)$_GET['id'] : 0;
     if ($bookingId < 1) aurora_response(array('message' => 'booking id không hợp lệ.'), 422);
 
@@ -3070,6 +4726,7 @@ if ($resource === 'booking_detail') {
                    m.title AS movie_title, m.poster_url, m.age_rating, m.format, m.duration_minutes,
                    s.name AS screen_name,
                    t.name AS theater_name, t.address AS theater_address, t.city,
+                   u.full_name AS customer_name, u.email AS customer_email, u.phone AS customer_phone,
                    GROUP_CONCAT(CONCAT(se.seat_row, se.seat_number, '(', se.seat_type, ')') ORDER BY se.seat_row, se.seat_number SEPARATOR '|') AS seats_raw,
                    GROUP_CONCAT(CONCAT(se.seat_row, se.seat_number) ORDER BY se.seat_row, se.seat_number SEPARATOR ', ') AS seats_display
             FROM bookings b
@@ -3077,6 +4734,7 @@ if ($resource === 'booking_detail') {
             INNER JOIN movies m ON m.id = st.movie_id
             INNER JOIN screens s ON s.id = st.screen_id
             INNER JOIN theaters t ON t.id = s.theater_id
+            INNER JOIN users u ON u.id = b.user_id
             LEFT JOIN booking_seats bs ON bs.booking_id = b.id
             LEFT JOIN seats se ON se.id = bs.seat_id
             WHERE b.id = ? AND b.user_id = ?
@@ -3087,22 +4745,58 @@ if ($resource === 'booking_detail') {
     if(!$stmt->execute()){$stmt->close();aurora_response(array('message'=>'Không thể tải chi tiết đơn đặt vé.'),500);}
     $stmt->store_result();
     $bookingDbId=$totalAmount=$ticketPrice=$durationMinutes=null;
-    $bookingCode=$bookingStatus=$bookingCreatedAt=$startsAt=$endsAt=$movieTitle=$posterUrl=$ageRating=$movieFormat=$screenName=$theaterName=$theaterAddress=$theaterCity=$seatsRaw=$seatsDisplay=null;
-    $stmt->bind_result($bookingDbId,$bookingCode,$totalAmount,$bookingStatus,$bookingCreatedAt,$startsAt,$endsAt,$ticketPrice,$movieTitle,$posterUrl,$ageRating,$movieFormat,$durationMinutes,$screenName,$theaterName,$theaterAddress,$theaterCity,$seatsRaw,$seatsDisplay);
+    $bookingCode=$bookingStatus=$bookingCreatedAt=$startsAt=$endsAt=$movieTitle=$posterUrl=$ageRating=$movieFormat=$screenName=$theaterName=$theaterAddress=$theaterCity=$customerName=$customerEmail=$customerPhone=$seatsRaw=$seatsDisplay=null;
+    $stmt->bind_result($bookingDbId,$bookingCode,$totalAmount,$bookingStatus,$bookingCreatedAt,$startsAt,$endsAt,$ticketPrice,$movieTitle,$posterUrl,$ageRating,$movieFormat,$durationMinutes,$screenName,$theaterName,$theaterAddress,$theaterCity,$customerName,$customerEmail,$customerPhone,$seatsRaw,$seatsDisplay);
     $row=null;
-    if($stmt->fetch())$row=array('id'=>$bookingDbId,'booking_code'=>$bookingCode,'total_amount'=>$totalAmount,'status'=>$bookingStatus,'created_at'=>$bookingCreatedAt,'starts_at'=>$startsAt,'ends_at'=>$endsAt,'ticket_price'=>$ticketPrice,'movie_title'=>$movieTitle,'poster_url'=>$posterUrl,'age_rating'=>$ageRating,'format'=>$movieFormat,'duration_minutes'=>$durationMinutes,'screen_name'=>$screenName,'theater_name'=>$theaterName,'theater_address'=>$theaterAddress,'city'=>$theaterCity,'seats_raw'=>$seatsRaw,'seats_display'=>$seatsDisplay);
+    if($stmt->fetch())$row=array('id'=>$bookingDbId,'booking_code'=>$bookingCode,'total_amount'=>$totalAmount,'status'=>$bookingStatus,'created_at'=>$bookingCreatedAt,'starts_at'=>$startsAt,'ends_at'=>$endsAt,'ticket_price'=>$ticketPrice,'movie_title'=>$movieTitle,'poster_url'=>$posterUrl,'age_rating'=>$ageRating,'format'=>$movieFormat,'duration_minutes'=>$durationMinutes,'screen_name'=>$screenName,'theater_name'=>$theaterName,'theater_address'=>$theaterAddress,'city'=>$theaterCity,'customer_name'=>$customerName,'customer_email'=>$customerEmail,'customer_phone'=>$customerPhone,'seats_raw'=>$seatsRaw,'seats_display'=>$seatsDisplay);
     $stmt->close();
     if (!$row) aurora_response(array('message' => 'Không tìm thấy đơn đặt vé.'), 404);
 
-    // Parse seats list
-    $seatsArr = array();
-    if ($row['seats_raw']) {
-        foreach (explode('|', $row['seats_raw']) as $seatStr) {
-            if (preg_match('/^([A-Z]+)(\d+)\((\w+)\)$/', $seatStr, $m)) {
-                $seatsArr[] = array('label' => $m[1].$m[2], 'row' => $m[1], 'number' => (int)$m[2], 'type' => $m[3]);
-            }
+    if (!aurora_issue_booking_tickets($db, (int)$row['id'], $row['booking_code'], $row['status'])) aurora_response(array('message'=>'Không thể phát hành dữ liệu vé điện tử.'),500);
+
+    $ticketsBySeat=array();$ticketResult=$db->query("SELECT booking_seat_id,ticket_code,qr_token,status,issued_at,checked_in_at FROM customer_booking_tickets WHERE booking_id=".(int)$row['id']." ORDER BY id");
+    while($ticketResult&&($ticket=$ticketResult->fetch_assoc()))$ticketsBySeat[(int)$ticket['booking_seat_id']]=$ticket;
+    $seatsArr=array();$tickets=array();
+    $seatResult=$db->query("SELECT bs.id booking_seat_id,bs.price,se.seat_row,se.seat_number,se.seat_type FROM booking_seats bs INNER JOIN seats se ON se.id=bs.seat_id WHERE bs.booking_id=".(int)$row['id']." ORDER BY se.seat_row,se.seat_number");
+    while($seatResult&&($seat=$seatResult->fetch_assoc())){
+        $seatId=(int)$seat['booking_seat_id'];$label=$seat['seat_row'].$seat['seat_number'];
+        $seatsArr[]=array('label'=>$label,'row'=>$seat['seat_row'],'number'=>(int)$seat['seat_number'],'type'=>$seat['seat_type'],'price'=>(float)$seat['price']);
+        if(isset($ticketsBySeat[$seatId])){$ticket=$ticketsBySeat[$seatId];$tickets[]=array('code'=>$ticket['ticket_code'],'seat'=>$label,'seatType'=>$seat['seat_type'],'price'=>(float)$seat['price'],'status'=>$ticket['status'],'issuedAt'=>$ticket['issued_at'],'checkedInAt'=>$ticket['checked_in_at'],'qrPayload'=>'AURORA|TICKET|'.$ticket['ticket_code'].'|'.$ticket['qr_token']);}
+    }
+
+    $order=null;$orderId=0;$orderItems=array();$onlinePayment=null;$redemption=null;
+    // Quyền sở hữu đã được xác minh bằng bookings.user_id ở truy vấn phía
+    // trên. Liên kết order bằng booking_id để vẫn đọc đúng các đơn POS cũ có
+    // customer_id chưa được đồng bộ.
+    // Endpoint GET chi doc schema hien co trong aurora_db. Khong goi ham tao/
+    // migrate bang tai day: schema POS thuc te co the khac schema khoi tao cu,
+    // lam ham ensure tra ve false va vo tinh bo qua toan bo hoa don.
+    $ordersTable=$db->query("SHOW TABLES LIKE 'orders'");
+    if($ordersTable&&$ordersTable->num_rows>0){
+        $voucherColumn=$db->query("SHOW COLUMNS FROM orders LIKE 'voucher_code'");
+        $voucherSelect=($voucherColumn&&$voucherColumn->num_rows>0)?'voucher_code':'NULL AS voucher_code';
+        $bookingCodeEsc=$db->real_escape_string($row['booking_code']);
+        // booking_code/order_code are unique. Ownership was already verified by
+        // bookings.user_id above, so this safely recovers legacy POS orders whose
+        // booking_id and customer_id were not backfilled when the sale was made.
+        $orderResult=$db->query("SELECT id,order_code,booking_id,customer_id,cashier_id,channel,subtotal,discount_amount,{$voucherSelect},total_amount,payment_method,amount_received,change_amount,status,created_at,updated_at FROM orders WHERE booking_id=".(int)$row['id']." OR order_code='{$bookingCodeEsc}' ORDER BY CASE WHEN booking_id=".(int)$row['id']." THEN 0 ELSE 1 END,id DESC LIMIT 1");
+        if(!$orderResult)aurora_response(array('message'=>'Khong the doc thong tin don hang tu aurora_db.'),500);
+        if($orderResult&&($orderRow=$orderResult->fetch_assoc())){
+            $orderId=(int)$orderRow['id'];$cashierId=(int)$orderRow['cashier_id'];$cashier=null;
+            if($cashierId>0){$cashierResult=$db->query("SELECT full_name,username,counter_code FROM pos_users WHERE id={$cashierId} LIMIT 1");if($cashierResult&&($cashierRow=$cashierResult->fetch_assoc()))$cashier=array('fullName'=>$cashierRow['full_name'],'username'=>$cashierRow['username'],'counter'=>$cashierRow['counter_code']);}
+            $order=array('id'=>$orderId,'code'=>$orderRow['order_code'],'bookingId'=>(int)$orderRow['booking_id'],'channel'=>$orderRow['channel'],'subtotal'=>(float)$orderRow['subtotal'],'discountAmount'=>(float)$orderRow['discount_amount'],'voucherCode'=>$orderRow['voucher_code'],'totalAmount'=>(float)$orderRow['total_amount'],'paymentMethod'=>$orderRow['payment_method'],'amountReceived'=>(float)$orderRow['amount_received'],'changeAmount'=>(float)$orderRow['change_amount'],'status'=>$orderRow['status'],'createdAt'=>$orderRow['created_at'],'updatedAt'=>$orderRow['updated_at'],'cashier'=>$cashier);
         }
     }
+    $payments=array();if($orderId>0){$paymentResult=$db->query("SELECT method,amount,reference_code,created_at FROM payments WHERE order_id={$orderId} ORDER BY id DESC");while($paymentResult&&($payment=$paymentResult->fetch_assoc()))$payments[]=array('method'=>$payment['method'],'amount'=>(float)$payment['amount'],'referenceCode'=>$payment['reference_code'],'createdAt'=>$payment['created_at']);}
+    $concessions=array();$concessionKeys=array();
+    // Don POS luu toan bo ve, combo va hang hoa trong order_items. Tra ve
+    // nguyen ven tat ca dong de lich su mua hang khong bi mat san pham kem.
+    if($orderId>0){$orderItemsTable=$db->query("SHOW TABLES LIKE 'order_items'");if($orderItemsTable&&$orderItemsTable->num_rows){$itemResult=$db->query("SELECT item_type,item_code,item_name,quantity,unit_price,seat_id FROM order_items WHERE order_id={$orderId} ORDER BY id");while($itemResult&&($item=$itemResult->fetch_assoc())){$normalized=array('type'=>$item['item_type'],'code'=>$item['item_code'],'name'=>$item['item_name'],'quantity'=>(int)$item['quantity'],'unitPrice'=>(float)$item['unit_price'],'total'=>(int)$item['quantity']*(float)$item['unit_price'],'seatId'=>(int)$item['seat_id']);$orderItems[]=$normalized;if(in_array($item['item_type'],array('COMBO','MERCHANDISE'),true)){$key=$item['item_code'].'|'.$item['unit_price'];$concessionKeys[$key]=true;$concessions[]=$normalized;}}}}
+    // Đơn online cũ lưu combo trong booking_concessions. Hợp nhất theo mã và
+    // giá để không cộng trùng nếu một đơn đã được đồng bộ sang order_items.
+    $legacyResult=$db->query("SELECT item_code,item_name,quantity,unit_price FROM booking_concessions WHERE booking_id=".(int)$row['id']." ORDER BY id");while($legacyResult&&($item=$legacyResult->fetch_assoc())){$key=$item['item_code'].'|'.$item['unit_price'];if(isset($concessionKeys[$key]))continue;$normalizedLegacy=array('type'=>'COMBO','code'=>$item['item_code'],'name'=>$item['item_name'],'quantity'=>(int)$item['quantity'],'unitPrice'=>(float)$item['unit_price'],'total'=>(int)$item['quantity']*(float)$item['unit_price'],'seatId'=>0);$concessionKeys[$key]=true;$concessions[]=$normalizedLegacy;$orderItems[]=$normalizedLegacy;}
+    if($orderId>0){$onlineTable=$db->query("SHOW TABLES LIKE 'online_payment_transactions'");if($onlineTable&&$onlineTable->num_rows){$onlineResult=$db->query("SELECT provider,txn_ref,amount,status,provider_transaction_no,bank_code,card_type,paid_at,expires_at FROM online_payment_transactions WHERE order_id={$orderId} ORDER BY id DESC LIMIT 1");if($onlineResult&&($onlineRow=$onlineResult->fetch_assoc()))$onlinePayment=array('provider'=>$onlineRow['provider'],'transactionReference'=>$onlineRow['txn_ref'],'amount'=>(float)$onlineRow['amount'],'status'=>$onlineRow['status'],'providerTransactionNo'=>$onlineRow['provider_transaction_no'],'bankCode'=>$onlineRow['bank_code'],'cardType'=>$onlineRow['card_type'],'paidAt'=>$onlineRow['paid_at'],'expiresAt'=>$onlineRow['expires_at']);}}
+    $redemptionTable=$db->query("SHOW TABLES LIKE 'pos_booking_redemptions'");if($redemptionTable&&$redemptionTable->num_rows){$redemptionResult=$db->query("SELECT redeemed_at,note FROM pos_booking_redemptions WHERE booking_id=".(int)$row['id']." ORDER BY redeemed_at DESC LIMIT 1");if($redemptionResult&&($redemptionRow=$redemptionResult->fetch_assoc()))$redemption=array('redeemedAt'=>$redemptionRow['redeemed_at'],'note'=>$redemptionRow['note']);}
 
     aurora_response(array('booking' => array(
         'id'              => (int)$row['id'],
@@ -3124,6 +4818,24 @@ if ($resource === 'booking_detail') {
         'city'            => $row['city'],
         'seats'           => $seatsArr,
         'seats_display'   => $row['seats_display'],
+        'tickets'         => $tickets,
+        'customer'        => array(
+            'fullName' => $row['customer_name'],
+            'email'    => $row['customer_email'],
+            'phone'    => $row['customer_phone'],
+        ),
+        'receipt'         => array(
+            'documentCode' => 'AURORA-RECEIPT-'.$row['booking_code'],
+            'generatedAt'  => aurora_vietnam_now(),
+            'currency'     => 'VND',
+            'dataSource'   => 'aurora_db',
+        ),
+        'order'           => $order,
+        'orderItems'      => $orderItems,
+        'payments'        => $payments,
+        'concessions'     => $concessions,
+        'onlinePayment'   => $onlinePayment,
+        'redemption'      => $redemption,
     )), 200);
 }
 

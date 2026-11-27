@@ -814,19 +814,22 @@ if ($route === '/courses' && $method === 'GET') {
     $stmt = $pdo->query("SELECT c.*, q.id as quiz_id FROM ems_courses c LEFT JOIN ems_quizzes q ON q.course_id = c.id ORDER BY c.id ASC");
     $courses = $stmt->fetchAll();
 
-    // Gắn thông tin nâng cao và modules chi tiết
+    // Gắn thông tin nâng cao và modules chi tiết (ưu tiên metadata_json đã lưu trong MySQL)
     foreach ($courses as &$c) {
         $cid = (int)$c['id'];
         $c['is_ctkm'] = (bool)$c['is_ctkm'];
         $rich = $richModulesByCourse[$cid] ?? $richModulesByCourse[1];
-        
-        $c['modules'] = $rich['modules'];
-        $c['instructorName'] = $rich['instructor']['name'];
-        $c['instructorTitle'] = $rich['instructor']['title'];
-        $c['instructorAvatar'] = $rich['instructor']['avatar'];
-        $c['level'] = $rich['level'];
-        $c['rating'] = $rich['rating'];
-        $c['reviewCount'] = $rich['review_count'];
+        $meta = !empty($c['metadata_json']) ? json_decode($c['metadata_json'], true) : null;
+
+        $c['modules'] = (!empty($meta['modules']) && is_array($meta['modules'])) ? $meta['modules'] : $rich['modules'];
+        $c['instructorName'] = $meta['instructorName'] ?? $rich['instructor']['name'];
+        $c['instructorTitle'] = $meta['instructorTitle'] ?? $rich['instructor']['title'];
+        $c['instructorAvatar'] = $meta['instructorAvatar'] ?? $rich['instructor']['avatar'];
+        $c['level'] = $meta['level'] ?? $rich['level'];
+        $c['rating'] = $meta['rating'] ?? $rich['rating'];
+        $c['reviewCount'] = $meta['reviewCount'] ?? $rich['review_count'];
+        $c['examCheckpoints'] = (!empty($meta['examCheckpoints']) && is_array($meta['examCheckpoints'])) ? $meta['examCheckpoints'] : [];
+        unset($c['metadata_json']);
     }
 
     jsonResponse([
@@ -839,14 +842,29 @@ if ($route === '/courses' && $method === 'GET') {
 if ($route === '/courses' && $method === 'POST') {
     $title = trim($body['title'] ?? 'Khóa đào tạo mới');
     $desc = trim($body['description'] ?? 'Mô tả khóa đào tạo');
-    $category = trim($body['category'] ?? 'Nghiệp vụ Dịch vụ');
+    $category = trim($body['category'] ?? 'Box ticket');
     $duration = (int)($body['duration_minutes'] ?? 45);
     $isCtkm = !empty($body['is_ctkm']) ? 1 : 0;
     $thumbnail = $body['thumbnail'] ?? 'https://images.unsplash.com/photo-1489599849927-2ee91cede3ba?w=600&auto=format&fit=crop&q=80';
+    $metadata = json_encode([
+        'level' => $body['level'] ?? 'Tiêu Chuẩn SOP',
+        'instructorName' => $body['instructorName'] ?? 'Phạm Thu Hương',
+        'instructorTitle' => $body['instructorTitle'] ?? 'Quản lý Đào tạo & Nhân sự Rạp',
+        'instructorAvatar' => $body['instructorAvatar'] ?? 'https://images.unsplash.com/photo-1573496359142-b8d87734a5a2?w=150&auto=format&fit=crop&q=80',
+        'modules' => $body['modules'] ?? [],
+        'examCheckpoints' => $body['examCheckpoints'] ?? [],
+        'rating' => $body['rating'] ?? 4.9,
+        'reviewCount' => $body['reviewCount'] ?? 30,
+    ], JSON_UNESCAPED_UNICODE);
 
-    $stmt = $pdo->prepare("INSERT INTO ems_courses (title, description, category, duration_minutes, is_ctkm, thumbnail, enrolled_count, completed_count) VALUES (?, ?, ?, ?, ?, ?, 10, 5)");
-    $stmt->execute([$title, $desc, $category, $duration, $isCtkm, $thumbnail]);
-    $newId = $pdo->lastInsertId();
+    try {
+        $stmt = $pdo->prepare("INSERT INTO ems_courses (title, description, category, duration_minutes, is_ctkm, thumbnail, enrolled_count, completed_count, metadata_json) VALUES (?, ?, ?, ?, ?, ?, 0, 0, ?)");
+        $stmt->execute([$title, $desc, $category, $duration, $isCtkm, $thumbnail, $metadata]);
+    } catch (Exception $e) {
+        $stmt = $pdo->prepare("INSERT INTO ems_courses (title, description, category, duration_minutes, is_ctkm, thumbnail, enrolled_count, completed_count) VALUES (?, ?, ?, ?, ?, ?, 0, 0)");
+        $stmt->execute([$title, $desc, $category, $duration, $isCtkm, $thumbnail]);
+    }
+    $newId = (int)$pdo->lastInsertId();
 
     jsonResponse([
         'status' => 'success',
@@ -855,9 +873,100 @@ if ($route === '/courses' && $method === 'POST') {
     ], 201);
 }
 
+if (preg_match('#^/courses/([0-9]+)$#', $route, $matches) && $method === 'PUT') {
+    $courseId = (int)$matches[1];
+    $title = trim($body['title'] ?? 'Khóa đào tạo');
+    $desc = trim($body['description'] ?? '');
+    $category = trim($body['category'] ?? 'Box ticket');
+    $duration = (int)($body['duration_minutes'] ?? 45);
+    $isCtkm = !empty($body['is_ctkm']) ? 1 : 0;
+    $thumbnail = $body['thumbnail'] ?? 'https://images.unsplash.com/photo-1489599849927-2ee91cede3ba?w=600&auto=format&fit=crop&q=80';
+    $metadata = json_encode([
+        'level' => $body['level'] ?? 'Tiêu Chuẩn SOP',
+        'instructorName' => $body['instructorName'] ?? 'Phạm Thu Hương',
+        'instructorTitle' => $body['instructorTitle'] ?? 'Quản lý Đào tạo & Nhân sự Rạp',
+        'instructorAvatar' => $body['instructorAvatar'] ?? 'https://images.unsplash.com/photo-1573496359142-b8d87734a5a2?w=150&auto=format&fit=crop&q=80',
+        'modules' => $body['modules'] ?? [],
+        'examCheckpoints' => $body['examCheckpoints'] ?? [],
+        'rating' => $body['rating'] ?? 4.9,
+        'reviewCount' => $body['reviewCount'] ?? 30,
+    ], JSON_UNESCAPED_UNICODE);
+
+    try {
+        $stmt = $pdo->prepare("UPDATE ems_courses SET title = ?, description = ?, category = ?, duration_minutes = ?, is_ctkm = ?, thumbnail = ?, metadata_json = ? WHERE id = ?");
+        $stmt->execute([$title, $desc, $category, $duration, $isCtkm, $thumbnail, $metadata, $courseId]);
+    } catch (Exception $e) {
+        $stmt = $pdo->prepare("UPDATE ems_courses SET title = ?, description = ?, category = ?, duration_minutes = ?, is_ctkm = ?, thumbnail = ? WHERE id = ?");
+        $stmt->execute([$title, $desc, $category, $duration, $isCtkm, $thumbnail, $courseId]);
+    }
+
+    jsonResponse([
+        'status' => 'success',
+        'message' => 'Cập nhật khóa đào tạo thành công!',
+        'id' => $courseId
+    ]);
+}
+
+if (preg_match('#^/courses/([0-9]+)$#', $route, $matches) && $method === 'DELETE') {
+    $courseId = (int)$matches[1];
+    $pdo->prepare("DELETE qq FROM ems_quiz_questions qq JOIN ems_quizzes q ON qq.quiz_id = q.id WHERE q.course_id = ?")->execute([$courseId]);
+    $pdo->prepare("DELETE FROM ems_quizzes WHERE course_id = ?")->execute([$courseId]);
+    $pdo->prepare("DELETE FROM ems_courses WHERE id = ?")->execute([$courseId]);
+
+    jsonResponse([
+        'status' => 'success',
+        'message' => 'Đã xóa khóa đào tạo khỏi CSDL!'
+    ]);
+}
+
 // ------------------------------------------------------------------------------
 // UC06, UC08: QUIZZES & QUESTIONS (+ AI GENERATOR)
 // ------------------------------------------------------------------------------
+if ($route === '/quizzes' && $method === 'POST') {
+    $courseId = (int)preg_replace('/[^0-9]/', '', (string)($body['course_id'] ?? '0'));
+    $title = trim($body['title'] ?? 'Bài Đánh Giá Nghiệp Vụ');
+    $passScore = (int)($body['pass_score'] ?? 80);
+    $duration = (int)($body['duration_minutes'] ?? 15);
+    $isCtkm = !empty($body['is_ctkm']) ? 1 : 0;
+    $questions = is_array($body['questions'] ?? null) ? $body['questions'] : [];
+
+    if ($courseId <= 0) {
+        jsonResponse(['status' => 'error', 'message' => 'Thiếu course_id hợp lệ'], 400);
+    }
+
+    // Kiểm tra khóa học đã có đề thi chưa -> cập nhật hoặc tạo mới
+    $check = $pdo->prepare("SELECT id FROM ems_quizzes WHERE course_id = ? LIMIT 1");
+    $check->execute([$courseId]);
+    $existing = $check->fetch();
+
+    if ($existing) {
+        $quizId = (int)$existing['id'];
+        $pdo->prepare("UPDATE ems_quizzes SET title = ?, pass_score = ?, duration_minutes = ?, is_ctkm = ? WHERE id = ?")
+            ->execute([$title, $passScore, $duration, $isCtkm, $quizId]);
+        $pdo->prepare("DELETE FROM ems_quiz_questions WHERE quiz_id = ?")->execute([$quizId]);
+    } else {
+        $pdo->prepare("INSERT INTO ems_quizzes (course_id, title, pass_score, duration_minutes, is_ctkm) VALUES (?, ?, ?, ?, ?)")
+            ->execute([$courseId, $title, $passScore, $duration, $isCtkm]);
+        $quizId = (int)$pdo->lastInsertId();
+    }
+
+    $qStmt = $pdo->prepare("INSERT INTO ems_quiz_questions (quiz_id, question_text, options, correct_answer_index, explanation) VALUES (?, ?, ?, ?, ?)");
+    foreach ($questions as $q) {
+        $qText = trim($q['questionText'] ?? $q['question_text'] ?? '');
+        if ($qText === '') continue;
+        $opts = is_array($q['options'] ?? null) ? $q['options'] : [];
+        $correctIdx = (int)($q['correctAnswerIndex'] ?? $q['correct_answer_index'] ?? 0);
+        $exp = trim($q['explanation'] ?? '');
+        $qStmt->execute([$quizId, $qText, json_encode($opts, JSON_UNESCAPED_UNICODE), $correctIdx, $exp]);
+    }
+
+    jsonResponse([
+        'status' => 'success',
+        'message' => 'Đã lưu bộ đề khảo thí vào CSDL!',
+        'id' => $quizId,
+        'question_count' => count($questions)
+    ]);
+}
 if ($route === '/quizzes' && $method === 'GET') {
     $stmt = $pdo->query("SELECT q.*, c.title as course_title FROM ems_quizzes q JOIN ems_courses c ON q.course_id = c.id ORDER BY q.id ASC");
     $quizzes = $stmt->fetchAll();

@@ -19,6 +19,7 @@ class CustomerController extends Controller
 
     public function movies(Request $request): JsonResponse
     {
+        $this->syncMovieStatuses();
         $query = DB::table('movies')->select([
             'id', 'title', 'description', 'duration_minutes', 'age_rating', 'format',
             'poster_url', 'trailer_url', 'status', 'release_date',
@@ -38,6 +39,7 @@ class CustomerController extends Controller
 
     public function movieDetail(int $movie): JsonResponse
     {
+        $this->syncMovieStatuses();
         $item = DB::table('movies')->where('id', $movie)->first();
         if (!$item) return response()->json(['message' => 'Không tìm thấy phim.'], 404);
 
@@ -47,6 +49,12 @@ class CustomerController extends Controller
             'format' => $item->format, 'posterUrl' => $item->poster_url, 'trailerUrl' => $item->trailer_url,
             'status' => $item->status, 'releaseDate' => $item->release_date,
         ]]);
+    }
+
+    private function syncMovieStatuses(): void
+    {
+        $today = now('Asia/Ho_Chi_Minh')->toDateString();
+        DB::update("UPDATE movies SET status=CASE WHEN release_date>? THEN 'coming_soon' ELSE 'now_showing' END WHERE UPPER(status) IN ('COMING_SOON','NOW_SHOWING') AND release_date IS NOT NULL AND status<>CASE WHEN release_date>? THEN 'coming_soon' ELSE 'now_showing' END", [$today, $today]);
     }
 
     public function theaters(): JsonResponse
@@ -76,24 +84,47 @@ class CustomerController extends Controller
         return response()->json(['showtimes' => $query->orderBy('showtimes.starts_at')->get()]);
     }
 
-    public function seats(int $showtime): JsonResponse
+    public function seats(Request $request, int $showtime): JsonResponse
     {
+        $userId = $this->customerSessionId($request);
+        if (!$userId) {
+            return response()->json(['message' => 'Vui lòng đăng nhập tài khoản khách hàng để xem sơ đồ ghế và đặt vé.'], 401);
+        }
+
         $item = DB::table('showtimes')->where('id', $showtime)->where('status', 'OPEN')->first();
         if (!$item) return response()->json(['message' => 'Suất chiếu không tồn tại hoặc đã đóng.'], 404);
 
+        $availabilityChecks = "EXISTS (SELECT 1 FROM booking_seats bs INNER JOIN bookings b ON b.id = bs.booking_id WHERE bs.seat_id = seats.id AND bs.showtime_id = ? AND b.status NOT IN ('CANCELLED', 'EXPIRED'))";
+        $bindings = [$showtime];
+        if (DB::getSchemaBuilder()->hasTable('seat_holds')) {
+            $availabilityChecks .= " OR EXISTS (SELECT 1 FROM seat_holds h WHERE h.seat_id=seats.id AND h.showtime_id=? AND h.expires_at>NOW())";
+            $bindings[] = $showtime;
+        }
+        if (DB::getSchemaBuilder()->hasTable('tms_showtime_seat_locks')) {
+            $availabilityChecks .= " OR EXISTS (SELECT 1 FROM tms_showtime_seat_locks sl WHERE sl.seat_id=seats.id AND sl.showtime_id=?)";
+            $bindings[] = $showtime;
+        }
         $seats = DB::table('seats')->select('seats.*')->selectRaw(
-            "CASE WHEN EXISTS (SELECT 1 FROM booking_seats bs INNER JOIN bookings b ON b.id = bs.booking_id WHERE bs.seat_id = seats.id AND bs.showtime_id = ? AND b.status NOT IN ('CANCELLED', 'EXPIRED')) THEN 0 ELSE 1 END AS is_available",
-            [$showtime]
+            "CASE WHEN {$availabilityChecks} THEN 0 ELSE 1 END AS is_available",
+            $bindings
         )->where('screen_id', $item->screen_id)
             ->orderBy('seat_row')->orderBy('seat_number')->get();
 
-        return response()->json(['showtime_id' => $showtime, 'seats' => $seats]);
+        $columns = 0; $rows = [];
+        foreach ($seats as $seat) {
+            $seat->seat_type = strtoupper((string)$seat->seat_type) === 'DOUBLE' ? 'COUPLE' : strtoupper((string)$seat->seat_type);
+            $columns = max($columns, (int)$seat->seat_number * ($seat->seat_type === 'COUPLE' ? 2 : 1));
+            if (!isset($rows[$seat->seat_row])) $rows[$seat->seat_row] = ['row'=>$seat->seat_row,'seat_count'=>0,'seat_type'=>$seat->seat_type];
+            $rows[$seat->seat_row]['seat_count']++;
+        }
+        $columns = max(1, $columns);
+        return response()->json(['showtime_id'=>$showtime,'layout'=>['version'=>1,'columns'=>$columns,'aisle_after'=>(int)floor($columns/2),'rows'=>array_values($rows)],'seats'=>$seats]);
     }
 
     public function createBooking(Request $request): JsonResponse
     {
-        $userId = $request->session()->get('user_id');
-        if (!$userId) return response()->json(['message' => 'Vui lòng đăng nhập để đặt vé.'], 401);
+        $userId = $this->customerSessionId($request);
+        if (!$userId) return response()->json(['message' => 'Vui lòng đăng nhập tài khoản khách hàng để đặt vé.'], 401);
 
         $data = $request->validate([
             'showtimeId' => ['required', 'integer'],
@@ -151,7 +182,8 @@ class CustomerController extends Controller
 
         $id = DB::table('users')->insertGetId([
             'full_name' => $data['fullName'], 'email' => $data['email'],
-            'password_hash' => Hash::make($data['password']), 'created_at' => now(), 'updated_at' => now(),
+            'password_hash' => Hash::make($data['password']), 'role' => 'customer', 'status' => 'active',
+            'created_at' => now(), 'updated_at' => now(),
         ]);
         $request->session()->put('user_id', $id);
 
@@ -161,7 +193,8 @@ class CustomerController extends Controller
     public function login(Request $request): JsonResponse
     {
         $data = $request->validate(['email' => ['required', 'email'], 'password' => ['required', 'string']]);
-        $user = DB::table('users')->where('email', $data['email'])->first();
+        $user = DB::table('users')->where('email', $data['email'])
+            ->where('role', 'customer')->where('status', 'active')->first();
 
         if (!$user || !Hash::check($data['password'], $user->password_hash)) {
             return response()->json(['message' => 'Email hoặc mật khẩu không đúng.'], 401);
@@ -437,9 +470,24 @@ class CustomerController extends Controller
     private function publicUser(?int $id): ?array
     {
         if (!$id) return null;
-        $user = DB::table('users')->where('id', $id)->first();
+        $user = DB::table('users')->where('id', $id)
+            ->where('role', 'customer')->where('status', 'active')->first();
         return $user ? ['id' => $user->id, 'fullName' => $user->full_name, 'email' => $user->email,
             'membershipLevel' => $user->membership_level, 'points' => $user->points] : null;
+    }
+
+    private function customerSessionId(Request $request): ?int
+    {
+        $id = (int) $request->session()->get('user_id', 0);
+        if ($id <= 0) return null;
+
+        $valid = DB::table('users')->where('id', $id)
+            ->where('role', 'customer')->where('status', 'active')->exists();
+        if (!$valid) {
+            $request->session()->forget('user_id');
+            return null;
+        }
+        return $id;
     }
 
     private function showtimesQuery()
@@ -453,5 +501,171 @@ class CustomerController extends Controller
                 'showtimes.ends_at', 'showtimes.ticket_price', 'showtimes.status',
             ])
             ->where('showtimes.status', 'OPEN');
+    }
+
+    // ═══════════════════════════════════════════════════════════════════════
+    // Mascot 3D System – Kết nối aurora_db
+    // ═══════════════════════════════════════════════════════════════════════
+
+    /**
+     * GET /api/mascot/config
+     * Trả về cấu hình hiện tại của linh vật 3D từ bảng mascot_3d_config.
+     */
+    public function mascotConfig(): JsonResponse
+    {
+        if (!Schema::hasTable('mascot_3d_config')) {
+            return response()->json($this->defaultMascotConfig());
+        }
+        $rows = DB::table('mascot_3d_config')->get();
+        $config = [];
+        foreach ($rows as $row) {
+            $config[$row->config_key] = $row->config_value;
+        }
+        // Merge với default để đảm bảo đủ key
+        return response()->json(array_merge($this->defaultMascotConfig(), $config));
+    }
+
+    /**
+     * POST /api/mascot/config
+     * Lưu cấu hình linh vật 3D (chỉ admin).
+     */
+    public function mascotConfigSave(Request $request): JsonResponse
+    {
+        // Kiểm tra quyền admin
+        $userId = (int) $request->session()->get('user_id', 0);
+        if ($userId <= 0) {
+            return response()->json(['message' => 'Chưa đăng nhập.'], 401);
+        }
+        $user = DB::table('users')->where('id', $userId)->first();
+        if (!$user || !in_array($user->role, ['admin', 'superadmin', 'manager'], true)) {
+            return response()->json(['message' => 'Không có quyền thực hiện.'], 403);
+        }
+
+        if (!Schema::hasTable('mascot_3d_config')) {
+            return response()->json(['message' => 'Bảng mascot_3d_config chưa tồn tại. Hãy chạy mascot_3d_system.sql.'], 503);
+        }
+
+        $allowed = [
+            'body_color', 'accent_color', 'cheek_color', 'eye_color', 'scarf_color',
+            'film_color', 'mascot_name', 'mascot_slogan', 'idle_animation',
+            'enable_shadow', 'enable_particles', 'scale_factor', 'ambient_light',
+            'point_light_x', 'point_light_y', 'point_light_z',
+        ];
+
+        $data = $request->only($allowed);
+        $now  = now();
+
+        foreach ($data as $key => $value) {
+            DB::table('mascot_3d_config')->updateOrInsert(
+                ['config_key' => $key],
+                ['config_value' => (string) $value, 'updated_by' => $userId, 'updated_at' => $now]
+            );
+        }
+
+        return response()->json(['success' => true, 'updated' => count($data), 'updatedAt' => $now]);
+    }
+
+    /**
+     * GET /api/mascot/stats
+     * Trả về thống kê tổng hợp từ bảng mascot_3d_events (view: mascot_3d_stats_summary).
+     */
+    public function mascotStats(): JsonResponse
+    {
+        if (!Schema::hasTable('mascot_3d_events')) {
+            return response()->json([
+                'total_events_all_time' => 0, 'unique_users_all_time' => 0,
+                'total_chat_opens' => 0, 'events_last_7d' => 0, 'events_today' => 0,
+                'note' => 'Bảng mascot_3d_events chưa tồn tại.',
+            ]);
+        }
+
+        $stats = DB::table('mascot_3d_events')->selectRaw("
+            COUNT(*)                                                                      AS total_events_all_time,
+            COUNT(DISTINCT user_id)                                                       AS unique_users_all_time,
+            SUM(CASE WHEN event_type = 'OPEN_CHAT' THEN 1 ELSE 0 END)                   AS total_chat_opens,
+            SUM(CASE WHEN created_at >= DATE_SUB(NOW(), INTERVAL 7 DAY) THEN 1 ELSE 0 END) AS events_last_7d,
+            SUM(CASE WHEN DATE(created_at) = CURDATE() THEN 1 ELSE 0 END)               AS events_today
+        ")->first();
+
+        // Most popular expression/pose
+        $popularExpression = DB::table('mascot_3d_events')
+            ->selectRaw('expression, COUNT(*) as cnt')
+            ->whereNotNull('expression')
+            ->groupBy('expression')
+            ->orderByDesc('cnt')
+            ->value('expression');
+
+        $popularPose = DB::table('mascot_3d_events')
+            ->selectRaw('pose, COUNT(*) as cnt')
+            ->whereNotNull('pose')
+            ->groupBy('pose')
+            ->orderByDesc('cnt')
+            ->value('pose');
+
+        return response()->json([
+            'total_events_all_time' => (int) ($stats->total_events_all_time ?? 0),
+            'unique_users_all_time' => (int) ($stats->unique_users_all_time ?? 0),
+            'total_chat_opens'      => (int) ($stats->total_chat_opens ?? 0),
+            'events_last_7d'        => (int) ($stats->events_last_7d ?? 0),
+            'events_today'          => (int) ($stats->events_today ?? 0),
+            'popular_expression'    => $popularExpression,
+            'popular_pose'          => $popularPose,
+        ]);
+    }
+
+    /**
+     * POST /api/mascot/event
+     * Log sự kiện tương tác với linh vật 3D (click, hover, expression_change…).
+     */
+    public function mascotEvent(Request $request): JsonResponse
+    {
+        if (!Schema::hasTable('mascot_3d_events')) {
+            return response()->json(['accepted' => false, 'note' => 'Table not found']);
+        }
+
+        $userId     = (int) $request->session()->get('user_id', 0) ?: null;
+        $sessionKey = $request->session()->getId();
+        $eventType  = strtoupper((string) $request->input('event_type', 'UNKNOWN'));
+        $expression = $request->input('expression');
+        $pose       = $request->input('pose');
+        $page       = $request->input('page_context');
+        $metadata   = $request->input('metadata') ? json_encode($request->input('metadata')) : null;
+        $ipHash     = $request->ip() ? hash('sha256', $request->ip()) : null;
+
+        DB::table('mascot_3d_events')->insert([
+            'session_key'   => $sessionKey,
+            'user_id'       => $userId,
+            'event_type'    => $eventType,
+            'expression'    => $expression,
+            'pose'          => $pose,
+            'page_context'  => $page,
+            'metadata_json' => $metadata,
+            'ip_hash'       => $ipHash,
+            'created_at'    => now(),
+        ]);
+
+        return response()->json(['accepted' => true]);
+    }
+
+    /**
+     * Giá trị mặc định cấu hình linh vật (fallback khi DB chưa có dữ liệu).
+     */
+    private function defaultMascotConfig(): array
+    {
+        return [
+            'body_color'       => '#F7D25E',
+            'accent_color'     => '#0F1B3D',
+            'cheek_color'      => '#FFB8C6',
+            'eye_color'        => '#1A1A3A',
+            'scarf_color'      => '#162850',
+            'film_color'       => '#2C3E6A',
+            'mascot_name'      => 'Aurora',
+            'mascot_slogan'    => 'Cùng bạn tận hưởng mọi khoảnh khắc điện ảnh!',
+            'idle_animation'   => 'float',
+            'enable_shadow'    => '1',
+            'enable_particles' => '1',
+            'scale_factor'     => '1.0',
+            'ambient_light'    => '0.6',
+        ];
     }
 }

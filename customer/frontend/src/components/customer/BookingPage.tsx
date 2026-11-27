@@ -12,9 +12,10 @@
 import {
   AlertCircle, ArrowLeft, Calendar, Check, ChevronLeft, ChevronRight,
   Clock, CreditCard, Film, Gift, Info, MapPin, QrCode,
-  RefreshCw, ShieldCheck, Smartphone, Sparkles, Star, Tag, Ticket, User, X, Zap,
+  RefreshCw, ShieldCheck, Smartphone, Sparkles, Tag, Ticket, User, X,
 } from 'lucide-react';
 import { useEffect, useRef, useState } from 'react';
+import AutoPaymentTicketStep, { type ActiveOnlinePayment } from './AutoPaymentTicketStep';
 
 const API = 'http://localhost/AURORA%20CINEMA/customer/backend/public/api.php';
 const HOLD_SECONDS = 600; // 10 phút giữ ghế
@@ -23,12 +24,13 @@ const HOLD_SECONDS = 600; // 10 phút giữ ghế
 type Lang = 'vi' | 'en';
 type Step = 1 | 2 | 3 | 4;
 type Seat = { id: number; seat_row: string; seat_number: number; seat_type: 'STANDARD' | 'VIP' | 'COUPLE' | 'DOUBLE'; price?: number; is_available: number; held_by_you?: number };
+type SeatLayout = { version:number; columns:number; aisle_after:number; rows:Array<{row:string;seat_count:number;seat_type:string}> };
 type Showtime = {
   id: number; screen_id: number; screen_name: string; total_seats: number; seats_left: number;
   theater_id: number; theater_name: string; theater_address: string; city: string;
   starts_at: string; ends_at: string; ticket_price: number; status: string; show_date: string;
 };
-type PayMethod = 'qr_vnpay' | 'qr_momo' | 'qr_zalopay';
+type PayMethod = 'vietqr' | 'qr_vnpay' | 'momo';
 type Combo = { id: string; name: string; price: number; description: string };
 type VoucherSuggestion = { id: number; code: string; name: string; discountType?: string; discountValue?: number };
 
@@ -45,16 +47,6 @@ type Props = {
 /* ─────────────────────────────── Helpers ─────────────────────────────── */
 function t(vi: string, en: string, lang: Lang) { return lang === 'en' ? en : vi; }
 
-function fmtDate(d: string, lang: Lang) {
-  try {
-    const date = new Date(d);
-    if (lang === 'vi') {
-      const days = ['CN', 'T2', 'T3', 'T4', 'T5', 'T6', 'T7'];
-      return `${days[date.getDay()]}, ${String(date.getDate()).padStart(2,'0')}/${String(date.getMonth()+1).padStart(2,'0')}`;
-    }
-    return date.toLocaleDateString('en-GB', { weekday: 'short', day: '2-digit', month: '2-digit' });
-  } catch { return d; }
-}
 function fmtTime(dt: string) {
   try { return new Date(dt.replace(' ', 'T')).toLocaleTimeString('vi-VN', { hour: '2-digit', minute: '2-digit' }); }
   catch { return dt.slice(11, 16); }
@@ -75,14 +67,6 @@ function getSeatPrice(seat: Seat, basePrice: number): number {
   if (seat.price !== undefined && Number.isFinite(Number(seat.price))) return Number(seat.price);
   return Number(basePrice || 0);
 }
-function seatColor(seat: Seat, selected: boolean): { bg: string; border: string; color: string } {
-  if (!seat.is_available) return { bg: '#e2e8f0', border: '#cbd5e1', color: '#94a3b8' };
-  if (selected) return { bg: '#1e3a5f', border: '#1e3a5f', color: '#f4c04a' };
-  if (seat.seat_type === 'VIP')    return { bg: '#fef9c3', border: '#fbbf24', color: '#92400e' };
-  if (seat.seat_type === 'COUPLE' || seat.seat_type === 'DOUBLE') return { bg: '#fce7f3', border: '#f472b6', color: '#9d174d' };
-  return { bg: '#f8fafc', border: '#cbd5e1', color: '#475569' };
-}
-
 /* ─────────────────────────────── Sub-Components ─────────────────────────────── */
 
 /** Progress bar bước */
@@ -118,7 +102,7 @@ function StepBar({ step, lang, onGoStep }: { step: Step; lang: Lang; onGoStep?: 
                 background: done
                   ? 'linear-gradient(135deg, #16a34a, #22c55e)'
                   : active
-                  ? 'linear-gradient(135deg, #0d1b2e, #1e3a5f)'
+                  ? 'linear-gradient(135deg, #0d1b2e, #0d1b2e)'
                   : '#f8fafc',
                 color: done || active ? '#ffffff' : '#94a3b8',
                 display: 'flex', alignItems: 'center', justifyContent: 'center',
@@ -170,10 +154,10 @@ function StepBar({ step, lang, onGoStep }: { step: Step; lang: Lang; onGoStep?: 
 
 /** Panel thông tin bên phải */
 function SummaryPanel({
-  movie, showtime, theater, seats, selectedSeats, seatPricing,
+  movie, showtime, theater, selectedSeats, seatPricing,
   discount, comboItems, comboTotal, totalAfterDiscount, timeLeft, step, lang, onContinue, continueLabel, continueDisabled,
 }: {
-  movie: any; showtime: any; theater: string; seats: Seat[]; selectedSeats: Seat[];
+  movie: any; showtime: any; theater: string; selectedSeats: Seat[];
   seatPricing: Record<string, number>; discount: number; comboItems: { combo: Combo; quantity: number }[]; comboTotal: number; totalAfterDiscount: number;
   timeLeft: number; step: Step; lang: Lang;
   onContinue: () => void; continueLabel: string; continueDisabled: boolean;
@@ -189,10 +173,10 @@ function SummaryPanel({
       background: '#ffffff',
       borderLeft: '1px solid #e2e8f0',
       display: 'flex', flexDirection: 'column',
-      position: 'sticky', top: 0,
-      height: 'calc(100vh - 104px)',
-      overflow: 'visible',
-      boxShadow: '-4px 0 20px rgba(13, 27, 46, 0.03)',
+      position: 'relative',
+      height: '100%', minHeight: 0,
+      overflowY: 'auto', overscrollBehavior: 'contain',
+      boxShadow: '-4px 0 20px rgba(13,27,46,0.03)',
       zIndex: 10,
     }}>
       {/* Poster header */}
@@ -301,7 +285,7 @@ function SummaryPanel({
               { icon: <Calendar size={13} color="#f4c04a" />, val: fmtDateFull(showtime.starts_at, lang), bold: false },
               { icon: <Clock size={13} color="#f4c04a" />, val: `${fmtTime(showtime.starts_at)} – ${fmtTime(showtime.ends_at || showtime.starts_at)}`, bold: false },
             ].map((r, i) => (
-              <div key={i} style={{ display: 'flex', alignItems: 'flex-start', gap: 9, fontSize: 12, color: '#1e293b' }}>
+              <div key={i} style={{ display: 'flex', alignItems: 'flex-start', gap: 9, fontSize: 12, color: '#0d1b2e' }}>
                 <span style={{ flexShrink: 0, marginTop: 1 }}>{r.icon}</span>
                 <span style={{ lineHeight: 1.35, fontWeight: r.bold ? 700 : 500 }}>{r.val}</span>
               </div>
@@ -439,7 +423,7 @@ function SummaryPanel({
                 border: 0, borderRadius: 12, padding: '14px 18px',
                 background: continueDisabled
                   ? '#e2e8f0'
-                  : 'linear-gradient(135deg, #0d1b2e 0%, #1e3a5f 100%)',
+                  : 'linear-gradient(135deg, #0d1b2e 0%, #0d1b2e 100%)',
                 color: continueDisabled ? '#94a3b8' : '#f4c04a',
                 fontWeight: 900, fontSize: 14,
                 cursor: continueDisabled ? 'not-allowed' : 'pointer',
@@ -475,6 +459,7 @@ export default function BookingPage({ movie, showtime: initShowtime, theater: in
   const [showtimesError, setShowtimesError] = useState('');
   const [showtimesReloadKey, setShowtimesReloadKey] = useState(0);
   const [seats, setSeats] = useState<Seat[]>([]);
+  const [seatLayout,setSeatLayout]=useState<SeatLayout>({version:1,columns:12,aisle_after:6,rows:[]});
   const [seatPricing, setSeatPricing] = useState<Record<string, number>>({});
   const [selectedSeatIds, setSelectedSeatIds] = useState<number[]>([]);
   const [seatsLoading, setSeatsLoading] = useState(false);
@@ -485,8 +470,18 @@ export default function BookingPage({ movie, showtime: initShowtime, theater: in
   const [comboQuantities, setComboQuantities] = useState<Record<string, number>>({});
   const [combos, setCombos] = useState<Combo[]>([]);
   const [voucherSuggestions, setVoucherSuggestions] = useState<VoucherSuggestion[]>([]);
-  const [payMethod, setPayMethod] = useState<PayMethod>('qr_vnpay');
-  const [bookingResult, setBookingResult] = useState<any>(null);
+  const [payMethod, setPayMethod] = useState<PayMethod>('vietqr');
+  const [vnpayConfig,setVnpayConfig]=useState<{
+    enabled:boolean; mode:string; credentialsConfigured:boolean; httpsReady:boolean;
+    simulationEnabled?: boolean;
+    gateways?: {
+      vietqr?: { enabled: boolean; autoBankSync: boolean; bankId: string; accountNo: string; accountName: string; mode: string };
+      vnpay?: { enabled: boolean; redirectGateway: boolean; mode: string };
+      momo?: { enabled: boolean; redirectGateway: boolean; mode: string };
+    };
+  }|null>(null);
+  const [activePayment, setActivePayment] = useState<ActiveOnlinePayment | null>(null);
+  const [activeBooking, setActiveBooking] = useState<{ id: number; code: string } | null>(null);
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState('');
   const [timeLeft, setTimeLeft] = useState(HOLD_SECONDS);
@@ -504,6 +499,15 @@ export default function BookingPage({ movie, showtime: initShowtime, theater: in
   useEffect(() => {
     fetch(`${API}?action=concessions`).then(r => r.json()).then(res => setCombos(Array.isArray(res.concessions) ? res.concessions : [])).catch(() => setCombos([]));
     fetch(`${API}?action=promotions`, { credentials:'include', cache:'no-store' }).then(r => r.json()).then(res => setVoucherSuggestions(Array.isArray(res.promotions) ? res.promotions : [])).catch(() => setVoucherSuggestions([]));
+    fetch(`${API}?action=payment_config`,{credentials:'include',cache:'no-store'})
+      .then(r=>r.json())
+      .then(result=>setVnpayConfig({
+        enabled:Boolean(result.enabled), mode:String(result.mode||'sandbox'),
+        credentialsConfigured:Boolean(result.credentialsConfigured), httpsReady:Boolean(result.httpsReady),
+        simulationEnabled:Boolean(result.simulationEnabled),
+        gateways: result.gateways || undefined,
+      }))
+      .catch(()=>setVnpayConfig({enabled:true,mode:'sandbox_inline',credentialsConfigured:false,httpsReady:true,simulationEnabled:true}));
   }, []);
 
   /* ── Load suất chiếu theo phim ── */
@@ -557,16 +561,25 @@ export default function BookingPage({ movie, showtime: initShowtime, theater: in
     loadedShowtimeIdRef.current = selectedShowtime.id;
     setSeatsLoading(true);
     fetch(`${API}?action=showtime_seats&showtime_id=${selectedShowtime.id}`, { credentials:'include' })
-      .then(r => r.json())
+      .then(async r => {
+        const result = await r.json();
+        if (r.status === 401) {
+          onRequireLogin();
+          throw new Error(result.message || t('Vui lòng đăng nhập để xem sơ đồ ghế.','Please sign in to view the seat map.',lang));
+        }
+        if (!r.ok) throw new Error(result.message || t('Không thể tải sơ đồ ghế.','Failed to load seat map.',lang));
+        return result;
+      })
       .then(res => {
         const liveSeats = res.seats || [];
         setSeats(liveSeats);
+        setSeatLayout(res.layout||{version:1,columns:12,aisle_after:6,rows:[]});
         setSeatPricing(res.pricing || {});
         const heldIds = liveSeats.filter((seat: Seat) => seat.held_by_you).map((seat: Seat) => seat.id);
         if (heldIds.length) setSelectedSeatIds(heldIds);
         if (res.hold_seconds) setTimeLeft(Number(res.hold_seconds));
       })
-      .catch(() => setError(t('Không thể tải sơ đồ ghế.','Failed to load seat map.',lang)))
+      .catch(loadError => setError(loadError instanceof Error ? loadError.message : t('Không thể tải sơ đồ ghế.','Failed to load seat map.',lang)))
       .finally(() => setSeatsLoading(false));
   }, [step, selectedShowtime]);
 
@@ -604,6 +617,10 @@ export default function BookingPage({ movie, showtime: initShowtime, theater: in
   );
 
   function pickShowtime(st: Showtime) {
+    if (!user) {
+      onRequireLogin();
+      return;
+    }
     if (selectedShowtime?.id !== st.id) {
       setSelectedSeatIds([]);
       setSeats([]);
@@ -627,13 +644,17 @@ export default function BookingPage({ movie, showtime: initShowtime, theater: in
     try {
       const response = await fetch(`${API}?action=seat_hold`, { method:'POST', credentials:'include', headers:{'Content-Type':'application/json'}, body:JSON.stringify({ showtimeId:selectedShowtime?.id, seatIds:nextSeatIds }) });
       const result = await response.json();
+      if (response.status === 401) {
+        onRequireLogin();
+        return;
+      }
       if (!response.ok) throw new Error(result.message || t('Không thể giữ ghế đã chọn.','Unable to hold selected seats.',lang));
       setSelectedSeatIds(result.seat_ids || nextSeatIds);
-      if (result.hold_seconds) setTimeLeft(Number(result.hold_seconds));
+      if (result.hold_seconds !== undefined) setTimeLeft(current => Math.min(current, Math.max(0, Number(result.hold_seconds))));
     } catch (holdError) {
       setSelectedSeatIds(selectedSeatIds);
       setError(holdError instanceof Error ? holdError.message : t('Không thể giữ ghế đã chọn.','Unable to hold selected seats.',lang));
-      if (selectedShowtime) fetch(`${API}?action=showtime_seats&showtime_id=${selectedShowtime.id}`, { credentials:'include' }).then(r => r.json()).then(result => { setSeats(result.seats || []); setSeatPricing(result.pricing || {}); }).catch(() => {});
+      if (selectedShowtime) fetch(`${API}?action=showtime_seats&showtime_id=${selectedShowtime.id}`, { credentials:'include' }).then(r => r.json()).then(result => { setSeats(result.seats || []); setSeatLayout(result.layout||{version:1,columns:12,aisle_after:6,rows:[]}); setSeatPricing(result.pricing || {}); }).catch(() => {});
     }
   }
 
@@ -665,14 +686,20 @@ export default function BookingPage({ movie, showtime: initShowtime, theater: in
       });
       const data = await res.json();
       if (!res.ok) { setError(data.message || t('Đặt vé thất bại.','Booking failed.',lang)); return; }
-      if (timerRef.current) {
-        clearInterval(timerRef.current);
-        timerRef.current = null;
+      if (data.payment?.mode === 'redirect' && data.payment?.paymentUrl) {
+        sessionStorage.setItem('aurora-vnpay-pending',JSON.stringify({txnRef:data.payment.txnRef,bookingCode:data.booking?.code,amount:data.payment.amount,expiresAt:data.payment.expiresAt}));
+        window.location.assign(data.payment.paymentUrl);
+        return;
       }
-      setBookingResult(data.booking);
+      if (!data.payment?.txnRef || !data.booking?.id) {
+        throw new Error(t('Không nhận được thông tin giao dịch thanh toán hợp lệ.','Invalid payment transaction response.',lang));
+      }
+      if (timerRef.current) clearInterval(timerRef.current);
+      setActiveBooking({ id: Number(data.booking.id), code: String(data.booking.code || '') });
+      setActivePayment(data.payment as ActiveOnlinePayment);
       setStep(4);
-      window.scrollTo({ top:0, behavior:'smooth' });
-    } catch { setError('Lỗi kết nối.'); }
+      window.scrollTo({ top: 0, behavior: 'smooth' });
+    } catch(submitError) { setError(submitError instanceof Error?submitError.message:t('Không thể khởi tạo thanh toán.','Unable to start payment.',lang)); }
     finally { setSubmitting(false); }
   }
 
@@ -703,19 +730,25 @@ export default function BookingPage({ movie, showtime: initShowtime, theater: in
   }
 
   /* ── CTA label & disabled ── */
+  const payMethodLabel = payMethod === 'vietqr' ? 'VIETQR' : payMethod === 'momo' ? 'MOMO' : 'VNPAY';
+  const selectedGatewayEnabled = payMethod === 'vietqr'
+    ? (vnpayConfig?.gateways?.vietqr?.enabled ?? true)
+    : payMethod === 'momo'
+    ? (vnpayConfig?.gateways?.momo?.enabled ?? Boolean(vnpayConfig?.simulationEnabled))
+    : (vnpayConfig?.gateways?.vnpay?.enabled ?? Boolean(vnpayConfig?.enabled));
   const ctaLabel = step === 1
     ? t('Chọn suất chiếu','Select Showtime',lang)
     : step === 2
     ? t('TIẾP TỤC →','CONTINUE →',lang)
     : step === 3
-    ? (submitting ? t('Đang xử lý...','Processing...',lang) : t('XÁC NHẬN ĐẶT VÉ','CONFIRM BOOKING',lang))
+    ? (submitting ? t(`ĐANG TẠO MÃ ${payMethodLabel}...`,`CREATING ${payMethodLabel}...`,lang) : t(`THANH TOÁN QUA ${payMethodLabel}`,`PAY WITH ${payMethodLabel}`,lang))
     : '';
   const ctaDisabled = step === 1
     ? !selectedShowtime
     : step === 2
     ? selectedSeatIds.length === 0
     : step === 3
-    ? submitting
+    ? submitting || !selectedGatewayEnabled
     : false;
 
   function handleCTA() {
@@ -736,10 +769,10 @@ export default function BookingPage({ movie, showtime: initShowtime, theater: in
 
   /* ═══════════════════════════════════════════════════════ RENDER ═══ */
   return (
-    <div style={{ minHeight:'100vh', background:'#f8fafc', fontFamily:"'Inter','Segoe UI',Arial,sans-serif", display:'flex', flexDirection:'column' }}>
+    <div style={{ height:'100vh', minHeight:'100vh', maxHeight:'100dvh', overflow:'hidden', background:'#f8fafc', fontFamily:"'Inter','Segoe UI',Arial,sans-serif", display:'flex', flexDirection:'column' }}>
 
       {/* ── TOP HEADER ── */}
-      <div style={{ background:'linear-gradient(90deg, #091322, #0d1b2e 50%, #15253c)', color:'#dce8f5', padding:'0 24px', height:56, display:'flex', alignItems:'center', justifyContent:'space-between', flexShrink:0, borderBottom:'1px solid rgba(244,192,74,0.2)', boxShadow:'0 2px 10px rgba(0,0,0,0.15)' }}>
+      <div style={{ position:'relative', zIndex:102, background:'linear-gradient(90deg, #0d1b2e, #0d1b2e 50%, #0d1b2e)', color:'#dce8f5', padding:'0 24px', height:56, display:'flex', alignItems:'center', justifyContent:'space-between', flexShrink:0, borderBottom:'1px solid rgba(244,192,74,0.2)', boxShadow:'0 2px 10px rgba(0,0,0,0.15)' }}>
         <button
           onClick={handleGoBack}
           style={{
@@ -787,7 +820,7 @@ export default function BookingPage({ movie, showtime: initShowtime, theater: in
       </div>
 
       {/* ── BREADCRUMB + STEP BAR ── */}
-      <div style={{ background:'#ffffff', borderBottom:'1px solid #e2e8f0', padding:'12px 24px', boxShadow:'0 1px 3px rgba(0,0,0,0.02)' }}>
+      <div style={{ position:'relative', zIndex:101, flexShrink:0, background:'#ffffff', borderBottom:'1px solid #e2e8f0', padding:'12px 24px', boxShadow:'0 4px 12px rgba(15,23,42,0.06)' }}>
         {/* Breadcrumb */}
         <div style={{ display:'flex', alignItems:'center', gap:6, fontSize:12, color:'#94a3b8', marginBottom:12, flexWrap:'wrap' }}>
           <span onClick={onClose} style={{ cursor:'pointer', color:'#64748b', fontWeight:500 }}>{t('Trang chủ','Home',lang)}</span>
@@ -827,21 +860,33 @@ export default function BookingPage({ movie, showtime: initShowtime, theater: in
       </div>
 
       {/* ── MAIN CONTENT ── */}
-      <div style={{ flex:1, display:'flex', overflow:'hidden', maxWidth:'100%' }}>
+      <div style={{ flex:1, minHeight:0, display:'flex', overflow:'hidden', maxWidth:'100%' }}>
 
         {/* LEFT: nội dung theo bước */}
-        <main style={{ flex:1, overflowY:'auto', padding:'24px 28px' }}>
+        <main style={{ flex:1, minWidth:0, minHeight:0, overflowY:'auto', overscrollBehavior:'contain', padding:'24px 28px' }}>
 
-          {/* ─── BƯỚC 4: THÀNH CÔNG ─── */}
-          {step === 4 && bookingResult && (
-            <SuccessStep booking={bookingResult} movie={movie} showtime={selectedShowtime!} theater={selectedTheater} selectedSeats={selectedSeats} comboItems={comboItems} totalFinal={totalFinal} lang={lang} onClose={onClose} />
+          {/* ─── BƯỚC 4: THANH TOÁN QR TỰ ĐỘNG & VÉ ĐIỆN TỬ ─── */}
+          {step === 4 && activePayment && activeBooking && (
+            <AutoPaymentTicketStep
+              apiBase={API}
+              lang={lang}
+              initialPayment={activePayment}
+              bookingId={activeBooking.id}
+              bookingCode={activeBooking.code}
+              movieTitle={movie.title}
+              theaterName={selectedTheater || selectedShowtime?.theater_name || 'Aurora Cinema'}
+              screenName={selectedShowtime?.screen_name || 'Phòng chiếu'}
+              startsAt={selectedShowtime?.starts_at || ''}
+              seatsDisplay={selectedSeats.map((s) => `${s.seat_row}${s.seat_number}`)}
+              onDone={onClose}
+            />
           )}
 
           {/* ─── BƯỚC 3: THANH TOÁN ─── */}
           {step === 3 && (
             <PaymentStep
               lang={lang} movie={movie} showtime={selectedShowtime!} theater={selectedTheater}
-              selectedSeats={selectedSeats} subtotal={subtotal} discount={discount} totalFinal={totalFinal}
+              selectedSeats={selectedSeats} discount={discount} totalFinal={totalFinal}
               comboItems={comboItems} comboTotal={comboTotal} comboQuantities={comboQuantities}
               combos={combos}
               onChangeCombo={(id: string, delta: number) => setComboQuantities(current => ({ ...current, [id]: Math.max(0, Math.min(10, (current[id] || 0) + delta)) }))}
@@ -850,7 +895,7 @@ export default function BookingPage({ movie, showtime: initShowtime, theater: in
               voucherInfo={voucherInfo} voucherError={voucherError} voucherLoading={voucherLoading}
               onApplyVoucher={applyVoucher} onRemoveVoucher={() => { setVoucherInfo(null); setVoucherCode(''); }}
               payMethod={payMethod} setPayMethod={setPayMethod}
-              user={user} error={error} onBack={() => goStep(2)}
+              user={user} error={error} onBack={() => goStep(2)} vnpayConfig={vnpayConfig}
             />
           )}
 
@@ -861,7 +906,7 @@ export default function BookingPage({ movie, showtime: initShowtime, theater: in
               seats={seats} seatsLoading={seatsLoading}
               seatRows={seatRows} sortedRows={sortedRows}
               selectedSeatIds={selectedSeatIds} onToggleSeat={toggleSeat}
-              error={error} onBack={() => goStep(1)} seatPricing={seatPricing}
+              error={error} onBack={() => goStep(1)} seatPricing={seatPricing} seatLayout={seatLayout}
             />
           )}
 
@@ -871,9 +916,9 @@ export default function BookingPage({ movie, showtime: initShowtime, theater: in
               lang={lang} movie={movie}
               availableDates={availableDates}
               selectedDate={selectedDate} setSelectedDate={setSelectedDate}
-              allShowtimes={allShowtimes} showtimesForDate={showtimesForDate}
+              allShowtimes={allShowtimes}
               theatersForDate={theatersForDate}
-              selectedTheater={selectedTheater} setSelectedTheater={setSelectedTheater}
+              setSelectedTheater={setSelectedTheater}
               selectedTheaterId={selectedTheaterId} setSelectedTheaterId={setSelectedTheaterId}
               showtimesForTheater={showtimesForTheater}
               selectedShowtime={selectedShowtime} onPickShowtime={pickShowtime}
@@ -887,7 +932,7 @@ export default function BookingPage({ movie, showtime: initShowtime, theater: in
         {step < 4 && (
           <SummaryPanel
             movie={movie} showtime={selectedShowtime} theater={selectedTheater}
-            seats={seats} selectedSeats={selectedSeats}
+            selectedSeats={selectedSeats}
             seatPricing={seatPricing} discount={discount} comboItems={comboItems} comboTotal={comboTotal} totalAfterDiscount={totalFinal}
             timeLeft={timeLeft} step={step} lang={lang}
             onContinue={handleCTA} continueLabel={ctaLabel} continueDisabled={ctaDisabled}
@@ -899,7 +944,7 @@ export default function BookingPage({ movie, showtime: initShowtime, theater: in
 }
 
 /* ═══════════════════════════════ STEP 1 ═══════════════════════════════ */
-function ShowtimeStep({ lang, movie, availableDates, selectedDate, setSelectedDate, allShowtimes, showtimesForDate, theatersForDate, selectedTheater, setSelectedTheater, selectedTheaterId, setSelectedTheaterId, showtimesForTheater, selectedShowtime, onPickShowtime, error, showtimesLoading, showtimesError, onReload }: any) {
+function ShowtimeStep({ lang, movie, availableDates, selectedDate, setSelectedDate, allShowtimes, theatersForDate, setSelectedTheater, selectedTheaterId, setSelectedTheaterId, showtimesForTheater, selectedShowtime, onPickShowtime, error, showtimesLoading, showtimesError, onReload }: any) {
   const noShowtimes = !showtimesLoading&&!showtimesError&&availableDates.length === 0 && allShowtimes.length === 0;
 
   return (
@@ -922,7 +967,7 @@ function ShowtimeStep({ lang, movie, availableDates, selectedDate, setSelectedDa
         </div>
       ) : showtimesError ? (
         <div style={{textAlign:'center',padding:'48px 20px',background:'#fff',border:'1px solid #fecaca',borderRadius:14}}>
-          <AlertCircle size={36} color="#dc2626" style={{margin:'0 auto 10px'}}/><b style={{display:'block',color:'#7f1d1d',fontSize:14}}>{t('Chưa thể tải lịch chiếu','Unable to load showtimes',lang)}</b><p style={{margin:'6px 0 16px',color:'#64748b',fontSize:12}}>{showtimesError}</p><button type="button" onClick={onReload} style={{display:'inline-flex',alignItems:'center',gap:6,padding:'9px 15px',border:0,borderRadius:8,color:'#fff',background:'#173b65',fontWeight:800,cursor:'pointer'}}><RefreshCw size={14}/>{t('Thử tải lại','Try again',lang)}</button>
+          <AlertCircle size={36} color="#dc2626" style={{margin:'0 auto 10px'}}/><b style={{display:'block',color:'#7f1d1d',fontSize:14}}>{t('Chưa thể tải lịch chiếu','Unable to load showtimes',lang)}</b><p style={{margin:'6px 0 16px',color:'#64748b',fontSize:12}}>{showtimesError}</p><button type="button" onClick={onReload} style={{display:'inline-flex',alignItems:'center',gap:6,padding:'9px 15px',border:0,borderRadius:8,color:'#fff',background:'#0d1b2e',fontWeight:800,cursor:'pointer'}}><RefreshCw size={14}/>{t('Thử tải lại','Try again',lang)}</button>
         </div>
       ) : noShowtimes ? (
         <div style={{ textAlign:'center', padding:'60px 20px', background:'#fff', borderRadius:14 }}>
@@ -1074,7 +1119,7 @@ function ShowtimeCard({ st, selected, lang, onClick }: { st:Showtime; selected:b
 }
 
 /* ═══════════════════════════════ STEP 2 ═══════════════════════════════ */
-function SeatStep({ lang, movie, showtime, theater, seats, seatsLoading, seatRows, sortedRows, selectedSeatIds, onToggleSeat, error, onBack, seatPricing }: any) {
+function SeatStep({ lang, movie, showtime, theater, seats, seatsLoading, seatRows, sortedRows, selectedSeatIds, onToggleSeat, error, onBack, seatPricing, seatLayout }: any) {
   const availableSeatCount = seats.filter((seat: Seat) => seat.is_available).length;
   const selectedSeatCount = selectedSeatIds.length;
   return (
@@ -1127,7 +1172,7 @@ function SeatStep({ lang, movie, showtime, theater, seats, seatsLoading, seatRow
       </div>
 
       {/* Live availability strip — values come from aurora_db.showtime_seats */}
-      <div style={{ display:'grid', gridTemplateColumns:'minmax(0,1fr) auto auto', gap:10, alignItems:'center', marginBottom:16, padding:'13px 16px', borderRadius:14, background:'linear-gradient(135deg,#0d1b2e,#19385e)', boxShadow:'0 9px 24px rgba(13,27,46,.13)' }}>
+      <div style={{ display:'grid', gridTemplateColumns:'minmax(0,1fr) auto auto', gap:10, alignItems:'center', marginBottom:16, padding:'13px 16px', borderRadius:14, background:'linear-gradient(135deg,#0d1b2e,#0d1b2e)', boxShadow:'0 9px 24px rgba(13,27,46,.13)' }}>
         <div style={{ minWidth:0 }}>
           <div style={{ display:'flex', alignItems:'center', gap:7, color:'#f4c04a', fontSize:11, fontWeight:900, letterSpacing:.7 }}><span style={{ width:8, height:8, borderRadius:'50%', background:'#2dd47b', boxShadow:'0 0 0 4px rgba(45,212,123,.16)' }} /> {t('SƠ ĐỒ GHẾ TRỰC TUYẾN', 'LIVE SEAT MAP', lang)}</div>
           <div style={{ color:'#c7d6e8', fontSize:11.5, marginTop:5 }}>{t('Ghế được đồng bộ và giữ tạm thời trên hệ thống Aurora.', 'Seats sync and are temporarily held by Aurora.', lang)}</div>
@@ -1136,87 +1181,11 @@ function SeatStep({ lang, movie, showtime, theater, seats, seatsLoading, seatRow
         <div style={{ borderLeft:'1px solid rgba(255,255,255,.15)', paddingLeft:14, textAlign:'right' }}><b style={{ display:'block', color:'#f4c04a', fontSize:17 }}>{selectedSeatCount}</b><span style={{ color:'#a8c0d9', fontSize:10 }}>{t('đang giữ','held',lang)}</span></div>
       </div>
 
-      {/* Legend */}
-      <div className="aurora-booking-card" style={{ padding: '12px 18px', marginBottom: 24, display: 'flex', gap: 18, flexWrap: 'wrap', justifyContent: 'center' }}>
-        {[
-          { bg: '#f8fafc', border: '#cbd5e1', color: '#475569', label: t('Ghế thường', 'Standard', lang) },
-          { bg: '#fef3c7', border: '#f59e0b', color: '#92400e', label: `Ghế VIP · ${fmtMoney(Number(seatPricing?.VIP || 0))}` },
-          { bg: '#fce7f3', border: '#f472b6', color: '#9d174d', label: t('Ghế đôi (Couple - x2)', 'Couple seat (x2)', lang) },
-          { bg: '#1e3a5f', border: '#f4c04a', color: '#f4c04a', label: t('Đang chọn', 'Selected', lang) },
-          { bg: '#e2e8f0', border: '#cbd5e1', color: '#94a3b8', label: t('Đã bán', 'Taken', lang) },
-        ].map(item => (
-          <div key={item.label} style={{ display: 'flex', alignItems: 'center', gap: 7, fontSize: 11.5, color: '#475569', fontWeight: 600 }}>
-            <div style={{ width: 22, height: 16, background: item.bg, border: `1.5px solid ${item.border}`, borderRadius: '4px 4px 6px 6px', flexShrink: 0, boxShadow: '0 1px 2px rgba(0,0,0,0.05)' }} />
-            <span>{item.label}</span>
-          </div>
-        ))}
-      </div>
-
-      {/* Screen */}
-      <div style={{ textAlign: 'center', marginBottom: 28 }}>
-        <div style={{
-          width: '78%', maxWidth: 580, height: 16,
-          background: 'linear-gradient(90deg, #94a3b8 0%, #cbd5e1 50%, #94a3b8 100%)',
-          borderRadius: '50% 50% 0 0 / 100% 100% 0 0',
-          margin: '0 auto 10px',
-          boxShadow: '0 8px 24px rgba(13,27,46,0.12)',
-        }} />
-        <span style={{ fontSize: 11, letterSpacing: 4, color: '#94a3b8', fontWeight: 800 }}>
-          {t('MÀN HÌNH CHIẾU', 'SCREEN', lang)}
-        </span>
-      </div>
-
-      {/* Seat grid */}
-      {seatsLoading ? (
-        <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', padding: '56px 0' }}>
-          <div style={{ width: 44, height: 44, border: '3px solid #e2e8f0', borderTop: '3px solid #0d1b2e', borderRadius: '50%', animation: 'spin 0.8s linear infinite' }} />
-          <p style={{ color: '#64748b', marginTop: 14, fontSize: 13, fontWeight: 600 }}>{t('Đang tải sơ đồ ghế...', 'Loading seats...', lang)}</p>
-        </div>
-      ) : (
-        <div style={{ overflowX: 'auto', paddingBottom: 12 }}>
-          <div style={{ display: 'flex', flexDirection: 'column', gap: 7, minWidth: 480, margin: '0 auto', width: 'fit-content' }}>
-            {sortedRows.map((row: string) => (
-              <div key={row} style={{ display: 'flex', alignItems: 'center', gap: 8, justifyContent: 'center' }}>
-                <span style={{ width: 22, fontSize: 11.5, fontWeight: 800, color: '#64748b', textAlign: 'center', flexShrink: 0 }}>{row}</span>
-                <div style={{ display: 'flex', gap: 5, alignItems: 'center', flexWrap: 'nowrap' }}>
-                  {(seatRows[row] as Seat[]).sort((a, b) => a.seat_number - b.seat_number).map(seat => {
-                    const isSelected = selectedSeatIds.includes(seat.id);
-                    const c = seatColor(seat, isSelected);
-                    const isDouble = seat.seat_type === 'COUPLE' || seat.seat_type === 'DOUBLE';
-                    const price = getSeatPrice(seat, Number(showtime.ticket_price));
-                    const typeName = seat.seat_type === 'VIP' ? 'VIP' : isDouble ? t('Ghế đôi', 'Couple', lang) : t('Ghế thường', 'Standard', lang);
-                    return (
-                      <button
-                        key={seat.id}
-                        disabled={!seat.is_available}
-                        onClick={() => onToggleSeat(seat)}
-                        title={`${seat.seat_row}${seat.seat_number} · ${typeName} · ${fmtMoney(price)}`}
-                        style={{
-                          width: isDouble ? 72 : 34, height: 28,
-                          background: c.bg, border: `1.5px solid ${c.border}`, color: c.color,
-                          borderRadius: '5px 5px 8px 8px', fontSize: isDouble ? 10 : 10, fontWeight: 800,
-                          cursor: seat.is_available ? 'pointer' : 'not-allowed',
-                          padding: 0, flexShrink: 0,
-                          transform: isSelected ? 'scale(1.12)' : 'scale(1)',
-                          boxShadow: isSelected
-                            ? '0 3px 10px rgba(30,58,95,0.4), 0 0 0 2px #f4c04a'
-                            : seat.is_available
-                            ? '0 1px 2px rgba(0,0,0,0.05)'
-                            : 'none',
-                          transition: 'all 0.15s cubic-bezier(0.16, 1, 0.3, 1)',
-                        }}
-                      >
-                        {isDouble ? `ĐÔI ${seat.seat_number}` : seat.seat_number}
-                      </button>
-                    );
-                  })}
-                </div>
-                <span style={{ width: 22, fontSize: 11.5, fontWeight: 800, color: '#64748b', textAlign: 'center', flexShrink: 0 }}>{row}</span>
-              </div>
-            ))}
-          </div>
-        </div>
-      )}
+      <section className="aurora-seat-map" aria-label={t('Sơ đồ ghế phòng chiếu','Cinema seating map',lang)}>
+        <div className="aurora-cinema-screen"><span>{t('MÀN HÌNH CHIẾU','SCREEN',lang)}</span><small>{t('Tất cả ghế đều hướng về màn hình','All seats face the screen',lang)}</small></div>
+        {seatsLoading?<div className="aurora-seat-loading"><div/><p>{t('Đang tải sơ đồ ghế...','Loading seats...',lang)}</p></div>:<div className="aurora-seat-rows">{sortedRows.map((row:string)=>{const rowSeats=(seatRows[row] as Seat[]).sort((a,b)=>a.seat_number-b.seat_number);const isCoupleRow=rowSeats.every(seat=>seat.seat_type==='COUPLE'||seat.seat_type==='DOUBLE');const columns=Math.max(1,Number(seatLayout?.columns||12));const coupleOffset=isCoupleRow?Math.floor((columns-rowSeats.length*2)/2)+1:1;const template=`repeat(${columns},minmax(34px,1fr))`;return <div className={`aurora-seat-row ${isCoupleRow?'couple-row':''}`} key={row}><b className="aurora-row-label">{row}</b><div className="aurora-seat-row-grid" style={{gridTemplateColumns:template}}>{rowSeats.map(seat=>{const isCouple=seat.seat_type==='COUPLE'||seat.seat_type==='DOUBLE';const columnStart=isCouple?coupleOffset+(seat.seat_number-1)*2:seat.seat_number;const selected=selectedSeatIds.includes(seat.id);const typeName=seat.seat_type==='VIP'?'VIP':isCouple?t('Ghế đôi','Couple',lang):t('Ghế thường','Standard',lang);return <button key={seat.id} type="button" style={{gridColumn:`${columnStart} / span ${isCouple?2:1}`}} disabled={!seat.is_available} onClick={()=>onToggleSeat(seat)} className={`aurora-seat aurora-seat-${isCouple?'couple':seat.seat_type.toLowerCase()} ${selected?'selected':''}`} title={`${seat.seat_row}${seat.seat_number} · ${typeName} · ${fmtMoney(getSeatPrice(seat,Number(showtime.ticket_price)))}`}><span>{seat.seat_row}{seat.seat_number}</span></button>})}</div><b className="aurora-row-label">{row}</b></div>})}</div>}
+        <div className="aurora-seat-legend"><span><i className="standard"/>{t('Ghế thường','Standard',lang)}</span><span><i className="vip"/>{t('Ghế VIP','VIP',lang)}</span><span><i className="couple"/>{t('Ghế đôi','Couple',lang)}</span><span><i className="selected"/>{t('Đang chọn','Selected',lang)}</span><span><i className="occupied"/>{t('Đã bán','Taken',lang)}</span></div>
+      </section>
 
       {/* Bottom info bar */}
       <div className="aurora-booking-card" style={{ marginTop: 24, padding: '14px 20px', display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: 12 }}>
@@ -1249,33 +1218,36 @@ function SeatStep({ lang, movie, showtime, theater, seats, seatsLoading, seatRow
 
 /* ═══════════════════════════════ STEP 3: THANH TOÁN ═══════════════════════════════ */
 function PaymentStep({
-  lang, movie, showtime, theater, selectedSeats, subtotal, discount, totalFinal,
+  lang, movie, showtime, theater, selectedSeats, discount, totalFinal,
   comboItems, comboTotal, comboQuantities, combos, onChangeCombo,
   voucherCode, setVoucherCode, voucherSuggestions, voucherInfo, voucherError, voucherLoading,
-  onApplyVoucher, onRemoveVoucher, payMethod, setPayMethod, user, error, onBack
+  onApplyVoucher, onRemoveVoucher, payMethod, setPayMethod, user, error, onBack, vnpayConfig
 }: any) {
   const ticketPrice = showtime.ticket_price;
-  const PAY_METHODS = [
+  const PAY_METHODS: Array<{ id: PayMethod; title: string; desc: string; accent: string; bg: string; icon: JSX.Element }> = [
+    {
+      id: 'vietqr',
+      title: 'VietQR · Chuyển khoản 24/7',
+      desc: t('Quét mã bằng mọi app ngân hàng', 'Scan with any banking app', lang),
+      accent: '#0d1b2e',
+      bg: '#f1f5f9',
+      icon: <QrCode size={19} color="#0d1b2e" />,
+    },
+    {
+      id: 'momo',
+      title: 'Ví MoMo',
+      desc: t('Mở app MoMo quét mã QR thanh toán', 'Scan QR using MoMo app', lang),
+      accent: '#a50064',
+      bg: '#fdf2f8',
+      icon: <Smartphone size={19} color="#a50064" />,
+    },
     {
       id: 'qr_vnpay',
-      title: 'VNPay QR',
-      desc: t('Quét mã qua 40+ ứng dụng ngân hàng & ví điện tử', 'Scan via 40+ banking apps & e-wallets', lang),
-      badge: 'Khuyên dùng',
-      icon: <QrCode size={20} color="#005baa" />,
-    },
-    {
-      id: 'qr_momo',
-      title: 'Ví MoMo',
-      desc: t('Thanh toán tức thì qua ứng dụng MoMo', 'Instant payment with MoMo app', lang),
-      badge: null,
-      icon: <Smartphone size={20} color="#a50064" />,
-    },
-    {
-      id: 'qr_zalopay',
-      title: 'Ví ZaloPay',
-      desc: t('Thanh toán tiện lợi qua ví ZaloPay', 'Convenient with ZaloPay', lang),
-      badge: null,
-      icon: <Zap size={20} color="#0068ff" />,
+      title: 'VNPAY-QR',
+      desc: t('Quét mã VNPAY-QR / ứng dụng ngân hàng', 'Pay via VNPAY-QR / banking app', lang),
+      accent: '#005baa',
+      bg: '#eff6ff',
+      icon: <CreditCard size={19} color="#005baa" />,
     },
   ];
 
@@ -1429,7 +1401,7 @@ function PaymentStep({
                   style={{
                     border: hasQty ? '1.5px solid #f59e0b' : '1px solid #e2e8f0',
                     background: hasQty ? '#fffaf0' : '#ffffff',
-                    boxShadow: hasQty ? '0 3px 12px rgba(245, 158, 11, 0.12)' : '0 1px 3px rgba(0,0,0,0.02)',
+                    boxShadow: hasQty ? '0 3px 12px rgba(244,192,74,0.12)' : '0 1px 3px rgba(0,0,0,0.02)',
                   }}
                 >
                   <div style={{
@@ -1550,7 +1522,7 @@ function PaymentStep({
                 disabled={voucherLoading || !voucherCode.trim()}
                 style={{
                   padding: '0 22px',
-                  background: 'linear-gradient(135deg, #0d1b2e, #1e3a5f)',
+                  background: 'linear-gradient(135deg, #0d1b2e, #0d1b2e)',
                   color: '#f4c04a',
                   border: 0, borderRadius: 10,
                   fontWeight: 800, fontSize: 13.5,
@@ -1619,12 +1591,12 @@ function PaymentStep({
                 key={pm.id}
                 className={`checkout-payment-option ${isChecked ? 'active' : ''}`}
                 style={{
-                  display: 'flex', alignItems: 'center', gap: 14,
-                  padding: '14px 18px', borderRadius: 12,
-                  border: `1.5px solid ${isChecked ? '#0d1b2e' : '#e2e8f0'}`,
+                  display: 'flex', alignItems: 'center', gap: 12,
+                  padding: '13px 16px', borderRadius: 12,
+                  border: `1.5px solid ${isChecked ? pm.accent : '#e2e8f0'}`,
                   background: isChecked ? '#f8fafc' : '#ffffff',
-                  cursor: 'pointer', transition: 'all 0.15s cubic-bezier(0.16, 1, 0.3, 1)',
-                  boxShadow: isChecked ? '0 2px 8px rgba(13,27,46,0.08)' : 'none',
+                  cursor: 'pointer', transition: 'all 0.15s ease',
+                  boxShadow: isChecked ? '0 2px 10px rgba(13,27,46,0.07)' : 'none',
                 }}
               >
                 <input
@@ -1633,60 +1605,30 @@ function PaymentStep({
                   value={pm.id}
                   checked={isChecked}
                   onChange={() => setPayMethod(pm.id)}
-                  style={{ accentColor: '#0d1b2e', width: 18, height: 18 }}
+                  style={{ accentColor: pm.accent, width: 17, height: 17, flexShrink: 0 }}
                 />
                 <div style={{
-                  width: 36, height: 36, borderRadius: 8,
-                  background: '#ffffff', border: '1px solid #e2e8f0',
+                  width: 38, height: 38, borderRadius: 10,
+                  background: pm.bg,
                   display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0
                 }}>
                   {pm.icon}
                 </div>
-                <div style={{ flex: 1 }}>
-                  <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-                    <span style={{ fontSize: 14, fontWeight: isChecked ? 800 : 600, color: '#0d1b2e' }}>
-                      {pm.title}
-                    </span>
-                    {pm.badge && (
-                      <span style={{ fontSize: 10, fontWeight: 800, background: '#dcfce7', color: '#15803d', padding: '1px 6px', borderRadius: 4 }}>
-                        {pm.badge}
-                      </span>
-                    )}
+                <div style={{ flex: 1, minWidth: 0 }}>
+                  <div style={{ fontSize: 14, fontWeight: 700, color: '#0d1b2e', lineHeight: 1.3 }}>
+                    {pm.title}
                   </div>
-                  <div style={{ fontSize: 11.5, color: '#64748b', marginTop: 2 }}>{pm.desc}</div>
+                  <div style={{ fontSize: 12, color: '#64748b', marginTop: 2, lineHeight: 1.3 }}>
+                    {pm.desc}
+                  </div>
                 </div>
                 {isChecked && (
-                  <span style={{ color: '#0d1b2e', fontWeight: 800, fontSize: 16 }}>✓</span>
+                  <Check size={17} color={pm.accent} style={{ flexShrink: 0 }} />
                 )}
               </label>
             );
           })}
         </div>
-
-        {/* QR simulator helper */}
-        {payMethod.startsWith('qr_') && (
-          <div className="checkout-qr-note" style={{ marginTop: 16, padding: '20px', background: '#f8fafc', borderRadius: 12, border: '1px dashed #cbd5e1', display: 'flex', alignItems: 'center', gap: 18 }}>
-            <div style={{ width: 84, height: 84, background: '#ffffff', border: '1px solid #e2e8f0', borderRadius: 10, display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0, boxShadow: '0 2px 8px rgba(0,0,0,0.05)' }}>
-              <QrCode size={56} color="#0d1b2e" />
-            </div>
-            <div>
-              <div style={{ fontSize: 13, fontWeight: 800, color: '#0d1b2e', marginBottom: 4 }}>
-                {t('Quét mã QR để thanh toán', 'Scan QR code to pay', lang)}
-              </div>
-              <p style={{ fontSize: 12, color: '#64748b', margin: 0, lineHeight: 1.5 }}>
-                {t('Mã QR động tương ứng với tổng tiền sẽ được hiển thị ngay sau khi bấm xác nhận. Hỗ trợ quét bằng mọi app ngân hàng & ví điện tử.', 'Dynamic QR code will appear after confirmation. Supports all Vietnamese bank apps.', lang)}
-              </p>
-              <div style={{ display: 'flex', gap: 12, marginTop: 8, fontSize: 11, color: '#16a34a', fontWeight: 600 }}>
-                <span style={{ display: 'flex', alignItems: 'center', gap: 4 }}>
-                  <ShieldCheck size={13} /> {t('Mã hóa SSL 256-bit', '256-bit SSL', lang)}
-                </span>
-                <span style={{ display: 'flex', alignItems: 'center', gap: 4 }}>
-                  <Check size={13} /> {t('Xác nhận tức thì', 'Instant confirmation', lang)}
-                </span>
-              </div>
-            </div>
-          </div>
-        )}
       </div>
 
       {/* CARD 5: THÔNG TIN NGƯỜI ĐẶT */}
@@ -1750,102 +1692,6 @@ function PaymentStep({
       </div>
 
       {error && <div style={errStyle}>{error}</div>}
-    </div>
-  );
-}
-
-/* ═══════════════════════════════ STEP 4 ═══════════════════════════════ */
-function SuccessStep({ booking, movie, showtime, theater, selectedSeats, totalFinal, lang, onClose }: any) {
-  // Tạo QR data string đơn giản
-  const qrData = `AURORA:${booking.code}:${movie.title}:${showtime?.starts_at||''}`;
-
-  return (
-    <div style={{ maxWidth:640, margin:'0 auto' }}>
-      {/* Header success */}
-      <div style={{ textAlign:'center', marginBottom:28 }}>
-        <div style={{ width:80, height:80, borderRadius:'50%', background:'linear-gradient(135deg,#dcfce7,#bbf7d0)', color:'#16a34a', display:'flex', alignItems:'center', justifyContent:'center', margin:'0 auto 16px', boxShadow:'0 8px 24px rgba(22,163,74,0.25)' }}>
-          <Check size={40} strokeWidth={3} />
-        </div>
-        <div style={{ fontSize:10, fontWeight:900, letterSpacing:3, color:'#94a3b8', marginBottom:6 }}>AURORA CINEMA</div>
-        <h1 style={{ fontSize:26, fontWeight:900, color:'#0d1b2e', margin:'0 0 8px' }}>
-          {t('ĐẶT VÉ THÀNH CÔNG!','BOOKING CONFIRMED!',lang)}
-        </h1>
-        <p style={{ color:'#64748b', fontSize:14, margin:0 }}>
-          {t('Vé của bạn đã được xác nhận. Vui lòng xuất trình mã vé khi đến rạp.','Your ticket is confirmed. Please show the code at the cinema.',lang)}
-        </p>
-      </div>
-
-      {/* Ticket card */}
-      <div style={{ background:'#fff', borderRadius:16, overflow:'hidden', boxShadow:'0 8px 32px rgba(0,0,0,0.12)', marginBottom:24 }}>
-        {/* Top: phim + mã */}
-        <div style={{ background:'linear-gradient(135deg,#0d1b2e,#1e3a5f)', padding:'20px 24px', color:'#fff' }}>
-          <div style={{ display:'flex', gap:14, alignItems:'center' }}>
-            {(movie.poster||movie.posterUrl) && (
-              <img src={movie.poster||movie.posterUrl} alt="" style={{ width:60, height:84, objectFit:'cover', borderRadius:8, flexShrink:0 }}
-                onError={e => { (e.target as HTMLImageElement).style.display='none'; }} />
-            )}
-            <div>
-              <div style={{ fontSize:10, color:'#9ab5cc', letterSpacing:1, marginBottom:4 }}>AURORA CINEMA · VÉ XEM PHIM</div>
-              <div style={{ fontSize:18, fontWeight:900, marginBottom:6 }}>{movie.title}</div>
-              <div style={{ fontSize:11, color:'#9ab5cc', display:'flex', gap:10 }}>
-                {movie.format && <span>{movie.format}</span>}
-                {(movie.ageRating||movie.rating) && <span style={{ background:ratingColor(movie.ageRating||movie.rating), color:'#fff', padding:'1px 6px', borderRadius:4 }}>{movie.ageRating||movie.rating}</span>}
-              </div>
-            </div>
-          </div>
-        </div>
-
-        {/* Dashed divider */}
-        <div style={{ position:'relative', height:0, background:'#fff' }}>
-          <div style={{ position:'absolute', left:-16, width:32, height:32, borderRadius:'50%', background:'#f1f5f9', top:-16, zIndex:1 }} />
-          <div style={{ position:'absolute', right:-16, width:32, height:32, borderRadius:'50%', background:'#f1f5f9', top:-16, zIndex:1 }} />
-          <div style={{ borderTop:'2px dashed #e2e8f0', margin:'0 24px' }} />
-        </div>
-
-        {/* Body */}
-        <div style={{ padding:'24px', display:'grid', gridTemplateColumns:'1fr 1fr', gap:'16px 24px' }}>
-          {[
-            { label:t('Mã vé','Booking code',lang), val: booking.code, big:true, gold:true },
-            { label:t('Ghế','Seats',lang), val: selectedSeats.map((s: Seat) => `${s.seat_row}${s.seat_number}`).join(', '), big:false, gold:false },
-            { label:t('Rạp','Cinema',lang), val: theater||showtime?.theater_name, big:false, gold:false },
-            { label:t('Phòng','Screen',lang), val: showtime?.screen_name, big:false, gold:false },
-            { label:t('Ngày','Date',lang), val: fmtDateFull(showtime?.starts_at||'', lang), big:false, gold:false },
-            { label:t('Tổng tiền','Total',lang), val: fmtMoney(totalFinal), big:false, gold:true },
-            { label:t('Thanh toán','Payment',lang), val: String(booking.payment?.method||'').replace('QR_',''), big:false, gold:false },
-            { label:t('Mã giao dịch','Transaction ID',lang), val: booking.payment?.referenceCode||'—', big:false, gold:false },
-          ].map(r => (
-            <div key={r.label}>
-              <div style={{ fontSize:10, fontWeight:600, color:'#94a3b8', textTransform:'uppercase', letterSpacing:0.5, marginBottom:4 }}>{r.label}</div>
-              <div style={{ fontSize: r.big ? 17 : 13, fontWeight: r.big ? 900 : 700, color: r.gold ? '#b8860b' : '#0d1b2e', letterSpacing: r.big ? 1 : 0 }}>{r.val}</div>
-            </div>
-          ))}
-        </div>
-
-        {/* QR code section */}
-        <div style={{ padding:'16px 24px', background:'#f8fafc', borderTop:'1px solid #e2e8f0', display:'flex', alignItems:'center', gap:16 }}>
-          {/* Simple QR visual placeholder */}
-          <div style={{ width:80, height:80, background:'#fff', border:'2px solid #e2e8f0', borderRadius:8, display:'flex', alignItems:'center', justifyContent:'center', flexShrink:0 }}>
-            <QrCode size={52} color="#0d1b2e" />
-          </div>
-          <div>
-            <div style={{ fontSize:12, fontWeight:700, color:'#0d1b2e', marginBottom:4 }}>{t('Quét mã QR để vào rạp','Scan QR code at entrance',lang)}</div>
-            <div style={{ fontSize:11, color:'#94a3b8', lineHeight:1.5 }}>
-              {t('Hoặc xuất trình mã vé: ','Or show booking code: ',lang)}
-              <strong style={{ color:'#b8860b', letterSpacing:1 }}>{booking.code}</strong>
-            </div>
-          </div>
-        </div>
-      </div>
-
-      {/* Action buttons */}
-      <div style={{ display:'flex', gap:10, flexWrap:'wrap' }}>
-        <button onClick={onClose} style={{ flex:1, minWidth:160, padding:'13px 20px', border:0, borderRadius:10, background:'linear-gradient(135deg,#0d1b2e,#1e3a5f)', color:'#f4c04a', fontWeight:900, fontSize:14, cursor:'pointer', display:'flex', alignItems:'center', justifyContent:'center', gap:8, boxShadow:'0 4px 16px rgba(13,27,46,0.3)' }}>
-          <Ticket size={16} /> {t('VỀ TRANG CHỦ','HOME',lang)}
-        </button>
-        <button onClick={onClose} style={{ flex:1, minWidth:160, padding:'13px 20px', border:'1.5px solid #e2e8f0', borderRadius:10, background:'#fff', color:'#0d1b2e', fontWeight:700, fontSize:14, cursor:'pointer', display:'flex', alignItems:'center', justifyContent:'center', gap:8 }}>
-          <Film size={16} /> {t('ĐẶT VÉ KHÁC','BOOK AGAIN',lang)}
-        </button>
-      </div>
     </div>
   );
 }

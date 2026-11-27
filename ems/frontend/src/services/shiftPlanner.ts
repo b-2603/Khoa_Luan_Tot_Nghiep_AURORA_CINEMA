@@ -34,6 +34,7 @@ export interface MonthlyDraft {
   schedules: WorkSchedule[];
   shortages: PlanShortage[];
   backupCount: Record<string, number>;
+  backupNames?: Record<string, string[]>;
   generatedAt: string;
 }
 
@@ -174,6 +175,7 @@ export function generateMonthlyPlan(month: string, staff: User[]): MonthlyDraft 
   const schedules: WorkSchedule[] = [];
   const shortages: PlanShortage[] = [];
   const backupCount: Record<string, number> = {};
+  const backupNames: Record<string, string[]> = {};
   let prevNight = new Set<string>();
   const order = ['shift-3', 'shift-1', 'shift-2'];
 
@@ -207,6 +209,8 @@ export function generateMonthlyPlan(month: string, staff: User[]): MonthlyDraft 
 
       const picked = candidates.slice(0, needed);
       backupCount[`${date}|${shiftId}`] = Math.max(0, candidates.length - picked.length);
+      // Người cũng rảnh ca này nhưng chưa được xếp (đã sắp theo công bằng) → làm dự phòng thay ca
+      backupNames[`${date}|${shiftId}`] = candidates.slice(needed).map(u => u.name);
 
       picked.forEach((u, idx) => {
         assignedToday.add(u.id);
@@ -239,7 +243,7 @@ export function generateMonthlyPlan(month: string, staff: User[]): MonthlyDraft 
   });
 
   schedules.sort((a, b) => a.date.localeCompare(b.date) || a.shiftId.localeCompare(b.shiftId));
-  return { month, schedules, shortages, backupCount, generatedAt: new Date().toISOString() };
+  return { month, schedules, shortages, backupCount, backupNames, generatedAt: new Date().toISOString() };
 }
 
 export function getMonthlyDraft(month: string): MonthlyDraft | null {

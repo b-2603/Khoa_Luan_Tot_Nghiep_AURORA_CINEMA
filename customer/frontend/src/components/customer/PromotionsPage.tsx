@@ -1,6 +1,6 @@
 import { useMemo, useState, type CSSProperties } from 'react';
 import {
-  ArrowRight, BadgePercent, CalendarDays, Check, ChevronRight, Clock3,
+  ArrowRight, CalendarDays, Check, ChevronRight, Clock3,
   Copy, Gift, Search, ShieldCheck, Sparkles, Ticket, Users, X,
 } from 'lucide-react';
 
@@ -22,6 +22,15 @@ type Promotion = {
   imageUrl?: string;
   discountType?: 'percent' | 'amount';
   discountValue?: number;
+  benefitType?: 'percent'|'amount'|'gift_product'|'buy_x_get_y'|'free_ticket'|'membership_bonus'|'other';
+  benefitTitle?: string;
+  benefitDescription?: string;
+  giftProductName?: string;
+  giftQuantity?: number;
+  buyQuantity?: number;
+  getQuantity?: number;
+  applicationScope?: string;
+  redemptionInstructions?: string;
   minOrderAmount?: number;
   maxDiscount?: number;
   startsAt?: string;
@@ -59,8 +68,12 @@ function dateLabel(value: string | undefined, language: Language) {
 }
 
 function offerValue(promotion: Promotion, language: Language) {
-  if (promotion.discountType === 'percent') return `${Number(promotion.discountValue || 0)}%`;
-  return language === 'vi' ? `-${money(promotion.discountValue)}` : `${money(promotion.discountValue)} off`;
+  const type=promotion.benefitType||promotion.discountType;
+  if (type === 'percent') return `${Number(promotion.discountValue || 0)}%`;
+  if(type==='amount')return language === 'vi' ? `-${money(promotion.discountValue)}` : `${money(promotion.discountValue)} off`;
+  if(type==='gift_product')return language==='vi'?`Tặng ${Number(promotion.giftQuantity||1)} ${promotion.giftProductName||'quà tặng'}`:`Free ${promotion.giftProductName||'gift'}`;
+  if(type==='buy_x_get_y')return promotion.benefitTitle||`${language==='vi'?'Mua':'Buy'} ${promotion.buyQuantity||1} ${language==='vi'?'tặng':'get'} ${promotion.getQuantity||1}`;
+  return promotion.benefitTitle|| (language==='vi'?'Quyền lợi đặc biệt':'Special benefit');
 }
 
 function categoryIcon(category: string | undefined) {
@@ -115,7 +128,7 @@ export default function PromotionsPage({ language, promotions, loading, error, o
 
   function renderArtwork(promotion: Promotion, featuredCard = false) {
     const Icon = categoryIcon(promotion.category);
-    return <div className={`offers-artwork ${featuredCard ? 'featured' : ''}`} style={{ '--offer-color': promotion.themeColor || '#D89718' } as CSSProperties}>
+    return <div className={`offers-artwork ${featuredCard ? 'featured' : ''}`} style={{ '--offer-color': promotion.themeColor || '#f4c04a' } as CSSProperties}>
       {promotion.imageUrl ? <img src={encodeURI(promotion.imageUrl)} alt="" /> : <>
         <div className="offers-artwork-orbit" />
         <Icon size={featuredCard ? 42 : 28} />
@@ -133,7 +146,7 @@ export default function PromotionsPage({ language, promotions, loading, error, o
       </header>
 
       {loading ? <section className="offers-loading" aria-label={t('Đang tải ưu đãi', 'Loading offers')}><i/><i/><i/></section> : error ? <section className="offers-state"><Gift size={30}/><h2>{t('Chưa thể tải ưu đãi', 'Offers are unavailable')}</h2><p>{error}</p><button onClick={onRetry}>{t('Thử lại', 'Try again')}</button></section> : promotions.length === 0 ? <section className="offers-state"><Gift size={30}/><h2>{t('Chưa có ưu đãi đang hoạt động', 'No active offers')}</h2><p>{t('Các chương trình mới sẽ xuất hiện tại đây ngay khi được phát hành.', 'New campaigns will appear here as soon as they launch.')}</p></section> : <>
-        {featured && <section className="offers-featured" style={{ '--offer-color': featured.themeColor || '#D89718' } as CSSProperties}>
+        {featured && <section className="offers-featured" style={{ '--offer-color': featured.themeColor || '#f4c04a' } as CSSProperties}>
           <div className="offers-featured-copy"><span>{featured.badge || t('ƯU ĐÃI NỔI BẬT', 'FEATURED OFFER')}</span><h2>{featured.name}</h2><p>{featured.description}</p><div className="offers-featured-facts"><b>{offerValue(featured, language)}</b><small><CalendarDays size={14}/>{t('Đến', 'Until')} {dateLabel(featured.endsAt, language)}</small>{featured.minOrderAmount ? <small><Ticket size={14}/>{t('Đơn từ', 'Orders from')} {money(featured.minOrderAmount)}</small> : null}</div><div className="offers-featured-actions"><button onClick={() => openPromotion(featured)}>{t('Xem chi tiết', 'View details')}<ArrowRight size={15}/></button><button onClick={() => copyCode(featured.code)}>{copiedCode === featured.code ? <Check size={15}/> : <Copy size={15}/>} {copiedCode === featured.code ? t('Đã sao chép', 'Copied') : featured.code}</button></div></div>
           {renderArtwork(featured, true)}
         </section>}
@@ -156,7 +169,7 @@ export default function PromotionsPage({ language, promotions, loading, error, o
     {selected && <div className="offer-modal-backdrop" role="presentation" onMouseDown={event => { if (event.currentTarget === event.target) setSelected(null); }}><section className="offer-modal" role="dialog" aria-modal="true" aria-labelledby="offer-modal-title">
       <button className="offer-modal-close" onClick={() => setSelected(null)} aria-label={t('Đóng', 'Close')}><X size={18}/></button>
       {renderArtwork(selected, true)}
-      <div className="offer-modal-content">{detailLoading && <div className="offer-modal-loading">{t('Đang đồng bộ chi tiết...', 'Loading details...')}</div>}<span>{selected.badge || t('ƯU ĐÃI AURORA', 'AURORA OFFER')}</span><h2 id="offer-modal-title">{selected.name}</h2><p>{selected.details || selected.description}</p><dl><div><dt>{t('Giá trị', 'Value')}</dt><dd>{offerValue(selected, language)}</dd></div><div><dt>{t('Đơn tối thiểu', 'Minimum order')}</dt><dd>{selected.minOrderAmount ? money(selected.minOrderAmount) : t('Không giới hạn', 'No minimum')}</dd></div><div><dt>{t('Giảm tối đa', 'Maximum discount')}</dt><dd>{selected.maxDiscount ? money(selected.maxDiscount) : t('Không giới hạn', 'No cap')}</dd></div><div><dt>{t('Thời hạn', 'Validity')}</dt><dd>{dateLabel(selected.startsAt, language)} — {dateLabel(selected.endsAt, language)}</dd></div></dl><div className="offer-modal-terms"><b><ShieldCheck size={16}/>{t('Điều kiện áp dụng', 'Terms and conditions')}</b><p>{selected.terms || t('Áp dụng theo điều kiện của chương trình tại thời điểm thanh toán.', 'Campaign terms apply at checkout.')}</p></div><div className="offer-modal-code"><span><small>{t('MÃ ÁP DỤNG', 'APPLY CODE')}</small><b>{selected.code}</b></span><button onClick={() => copyCode(selected.code)}>{copiedCode === selected.code ? <Check size={16}/> : <Copy size={16}/>} {copiedCode === selected.code ? t('Đã sao chép', 'Copied') : t('Sao chép mã', 'Copy code')}</button></div><button className="offer-modal-book" onClick={() => { setSelected(null); onBook(); }}><Ticket size={17}/>{t('Đặt vé ngay', 'Book now')}</button></div>
+      <div className="offer-modal-content">{detailLoading && <div className="offer-modal-loading">{t('Đang đồng bộ chi tiết...', 'Loading details...')}</div>}<span>{selected.badge || t('ƯU ĐÃI AURORA', 'AURORA OFFER')}</span><h2 id="offer-modal-title">{selected.name}</h2><p>{selected.details || selected.description}</p><dl><div><dt>{t('Quyền lợi', 'Benefit')}</dt><dd>{offerValue(selected, language)}</dd></div><div><dt>{t('Đơn tối thiểu', 'Minimum order')}</dt><dd>{selected.minOrderAmount ? money(selected.minOrderAmount) : t('Không giới hạn', 'No minimum')}</dd></div>{['percent','amount'].includes(selected.benefitType||selected.discountType||'')&&<div><dt>{t('Giảm tối đa', 'Maximum discount')}</dt><dd>{selected.maxDiscount ? money(selected.maxDiscount) : t('Không giới hạn', 'No cap')}</dd></div>}<div><dt>{t('Thời hạn', 'Validity')}</dt><dd>{dateLabel(selected.startsAt, language)} — {dateLabel(selected.endsAt, language)}</dd></div></dl>{selected.benefitDescription&&<div className="offer-modal-terms"><b><Gift size={16}/>{t('Chi tiết quyền lợi', 'Benefit details')}</b><p>{selected.benefitDescription}</p></div>}<div className="offer-modal-terms"><b><ShieldCheck size={16}/>{t('Điều kiện áp dụng', 'Terms and conditions')}</b><p>{selected.terms || t('Áp dụng theo điều kiện của chương trình tại thời điểm thanh toán.', 'Campaign terms apply at checkout.')}</p>{selected.redemptionInstructions&&<p><strong>{t('Cách nhận:', 'How to redeem:')}</strong> {selected.redemptionInstructions}</p>}</div><div className="offer-modal-code"><span><small>{t('MÃ ÁP DỤNG', 'APPLY CODE')}</small><b>{selected.code}</b></span><button onClick={() => copyCode(selected.code)}>{copiedCode === selected.code ? <Check size={16}/> : <Copy size={16}/>} {copiedCode === selected.code ? t('Đã sao chép', 'Copied') : t('Sao chép mã', 'Copy code')}</button></div><button className="offer-modal-book" onClick={() => { setSelected(null); onBook(); }}><Ticket size={17}/>{t('Đặt vé ngay', 'Book now')}</button></div>
     </section></div>}
   </main>;
 }

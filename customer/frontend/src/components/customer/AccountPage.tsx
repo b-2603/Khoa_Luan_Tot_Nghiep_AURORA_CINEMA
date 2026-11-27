@@ -1,12 +1,19 @@
-import { useState, useEffect, FormEvent, useRef } from 'react';
+import { useState, useEffect, FormEvent, useRef, useId, PointerEvent as ReactPointerEvent } from 'react';
 import {
   User, Mail, Phone, CreditCard, Calendar, MapPin,
   Lock, Eye, EyeOff, Check, AlertCircle, ChevronRight,
   Star, Ticket, Gift, Shield, Edit3, Save, X, Clock3, ReceiptText,
-  CheckCircle, Tag, Sparkles, Camera, Upload, Loader2
+  CheckCircle, Tag, Sparkles, Camera, Upload, Loader2, Trash2,
+  QrCode, Download, FileDown, Copy, Armchair, Popcorn, Banknote, Film
 } from 'lucide-react';
+import QRCode from 'qrcode';
+import SafeAvatar from './SafeAvatar';
+import { BookingDetail, ElectronicTicket, saveBookingReceiptPdf } from '../../lib/bookingReceiptPdf';
+import './AccountPage.css';
 
-const API_URL = 'http://localhost/AURORA%20CINEMA/customer/backend/public/api.php';
+const VITE_ENV = (import.meta as ImportMeta & { env?: Record<string, string | undefined> }).env;
+const API_URL = VITE_ENV?.VITE_CUSTOMER_API_URL?.trim()
+  || `${window.location.protocol}//${window.location.hostname}/AURORA%20CINEMA/customer/backend/public/api.php`;
 
 type Profile = {
   id: number;
@@ -42,6 +49,28 @@ type MembershipCard = {
   expiryNote: string;
 };
 
+type BookingHistoryItem={id:number;code:string;totalAmount:number;status:string;createdAt?:string;startsAt:string;movieTitle:string;posterUrl?:string|null;format?:string|null;ageRating?:string|null;theaterName:string;screenName:string;seats:string;paymentMethod?:string|null;paymentRef?:string|null;ticketCount?:number};
+type LoyaltyTransaction={id:number;order_id?:number|null;points_change:number;balance_after:number;transaction_type:string;description:string;ticket_amount?:number;product_amount?:number;ticket_rate?:number;product_rate?:number;point_value_vnd?:number;created_at:string};
+type LoyaltyOverview={member:{level:string;points:number;lifetimePoints:number;pointValueVnd:number;redeemableValue:number;ticketRate:number;productRate:number;nextLevel:string|null;nextThreshold:number|null;pointsToNext:number}|null;history:LoyaltyTransaction[]};
+
+const salesChannelLabel=(channel?:string)=>channel==='POS'?'Mua trực tiếp tại quầy':channel==='ONLINE'?'Website Aurora':channel||'—';
+const paymentMethodLabel=(method?:string)=>{
+  const m=String(method||'').toUpperCase();
+  if(m==='CASH')return 'Tiền mặt';
+  if(m==='CARD')return 'Thẻ ngân hàng';
+  if(m==='TRANSFER')return 'Chuyển khoản';
+  if(m==='VIETQR')return 'VietQR · Chuyển khoản 24/7';
+  if(m==='MOMO')return 'Ví MoMo';
+  if(m==='QR_VNPAY'||m==='VNPAY')return 'VNPAY-QR';
+  return method||'—';
+};
+
+function TicketQr({ticket}:{ticket:ElectronicTicket}){
+  const [src,setSrc]=useState('');
+  useEffect(()=>{let active=true;QRCode.toDataURL(ticket.qrPayload,{width:260,margin:2,errorCorrectionLevel:'M',color:{dark:'#0d1b2e',light:'#ffffff'}}).then(url=>{if(active)setSrc(url);}).catch(()=>setSrc(''));return()=>{active=false;};},[ticket.qrPayload]);
+  return <div className="booking-ticket-qr">{src?<img src={src} alt={`Mã QR vé ${ticket.code}`}/>:<span><Loader2 size={24}/></span>}<a href={src||undefined} download={`${ticket.code}.png`} aria-disabled={!src}><Download size={14}/>Lưu QR</a></div>;
+}
+
 type AccountPageProps = {
   authUser: { fullName: string; email: string; avatarUrl?: string | null } | null;
   onUserUpdate?: (user: { fullName: string; email: string; avatarUrl?: string | null }) => void;
@@ -57,26 +86,33 @@ const TABS = [
 ];
 
 const MEMBERSHIP_CONFIG: Record<string, { label: string; color: string; next?: string; nextPoints: number }> = {
-  STANDARD: { label: 'Thành Viên', color: '#64748b', next: 'SILVER',   nextPoints: 500  },
-  SILVER:   { label: 'Bạc',        color: '#94a3b8', next: 'GOLD',     nextPoints: 2000 },
-  GOLD:     { label: 'Vàng',       color: '#f4c04a', next: 'PLATINUM', nextPoints: 5000 },
-  PLATINUM: { label: 'Bạch Kim',   color: '#e2e8f0', next: undefined,  nextPoints: 9999 },
+  STANDARD: { label: 'Thành Viên', color: '#64748b', next: 'SILVER', nextPoints: 500000 },
+  SILVER:   { label: 'Bạc', color: '#94a3b8', next: 'GOLD', nextPoints: 2000000 },
+  GOLD:     { label: 'Vàng', color: '#f4c04a', next: 'VIP', nextPoints: 5000000 },
+  VIP:      { label: 'VIP', color: '#0d1b2e', next: undefined, nextPoints: 5000000 },
+  PLATINUM: { label: 'VIP', color: '#0d1b2e', next: undefined, nextPoints: 5000000 },
 };
 
-const VN_CITIES = [
-  'Hà Nội','TP. Hồ Chí Minh','Đà Nẵng','Cần Thơ','Hải Phòng',
-  'Bình Dương','Đồng Nai','Khánh Hòa','Thừa Thiên Huế','Quảng Nam',
-  'An Giang','Bà Rịa - Vũng Tàu','Bắc Giang','Bắc Kạn','Bạc Liêu',
-  'Bắc Ninh','Bến Tre','Bình Định','Bình Phước','Bình Thuận',
-  'Cà Mau','Cao Bằng','Đắk Lắk','Đắk Nông','Điện Biên','Đồng Tháp',
-  'Gia Lai','Hà Giang','Hà Nam','Hà Tĩnh','Hải Dương','Hậu Giang',
-  'Hòa Bình','Hưng Yên','Kiên Giang','Kon Tum','Lai Châu','Lạng Sơn',
-  'Lào Cai','Lâm Đồng','Long An','Nam Định','Nghệ An','Ninh Bình',
-  'Ninh Thuận','Phú Thọ','Phú Yên','Quảng Bình','Quảng Ngãi',
-  'Quảng Ninh','Quảng Trị','Sóc Trăng','Sơn La','Tây Ninh',
-  'Thái Bình','Thái Nguyên','Thanh Hóa','Tiền Giang','Trà Vinh',
-  'Tuyên Quang','Vĩnh Long','Vĩnh Phúc','Yên Bái',
-];
+type AdministrativeProvince = {
+  code: string;
+  name: string;
+  fullName: string;
+  aliases?: string[];
+};
+
+type AdministrativeDistrict = {
+  code: string;
+  name: string;
+};
+
+type AvatarCropMetadata = {
+  offsetX: number;
+  offsetY: number;
+  zoom: number;
+  sourceWidth: number;
+  sourceHeight: number;
+  outputSize: number;
+};
 
 function InputField({
   label, value, onChange, type = 'text', placeholder = '', required = false,
@@ -110,7 +146,7 @@ function InputField({
             padding: Icon ? '10px 12px 10px 36px' : '10px 12px',
             border: '1.5px solid #d5dee9', borderRadius: 10, fontSize: 13.5,
             background: disabled ? '#f8fafd' : '#fff',
-            color: disabled ? '#64748b' : '#1a2332',
+            color: disabled ? '#64748b' : '#0d1b2e',
             outline: 'none', transition: 'border-color 0.2s, box-shadow 0.2s',
           }}
           onFocus={e => { e.target.style.borderColor = '#f4c04a'; e.target.style.boxShadow = '0 0 0 3px rgba(244,192,74,0.15)'; }}
@@ -118,6 +154,67 @@ function InputField({
         />
       </div>
       {hint && <span style={{ fontSize: 11, color: '#94a3b8' }}>{hint}</span>}
+    </div>
+  );
+}
+
+function formatVietnameseDate(value: string) {
+  const match = /^(\d{4})-(\d{2})-(\d{2})$/.exec(value);
+  return match ? `${match[3]}/${match[2]}/${match[1]}` : '';
+}
+
+function parseVietnameseDate(value: string) {
+  const match = /^(\d{2})\/(\d{2})\/(\d{4})$/.exec(value);
+  if (!match) return '';
+  const day = Number(match[1]);
+  const month = Number(match[2]);
+  const year = Number(match[3]);
+  const date = new Date(year, month - 1, day);
+  if (date.getFullYear() !== year || date.getMonth() !== month - 1 || date.getDate() !== day) return '';
+  return `${match[3]}-${match[2]}-${match[1]}`;
+}
+
+function VietnameseDateField({ value, onChange }: { value: string; onChange: (value: string) => void }) {
+  const [displayValue, setDisplayValue] = useState(() => formatVietnameseDate(value));
+  const [dateError, setDateError] = useState('');
+  const nativeDateRef = useRef<HTMLInputElement>(null);
+  const today = new Date();
+  const maxDate = `${today.getFullYear()}-${String(today.getMonth() + 1).padStart(2, '0')}-${String(today.getDate()).padStart(2, '0')}`;
+
+  useEffect(() => setDisplayValue(formatVietnameseDate(value)), [value]);
+
+  function handleTextChange(rawValue: string) {
+    const digits = rawValue.replace(/\D/g, '').slice(0, 8);
+    const formatted = digits.length <= 2 ? digits : digits.length <= 4 ? `${digits.slice(0, 2)}/${digits.slice(2)}` : `${digits.slice(0, 2)}/${digits.slice(2, 4)}/${digits.slice(4)}`;
+    setDisplayValue(formatted);
+    setDateError('');
+    if (formatted === '') onChange('');
+    if (formatted.length === 10) {
+      const isoDate = parseVietnameseDate(formatted);
+      if (isoDate) onChange(isoDate);
+      else setDateError('Ngày sinh không hợp lệ.');
+    }
+  }
+
+  function openDatePicker() {
+    const input = nativeDateRef.current as (HTMLInputElement & { showPicker?: () => void }) | null;
+    if (input?.showPicker) input.showPicker();
+    else input?.click();
+  }
+
+  return (
+    <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
+      <label style={{ fontSize: 12.5, fontWeight: 700, color: '#4a637a', letterSpacing: 0.3 }}>Ngày sinh</label>
+      <div style={{ position: 'relative' }}>
+        <span style={{ position: 'absolute', left: 12, top: '50%', transform: 'translateY(-50%)', color: '#94a3b8', display: 'flex', pointerEvents: 'none' }}><Calendar size={14}/></span>
+        <input type="text" inputMode="numeric" autoComplete="bday" value={displayValue} onChange={event => handleTextChange(event.target.value)} onBlur={() => {
+          if (displayValue && !parseVietnameseDate(displayValue)) setDateError('Vui lòng nhập theo định dạng ngày/tháng/năm.');
+          else if (value) setDisplayValue(formatVietnameseDate(value));
+        }} placeholder="dd/mm/yyyy" maxLength={10} aria-invalid={Boolean(dateError)} style={{ width:'100%', boxSizing:'border-box', padding:'10px 44px 10px 36px', border:`1.5px solid ${dateError ? '#ef8d8d' : '#d5dee9'}`, borderRadius:10, color:'#0d1b2e', background:'#fff', fontSize:13.5, outline:'none' }} />
+        <button type="button" onClick={openDatePicker} aria-label="Mở lịch chọn ngày sinh" title="Chọn ngày sinh" style={{ position:'absolute', top:'50%', right:7, transform:'translateY(-50%)', display:'grid', width:31, height:31, placeItems:'center', padding:0, border:0, borderRadius:8, color:'#49647f', background:'transparent', cursor:'pointer' }}><Calendar size={16}/></button>
+        <input ref={nativeDateRef} type="date" value={value || ''} max={maxDate} onChange={event => { onChange(event.target.value); setDisplayValue(formatVietnameseDate(event.target.value)); setDateError(''); }} tabIndex={-1} aria-hidden="true" style={{ position:'absolute', width:1, height:1, right:12, bottom:0, opacity:0, pointerEvents:'none' }} />
+      </div>
+      {dateError && <span role="alert" style={{ fontSize: 11, color: '#c24141' }}>{dateError}</span>}
     </div>
   );
 }
@@ -137,6 +234,11 @@ export default function AccountPage({ authUser, onUserUpdate, initialTab = 'info
   const [city, setCity] = useState('');
   const [district, setDistrict] = useState('');
   const [address, setAddress] = useState('');
+  const [provinces, setProvinces] = useState<AdministrativeProvince[]>([]);
+  const [districts, setDistricts] = useState<AdministrativeDistrict[]>([]);
+  const [provincesLoading, setProvincesLoading] = useState(true);
+  const [districtsLoading, setDistrictsLoading] = useState(false);
+  const [addressCatalogError, setAddressCatalogError] = useState('');
 
   // Password change
   const [showPasswordForm, setShowPasswordForm] = useState(false);
@@ -154,15 +256,44 @@ export default function AccountPage({ authUser, onUserUpdate, initialTab = 'info
   const [errorMsg, setErrorMsg] = useState('');
   const [pwdSuccess, setPwdSuccess] = useState('');
   const [pwdError, setPwdError] = useState('');
-  const [bookings, setBookings] = useState<any[]>([]);
+  const [bookings, setBookings] = useState<BookingHistoryItem[]>([]);
   const [bookingsLoading, setBookingsLoading] = useState(false);
+  const [bookingDetail,setBookingDetail]=useState<BookingDetail|null>(null);
+  const [bookingDetailLoading,setBookingDetailLoading]=useState(false);
+  const [bookingDetailError,setBookingDetailError]=useState('');
+  const [receiptExporting,setReceiptExporting]=useState(false);
+  const [receiptExportMessage,setReceiptExportMessage]=useState('');
   const [membershipCard, setMembershipCard] = useState<MembershipCard | null>(null);
   const [membershipLoading, setMembershipLoading] = useState(false);
+  const [loyaltyOverview,setLoyaltyOverview]=useState<LoyaltyOverview>({member:null,history:[]});
+  const [loyaltyLoading,setLoyaltyLoading]=useState(false);
   const [voucherCode, setVoucherCode] = useState('');
   const [avatarUploading, setAvatarUploading] = useState(false);
+  const [avatarPreviewOpen, setAvatarPreviewOpen] = useState(false);
+  const [avatarDeleteConfirmOpen, setAvatarDeleteConfirmOpen] = useState(false);
+  const [avatarCropFile, setAvatarCropFile] = useState<File | null>(null);
   const avatarInputRef = useRef<HTMLInputElement>(null);
 
   useEffect(() => setActiveTab(initialTab), [initialTab]);
+
+  useEffect(() => {
+    if (!avatarPreviewOpen && !avatarDeleteConfirmOpen && !avatarCropFile) return;
+    const previousOverflow = document.body.style.overflow;
+    const closeOnEscape = (event: KeyboardEvent) => {
+      if (event.key !== 'Escape') return;
+      setAvatarDeleteConfirmOpen(false);
+      if (!avatarUploading) {
+        setAvatarCropFile(null);
+        if (avatarInputRef.current) avatarInputRef.current.value = '';
+      }
+    };
+    document.body.style.overflow = 'hidden';
+    document.addEventListener('keydown', closeOnEscape);
+    return () => {
+      document.body.style.overflow = previousOverflow;
+      document.removeEventListener('keydown', closeOnEscape);
+    };
+  }, [avatarPreviewOpen, avatarDeleteConfirmOpen, avatarCropFile, avatarUploading]);
 
   useEffect(() => {
     setLoading(true);
@@ -187,6 +318,63 @@ export default function AccountPage({ authUser, onUserUpdate, initialTab = 'info
   }, []);
 
   useEffect(() => {
+    let cancelled = false;
+    setProvincesLoading(true);
+    setAddressCatalogError('');
+    fetch(`${API_URL}?action=address_provinces`)
+      .then(async response => {
+        const data = await response.json();
+        if (!response.ok) throw new Error(data.message || 'Không thể tải danh sách tỉnh/thành.');
+        return data;
+      })
+      .then(data => {
+        if (!cancelled) setProvinces(Array.isArray(data.provinces) ? data.provinces : []);
+      })
+      .catch(error => {
+        if (!cancelled) setAddressCatalogError(error instanceof Error ? error.message : 'Không thể tải danh mục địa chỉ.');
+      })
+      .finally(() => { if (!cancelled) setProvincesLoading(false); });
+    return () => { cancelled = true; };
+  }, []);
+
+  useEffect(() => {
+    const selectedProvince = provinces.find(province =>
+      province.name === city || province.fullName === city || province.aliases?.includes(city)
+    );
+    if (!selectedProvince) {
+      setDistricts([]);
+      setDistrictsLoading(false);
+      return;
+    }
+
+    if (city !== selectedProvince.name) {
+      setCity(selectedProvince.name);
+      return;
+    }
+
+    let cancelled = false;
+    setDistrictsLoading(true);
+    setAddressCatalogError('');
+    fetch(`${API_URL}?action=address_districts&province_code=${encodeURIComponent(selectedProvince.code)}`)
+      .then(async response => {
+        const data = await response.json();
+        if (!response.ok) throw new Error(data.message || 'Không thể tải danh sách quận/huyện.');
+        return data;
+      })
+      .then(data => {
+        if (!cancelled) setDistricts(Array.isArray(data.districts) ? data.districts : []);
+      })
+      .catch(error => {
+        if (!cancelled) {
+          setDistricts([]);
+          setAddressCatalogError(error instanceof Error ? error.message : 'Không thể tải danh sách quận/huyện.');
+        }
+      })
+      .finally(() => { if (!cancelled) setDistrictsLoading(false); });
+    return () => { cancelled = true; };
+  }, [city, provinces]);
+
+  useEffect(() => {
     if (activeTab !== 'history') return;
     setBookingsLoading(true);
     fetch(`${API_URL}?action=booking_history`, { credentials: 'include' })
@@ -195,6 +383,31 @@ export default function AccountPage({ authUser, onUserUpdate, initialTab = 'info
       .catch(() => setBookings([]))
       .finally(() => setBookingsLoading(false));
   }, [activeTab]);
+
+  useEffect(()=>{
+    if(activeTab!=='points')return;let active=true;setLoyaltyLoading(true);
+    fetch(`${API_URL}?action=membership_overview&_=${Date.now()}`,{credentials:'include',cache:'no-store'}).then(async response=>{const data=await response.json();if(!response.ok)throw new Error(data.message||'Không thể tải điểm thưởng.');return data;}).then(data=>{if(active)setLoyaltyOverview({member:data.member||null,history:data.history||[]});}).catch(()=>{if(active)setLoyaltyOverview({member:null,history:[]});}).finally(()=>{if(active)setLoyaltyLoading(false)});
+    return()=>{active=false};
+  },[activeTab]);
+
+  useEffect(()=>{if(!bookingDetail&&!bookingDetailLoading)return;const previous=document.body.style.overflow;const onKey=(event:KeyboardEvent)=>{if(event.key==='Escape'&&!bookingDetailLoading)setBookingDetail(null);};document.body.style.overflow='hidden';document.addEventListener('keydown',onKey);return()=>{document.body.style.overflow=previous;document.removeEventListener('keydown',onKey);};},[bookingDetail,bookingDetailLoading]);
+
+  async function openBookingDetail(bookingId:number){
+    setBookingDetailError('');setReceiptExportMessage('');setBookingDetailLoading(true);
+    try{const response=await fetch(`${API_URL}?action=booking_detail&id=${bookingId}`,{credentials:'include',cache:'no-store'});const data=await response.json();if(!response.ok||!data.booking)throw new Error(data.message||'Không thể tải chi tiết đơn hàng.');setBookingDetail(data.booking as BookingDetail);}catch(error){setBookingDetailError(error instanceof Error?error.message:'Không thể tải chi tiết đơn hàng.');setBookingDetail(null);}finally{setBookingDetailLoading(false);}
+  }
+
+  async function exportBookingReceipt(){
+    if(!bookingDetail||receiptExporting)return;
+    setReceiptExporting(true);setReceiptExportMessage('');
+    try{
+      const result=await saveBookingReceiptPdf(bookingDetail);
+      if(result==='downloaded')setReceiptExportMessage('Đã tạo file PDF và bắt đầu tải xuống.');
+      if(result==='shared')setReceiptExportMessage('Đã mở bảng chia sẻ file PDF.');
+    }catch(error){
+      setReceiptExportMessage(error instanceof Error?`Không thể tạo PDF: ${error.message}`:'Không thể tạo file PDF. Vui lòng thử lại.');
+    }finally{setReceiptExporting(false);}
+  }
 
   useEffect(() => {
     if (activeTab !== 'member') return;
@@ -208,20 +421,48 @@ export default function AccountPage({ authUser, onUserUpdate, initialTab = 'info
 
   async function handleSave(e: FormEvent) {
     e.preventDefault();
-    setSaving(true); setSuccessMsg(''); setErrorMsg('');
+    setSuccessMsg(''); setErrorMsg('');
+    const cleanName = fullName.trim();
+    const cleanPhone = phone.replace(/[\s.\-()]/g, '');
+    const cleanIdNumber = idNumber.trim();
+    const cleanAddress = address.trim();
+    if (cleanName.length < 2 || cleanName.length > 120) { setErrorMsg('Họ và tên phải có từ 2 đến 120 ký tự.'); return; }
+    if (cleanPhone && !/^(0\d{9,10}|\+84\d{9,10})$/.test(cleanPhone)) { setErrorMsg('Số điện thoại không đúng định dạng Việt Nam.'); return; }
+    if (cleanIdNumber && !/^[A-Za-z0-9]{6,20}$/.test(cleanIdNumber)) { setErrorMsg('CMND, CCCD hoặc hộ chiếu phải có từ 6 đến 20 ký tự chữ và số.'); return; }
+    if (birthday && (!/^\d{4}-\d{2}-\d{2}$/.test(birthday) || birthday > new Date().toISOString().slice(0, 10))) { setErrorMsg('Ngày sinh không hợp lệ.'); return; }
+    if (cleanAddress.length > 255) { setErrorMsg('Địa chỉ cụ thể không được vượt quá 255 ký tự.'); return; }
+    if (city && !district && !districtsLoading) { setErrorMsg('Vui lòng chọn quận/huyện thuộc tỉnh/thành đã chọn.'); return; }
+    if (district && !city) { setErrorMsg('Vui lòng chọn tỉnh/thành trước khi chọn quận/huyện.'); return; }
+    if (provincesLoading || districtsLoading) { setErrorMsg('Danh mục địa chỉ đang tải, vui lòng chờ trong giây lát.'); return; }
+    const saveStartedAt = Date.now();
+    setSaving(true);
     try {
       const res = await fetch(`${API_URL}?action=profile_update`, {
         method: 'POST', credentials: 'include',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ fullName, phone, idNumber, birthday, gender, city, district, address }),
+        body: JSON.stringify({ fullName: cleanName, phone: cleanPhone, idNumber: cleanIdNumber, birthday, gender, city, district, address: cleanAddress }),
       });
-      const data = await res.json();
+      const rawResponse = await res.text();
+      let data: any = {};
+      try { data = rawResponse ? JSON.parse(rawResponse) : {}; }
+      catch { throw new Error('Máy chủ trả về dữ liệu không hợp lệ.'); }
       if (!res.ok) { setErrorMsg(data.message || 'Không thể cập nhật.'); return; }
-      setSuccessMsg('Cập nhật thông tin thành công!');
+      if (data.profile) {
+        const updated = data.profile as Profile;
+        setProfile(updated);
+        setFullName(updated.fullName || ''); setPhone(updated.phone || ''); setIdNumber(updated.idNumber || '');
+        setBirthday(updated.birthday || ''); setGender(updated.gender || ''); setCity(updated.city || '');
+        setDistrict(updated.district || ''); setAddress(updated.address || '');
+      }
+      setSuccessMsg(data.message || 'Cập nhật thông tin thành công!');
       if (data.user && onUserUpdate) onUserUpdate(data.user);
       setTimeout(() => setSuccessMsg(''), 4000);
-    } catch { setErrorMsg('Không thể kết nối máy chủ.'); }
-    finally { setSaving(false); }
+    } catch (error) { setErrorMsg(error instanceof Error ? error.message : 'Không thể kết nối máy chủ.'); }
+    finally {
+      const remaining = 650 - (Date.now() - saveStartedAt);
+      if (remaining > 0) await new Promise(resolve => window.setTimeout(resolve, remaining));
+      setSaving(false);
+    }
   }
 
   async function handleChangePassword(e: FormEvent) {
@@ -245,50 +486,110 @@ export default function AccountPage({ authUser, onUserUpdate, initialTab = 'info
     finally { setSavingPwd(false); }
   }
 
-  async function handleAvatarUpload(file?: File) {
+  function handleAvatarFileSelected(file?: File) {
     if (!file) return;
     setErrorMsg(''); setSuccessMsg('');
-    if (!['image/jpeg', 'image/png', 'image/webp'].includes(file.type)) { setErrorMsg('Chỉ hỗ trợ ảnh JPG, PNG hoặc WebP.'); return; }
-    if (file.size > 5 * 1024 * 1024) { setErrorMsg('Ảnh đại diện phải nhỏ hơn hoặc bằng 5 MB.'); return; }
+    const supportedMime = ['image/jpeg', 'image/jpg', 'image/png'].includes(file.type.toLowerCase());
+    const supportedExtension = /\.(jpe?g|png)$/i.test(file.name);
+    if (!supportedMime && !supportedExtension) {
+      setErrorMsg('Chỉ hỗ trợ ảnh JPG hoặc PNG hợp lệ.');
+      if (avatarInputRef.current) avatarInputRef.current.value = '';
+      return;
+    }
+    if (file.size > 5 * 1024 * 1024) {
+      setErrorMsg('Ảnh đại diện phải nhỏ hơn hoặc bằng 5 MB.');
+      if (avatarInputRef.current) avatarInputRef.current.value = '';
+      return;
+    }
+    setAvatarCropFile(file);
+  }
+
+  async function handleAvatarUpload(file: File, crop: AvatarCropMetadata, sourceName: string) {
+    setErrorMsg(''); setSuccessMsg('');
     setAvatarUploading(true);
     try {
-      const formData = new FormData(); formData.append('avatar', file);
+      const formData = new FormData();
+      formData.append('avatar', file);
+      formData.append('source_name', sourceName);
+      formData.append('source_width', String(crop.sourceWidth));
+      formData.append('source_height', String(crop.sourceHeight));
+      formData.append('crop_offset_x', crop.offsetX.toFixed(4));
+      formData.append('crop_offset_y', crop.offsetY.toFixed(4));
+      formData.append('crop_zoom', crop.zoom.toFixed(4));
+      formData.append('crop_output_size', String(crop.outputSize));
       const response = await fetch(`${API_URL}?action=profile_avatar`, { method:'POST', credentials:'include', body:formData });
-      const data = await response.json();
+      const responseText = await response.text();
+      let data: any = {};
+      try { data = responseText ? JSON.parse(responseText) : {}; }
+      catch { throw new Error('Máy chủ trả về dữ liệu không hợp lệ khi tải ảnh.'); }
       if (!response.ok) throw new Error(data.message || 'Không thể tải ảnh đại diện lên.');
       const avatarUrl = String(data.avatarUrl || '');
+      if (!avatarUrl) throw new Error('Máy chủ chưa trả về đường dẫn ảnh đại diện.');
       setProfile(current => current ? { ...current, avatarUrl } : current);
       if (data.user && onUserUpdate) onUserUpdate(data.user);
       setSuccessMsg('Đã cập nhật ảnh đại diện.');
       window.setTimeout(() => setSuccessMsg(''), 4000);
-    } catch (error) { setErrorMsg(error instanceof Error ? error.message : 'Không thể tải ảnh đại diện lên.'); }
-    finally { setAvatarUploading(false); if (avatarInputRef.current) avatarInputRef.current.value = ''; }
+      setAvatarCropFile(null);
+      return true;
+    } catch (error) {
+      setErrorMsg(error instanceof Error ? error.message : 'Không thể tải ảnh đại diện lên.');
+      return false;
+    } finally {
+      setAvatarUploading(false);
+      if (avatarInputRef.current) avatarInputRef.current.value = '';
+    }
+  }
+
+  async function handleAvatarRemove() {
+    if (!avatarUrl || avatarUploading) return;
+    setAvatarDeleteConfirmOpen(false);
+    setAvatarUploading(true); setErrorMsg(''); setSuccessMsg('');
+    try {
+      const response = await fetch(`${API_URL}?action=profile_avatar_delete`, { method: 'POST', credentials: 'include' });
+      const data = await response.json();
+      if (!response.ok) throw new Error(data.message || 'Không thể xóa ảnh đại diện.');
+      setProfile(current => current ? { ...current, avatarUrl: null } : current);
+      if (data.user && onUserUpdate) onUserUpdate(data.user);
+      setSuccessMsg('Đã xóa ảnh đại diện.');
+      window.setTimeout(() => setSuccessMsg(''), 4000);
+    } catch (error) { setErrorMsg(error instanceof Error ? error.message : 'Không thể xóa ảnh đại diện.'); }
+    finally { setAvatarUploading(false); }
   }
 
   const memberLevel = profile?.membershipLevel || 'STANDARD';
   const memberCfg = MEMBERSHIP_CONFIG[memberLevel] || MEMBERSHIP_CONFIG.STANDARD;
   const avatarLetter = (authUser?.fullName || fullName || 'A').charAt(0).toUpperCase();
   const avatarUrl = profile?.avatarUrl || authUser?.avatarUrl || '';
+  const bookingProductLines: BookingDetail['orderItems'] = bookingDetail ? [...(bookingDetail.orderItems || [])] : [];
+  if (bookingDetail && !bookingProductLines.some(item => item.type === 'TICKET')) {
+    bookingDetail.tickets.forEach(ticket => bookingProductLines.push({ type:'TICKET', code:ticket.code, name:`Vé xem phim · Ghế ${ticket.seat}`, quantity:1, unitPrice:ticket.price, total:ticket.price, seatId:0 }));
+  }
+  if (bookingDetail) {
+    bookingDetail.concessions.forEach(item => {
+      const exists = bookingProductLines.some(line => line.type !== 'TICKET' && line.code === item.code && Number(line.unitPrice) === Number(item.unitPrice));
+      if (!exists) bookingProductLines.push({ type:item.type || 'COMBO', code:item.code, name:item.name, quantity:item.quantity, unitPrice:item.unitPrice, total:item.total, seatId:0 });
+    });
+  }
 
   return (
     <div style={{ minHeight: '100vh', background: 'linear-gradient(180deg,#f0f4f8 0%,#eef0f4 100%)', fontFamily: "'Inter','Segoe UI',Arial,sans-serif" }}>
 
       {/* Page Header */}
-      <div style={{ background: 'linear-gradient(135deg,#0d1b2e 0%,#1a3050 100%)', padding: '32px 20px 56px', position: 'relative', overflow: 'hidden' }}>
-        <input ref={avatarInputRef} type="file" accept="image/jpeg,image/png,image/webp" onChange={event => void handleAvatarUpload(event.target.files?.[0])} style={{ display:'none' }} />
+      <div style={{ background: 'linear-gradient(135deg,#0d1b2e 0%,#0d1b2e 100%)', padding: '32px 20px 56px', position: 'relative', overflow: 'hidden' }}>
+        <input ref={avatarInputRef} type="file" accept=".jpg,.jpeg,.png,image/jpeg,image/png" onChange={event => handleAvatarFileSelected(event.target.files?.[0])} style={{ display:'none' }} />
         <div style={{ position: 'absolute', top: -40, right: -40, width: 200, height: 200, borderRadius: '50%', background: 'rgba(244,192,74,0.07)' }} />
         <div style={{ position: 'absolute', bottom: -60, left: -30, width: 180, height: 180, borderRadius: '50%', background: 'rgba(244,192,74,0.05)' }} />
         <div style={{ maxWidth: 1100, margin: '0 auto', display: 'flex', alignItems: 'center', gap: 20, position: 'relative' }}>
-          <button type="button" onClick={() => avatarInputRef.current?.click()} title="Thay ảnh đại diện" style={{
+          <button type="button" onClick={() => avatarUrl ? setAvatarPreviewOpen(true) : avatarInputRef.current?.click()} title={avatarUrl ? 'Xem ảnh đại diện' : 'Thay ảnh đại diện'} aria-label={avatarUrl ? 'Xem ảnh đại diện kích thước lớn' : 'Chọn ảnh đại diện'} style={{
             width: 72, height: 72, borderRadius: '50%',
-            background: 'linear-gradient(135deg,#f4c04a 0%,#e8a020 100%)',
+            background: 'linear-gradient(135deg,#f4c04a 0%,#f4c04a 100%)',
             display: 'flex', alignItems: 'center', justifyContent: 'center',
             fontSize: 30, fontWeight: 800, color: '#0d1b2e',
             border: '3px solid rgba(244,192,74,0.4)',
             boxShadow: '0 8px 24px rgba(0,0,0,0.3)', flexShrink: 0, padding: 0, overflow: 'hidden', cursor: 'pointer', position: 'relative'
           }}>
-            {avatarUrl ? <img src={avatarUrl} alt="Ảnh đại diện" style={{ width:'100%', height:'100%', objectFit:'cover' }} /> : avatarLetter}
-            <span style={{ position:'absolute', right:0, bottom:0, display:'grid', width:24, height:24, placeItems:'center', borderRadius:'50%', color:'#fff', background:'#0d1b2e', border:'2px solid #f4c04a' }}><Camera size={12}/></span>
+            <SafeAvatar url={avatarUrl} name={authUser?.fullName || fullName || avatarLetter} />
+            <span style={{ position:'absolute', right:0, bottom:0, display:'grid', width:24, height:24, placeItems:'center', borderRadius:'50%', color:'#fff', background:'#0d1b2e', border:'2px solid #f4c04a' }}>{avatarUrl ? <Eye size={12}/> : <Camera size={12}/>}</span>
           </button>
           <div>
             <div style={{ fontSize: 22, fontWeight: 800, color: '#fff', marginBottom: 4 }}>
@@ -352,13 +653,10 @@ export default function AccountPage({ authUser, onUserUpdate, initialTab = 'info
                     </div>
                   )}
 
-                  <section style={{ display:'flex', alignItems:'center', gap:18, padding:18, marginBottom:28, border:'1px solid #dbe7f4', borderRadius:14, background:'linear-gradient(120deg,#f8fbff,#fff)' }}>
-                    <button type="button" disabled={avatarUploading} onClick={() => avatarInputRef.current?.click()} style={{ position:'relative', display:'grid', width:82, height:82, flex:'0 0 82px', placeItems:'center', overflow:'hidden', border:'3px solid #fff', borderRadius:'50%', color:'#17375e', background:'linear-gradient(135deg,#f8d271,#e8a020)', boxShadow:'0 8px 18px rgba(31,74,123,.18)', cursor:avatarUploading?'wait':'pointer', padding:0 }}>
-                      {avatarUrl ? <img src={avatarUrl} alt="Ảnh đại diện" style={{ width:'100%', height:'100%', objectFit:'cover' }} /> : <span style={{ fontSize:28, fontWeight:850 }}>{avatarLetter}</span>}
-                      <span style={{ position:'absolute', right:1, bottom:1, display:'grid', width:27, height:27, placeItems:'center', border:'2px solid #fff', borderRadius:'50%', color:'#fff', background:'#1d5fae' }}>{avatarUploading ? <Loader2 size={13} style={{ animation:'spin .8s linear infinite' }} /> : <Camera size={13}/>}</span>
-                    </button>
-                    <div style={{ minWidth:0, flex:1 }}><div style={{ display:'flex', alignItems:'center', gap:7, color:'#183858', fontSize:14, fontWeight:850 }}><Camera size={16} color="#d99216"/> Ảnh đại diện</div><p style={{ margin:'5px 0 10px', color:'#718399', fontSize:12, lineHeight:1.5 }}>Ảnh sẽ hiển thị trên hồ sơ và thanh điều hướng tài khoản của bạn.</p><div style={{ display:'flex', alignItems:'center', flexWrap:'wrap', gap:8 }}><button type="button" disabled={avatarUploading} onClick={() => avatarInputRef.current?.click()} style={{ display:'inline-flex', alignItems:'center', gap:6, minHeight:32, padding:'0 11px', border:'1px solid #9fc0e5', borderRadius:8, color:'#165a9f', background:'#fff', fontSize:12, fontWeight:750, cursor:avatarUploading?'wait':'pointer' }}>{avatarUploading ? <Loader2 size={14} style={{ animation:'spin .8s linear infinite' }}/> : <Upload size={14}/>} {avatarUploading ? 'Đang tải ảnh...' : avatarUrl ? 'Thay ảnh' : 'Tải ảnh lên'}</button><small style={{ color:'#8b9aae', fontSize:10.5 }}>JPG, PNG hoặc WebP · tối đa 5 MB · tối thiểu 80×80 px</small></div></div>
-                  </section>
+                  <div className="profile-avatar-actions profile-avatar-actions-only">
+                    <button type="button" className="primary" disabled={avatarUploading} onClick={() => avatarInputRef.current?.click()}>{avatarUploading ? <Loader2 size={16} style={{ animation:'spin .8s linear infinite' }}/> : <Upload size={16}/>} {avatarUploading ? 'Đang tải ảnh...' : 'Thay ảnh'}</button>
+                    <button type="button" className="remove" disabled={!avatarUrl || avatarUploading} onClick={() => setAvatarDeleteConfirmOpen(true)}><Trash2 size={14}/>Xóa ảnh</button>
+                  </div>
 
                   {/* Section: Cá nhân */}
                   <SectionTitle>THÔNG TIN CÁ NHÂN</SectionTitle>
@@ -372,17 +670,36 @@ export default function AccountPage({ authUser, onUserUpdate, initialTab = 'info
                   {/* Section: Bổ sung */}
                   <SectionTitle>THÔNG TIN BỔ SUNG</SectionTitle>
                   <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 16, marginBottom: 28 }}>
-                    <InputField label="Ngày sinh" value={birthday} onChange={setBirthday} type="date" lang="vi" icon={Calendar} />
+                    <VietnameseDateField value={birthday} onChange={setBirthday} />
                     <SelectField label="Giới tính" value={gender} onChange={setGender} options={[{ value: 'male', label: 'Nam' }, { value: 'female', label: 'Nữ' }, { value: 'other', label: 'Khác' }]} placeholder="Chọn giới tính" />
                   </div>
 
                   {/* Section: Địa chỉ */}
                   <SectionTitle>ĐỊA CHỈ</SectionTitle>
-                  <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 16, marginBottom: 16 }}>
-                    <SelectField label="Tỉnh / Thành phố" value={city} onChange={v => { setCity(v); setDistrict(''); }} options={VN_CITIES.map(c => ({ value: c, label: c }))} placeholder="Chọn Tỉnh/Thành phố" icon={MapPin} />
-                    <InputField label="Quận / Huyện" value={district} onChange={setDistrict} placeholder="Nhập Quận/Huyện" />
-                  </div>
-                  <div style={{ marginBottom: 28 }}>
+                  <div className="profile-address-card">
+                    <div className="profile-address-grid">
+                      <SelectField
+                        label="Tỉnh / Thành phố"
+                        value={city}
+                        onChange={value => { setCity(value); setDistrict(''); setDistricts([]); setDistrictsLoading(Boolean(value)); setAddressCatalogError(''); }}
+                        options={provinces.map(province => ({ value: province.name, label: province.name }))}
+                        placeholder={provincesLoading ? 'Đang tải tỉnh/thành...' : 'Chọn Tỉnh/Thành phố'}
+                        icon={MapPin}
+                        loading={provincesLoading}
+                        disabled={provincesLoading}
+                      />
+                      <SelectField
+                        label="Quận / Huyện"
+                        value={district}
+                        onChange={setDistrict}
+                        options={districts.map(item => ({ value: item.name, label: item.name }))}
+                        placeholder={!city ? 'Chọn tỉnh/thành trước' : districtsLoading ? 'Đang tải quận/huyện...' : 'Chọn Quận/Huyện'}
+                        icon={MapPin}
+                        loading={districtsLoading}
+                        disabled={!city || districtsLoading || Boolean(addressCatalogError)}
+                      />
+                    </div>
+                    {addressCatalogError && <div className="profile-address-error" role="alert"><AlertCircle size={14}/>{addressCatalogError}</div>}
                     <InputField label="Địa chỉ cụ thể" value={address} onChange={setAddress} icon={MapPin} placeholder="Số nhà, tên đường..." />
                   </div>
 
@@ -427,7 +744,7 @@ export default function AccountPage({ authUser, onUserUpdate, initialTab = 'info
                             <div style={{ position: 'relative' }}>
                               <Lock size={13} style={{ position: 'absolute', left: 12, top: '50%', transform: 'translateY(-50%)', color: '#94a3b8' }} />
                               <input type={show ? 'text' : 'password'} value={val} onChange={e => setVal(e.target.value)} placeholder="••••••••"
-                                style={{ width: '100%', boxSizing: 'border-box', padding: '9px 40px 9px 36px', border: '1.5px solid #d5dee9', borderRadius: 8, fontSize: 13, background: '#fff', color: '#1a2332', outline: 'none' }} />
+                                style={{ width: '100%', boxSizing: 'border-box', padding: '9px 40px 9px 36px', border: '1.5px solid #d5dee9', borderRadius: 8, fontSize: 13, background: '#fff', color: '#0d1b2e', outline: 'none' }} />
                               <button type="button" onClick={() => setShow(!show)} style={{ position: 'absolute', right: 10, top: '50%', transform: 'translateY(-50%)', background: 'none', border: 'none', cursor: 'pointer', color: '#94a3b8' }}>
                                 {show ? <EyeOff size={14} /> : <Eye size={14} />}
                               </button>
@@ -437,7 +754,7 @@ export default function AccountPage({ authUser, onUserUpdate, initialTab = 'info
                       </div>
                       <button type="button" onClick={handleChangePassword} disabled={savingPwd} style={{
                         marginTop: 14, padding: '10px 20px',
-                        background: 'linear-gradient(135deg,#f4c04a,#e8a020)', border: 'none', borderRadius: 8,
+                        background: 'linear-gradient(135deg,#f4c04a,#f4c04a)', border: 'none', borderRadius: 8,
                         fontSize: 13, fontWeight: 700, color: '#0d1b2e', cursor: savingPwd ? 'not-allowed' : 'pointer', opacity: savingPwd ? 0.7 : 1
                       }}>
                         {savingPwd ? 'Đang lưu...' : 'Cập nhật mật khẩu'}
@@ -446,16 +763,11 @@ export default function AccountPage({ authUser, onUserUpdate, initialTab = 'info
                   )}
 
                   {/* Save */}
-                  <div style={{ display: 'flex', justifyContent: 'center', paddingTop: 8 }}>
-                    <button type="submit" disabled={saving} style={{
-                      padding: '13px 48px',
-                      background: saving ? '#e5e7eb' : 'linear-gradient(135deg,#f4c04a 0%,#e8a020 100%)',
-                      border: 'none', borderRadius: 12, fontSize: 14, fontWeight: 800,
-                      color: saving ? '#9ca3af' : '#0d1b2e', cursor: saving ? 'not-allowed' : 'pointer',
-                      boxShadow: saving ? 'none' : '0 6px 20px rgba(244,192,74,0.40)',
-                      transition: 'all 0.2s', display: 'flex', alignItems: 'center', gap: 8
-                    }}>
-                      {saving ? '⏳ Đang lưu...' : <><Save size={16} /> CẬP NHẬT THÔNG TIN</>}
+                  <div className="profile-save-area">
+                    {successMsg && <div className="profile-save-result success" role="status"><CheckCircle size={16}/>{successMsg}</div>}
+                    {errorMsg && <div className="profile-save-result error" role="alert"><AlertCircle size={16}/>{errorMsg}</div>}
+                    <button type="submit" disabled={saving} aria-busy={saving} className={`profile-save-button ${saving ? 'loading' : ''}`}>
+                      {saving ? <><Loader2 size={17}/>ĐANG CẬP NHẬT...</> : <><Save size={16} />CẬP NHẬT THÔNG TIN</>}
                     </button>
                   </div>
                 </form>
@@ -467,7 +779,7 @@ export default function AccountPage({ authUser, onUserUpdate, initialTab = 'info
           {activeTab === 'member' && (
             <div style={{ padding: 32 }}>
               {membershipLoading && !membershipCard ? <LoadingState text="Đang cấp và tải thông tin thẻ thành viên..." /> : <>
-              <div style={{ borderRadius: 20, padding: '30px 28px', background: 'linear-gradient(135deg,#0d1b2e,#1a3050 60%,#0f2540)', position: 'relative', overflow: 'hidden', marginBottom: 20, boxShadow: '0 16px 48px rgba(13,27,46,.35)' }}>
+              <div style={{ borderRadius: 20, padding: '30px 28px', background: 'linear-gradient(135deg,#0d1b2e,#0d1b2e 60%,#0d1b2e)', position: 'relative', overflow: 'hidden', marginBottom: 20, boxShadow: '0 16px 48px rgba(13,27,46,.35)' }}>
                 <div style={{ position:'absolute', width:220, height:220, border:'34px solid rgba(244,192,74,.10)', borderRadius:'50%', right:-68, top:-92 }} />
                 <div style={{ display:'flex', justifyContent:'space-between', gap:16, position:'relative', flexWrap:'wrap' }}>
                   <div><div style={{ fontSize:11, letterSpacing:3, color:'#f4c04a', fontWeight:800 }}>AURORA CINEMA</div><div style={{ fontSize:23, color:'#fff', fontWeight:900, marginTop:5 }}>Thẻ Thành Viên</div></div>
@@ -476,7 +788,7 @@ export default function AccountPage({ authUser, onUserUpdate, initialTab = 'info
                 <div style={{ position:'relative', marginTop:28, fontSize:24, fontWeight:900, color:'#fff' }}>{profile?.fullName || authUser?.fullName || 'Khách hàng Aurora'}</div>
                 <div style={{ position:'relative', marginTop:5, fontSize:13, color:'#b8c6d8' }}>{profile?.email || authUser?.email}</div>
                 <div style={{ position:'relative', marginTop:24, display:'flex', gap:32, flexWrap:'wrap' }}>
-                  <div><div style={{ fontSize:10, letterSpacing:1.1, fontWeight:800, color:'#9fb1c6' }}>MÃ THẺ TỰ ĐỘNG</div><div style={{ marginTop:5, color:'#f4c04a', fontSize:18, fontWeight:900, letterSpacing:1.5, fontFamily:'monospace' }}>{membershipCard?.cardNumber || '—'}</div></div>
+                  <div><div style={{ fontSize:10, letterSpacing:1.1, fontWeight:800, color:'#9fb1c6' }}>MÃ THÀNH VIÊN</div><div style={{ marginTop:5, color:'#f4c04a', fontSize:18, fontWeight:900, letterSpacing:1.5, fontFamily:'monospace' }}>{membershipCard?.cardNumber || '—'}</div></div>
                   <div><div style={{ fontSize:10, letterSpacing:1.1, fontWeight:800, color:'#9fb1c6' }}>ĐIỂM KHẢ DỤNG</div><div style={{ marginTop:5, color:'#fff', fontSize:18, fontWeight:900 }}>{membershipCard?.pointsAvailable ?? profile?.points ?? 0} điểm</div></div>
                   <div><div style={{ fontSize:10, letterSpacing:1.1, fontWeight:800, color:'#9fb1c6' }}>TRẠNG THÁI</div><div style={{ marginTop:5, color:'#86efac', fontSize:14, fontWeight:800 }}>● ĐANG HOẠT ĐỘNG</div></div>
                 </div>
@@ -485,20 +797,20 @@ export default function AccountPage({ authUser, onUserUpdate, initialTab = 'info
                 <div style={{ padding:'16px 20px', borderBottom:'1px solid #edf1f5', fontWeight:800, color:'#0d1b2e' }}>Thông tin thẻ và điểm thưởng</div>
                 <div style={{ display:'grid', gridTemplateColumns:'repeat(3,minmax(0,1fr))' }}>
                   {[
-                    ['Số thẻ', membershipCard?.cardNumber || 'Đang cấp'], ['Hạng thẻ', MEMBERSHIP_CONFIG[membershipCard?.membershipLevel || memberLevel]?.label || 'Thành Viên'], ['Ngày kích hoạt', formatShortDate(membershipCard?.activatedAt)],
+                    ['Mã thành viên', membershipCard?.cardNumber || 'Đang cấp'], ['Hạng thẻ', MEMBERSHIP_CONFIG[membershipCard?.membershipLevel || memberLevel]?.label || 'Thành Viên'], ['Ngày kích hoạt', formatShortDate(membershipCard?.activatedAt)],
                     ['Tổng chi tiêu', formatMoney(membershipCard?.totalSpent || 0)], ['Điểm tích lũy', `${membershipCard?.pointsAccumulated ?? 0} điểm`], ['Điểm đã dùng', `${membershipCard?.pointsUsed ?? 0} điểm`],
                     ['Điểm khả dụng', `${membershipCard?.pointsAvailable ?? profile?.points ?? 0} điểm`], ['Điểm sắp hết hạn', `${membershipCard?.pointsExpiring ?? 0} điểm`], ['Hạn thẻ', formatShortDate(membershipCard?.expiresAt)]
-                  ].map(([label, value]) => <div key={label} style={{ padding:'16px 20px', borderRight:'1px solid #edf1f5', borderBottom:'1px solid #edf1f5' }}><div style={{ fontSize:10.5, color:'#7b8ba0', fontWeight:800, letterSpacing:.5 }}>{label.toUpperCase()}</div><div style={{ marginTop:6, color:'#172b4d', fontSize:14, fontWeight:800 }}>{value}</div></div>)}
+                  ].map(([label, value]) => <div key={label} style={{ padding:'16px 20px', borderRight:'1px solid #edf1f5', borderBottom:'1px solid #edf1f5' }}><div style={{ fontSize:10.5, color:'#7b8ba0', fontWeight:800, letterSpacing:.5 }}>{label.toUpperCase()}</div><div style={{ marginTop:6, color:'#0d1b2e', fontSize:14, fontWeight:800 }}>{value}</div></div>)}
                 </div>
               </div>
               {(membershipCard?.nextLevel || memberCfg.next) && (
                 <div style={{ background: '#fff', borderRadius: 14, padding: 20, border: '1px solid #e8edf4', marginBottom: 20 }}>
                   <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: 10 }}>
                     <span style={{ fontSize: 13.5, fontWeight: 700, color: '#0d1b2e' }}>Tiến đến hạng {MEMBERSHIP_CONFIG[membershipCard?.nextLevel || memberCfg.next || '']?.label}</span>
-                    <span style={{ fontSize: 12, color: '#64748b' }}>{membershipCard?.pointsAvailable ?? profile?.points ?? 0} / {membershipCard?.nextThreshold || memberCfg.nextPoints} điểm</span>
+                    <span style={{ fontSize: 12, color: '#64748b' }}>{membershipCard?.pointsAccumulated ?? profile?.points ?? 0} / {membershipCard?.nextThreshold || memberCfg.nextPoints} điểm tích lũy</span>
                   </div>
                   <div style={{ background: '#f1f5f9', borderRadius: 99, height: 8, overflow: 'hidden' }}>
-                    <div style={{ height: '100%', borderRadius: 99, background: 'linear-gradient(90deg,#f4c04a,#e8a020)', width: `${Math.min(100, ((membershipCard?.pointsAvailable ?? profile?.points ?? 0) / (membershipCard?.nextThreshold || memberCfg.nextPoints)) * 100)}%`, transition: 'width 1s ease' }} />
+                    <div style={{ height: '100%', borderRadius: 99, background: 'linear-gradient(90deg,#f4c04a,#f4c04a)', width: `${Math.min(100, ((membershipCard?.pointsAccumulated ?? profile?.points ?? 0) / (membershipCard?.nextThreshold || memberCfg.nextPoints)) * 100)}%`, transition: 'width 1s ease' }} />
                   </div>
                   <div style={{ fontSize: 12, color: '#64748b', marginTop: 8 }}>
                     Cần thêm <strong style={{ color: '#f4c04a' }}>{membershipCard?.pointsToNextLevel ?? Math.max(0, memberCfg.nextPoints - (profile?.points || 0))}</strong> điểm để lên hạng
@@ -516,7 +828,7 @@ export default function AccountPage({ authUser, onUserUpdate, initialTab = 'info
                 ].map((b, i) => (
                   <div key={i} style={{ display: 'flex', alignItems: 'center', gap: 12, padding: '10px 0', borderBottom: i < 3 ? '1px solid #f1f5f9' : 'none' }}>
                     <span style={{ fontSize: 20 }}>{b.icon}</span>
-                    <span style={{ fontSize: 13.5, color: '#1a2332' }}>{b.text}</span>
+                    <span style={{ fontSize: 13.5, color: '#0d1b2e' }}>{b.text}</span>
                     <Check size={14} color="#22c55e" style={{ marginLeft: 'auto', flexShrink: 0 }} />
                   </div>
                 ))}
@@ -529,22 +841,45 @@ export default function AccountPage({ authUser, onUserUpdate, initialTab = 'info
           {activeTab === 'history' && (
             <div style={{ padding: 32 }}>
               <PageHeading icon={ReceiptText} title="Lịch sử đặt vé" subtitle="Theo dõi tất cả giao dịch đặt vé của bạn." />
+              {bookingDetailError&&<div className="booking-detail-error" role="alert"><AlertCircle size={16}/>{bookingDetailError}<button type="button" onClick={()=>setBookingDetailError('')}><X size={14}/></button></div>}
               {bookingsLoading ? <LoadingState text="Đang tải lịch sử đặt vé..." /> : bookings.length === 0 ? (
                 <EmptyState icon="🎟️" title="Bạn chưa có vé nào" text="Các vé đã đặt sẽ xuất hiện tại đây để bạn tiện theo dõi." />
               ) : <div style={{ display: 'grid', gap: 14 }}>
                 {bookings.map(booking => {
                   const isPaid = booking.status === 'PAID';
-                  return <div key={booking.id} style={{ border: '1px solid #e2e8f0', borderRadius: 14, padding: 18, background: '#fff', display: 'flex', gap: 16, alignItems: 'center', flexWrap: 'wrap' }}>
-                    <div style={{ width: 48, height: 48, borderRadius: 12, background: '#fff7dd', display: 'grid', placeItems: 'center', flexShrink: 0 }}><Ticket size={23} color="#d99216" /></div>
-                    <div style={{ flex: 1, minWidth: 210 }}>
-                      <div style={{ fontSize: 15, fontWeight: 800, color: '#0d1b2e' }}>{booking.movieTitle}</div>
-                      <div style={{ fontSize: 12.5, color: '#64748b', marginTop: 5 }}>{booking.theaterName} · {booking.screenName}</div>
-                      <div style={{ fontSize: 12.5, color: '#64748b', marginTop: 3 }}>{formatDateTime(booking.startsAt)} · Ghế {booking.seats || '—'}</div>
+                  const statusText = isPaid ? 'ĐÃ THANH TOÁN' : booking.status === 'PENDING' ? 'CHỜ THANH TOÁN' : booking.status === 'EXPIRED' ? 'HẾT HẠN' : booking.status === 'CANCELLED' ? 'ĐÃ HỦY' : booking.status;
+                  return <article key={booking.id} className="booking-history-card" style={{ alignItems: 'center' }}>
+                    {booking.posterUrl ? (
+                      <img src={booking.posterUrl} alt={booking.movieTitle} style={{ width: 52, height: 74, objectFit: 'cover', borderRadius: 10, flexShrink: 0, border: '1px solid #e2e8f0' }} />
+                    ) : (
+                      <div style={{ width: 52, height: 74, borderRadius: 10, background: '#fff7dd', display: 'grid', placeItems: 'center', flexShrink: 0 }}><Ticket size={23} color="#f4c04a" /></div>
+                    )}
+                    <div style={{ flex: 1, minWidth: 230 }}>
+                      <div style={{ display: 'flex', alignItems: 'center', gap: 7, flexWrap: 'wrap' }}>
+                        <span style={{ fontSize: 15, fontWeight: 800, color: '#0d1b2e' }}>{booking.movieTitle}</span>
+                        {booking.ageRating && <span style={{ fontSize: 10, fontWeight: 800, padding: '1px 6px', borderRadius: 4, background: '#fef3c7', color: '#92400e' }}>{booking.ageRating}</span>}
+                        {booking.format && <span style={{ fontSize: 11, color: '#64748b', fontWeight: 600 }}>{booking.format}</span>}
+                      </div>
+                      <div style={{ fontSize: 12.5, color: '#475569', marginTop: 4 }}>{booking.theaterName} · {booking.screenName} · <strong>{formatDateTime(booking.startsAt)}</strong></div>
+                      <div style={{ fontSize: 12, color: '#64748b', marginTop: 3, display: 'flex', gap: 10, flexWrap: 'wrap' }}>
+                        <span>Ghế: <strong style={{ color: '#0d1b2e' }}>{booking.seats || '—'}</strong></span>
+                        {booking.paymentMethod && <span>· {paymentMethodLabel(booking.paymentMethod)}</span>}
+                        {booking.paymentRef && <span style={{ fontFamily: 'monospace', color: '#15803d', fontWeight: 700 }}>· {booking.paymentRef}</span>}
+                      </div>
                     </div>
-                    <div style={{ minWidth: 120 }}><div style={{ fontSize: 11, color: '#94a3b8', fontWeight: 700 }}>MÃ ĐẶT VÉ</div><div style={{ fontWeight: 800, color: '#0d1b2e', fontSize: 13 }}>{booking.code}</div></div>
-                    <div style={{ minWidth: 115 }}><div style={{ fontSize: 11, color: '#94a3b8', fontWeight: 700 }}>TỔNG TIỀN</div><div style={{ fontWeight: 800, color: '#d99216', fontSize: 14 }}>{formatMoney(booking.totalAmount)}</div></div>
-                    <span style={{ fontSize: 11, fontWeight: 800, padding: '5px 10px', borderRadius: 20, color: isPaid ? '#166534' : '#9a6700', background: isPaid ? '#dcfce7' : '#fef3c7' }}>{isPaid ? 'ĐÃ THANH TOÁN' : booking.status}</span>
-                  </div>;
+                    <div style={{ minWidth: 126 }}>
+                      <div style={{ fontSize: 10.5, color: '#94a3b8', fontWeight: 700 }}>MÃ ĐẶT VÉ</div>
+                      <div style={{ fontWeight: 800, color: '#0d1b2e', fontSize: 13, fontFamily: 'monospace' }}>{booking.code}</div>
+                      {booking.createdAt && <div style={{ fontSize: 11, color: '#94a3b8', marginTop: 2 }}>{formatDateTime(booking.createdAt)}</div>}
+                    </div>
+                    <div style={{ minWidth: 110 }}>
+                      <div style={{ fontSize: 10.5, color: '#94a3b8', fontWeight: 700 }}>TỔNG TIỀN</div>
+                      <div style={{ fontWeight: 900, color: '#b45309', fontSize: 14.5 }}>{formatMoney(booking.totalAmount)}</div>
+                      {Boolean(booking.ticketCount) && <div style={{ fontSize: 11, color: '#15803d', fontWeight: 700 }}>{booking.ticketCount} vé QR</div>}
+                    </div>
+                    <span style={{ fontSize: 11, fontWeight: 800, padding: '5px 10px', borderRadius: 20, color: isPaid ? '#166534' : booking.status === 'PENDING' ? '#92400e' : '#64748b', background: isPaid ? '#dcfce7' : booking.status === 'PENDING' ? '#fef3c7' : '#f1f5f9' }}>{statusText}</span>
+                    <button type="button" className="booking-detail-open" onClick={()=>void openBookingDetail(booking.id)}><QrCode size={16}/>{isPaid?'Xem vé điện tử':'Xem chi tiết'}<ChevronRight size={15}/></button>
+                  </article>;
                 })}
               </div>}
             </div>
@@ -552,16 +887,13 @@ export default function AccountPage({ authUser, onUserUpdate, initialTab = 'info
 
           {/* ── TAB: ĐIỂM THƯỞNG ── */}
           {activeTab === 'points' && (
-            <div style={{ padding: 32 }}>
-              <PageHeading icon={Sparkles} title="Điểm thưởng Aurora" subtitle="Tích điểm sau mỗi giao dịch và dùng điểm để nhận ưu đãi." />
-              <div style={{ borderRadius: 18, padding: 26, background: 'linear-gradient(135deg,#fff7dc,#fff 65%)', border: '1px solid #f6d77d', display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 20, flexWrap: 'wrap', marginBottom: 22 }}>
-                <div><div style={{ fontSize: 12, fontWeight: 800, color: '#9a6700', letterSpacing: 1 }}>SỐ DƯ ĐIỂM HIỆN TẠI</div><div style={{ fontSize: 38, fontWeight: 900, color: '#d99216', marginTop: 3 }}>{profile?.points || 0} <span style={{ fontSize: 15 }}>điểm</span></div><div style={{ color: '#64748b', fontSize: 13 }}>1.000đ chi tiêu hợp lệ = 1 điểm Aurora</div></div>
-                <div style={{ width: 64, height: 64, borderRadius: '50%', background: '#f4c04a', display: 'grid', placeItems: 'center', boxShadow: '0 8px 20px rgba(244,192,74,.35)' }}><Star size={31} fill="#0d1b2e" color="#0d1b2e" /></div>
-              </div>
-              <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3,minmax(0,1fr))', gap: 14, marginBottom: 24 }}>
-                {[['1', 'điểm', 'mỗi 1.000đ chi tiêu'], ['500', 'điểm', 'để lên hạng Silver'], ['2.000', 'điểm', 'để lên hạng Gold']].map(item => <div key={item[0]} style={{ border: '1px solid #e8edf4', borderRadius: 12, padding: 16, textAlign: 'center' }}><b style={{ fontSize: 20, color: '#0d1b2e' }}>{item[0]} <span style={{ fontSize: 12 }}>{item[1]}</span></b><div style={{ color: '#64748b', fontSize: 12, marginTop: 5 }}>{item[2]}</div></div>)}
-              </div>
-              <div style={{ borderTop: '1px solid #e8edf4', paddingTop: 20 }}><SectionTitle>LỊCH SỬ ĐIỂM</SectionTitle><EmptyState icon="⭐" title="Chưa có giao dịch điểm" text="Điểm từ các vé thanh toán thành công sẽ được cập nhật tại đây." compact /></div>
+            <div className="aurora-points-page">
+              <PageHeading icon={Sparkles} title="Điểm thưởng Aurora" subtitle="Tích theo từng nhóm sản phẩm và sử dụng trực tiếp khi thanh toán tại POS." />
+              {loyaltyLoading?<LoadingState text="Đang đối chiếu sổ điểm từ aurora_db..."/>:<>
+              <section className="points-balance-hero"><div><span>SỐ DƯ KHẢ DỤNG</span><strong>{Number(loyaltyOverview.member?.points??profile?.points??0).toLocaleString('vi-VN')} <small>điểm</small></strong><p>Tương đương <b>{formatMoney(loyaltyOverview.member?.redeemableValue||0)}</b> khi mua trực tiếp tại quầy</p></div><div className="points-tier-orb"><Star size={30} fill="currentColor"/><small>HẠNG</small><b>{loyaltyOverview.member?.level||memberLevel}</b></div></section>
+              <section className="points-policy-grid"><article><Ticket/><span><small>VÉ XEM PHIM</small><b>{loyaltyOverview.member?.ticketRate||5}%</b><p>Giá trị vé thanh toán hợp lệ</p></span></article><article><Popcorn/><span><small>BẮP NƯỚC & HÀNG HÓA</small><b>{loyaltyOverview.member?.productRate||10}%</b><p>Sản phẩm mua kèm trong đơn</p></span></article><article className="vip"><Sparkles/><span><small>ĐẶC QUYỀN VIP</small><b>+3%</b><p>Cộng thêm cho từng loại sản phẩm</p></span></article><article><Banknote/><span><small>QUY ĐỔI TẠI POS</small><b>1 điểm = 1đ</b><p>Không quy đổi tiền mặt</p></span></article></section>
+              <section className="points-ledger"><header><div><span>LỊCH SỬ ĐIỂM</span><h3>Sổ giao dịch thành viên</h3></div><small>Dữ liệu trực tiếp từ aurora_db</small></header>{loyaltyOverview.history.length?<div>{loyaltyOverview.history.map(row=><article key={row.id}><span className={row.points_change>=0?'earn':'redeem'}>{row.points_change>=0?<Sparkles size={16}/>:<Banknote size={16}/>}</span><div><b>{row.description}</b><small>{formatDateTime(row.created_at)}{row.order_id?` · Đơn #${row.order_id}`:''}</small>{row.points_change>0&&<em>Vé {Number(row.ticket_rate||5)}% · Hàng hóa {Number(row.product_rate||10)}%</em>}</div><strong className={row.points_change>=0?'plus':'minus'}>{row.points_change>=0?'+':''}{Number(row.points_change).toLocaleString('vi-VN')} điểm<small>Còn {Number(row.balance_after).toLocaleString('vi-VN')}</small></strong></article>)}</div>:<EmptyState icon="⭐" title="Chưa có giao dịch điểm" text="Điểm sẽ được ghi nhận sau khi đơn hàng thành viên thanh toán thành công." compact />}</section>
+              </>}
             </div>
           )}
 
@@ -570,20 +902,252 @@ export default function AccountPage({ authUser, onUserUpdate, initialTab = 'info
             <div style={{ padding: 32 }}>
               <PageHeading icon={Gift} title="Voucher của tôi" subtitle="Lưu mã ưu đãi để áp dụng khi thanh toán vé." />
               <div style={{ display: 'flex', gap: 10, padding: 16, background: '#f8fafd', border: '1px solid #e8edf4', borderRadius: 14, marginBottom: 22, flexWrap: 'wrap' }}>
-                <Tag size={20} color="#d99216" style={{ marginTop: 8 }} /><input value={voucherCode} onChange={e => setVoucherCode(e.target.value.toUpperCase())} placeholder="Nhập mã voucher của bạn" style={{ flex: 1, minWidth: 200, border: '1px solid #d5dee9', borderRadius: 9, padding: '10px 12px', outline: 'none', fontSize: 13 }} /><button onClick={() => setVoucherCode('')} style={{ background: '#f4c04a', border: 'none', borderRadius: 9, padding: '0 18px', fontWeight: 800, color: '#0d1b2e', cursor: 'pointer' }}>ÁP DỤNG</button>
+                <Tag size={20} color="#f4c04a" style={{ marginTop: 8 }} /><input value={voucherCode} onChange={e => setVoucherCode(e.target.value.toUpperCase())} placeholder="Nhập mã voucher của bạn" style={{ flex: 1, minWidth: 200, border: '1px solid #d5dee9', borderRadius: 9, padding: '10px 12px', outline: 'none', fontSize: 13 }} /><button onClick={() => setVoucherCode('')} style={{ background: '#f4c04a', border: 'none', borderRadius: 9, padding: '0 18px', fontWeight: 800, color: '#0d1b2e', cursor: 'pointer' }}>ÁP DỤNG</button>
               </div>
               <EmptyState icon="🎁" title="Bạn chưa có voucher khả dụng" text="Voucher được gửi từ các chương trình ưu đãi của Aurora Cinema sẽ hiển thị tại đây." />
-              <div style={{ marginTop: 24, borderTop: '1px solid #e8edf4', paddingTop: 20 }}><SectionTitle>MẸO SỬ DỤNG VOUCHER</SectionTitle><div style={{ display: 'grid', gap: 10 }}>{['Nhập mã voucher tại bước thanh toán để áp dụng ưu đãi.', 'Mỗi voucher chỉ dùng một lần và có thời hạn riêng.', 'Không thể cộng dồn nhiều voucher trong cùng một đơn hàng.'].map((text, i) => <div key={text} style={{ display: 'flex', gap: 10, color: '#475569', fontSize: 13 }}><CheckCircle size={17} color="#22a55a" style={{ flexShrink: 0 }} />{text}</div>)}</div></div>
+              <div style={{ marginTop: 24, borderTop: '1px solid #e8edf4', paddingTop: 20 }}><SectionTitle>MẸO SỬ DỤNG VOUCHER</SectionTitle><div style={{ display: 'grid', gap: 10 }}>{['Nhập mã voucher tại bước thanh toán để áp dụng ưu đãi.', 'Mỗi voucher chỉ dùng một lần và có thời hạn riêng.', 'Không thể cộng dồn nhiều voucher trong cùng một đơn hàng.'].map(text => <div key={text} style={{ display: 'flex', gap: 10, color: '#475569', fontSize: 13 }}><CheckCircle size={17} color="#22a55a" style={{ flexShrink: 0 }} />{text}</div>)}</div></div>
             </div>
           )}
         </div>
       </div>
+      {bookingDetailLoading&&<div className="booking-detail-backdrop"><div className="booking-detail-loading"><Loader2 size={28}/><b>Đang chuẩn bị vé điện tử</b><span>Đối chiếu đơn hàng trực tiếp từ Aurora Cinema…</span></div></div>}
+      {bookingDetail&&(
+        <div className="booking-detail-backdrop" onMouseDown={event=>{if(event.target===event.currentTarget)setBookingDetail(null);}}>
+          <section className="booking-detail-modal" role="dialog" aria-modal="true" aria-labelledby="booking-detail-title">
+            <header className="booking-detail-head"><div><span><ReceiptText size={14}/> HỒ SƠ ĐƠN HÀNG AURORA</span><h2 id="booking-detail-title">Chi tiết đơn hàng</h2><p>Thông tin suất chiếu, vé điện tử, hàng hóa và thanh toán được đối chiếu từ aurora_db.</p></div><button type="button" onClick={()=>setBookingDetail(null)} aria-label="Đóng chi tiết đơn hàng"><X size={20}/></button></header>
+            <div className="booking-detail-scroll">
+              <section className="booking-order-overview">
+                <div><small>MÃ ĐƠN HÀNG</small><strong>{bookingDetail.order?.code||bookingDetail.code}</strong></div>
+                <div><small>KÊNH BÁN</small><b>{salesChannelLabel(bookingDetail.order?.channel)}</b></div>
+                <div><small>THANH TOÁN</small><b>{paymentMethodLabel(bookingDetail.order?.paymentMethod||bookingDetail.payments[0]?.method)}</b></div>
+                <div><small>GIÁ TRỊ ĐƠN</small><strong>{formatMoney(bookingDetail.order?.totalAmount??bookingDetail.total_amount)}</strong></div>
+                <span className={`booking-order-state ${bookingDetail.status.toLowerCase()}`}><i/>{bookingDetail.status==='PAID'?'Đã thanh toán':bookingDetail.status==='PENDING'?'Chờ thanh toán':bookingDetail.status==='CANCELLED'?'Đã hủy':'Hết hạn'}</span>
+              </section>
+              <section className="booking-movie-summary">
+                <div className="booking-poster">{bookingDetail.poster_url?<img src={bookingDetail.poster_url} alt={bookingDetail.movie_title}/>:<Film size={34}/>}</div>
+                <div><span>{bookingDetail.age_rating||'P'} · {bookingDetail.format||'2D'} · {bookingDetail.duration_minutes} phút</span><h3>{bookingDetail.movie_title}</h3><p><Calendar size={15}/>{formatDateTime(bookingDetail.starts_at)} - {formatDateTime(bookingDetail.ends_at)}</p><p><MapPin size={15}/>{bookingDetail.theater_name} · {bookingDetail.screen_name}</p><small>{bookingDetail.theater_address}{bookingDetail.city?` · ${bookingDetail.city}`:''}</small></div>
+                <aside><small>TRẠNG THÁI</small><b className={bookingDetail.status==='PAID'?'paid':''}>{bookingDetail.status==='PAID'?'Đã thanh toán':bookingDetail.status}</b><small>MÃ ĐẶT VÉ</small><strong>{bookingDetail.code}</strong></aside>
+              </section>
+
+              <div className="booking-detail-section-title"><div><Ticket size={17}/><span><b>Vé của bạn</b><small>{bookingDetail.tickets.length} vé điện tử</small></span></div><p>Đưa từng QR cho nhân viên soát vé</p></div>
+              {bookingDetail.tickets.length?<div className="booking-ticket-list">{bookingDetail.tickets.map(ticket=><article className="booking-electronic-ticket" key={ticket.code}>
+                <div className="booking-ticket-info"><span className="booking-ticket-brand">AURORA CINEMA</span><div className="booking-ticket-seat"><Armchair size={21}/><span><small>GHẾ</small><b>{ticket.seat}</b></span></div><dl><div><dt>Mã vé</dt><dd>{ticket.code}<button type="button" title="Sao chép mã vé" onClick={()=>void navigator.clipboard?.writeText(ticket.code)}><Copy size={13}/></button></dd></div><div><dt>Loại ghế</dt><dd>{ticket.seatType}</dd></div><div><dt>Giá vé</dt><dd>{formatMoney(ticket.price)}</dd></div></dl><span className={`booking-ticket-status ${ticket.status.toLowerCase()}`}>{ticket.status==='VALID'?'Sẵn sàng sử dụng':ticket.status==='USED'?'Đã soát vé':'Không còn hiệu lực'}</span></div>
+                <TicketQr ticket={ticket}/>
+              </article>)}</div>:<div className="booking-no-ticket"><QrCode size={28}/><b>Vé QR chưa được phát hành</b><span>Vé điện tử được tạo sau khi đơn hàng thanh toán thành công.</span></div>}
+
+              <section className="booking-line-items">
+                <header><div><ReceiptText size={17}/><span><b>Chi tiết sản phẩm</b><small>{bookingProductLines.length} dòng sản phẩm trong đơn</small></span></div><strong>{formatMoney(bookingDetail.order?.totalAmount??bookingDetail.total_amount)}</strong></header>
+                <div className="booking-line-items-head"><span>Sản phẩm</span><span>SL</span><span>Đơn giá</span><span>Thành tiền</span></div>
+                {bookingProductLines.map((item,index)=><div className="booking-line-item" key={`${item.code}-${index}`}><span><i className={item.type.toLowerCase()}>{item.type==='TICKET'?<Ticket size={15}/>:<Popcorn size={15}/>}</i><span><b>{item.name}</b><small>{item.code}</small></span></span><b>{item.quantity}</b><span>{formatMoney(item.unitPrice)}</span><strong>{formatMoney(item.total)}</strong></div>)}
+              </section>
+
+              <div className="booking-detail-columns">
+                <section><h4><User size={16}/>Khách hàng & tiếp nhận</h4><dl><div><dt>Người đặt</dt><dd>{bookingDetail.customer?.fullName||authUser?.fullName||'Khách hàng Aurora'}</dd></div><div><dt>Email</dt><dd>{bookingDetail.customer?.email||authUser?.email||'—'}</dd></div><div><dt>Số điện thoại</dt><dd>{bookingDetail.customer?.phone||'—'}</dd></div><div><dt>Ngày đặt</dt><dd>{formatDateTime(bookingDetail.order?.createdAt||bookingDetail.created_at)}</dd></div><div><dt>Thu ngân</dt><dd>{bookingDetail.order?.cashier?.fullName||'Hệ thống trực tuyến'}</dd></div><div><dt>Quầy bán</dt><dd>{bookingDetail.order?.cashier?.counter||'Website Aurora'}</dd></div>{bookingDetail.redemption&&<div><dt>Đổi/nhận vé</dt><dd>{formatDateTime(bookingDetail.redemption.redeemedAt)}</dd></div>}<div><dt>Mã chứng từ</dt><dd>{bookingDetail.receipt?.documentCode||`AURORA-RECEIPT-${bookingDetail.code}`}</dd></div></dl></section>
+                <section><h4><Banknote size={16}/>Thanh toán & đối soát</h4><dl><div><dt>Tạm tính</dt><dd>{formatMoney(bookingDetail.order?.subtotal??bookingDetail.total_amount)}</dd></div><div><dt>Giảm giá</dt><dd>- {formatMoney(bookingDetail.order?.discountAmount||0)}</dd></div>{bookingDetail.order?.voucherCode&&<div><dt>Voucher</dt><dd>{bookingDetail.order.voucherCode}</dd></div>}<div><dt>Khách thanh toán</dt><dd>{formatMoney(bookingDetail.order?.amountReceived||bookingDetail.total_amount)}</dd></div>{Boolean(bookingDetail.order?.changeAmount)&&<div><dt>Tiền thừa</dt><dd>{formatMoney(bookingDetail.order?.changeAmount||0)}</dd></div>}<div className="total"><dt>Tổng đơn hàng</dt><dd>{formatMoney(bookingDetail.order?.totalAmount??bookingDetail.total_amount)}</dd></div></dl>{(bookingDetail.payments.length?bookingDetail.payments:[{method:bookingDetail.order?.paymentMethod||'',amount:bookingDetail.total_amount,referenceCode:bookingDetail.order?.code||bookingDetail.code,createdAt:bookingDetail.order?.createdAt||bookingDetail.created_at}]).map((payment,index)=><div className="booking-payment-proof" key={`${payment.referenceCode}-${index}`}><Banknote size={17}/><span><small>{paymentMethodLabel(payment.method)} · {formatMoney(payment.amount)} · {formatDateTime(payment.createdAt)}</small><b>{payment.referenceCode||'Chưa có mã đối soát'}</b></span></div>)}{bookingDetail.onlinePayment&&<div className="booking-online-payment"><b>{bookingDetail.onlinePayment.provider} · {bookingDetail.onlinePayment.status}</b><span>{bookingDetail.onlinePayment.bankCode||'Ngân hàng chưa xác định'}{bookingDetail.onlinePayment.cardType?` · ${bookingDetail.onlinePayment.cardType}`:''}</span><code>{bookingDetail.onlinePayment.providerTransactionNo||bookingDetail.onlinePayment.transactionReference}</code></div>}</section>
+              </div>
+            </div>
+            <footer className="booking-detail-foot"><p role="status"><Shield size={15}/>{receiptExportMessage||'File PDF có đầy đủ vé, QR, suất chiếu, phòng chiếu và thanh toán.'}</p><button type="button" className="booking-pdf-button" onClick={()=>void exportBookingReceipt()} disabled={receiptExporting}>{receiptExporting?<Loader2 className="spin" size={16}/>:<FileDown size={16}/>}<span>{receiptExporting?'Đang tạo PDF…':'Tải / chia sẻ PDF'}</span></button><button type="button" className="primary" onClick={()=>setBookingDetail(null)}>Hoàn tất</button></footer>
+          </section>
+        </div>
+      )}
+      {avatarPreviewOpen && avatarUrl && (
+        <div className="profile-avatar-lightbox" role="presentation">
+          <div className="profile-avatar-lightbox-dialog" role="dialog" aria-modal="true" aria-label="Xem ảnh đại diện">
+            <button type="button" className="profile-avatar-lightbox-close" onClick={() => setAvatarPreviewOpen(false)} aria-label="Đóng ảnh đại diện"><X size={20}/></button>
+            <div className="profile-avatar-lightbox-media">
+              <SafeAvatar url={avatarUrl} name={authUser?.fullName || fullName || avatarLetter} fit="contain" />
+            </div>
+            <div className="profile-avatar-lightbox-caption">{authUser?.fullName || fullName || 'Ảnh đại diện'}</div>
+          </div>
+        </div>
+      )}
+      {saving && (
+        <div className="profile-update-loading" role="status" aria-live="polite">
+          <div className="profile-update-loading-icon"><Loader2 size={20}/></div>
+          <div className="profile-update-loading-copy"><strong>Đang cập nhật thông tin</strong><span>Hệ thống đang lưu thay đổi vào hồ sơ của bạn.</span></div>
+          <div className="profile-update-loading-progress"><i/></div>
+        </div>
+      )}
+      {avatarCropFile && (
+        <AvatarCropModal
+          file={avatarCropFile}
+          saving={avatarUploading}
+          onCancel={() => {
+            if (avatarUploading) return;
+            setAvatarCropFile(null);
+            if (avatarInputRef.current) avatarInputRef.current.value = '';
+          }}
+          onConfirm={handleAvatarUpload}
+        />
+      )}
+      {avatarDeleteConfirmOpen && (
+        <div className="profile-confirm-overlay" onClick={() => setAvatarDeleteConfirmOpen(false)} role="presentation">
+          <div className="profile-confirm-dialog" role="alertdialog" aria-modal="true" aria-labelledby="avatar-delete-title" aria-describedby="avatar-delete-description" onClick={event => event.stopPropagation()}>
+            <button type="button" className="profile-confirm-close" onClick={() => setAvatarDeleteConfirmOpen(false)} aria-label="Đóng thông báo"><X size={18}/></button>
+            <div className="profile-confirm-icon"><Trash2 size={24}/></div>
+            <div className="profile-confirm-copy">
+              <h3 id="avatar-delete-title">Xóa ảnh đại diện?</h3>
+              <p id="avatar-delete-description">Ảnh hiện tại sẽ bị xóa khỏi hồ sơ của bạn. Bạn có thể tải ảnh mới lên bất cứ lúc nào.</p>
+            </div>
+            <div className="profile-confirm-actions">
+              <button type="button" className="cancel" onClick={() => setAvatarDeleteConfirmOpen(false)}>Hủy</button>
+              <button type="button" className="confirm" onClick={() => void handleAvatarRemove()}><Trash2 size={15}/>Xóa ảnh</button>
+            </div>
+          </div>
+        </div>
+      )}
       <div style={{ height: 48 }} />
     </div>
   );
 }
 
 /* ─── Small helper sub-components ── */
+function AvatarCropModal({ file, saving, onCancel, onConfirm }: {
+  file: File;
+  saving: boolean;
+  onCancel: () => void;
+  onConfirm: (file: File, crop: AvatarCropMetadata, sourceName: string) => Promise<boolean>;
+}) {
+  const OUTPUT_SIZE = 512;
+  const [sourceUrl, setSourceUrl] = useState('');
+  const [sourceSize, setSourceSize] = useState({ width: 0, height: 0 });
+  const [viewportSize, setViewportSize] = useState(360);
+  const [zoom, setZoom] = useState(1);
+  const [offset, setOffset] = useState({ x: 0, y: 0 });
+  const [cropError, setCropError] = useState('');
+  const imageRef = useRef<HTMLImageElement>(null);
+  const viewportRef = useRef<HTMLDivElement>(null);
+  const dragRef = useRef<{ pointerId: number; x: number; y: number; offsetX: number; offsetY: number; maxX: number; maxY: number } | null>(null);
+
+  useEffect(() => {
+    const url = URL.createObjectURL(file);
+    setSourceUrl(url);
+    return () => URL.revokeObjectURL(url);
+  }, [file]);
+
+  useEffect(() => {
+    const viewport = viewportRef.current;
+    if (!viewport) return;
+    const updateSize = () => setViewportSize(Math.max(1, viewport.getBoundingClientRect().width));
+    updateSize();
+    const observer = typeof ResizeObserver !== 'undefined' ? new ResizeObserver(updateSize) : null;
+    observer?.observe(viewport);
+    window.addEventListener('resize', updateSize);
+    return () => {
+      observer?.disconnect();
+      window.removeEventListener('resize', updateSize);
+    };
+  }, []);
+
+  const baseScale = sourceSize.width && sourceSize.height
+    ? Math.max(viewportSize / sourceSize.width, viewportSize / sourceSize.height)
+    : 1;
+  const renderedWidth = sourceSize.width * baseScale * zoom;
+  const renderedHeight = sourceSize.height * baseScale * zoom;
+  const maxX = Math.max(0, (renderedWidth - viewportSize) / 2);
+  const maxY = Math.max(0, (renderedHeight - viewportSize) / 2);
+
+  function handlePointerDown(event: ReactPointerEvent<HTMLDivElement>) {
+    if (!sourceSize.width || saving) return;
+    event.currentTarget.setPointerCapture(event.pointerId);
+    dragRef.current = { pointerId: event.pointerId, x: event.clientX, y: event.clientY, offsetX: offset.x, offsetY: offset.y, maxX, maxY };
+  }
+
+  function handlePointerMove(event: ReactPointerEvent<HTMLDivElement>) {
+    const drag = dragRef.current;
+    if (!drag || drag.pointerId !== event.pointerId) return;
+    const nextX = drag.maxX > 0 ? drag.offsetX + (event.clientX - drag.x) / drag.maxX : 0;
+    const nextY = drag.maxY > 0 ? drag.offsetY + (event.clientY - drag.y) / drag.maxY : 0;
+    setOffset({ x: Math.max(-1, Math.min(1, nextX)), y: Math.max(-1, Math.min(1, nextY)) });
+  }
+
+  function handlePointerEnd(event: ReactPointerEvent<HTMLDivElement>) {
+    if (dragRef.current?.pointerId === event.pointerId) dragRef.current = null;
+  }
+
+  async function createCroppedImage() {
+    const image = imageRef.current;
+    if (!image || !sourceSize.width || saving) return;
+    setCropError('');
+    const canvas = document.createElement('canvas');
+    canvas.width = OUTPUT_SIZE;
+    canvas.height = OUTPUT_SIZE;
+    const context = canvas.getContext('2d');
+    if (!context) { setCropError('Trình duyệt không thể xử lý ảnh này.'); return; }
+    const scale = Math.max(OUTPUT_SIZE / sourceSize.width, OUTPUT_SIZE / sourceSize.height) * zoom;
+    const width = sourceSize.width * scale;
+    const height = sourceSize.height * scale;
+    const outputMaxX = Math.max(0, (width - OUTPUT_SIZE) / 2);
+    const outputMaxY = Math.max(0, (height - OUTPUT_SIZE) / 2);
+    context.fillStyle = '#ffffff';
+    context.fillRect(0, 0, OUTPUT_SIZE, OUTPUT_SIZE);
+    context.imageSmoothingEnabled = true;
+    context.imageSmoothingQuality = 'high';
+    context.drawImage(image, (OUTPUT_SIZE - width) / 2 + offset.x * outputMaxX, (OUTPUT_SIZE - height) / 2 + offset.y * outputMaxY, width, height);
+    const blob = await new Promise<Blob | null>(resolve => canvas.toBlob(resolve, 'image/jpeg', .92));
+    if (!blob) { setCropError('Không thể tạo ảnh đã cắt. Vui lòng thử lại.'); return; }
+    const croppedFile = new File([blob], `avatar_${Date.now()}.jpg`, { type: 'image/jpeg' });
+    await onConfirm(croppedFile, {
+      offsetX: offset.x,
+      offsetY: offset.y,
+      zoom,
+      sourceWidth: sourceSize.width,
+      sourceHeight: sourceSize.height,
+      outputSize: OUTPUT_SIZE,
+    }, file.name);
+  }
+
+  return (
+    <div className="profile-crop-overlay" role="presentation" onClick={() => { if (!saving) onCancel(); }}>
+      <div className="profile-crop-dialog" role="dialog" aria-modal="true" aria-labelledby="avatar-crop-title" onClick={event => event.stopPropagation()}>
+        <div className="profile-crop-header">
+          <div><h3 id="avatar-crop-title">Cắt ảnh đại diện</h3><p>Kéo ảnh để chọn vùng bạn muốn hiển thị.</p></div>
+          <button type="button" onClick={onCancel} disabled={saving} aria-label="Đóng trình cắt ảnh"><X size={19}/></button>
+        </div>
+        <div className="profile-crop-body">
+          <div
+            ref={viewportRef}
+            className="profile-crop-viewport"
+            onPointerDown={handlePointerDown}
+            onPointerMove={handlePointerMove}
+            onPointerUp={handlePointerEnd}
+            onPointerCancel={handlePointerEnd}
+          >
+            {sourceUrl && <img
+              ref={imageRef}
+              src={sourceUrl}
+              alt="Ảnh đang cắt"
+              draggable={false}
+              onLoad={event => setSourceSize({ width: event.currentTarget.naturalWidth, height: event.currentTarget.naturalHeight })}
+              style={{
+                width: renderedWidth || 'auto',
+                height: renderedHeight || 'auto',
+                transform: `translate(calc(-50% + ${offset.x * maxX}px), calc(-50% + ${offset.y * maxY}px))`,
+              }}
+            />}
+            <div className="profile-crop-grid" aria-hidden="true" />
+            <div className="profile-crop-mask" aria-hidden="true" />
+          </div>
+          <div className="profile-crop-controls">
+            <div className="profile-crop-control-heading"><span>Thu phóng</span><strong>{Math.round(zoom * 100)}%</strong></div>
+            <div className="profile-crop-slider-row">
+              <span aria-hidden="true">−</span>
+              <input type="range" min="1" max="3" step="0.01" value={zoom} disabled={saving} onChange={event => setZoom(Number(event.target.value))} aria-label="Thu phóng ảnh" />
+              <span aria-hidden="true">+</span>
+            </div>
+            <button type="button" className="profile-crop-reset" disabled={saving} onClick={() => { setZoom(1); setOffset({ x: 0, y: 0 }); }}>Đặt lại vị trí</button>
+          </div>
+        </div>
+        {cropError && <div className="profile-crop-error" role="alert"><AlertCircle size={15}/>{cropError}</div>}
+        <div className="profile-crop-footer">
+          <button type="button" className="cancel" disabled={saving} onClick={onCancel}>Hủy</button>
+          <button type="button" className="save" disabled={saving || !sourceSize.width} onClick={() => void createCroppedImage()}>{saving ? <Loader2 size={16} style={{ animation:'spin .8s linear infinite' }}/> : <Check size={16}/>} {saving ? 'Đang lưu ảnh...' : 'Dùng ảnh này'}</button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
 function formatMoney(value: number | string) {
   return `${Number(value || 0).toLocaleString('vi-VN')}đ`;
 }
@@ -601,13 +1165,13 @@ function formatDateTime(value: string) {
 
 function PageHeading({ icon: Icon, title, subtitle }: { icon: any; title: string; subtitle: string }) {
   return <div style={{ display: 'flex', alignItems: 'center', gap: 12, marginBottom: 24 }}>
-    <div style={{ width: 42, height: 42, display: 'grid', placeItems: 'center', borderRadius: 12, background: '#fff7dd' }}><Icon size={21} color="#d99216" /></div>
+    <div style={{ width: 42, height: 42, display: 'grid', placeItems: 'center', borderRadius: 12, background: '#fff7dd' }}><Icon size={21} color="#f4c04a" /></div>
     <div><div style={{ fontSize: 20, fontWeight: 850, color: '#0d1b2e' }}>{title}</div><div style={{ fontSize: 12.5, color: '#64748b', marginTop: 2 }}>{subtitle}</div></div>
   </div>;
 }
 
 function EmptyState({ icon, title, text, compact = false }: { icon: string; title: string; text: string; compact?: boolean }) {
-  return <div style={{ padding: compact ? '24px 16px' : '44px 20px', textAlign: 'center', border: '1px dashed #d5dee9', borderRadius: 14, background: '#fbfdff' }}><div style={{ fontSize: compact ? 32 : 44, marginBottom: 10 }}>{icon}</div><div style={{ fontWeight: 800, fontSize: 15, color: '#1a2332', marginBottom: 5 }}>{title}</div><div style={{ fontSize: 13, color: '#64748b', maxWidth: 400, margin: '0 auto' }}>{text}</div></div>;
+  return <div style={{ padding: compact ? '24px 16px' : '44px 20px', textAlign: 'center', border: '1px dashed #d5dee9', borderRadius: 14, background: '#fbfdff' }}><div style={{ fontSize: compact ? 32 : 44, marginBottom: 10 }}>{icon}</div><div style={{ fontWeight: 800, fontSize: 15, color: '#0d1b2e', marginBottom: 5 }}>{title}</div><div style={{ fontSize: 13, color: '#64748b', maxWidth: 400, margin: '0 auto' }}>{text}</div></div>;
 }
 
 function LoadingState({ text }: { text: string }) {
@@ -623,25 +1187,34 @@ function SectionTitle({ children }: { children: string }) {
   );
 }
 
-function SelectField({ label, value, onChange, options, placeholder, icon: Icon }: {
+function SelectField({ label, value, onChange, options, placeholder, icon: Icon, disabled = false, loading = false, hint }: {
   label: string; value: string; onChange: (v: string) => void;
   options: { value: string; label: string }[]; placeholder: string; icon?: any;
+  disabled?: boolean; loading?: boolean; hint?: string;
 }) {
+  const fieldId = useId();
   return (
-    <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
-      <label style={{ fontSize: 12.5, fontWeight: 700, color: '#4a637a', letterSpacing: 0.3 }}>{label}</label>
-      <div style={{ position: 'relative' }}>
-        {Icon && <Icon size={14} style={{ position: 'absolute', left: 12, top: '50%', transform: 'translateY(-50%)', color: '#94a3b8' }} />}
-        <select value={value} onChange={e => onChange(e.target.value)} style={{
-          width: '100%', padding: Icon ? '10px 36px 10px 36px' : '10px 36px 10px 12px',
-          border: '1.5px solid #d5dee9', borderRadius: 10, fontSize: 13.5,
-          background: '#fff', color: value ? '#1a2332' : '#94a3b8', outline: 'none', cursor: 'pointer', appearance: 'none'
-        }}>
+    <div className="account-select-field">
+      <label htmlFor={fieldId}>{label}</label>
+      <div className="account-select-control">
+        {Icon && <Icon className="account-select-leading" size={15}/>}
+        <select
+          value={value}
+          id={fieldId}
+          disabled={disabled}
+          aria-busy={loading}
+          onChange={e => onChange(e.target.value)}
+          className={`${Icon ? 'has-icon' : ''} ${value ? 'has-value' : ''}`}
+        >
           <option value="">{placeholder}</option>
           {options.map(o => <option key={o.value} value={o.value}>{o.label}</option>)}
         </select>
-        <ChevronRight size={14} color="#94a3b8" style={{ position: 'absolute', right: 12, top: '50%', transform: 'translateY(-50%) rotate(90deg)', pointerEvents: 'none' }} />
+        {loading
+          ? <Loader2 className="account-select-spinner" size={15}/>
+          : <ChevronRight className="account-select-chevron" size={15}/>
+        }
       </div>
+      {hint && <span className="account-select-hint">{hint}</span>}
     </div>
   );
 }
