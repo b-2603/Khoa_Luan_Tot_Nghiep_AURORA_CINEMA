@@ -31,6 +31,10 @@ Thời gian TMS dùng múi giờ Việt Nam (`Asia/Ho_Chi_Minh`, UTC+07:00); cá
 
 ## Endpoint
 
+- `GET|PUT ?action=account-profile` — đọc hoặc cập nhật hồ sơ của tài khoản trong phiên hiện tại. Tên đăng nhập, vai trò và phạm vi RBAC không thể thay đổi qua endpoint này.
+- `GET ?action=account-avatar&id={user_id}` — trả nội dung ảnh đại diện của một tài khoản TMS đang hoạt động; yêu cầu phiên đăng nhập. API không trả đường dẫn tệp lưu trữ.
+- `POST ?action=account-avatar` — tải ảnh đại diện của chính tài khoản hiện tại bằng `multipart/form-data`, trường `avatar`. Hỗ trợ JPG, PNG, GIF, WebP; tối đa 5 MB, kích thước 64–5000 px. Metadata lưu trong `aurora_db.users`, tệp được đặt ngoài web root và ảnh cũ được dọn sau khi transaction thành công.
+- `DELETE ?action=account-avatar` — xóa ảnh đại diện của tài khoản hiện tại và ghi Audit Log.
 - `GET ?action=dashboard&date=YYYY-MM-DD` — KPI vận hành từ `orders`, `bookings`, `booking_seats`, `showtimes`, `screens` và `staff_shifts`; Admin Rạp/Giám sát chỉ nhận dữ liệu thuộc `theater_id` được gán trong `aurora_db`.
 - `GET ?action=cinema-schedule-board&date=YYYY-MM-DD` — sơ đồ phòng và suất chiếu theo thời gian, kèm tổng ghế, công suất, đơn đã thanh toán và doanh thu của rạp đang phụ trách.
 - `GET ?action=revenue` — doanh thu thực tế theo ngày từ booking/order đã thanh toán.

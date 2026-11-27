@@ -85,7 +85,7 @@ function requireAdmin() {
     }
 
     $userId = (int)$_SESSION['tms_user']['id'];
-    $result = $db->query("SELECT u.id,u.username,u.full_name,u.email,u.phone,u.theater_id,u.role,u.status,t.name AS theater_name FROM users u LEFT JOIN theaters t ON t.id=u.theater_id WHERE u.id = {$userId} LIMIT 1");
+    $result = $db->query("SELECT u.id,u.username,u.full_name,u.email,u.phone,u.theater_id,u.role,u.status,u.avatar_updated_at,IF(u.avatar_path IS NULL,0,1) AS has_avatar,t.name AS theater_name FROM users u LEFT JOIN theaters t ON t.id=u.theater_id WHERE u.id = {$userId} LIMIT 1");
     if (!$result) {
         jsonResponse(array('success' => false, 'message' => 'Không thể xác minh trạng thái tài khoản trong aurora_db: ' . $db->error), 500);
     }
@@ -396,6 +396,17 @@ $userTheaterColumn = $db->query("SHOW COLUMNS FROM users LIKE 'theater_id'");
 if (!$userTheaterColumn || $userTheaterColumn->num_rows === 0) {
     $db->query("ALTER TABLE users ADD COLUMN theater_id BIGINT UNSIGNED NULL");
 }
+$profileAvatarColumns = array(
+    'avatar_path' => "VARCHAR(255) NULL AFTER email",
+    'avatar_mime' => "VARCHAR(80) NULL AFTER avatar_path",
+    'avatar_updated_at' => "DATETIME NULL AFTER avatar_mime"
+);
+foreach ($profileAvatarColumns as $columnName => $columnDefinition) {
+    $avatarColumn = $db->query("SHOW COLUMNS FROM users LIKE '".$db->real_escape_string($columnName)."'");
+    if ((!$avatarColumn || $avatarColumn->num_rows === 0) && !$db->query("ALTER TABLE users ADD COLUMN `{$columnName}` {$columnDefinition}")) {
+        jsonResponse(array('success'=>false,'message'=>'Không thể chuẩn bị dữ liệu ảnh đại diện trong aurora_db: '.$db->error),500);
+    }
+}
 
 // PHP 5.2 on WAMP can occasionally reuse an old session id. Keep a separate,
 // signed TMS identity cookie so a reload always restores the account that most
@@ -423,7 +434,7 @@ function restoreTmsIdentity() {
     $expected = hash_hmac('sha256', $payload, $tmsIdentitySecret);
     if ($parts[2] !== $expected || (int)$parts[1] < time()) { clearTmsIdentity(); return; }
     $userId = (int)$parts[0];
-    $result = $db->query("SELECT u.id,u.username,u.full_name,u.email,u.phone,u.theater_id,u.role,u.status,t.name AS theater_name FROM users u LEFT JOIN theaters t ON t.id=u.theater_id WHERE u.id = {$userId} AND u.status = 'active' LIMIT 1");
+    $result = $db->query("SELECT u.id,u.username,u.full_name,u.email,u.phone,u.theater_id,u.role,u.status,u.avatar_updated_at,IF(u.avatar_path IS NULL,0,1) AS has_avatar,t.name AS theater_name FROM users u LEFT JOIN theaters t ON t.id=u.theater_id WHERE u.id = {$userId} AND u.status = 'active' LIMIT 1");
     if (!$result || !($user = $result->fetch_assoc())) { clearTmsIdentity(); return; }
     // The signed identity is intentionally authoritative over a stale PHP
     // session. It is only issued after a successful credential check.
@@ -825,6 +836,10 @@ if ($action === 'login' && $requestMethod === 'POST') {
             jsonResponse(array('success' => false, 'message' => 'Không thể ghi nhận lần đăng nhập trong aurora_db: ' . $db->error), 500);
         }
         unset($user['password_hash']);
+        $avatarResult = $db->query('SELECT avatar_updated_at,IF(avatar_path IS NULL,0,1) AS has_avatar FROM users WHERE id='.(int)$user['id'].' LIMIT 1');
+        $avatarRow = $avatarResult ? $avatarResult->fetch_assoc() : null;
+        $user['has_avatar'] = $avatarRow ? (bool)$avatarRow['has_avatar'] : false;
+        $user['avatar_updated_at'] = $avatarRow ? $avatarRow['avatar_updated_at'] : null;
 
         $user['role'] = AdminController::normalizeRole($user['role']);
         if ($user['role'] === 'super_admin') {
@@ -878,6 +893,69 @@ if ($action === 'me') {
     jsonResponse(array('success' => true, 'data' => $user));
 }
 
+if ($action === 'account-avatar') {
+    $sessionUser = requireAdmin();
+    $currentUserId = (int)$sessionUser['id'];
+    $avatarDirectory = dirname(dirname(dirname(__FILE__))) . DIRECTORY_SEPARATOR . 'uploads' . DIRECTORY_SEPARATOR . 'profile-avatars';
+
+    if ($requestMethod === 'GET') {
+        $targetUserId = isset($_GET['id']) ? (int)$_GET['id'] : $currentUserId;
+        $result = $db->query("SELECT avatar_path,avatar_mime,avatar_updated_at FROM users WHERE id={$targetUserId} AND status='active' LIMIT 1");
+        $avatar = $result ? $result->fetch_assoc() : null;
+        if (!$avatar || empty($avatar['avatar_path'])) jsonResponse(array('success'=>false,'message'=>'Tài khoản chưa có ảnh đại diện.'),404);
+        $safeName = basename($avatar['avatar_path']);
+        $path = $avatarDirectory . DIRECTORY_SEPARATOR . $safeName;
+        if (!is_file($path)) jsonResponse(array('success'=>false,'message'=>'Tệp ảnh đại diện không còn tồn tại.'),404);
+        header('X-Content-Type-Options: nosniff');
+        header('Cache-Control: private, max-age=300');
+        header('Content-Type: '.($avatar['avatar_mime'] ? $avatar['avatar_mime'] : 'image/jpeg'));
+        header('Content-Length: '.filesize($path));
+        header('Content-Disposition: inline; filename="avatar"');
+        readfile($path);
+        exit;
+    }
+
+    if ($requestMethod === 'POST') {
+        $file = isset($_FILES['avatar']) ? $_FILES['avatar'] : null;
+        if (!$file || !isset($file['error']) || $file['error'] !== UPLOAD_ERR_OK) jsonResponse(array('success'=>false,'message'=>'Không nhận được tệp ảnh hợp lệ.'),422);
+        $size = isset($file['size']) ? (int)$file['size'] : 0;
+        if ($size < 1 || $size > 5 * 1024 * 1024) jsonResponse(array('success'=>false,'message'=>'Ảnh đại diện phải nhỏ hơn 5 MB.'),422);
+        $imageInfo = @getimagesize($file['tmp_name']);
+        if (!$imageInfo || empty($imageInfo[0]) || empty($imageInfo[1])) jsonResponse(array('success'=>false,'message'=>'Tệp được chọn không phải là hình ảnh hợp lệ.'),422);
+        if ((int)$imageInfo[0] < 64 || (int)$imageInfo[1] < 64 || (int)$imageInfo[0] > 5000 || (int)$imageInfo[1] > 5000) jsonResponse(array('success'=>false,'message'=>'Kích thước ảnh phải từ 64×64 đến 5000×5000 pixel.'),422);
+        $mime = isset($imageInfo['mime']) ? strtolower($imageInfo['mime']) : '';
+        $extensions = array('image/jpeg'=>'jpg','image/png'=>'png','image/gif'=>'gif','image/webp'=>'webp');
+        if (!isset($extensions[$mime])) jsonResponse(array('success'=>false,'message'=>'Chỉ hỗ trợ ảnh JPG, PNG, GIF hoặc WebP.'),422);
+        if (!is_dir($avatarDirectory) && !mkdir($avatarDirectory, 0775, true)) jsonResponse(array('success'=>false,'message'=>'Không thể tạo thư mục lưu ảnh đại diện.'),500);
+        $random = function_exists('random_bytes') ? bin2hex(random_bytes(20)) : sha1(uniqid((string)mt_rand(), true).microtime());
+        $storedName = 'tms-'.$currentUserId.'-'.$random.'.'.$extensions[$mime];
+        $targetPath = $avatarDirectory . DIRECTORY_SEPARATOR . $storedName;
+        if (!move_uploaded_file($file['tmp_name'], $targetPath)) jsonResponse(array('success'=>false,'message'=>'Không thể lưu ảnh đại diện lên máy chủ.'),500);
+        $oldResult = $db->query("SELECT avatar_path FROM users WHERE id={$currentUserId} LIMIT 1");
+        $oldAvatar = $oldResult ? $oldResult->fetch_assoc() : null;
+        $storedEsc = $db->real_escape_string($storedName);
+        $mimeEsc = $db->real_escape_string($mime);
+        if (!$db->query("UPDATE users SET avatar_path='{$storedEsc}',avatar_mime='{$mimeEsc}',avatar_updated_at=NOW(),updated_at=NOW() WHERE id={$currentUserId} AND status='active'")) {
+            @unlink($targetPath);
+            jsonResponse(array('success'=>false,'message'=>'Không thể ghi ảnh đại diện vào aurora_db: '.$db->error),500);
+        }
+        if ($oldAvatar && !empty($oldAvatar['avatar_path']) && basename($oldAvatar['avatar_path']) !== $storedName) @unlink($avatarDirectory.DIRECTORY_SEPARATOR.basename($oldAvatar['avatar_path']));
+        $updated = $db->query("SELECT avatar_updated_at FROM users WHERE id={$currentUserId} LIMIT 1")->fetch_assoc();
+        writeTmsAuditLog($db,'PROFILE_AVATAR_UPDATED','Cập nhật ảnh đại diện tài khoản.',array('user_id'=>$currentUserId,'username'=>$sessionUser['username'],'role'=>$sessionUser['role'],'module'=>'account','entity_type'=>'user','entity_id'=>$currentUserId,'severity'=>'success','status_code'=>200));
+        jsonResponse(array('success'=>true,'message'=>'Đã cập nhật ảnh đại diện.','data'=>array('has_avatar'=>true,'avatar_updated_at'=>$updated['avatar_updated_at'])));
+    }
+
+    if ($requestMethod === 'DELETE') {
+        $result = $db->query("SELECT avatar_path FROM users WHERE id={$currentUserId} LIMIT 1");
+        $oldAvatar = $result ? $result->fetch_assoc() : null;
+        if (!$db->query("UPDATE users SET avatar_path=NULL,avatar_mime=NULL,avatar_updated_at=NULL,updated_at=NOW() WHERE id={$currentUserId}")) jsonResponse(array('success'=>false,'message'=>'Không thể xóa ảnh đại diện trong aurora_db.'),500);
+        if ($oldAvatar && !empty($oldAvatar['avatar_path'])) @unlink($avatarDirectory.DIRECTORY_SEPARATOR.basename($oldAvatar['avatar_path']));
+        writeTmsAuditLog($db,'PROFILE_AVATAR_REMOVED','Xóa ảnh đại diện tài khoản.',array('user_id'=>$currentUserId,'username'=>$sessionUser['username'],'role'=>$sessionUser['role'],'module'=>'account','entity_type'=>'user','entity_id'=>$currentUserId,'severity'=>'info','status_code'=>200));
+        jsonResponse(array('success'=>true,'message'=>'Đã xóa ảnh đại diện.','data'=>array('has_avatar'=>false,'avatar_updated_at'=>null)));
+    }
+    jsonResponse(array('success'=>false,'message'=>'Phương thức không được hỗ trợ cho ảnh đại diện.'),405);
+}
+
 if ($action === 'account-profile') {
     $sessionUser = requireAdmin();
     $userId = (int)$sessionUser['id'];
@@ -919,13 +997,14 @@ if ($action === 'account-profile') {
         jsonResponse(array('success'=>false,'message'=>'Phương thức không được hỗ trợ cho hồ sơ tài khoản.'),405);
     }
 
-    $profileResult = $db->query("SELECT u.id,u.username,u.full_name,u.email,u.phone,u.role,u.status,u.theater_id,u.last_login,u.created_at,u.updated_at,t.name AS theater_name,t.address AS theater_address,t.city AS theater_city,'' AS theater_phone,(SELECT COUNT(*) FROM screens s WHERE s.theater_id=t.id) AS total_screens,'active' AS theater_status FROM users u LEFT JOIN theaters t ON t.id=u.theater_id WHERE u.id={$userId} LIMIT 1");
+    $profileResult = $db->query("SELECT u.id,u.username,u.full_name,u.email,u.phone,u.role,u.status,u.theater_id,u.last_login,u.created_at,u.updated_at,u.avatar_updated_at,IF(u.avatar_path IS NULL,0,1) AS has_avatar,t.name AS theater_name,t.address AS theater_address,t.city AS theater_city,'' AS theater_phone,(SELECT COUNT(*) FROM screens s WHERE s.theater_id=t.id) AS total_screens,'active' AS theater_status FROM users u LEFT JOIN theaters t ON t.id=u.theater_id WHERE u.id={$userId} LIMIT 1");
     if (!$profileResult) jsonResponse(array('success'=>false,'message'=>'Không thể tải hồ sơ tài khoản từ aurora_db: '.$db->error),500);
     $profile = $profileResult->fetch_assoc();
     if (!$profile) jsonResponse(array('success'=>false,'message'=>'Không tìm thấy hồ sơ tài khoản trong aurora_db.'),404);
     $profile['id'] = (int)$profile['id'];
     $profile['theater_id'] = (int)$profile['theater_id'];
     $profile['total_screens'] = (int)$profile['total_screens'];
+    $profile['has_avatar'] = (bool)$profile['has_avatar'];
     $profile['role'] = AdminController::normalizeRole($profile['role']);
     if ($profile['role'] === 'super_admin') {
         $theaterCountResult = $db->query("SELECT COUNT(*) FROM theaters");

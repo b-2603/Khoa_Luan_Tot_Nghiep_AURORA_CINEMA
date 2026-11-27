@@ -1,6 +1,7 @@
-import { FormEvent, useEffect, useState } from 'react';
-import { Building2, CalendarDays, CheckCircle2, Clock3, Eye, EyeOff, KeyRound, Mail, MapPin, Phone, RefreshCw, Save, ShieldCheck, UserRound, X } from 'lucide-react';
+import { FormEvent, useEffect, useRef, useState } from 'react';
+import { Building2, CalendarDays, Camera, CheckCircle2, Clock3, Eye, EyeOff, KeyRound, Mail, MapPin, Phone, RefreshCw, Save, ShieldCheck, Trash2, Upload, UserRound, X } from 'lucide-react';
 import './AccountProfileModal.css';
+import './AccountProfileAvatar.css';
 
 export type AccountProfile = {
   id: number;
@@ -25,6 +26,8 @@ export type AccountProfile = {
   updated_at?: string | null;
   role_info?: { name?: string; badge?: string; color?: string; description?: string } | null;
   source?: string;
+  has_avatar?: boolean;
+  avatar_updated_at?: string | null;
 };
 
 type Props = {
@@ -48,6 +51,9 @@ export default function AccountProfileModal({ open, apiBase, onClose, onUpdated 
   const [error, setError] = useState('');
   const [success, setSuccess] = useState('');
   const [showPasswords, setShowPasswords] = useState(false);
+  const [uploadingAvatar, setUploadingAvatar] = useState(false);
+  const [avatarDragging, setAvatarDragging] = useState(false);
+  const avatarInput = useRef<HTMLInputElement>(null);
 
   const loadProfile = async () => {
     setLoading(true); setError(''); setSuccess('');
@@ -96,13 +102,41 @@ export default function AccountProfileModal({ open, apiBase, onClose, onUpdated 
 
   const roleName = profile?.role_info?.name || profile?.role || 'Tài khoản TMS';
   const initial = profile?.full_name?.trim().split(/\s+/).slice(-1)[0]?.[0]?.toUpperCase() || 'A';
+  const avatarUrl = profile?.has_avatar ? `${apiBase}?action=account-avatar&id=${profile.id}&v=${encodeURIComponent(profile.avatar_updated_at || '')}` : '';
+  const updateAvatar = async (selected: File) => {
+    setError(''); setSuccess('');
+    if (!/^image\/(jpeg|png|gif|webp)$/i.test(selected.type)) { setError('Chỉ hỗ trợ ảnh JPG, PNG, GIF hoặc WebP.'); return; }
+    if (selected.size > 5 * 1024 * 1024) { setError('Ảnh đại diện phải nhỏ hơn 5 MB.'); return; }
+    setUploadingAvatar(true);
+    try {
+      const data = new FormData(); data.append('avatar', selected);
+      const response = await fetch(`${apiBase}?action=account-avatar`, { method:'POST', credentials:'include', body:data });
+      const result = await response.json();
+      if (!response.ok || !result.success) throw new Error(result.message || 'Không thể tải ảnh đại diện.');
+      const value = { ...profile!, has_avatar:true, avatar_updated_at:result.data.avatar_updated_at };
+      setProfile(value); onUpdated(value); setSuccess(result.message || 'Đã cập nhật ảnh đại diện.');
+    } catch (reason) { setError(reason instanceof Error ? reason.message : 'Không thể tải ảnh đại diện.'); }
+    finally { setUploadingAvatar(false); if (avatarInput.current) avatarInput.current.value=''; }
+  };
+  const removeAvatar = async () => {
+    if (!profile?.has_avatar || uploadingAvatar) return;
+    setUploadingAvatar(true); setError(''); setSuccess('');
+    try {
+      const response = await fetch(`${apiBase}?action=account-avatar`, { method:'DELETE', credentials:'include' });
+      const result = await response.json();
+      if (!response.ok || !result.success) throw new Error(result.message || 'Không thể xóa ảnh đại diện.');
+      const value = { ...profile, has_avatar:false, avatar_updated_at:null };
+      setProfile(value); onUpdated(value); setSuccess(result.message || 'Đã xóa ảnh đại diện.');
+    } catch (reason) { setError(reason instanceof Error ? reason.message : 'Không thể xóa ảnh đại diện.'); }
+    finally { setUploadingAvatar(false); }
+  };
 
   return <div className="account-profile-backdrop" onMouseDown={event => { if (event.currentTarget === event.target && !saving) onClose(); }}>
     <section className="account-profile-modal" role="dialog" aria-modal="true" aria-labelledby="account-profile-title">
       <button className="account-profile-close" type="button" onClick={onClose} disabled={saving} aria-label="Đóng hồ sơ"><X size={19}/></button>
       {loading ? <div className="account-profile-loading"><RefreshCw className="spin"/><b>Đang tải hồ sơ tài khoản</b><span>Đồng bộ dữ liệu trực tiếp từ aurora_db…</span></div> : profile ? <>
         <header className="account-profile-hero">
-          <div className="account-profile-avatar">{initial}</div>
+          <button className={`account-profile-avatar ${avatarUrl?'has-image':''}`} type="button" onClick={()=>avatarInput.current?.click()} disabled={uploadingAvatar} title="Thay ảnh đại diện">{avatarUrl?<img src={avatarUrl} alt={`Ảnh đại diện ${profile.full_name}`}/>:initial}<span>{uploadingAvatar?<RefreshCw className="spin"/>:<Camera/>}</span></button>
           <div className="account-profile-identity"><span>HỒ SƠ TÀI KHOẢN TMS</span><h2 id="account-profile-title">{profile.full_name}</h2><p>@{profile.username} · {roleName}</p></div>
           <div className="account-profile-status"><span><i/>{profile.status === 'active' ? 'Đang hoạt động' : profile.status}</span></div>
         </header>
@@ -122,6 +156,12 @@ export default function AccountProfileModal({ open, apiBase, onClose, onUpdated 
 
           <main className="account-profile-editor">
             <div className="account-profile-section-title"><span><UserRound/></span><div><h3>Thông tin cá nhân</h3><p>Cập nhật thông tin liên hệ của tài khoản</p></div></div>
+            <input ref={avatarInput} type="file" hidden accept="image/jpeg,image/png,image/gif,image/webp" onChange={event=>{const selected=event.target.files?.[0];if(selected)void updateAvatar(selected)}}/>
+            <section className={`account-avatar-editor ${avatarDragging?'dragging':''}`} onDragOver={event=>{event.preventDefault();setAvatarDragging(true)}} onDragLeave={()=>setAvatarDragging(false)} onDrop={event=>{event.preventDefault();setAvatarDragging(false);const selected=event.dataTransfer.files?.[0];if(selected)void updateAvatar(selected)}}>
+              <div className="account-avatar-preview">{avatarUrl?<img src={avatarUrl} alt="Ảnh đại diện hiện tại"/>:<span>{initial}</span>}<i>{uploadingAvatar?<RefreshCw className="spin"/>:<Camera/>}</i></div>
+              <div className="account-avatar-copy"><b>Ảnh đại diện</b><p>Kéo thả ảnh vào đây hoặc chọn từ máy tính. JPG, PNG, GIF, WebP · tối đa 5 MB.</p><small>Ảnh vuông, tối thiểu 256×256 pixel sẽ hiển thị đẹp nhất.</small></div>
+              <div className="account-avatar-actions"><button type="button" className="upload" onClick={()=>avatarInput.current?.click()} disabled={uploadingAvatar}><Upload/>{profile.has_avatar?'Thay ảnh':'Tải ảnh lên'}</button>{profile.has_avatar&&<button type="button" className="remove" onClick={()=>void removeAvatar()} disabled={uploadingAvatar} title="Xóa ảnh"><Trash2/></button>}</div>
+            </section>
             <div className="account-profile-grid">
               <label className="wide"><span>Họ và tên <em>*</em></span><div><UserRound/><input value={form.full_name} maxLength={120} onChange={event=>setForm({...form,full_name:event.target.value})}/></div></label>
               <label><span>Email công việc <em>*</em></span><div><Mail/><input type="email" value={form.email} maxLength={180} onChange={event=>setForm({...form,email:event.target.value})}/></div></label>

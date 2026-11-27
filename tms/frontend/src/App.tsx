@@ -18,6 +18,7 @@ import MovieManagementWorkspace from './components/MovieManagementWorkspace';
 import AccountProfileModal, { type AccountProfile } from './components/AccountProfileModal';
 import UserPreferencesPage, { DEFAULT_TMS_PREFERENCES, type TmsPreferences } from './components/UserPreferencesPage';
 import CommunicationWorkspace from './components/CommunicationWorkspace';
+import CommunicationErrorBoundary from './components/CommunicationErrorBoundary';
 import './components/MarketingWorkspace.css';
 import './components/MarketingReviewHierarchy.css';
 import './components/MarketingWorkspace.layout.css';
@@ -249,7 +250,7 @@ function rbacModuleForView(view: string, role?: TMSRole) {
 // ============================================================
 // DATA TYPES
 // ============================================================
-interface TMSUser { id?: number; username: string; full_name: string; role: TMSRole; phone?: string; email?: string; theater_id?: number; theater_name?: string; status?: string; last_login?: string | null; membership_level?: string; points?: number; booking_count?: number; total_spent?: number; oauth_providers?: string | null; created_at?: string; account_type?: 'internal' | 'customer'; }
+interface TMSUser { id?: number; username: string; full_name: string; role: TMSRole; phone?: string; email?: string; theater_id?: number; theater_name?: string; status?: string; last_login?: string | null; membership_level?: string; points?: number; booking_count?: number; total_spent?: number; oauth_providers?: string | null; created_at?: string; account_type?: 'internal' | 'customer'; has_avatar?: boolean; avatar_updated_at?: string | null; }
 type PermissionLevel = 'full' | 'manage' | 'view' | 'none';
 type CurrentPermission = { module:string; level:PermissionLevel; actions:PermissionActions; updated_at?:string };
 function formatLastLogin(value?: string | null) {
@@ -840,7 +841,7 @@ export default function App() {
           // Do not turn a recoverable session mismatch into an automatic
           // logout; the account returned by the authenticated API is restored.
           window.sessionStorage.setItem('aurora_tms_username', user.username);
-          const restoredUser = { id: user.id, username: user.username, full_name: user.full_name, role: toTmsRole(user.role), phone: user.phone, email: user.email, theater_id: Number(user.theater_id || 0), theater_name: user.theater_name, status: user.status } as TMSUser;
+          const restoredUser = { id: user.id, username: user.username, full_name: user.full_name, role: toTmsRole(user.role), phone: user.phone, email: user.email, theater_id: Number(user.theater_id || 0), theater_name: user.theater_name, status: user.status, has_avatar:Boolean(user.has_avatar), avatar_updated_at:user.avatar_updated_at } as TMSUser;
           setCurrentUser(restoredUser);
           setActive(restoredTmsView(restoredUser));
           setIsLoggedIn(true);
@@ -2353,7 +2354,7 @@ export default function App() {
         const user = result.data.user;
         const role = toTmsRole(user.role);
         window.sessionStorage.setItem('aurora_tms_username', user.username);
-        setCurrentUser({ id: user.id, username: user.username, full_name: user.full_name, role, phone: user.phone, email: user.email, theater_id: Number(user.theater_id || 0), theater_name: user.theater_name, status: user.status });
+        setCurrentUser({ id: user.id, username: user.username, full_name: user.full_name, role, phone: user.phone, email: user.email, theater_id: Number(user.theater_id || 0), theater_name: user.theater_name, status: user.status, has_avatar:Boolean(user.has_avatar), avatar_updated_at:user.avatar_updated_at });
         setIsLoggedIn(true); setActive('dashboard');
       } else { setErrorMsg(result.message || 'Tên đăng nhập hoặc mật khẩu không chính xác.'); }
     } catch {
@@ -2953,7 +2954,7 @@ export default function App() {
     // the only valid source of truth: plans submitted by Marketing for review.
     if (role === 'super_admin' && (a === 'theater_plans' || a === 'theater_plan_approvals' || a === 'Duyệt kế hoạch phim' || a === 'Duyệt kế hoạch' || a === 'Kế hoạch phim' || a === 'Phân bổ phim cho rạp' || a === 'marketing_approvals')) return <MarketingPlanApproval apiBase={API_BASE} notify={showSystemNotice} requestConfirm={requestSystemConfirmation}/>;
     if (role === 'super_admin' && (a === 'promotion_approvals' || a === 'Duyệt chương trình khuyến mãi' || a === 'Duyệt kế hoạch CTKM')) return <PromotionApprovalWorkspace apiBase={API_BASE} notify={showSystemNotice} requestConfirm={requestSystemConfirmation}/>;
-    if (a === 'communications' || a === 'Kênh trao đổi') return <CommunicationWorkspace apiBase={API_BASE} notify={showSystemNotice}/>;
+    if (a === 'communications' || a === 'Kênh trao đổi') return <CommunicationErrorBoundary><CommunicationWorkspace apiBase={API_BASE} notify={showSystemNotice}/></CommunicationErrorBoundary>;
     if (role === 'marketing_manager') return <MarketingWorkspace active={a} apiBase={API_BASE} notify={showSystemNotice} requestConfirm={requestSystemConfirmation} onNavigate={setActive}/>;
 
     if (a === 'dashboard' || a === 'Tổng quan tài chính') return renderDashboard();
@@ -3911,13 +3912,13 @@ export default function App() {
                 {preferences.show_greeting && <div className="hello"><span>Xin chào,</span><strong>{displayName}</strong></div>}
                 {preferences.show_role_badge && <span className={`role-badge-pill ${role}`}>{rc.badge}</span>}
                 <ChevronDown size={15} />
-                <div className="user-icon"><UserRound size={20} /></div>
+                <div className={`user-icon ${currentUser?.has_avatar?'has-avatar':''}`}>{currentUser?.has_avatar&&currentUser.id?<img src={`${API_BASE}?action=account-avatar&id=${currentUser.id}&v=${encodeURIComponent(currentUser.avatar_updated_at||'')}`} alt=""/>:<UserRound size={20} />}</div>
               </button>
 
               {userDropdownOpen && (
                 <div className="user-dropdown-menu account-dropdown" style={{ width: 290 }}>
                   <div className="user-dropdown-header">
-                    <div style={{ fontSize: '1.4rem', marginBottom: 4 }}>{rc.emoji}</div>
+                    <div className={`account-dropdown-avatar ${currentUser?.has_avatar?'has-avatar':''}`}>{currentUser?.has_avatar&&currentUser.id?<img src={`${API_BASE}?action=account-avatar&id=${currentUser.id}&v=${encodeURIComponent(currentUser.avatar_updated_at||'')}`} alt=""/>:rc.emoji}</div>
                     <b>{displayName}</b>
                     <div style={{ fontSize: '0.78rem', color: rc.color, fontWeight: 700, marginTop: 2 }}>{rc.name}</div>
                     <div style={{ fontSize: '0.74rem', color: '#64748b', marginTop: 1 }}>@{currentUser?.username}</div>
@@ -3960,7 +3961,7 @@ export default function App() {
         open={showAccountProfile}
         apiBase={API_BASE}
         onClose={() => setShowAccountProfile(false)}
-        onUpdated={(profile: AccountProfile) => setCurrentUser(previous => previous ? { ...previous, full_name:profile.full_name, email:profile.email, phone:profile.phone, theater_name:profile.theater_name || previous.theater_name } : previous)}
+        onUpdated={(profile: AccountProfile) => setCurrentUser(previous => previous ? { ...previous, full_name:profile.full_name, email:profile.email, phone:profile.phone, theater_name:profile.theater_name || previous.theater_name, has_avatar:profile.has_avatar, avatar_updated_at:profile.avatar_updated_at } : previous)}
       />
 
       {/* MODAL: ADD/EDIT USER (super_admin only) */}
