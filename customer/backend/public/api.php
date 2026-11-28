@@ -1,5 +1,11 @@
 <?php
 
+// Keep mysqli error behavior compatible with PHP 5.x/7.x fallback branches
+// (e.g., `if ($stmt) ... else ...`) when running under XAMPP PHP 8.2+.
+if (function_exists('mysqli_report') && defined('MYSQLI_REPORT_OFF')) {
+    mysqli_report(MYSQLI_REPORT_OFF);
+}
+
 // Compatibility endpoint for WAMP installations that still run an old PHP version.
 // It reads the same aurora_db used by the Laravel API and does not contain seed data.
 
@@ -3586,13 +3592,13 @@ if ($resource === 'bookings') {
 
         $takenSql = "SELECT COUNT(*) FROM booking_seats bs INNER JOIN bookings b ON b.id = bs.booking_id WHERE b.showtime_id = ? AND bs.seat_id IN (" . implode(',', array_fill(0, count($seatIds), '?')) . ") AND b.status NOT IN ('CANCELLED','EXPIRED')";
         $stmt = $db->prepare($takenSql);
-        $refs = array(str_repeat('i', count($seatIds) + 1), $showtimeId); foreach ($seatIds as $key => $value) $refs[] = &$seatIds[$key];
+        $refs = array(str_repeat('i', count($seatIds) + 1), &$showtimeId); foreach ($seatIds as $key => $value) $refs[] = &$seatIds[$key];
         call_user_func_array(array($stmt, 'bind_param'), $refs);
         $stmt->execute(); $taken = 0; $stmt->bind_result($taken); $stmt->fetch(); $stmt->close();
         if ((int)$taken > 0) throw new Exception('Một hoặc nhiều ghế vừa được đặt bởi khách khác.');
         $lockedSql = "SELECT COUNT(*) FROM tms_showtime_seat_locks WHERE showtime_id = ? AND seat_id IN (" . implode(',', array_fill(0, count($seatIds), '?')) . ")";
         $stmt = $db->prepare($lockedSql);
-        $refs = array(str_repeat('i', count($seatIds) + 1), $showtimeId); foreach ($seatIds as $key => $value) $refs[] = &$seatIds[$key];
+        $refs = array(str_repeat('i', count($seatIds) + 1), &$showtimeId); foreach ($seatIds as $key => $value) $refs[] = &$seatIds[$key];
         call_user_func_array(array($stmt, 'bind_param'), $refs);
         $stmt->execute(); $locked = 0; $stmt->bind_result($locked); $stmt->fetch(); $stmt->close();
         if ((int)$locked > 0) throw new Exception('Một hoặc nhiều ghế đã được rạp khóa cho suất chiếu này.');
@@ -3912,9 +3918,12 @@ if ($resource === 'change_password') {
 if ($resource === 'booking_history') {
     $userId = aurora_require_customer($db, 'Vui lòng đăng nhập tài khoản khách hàng để xem lịch sử đặt vé.');
 
-    $sql = "SELECT b.id, b.booking_code, b.total_amount, b.status, st.starts_at,
-                   m.title, t.name, sc.name,
-                   GROUP_CONCAT(CONCAT(se.seat_row, se.seat_number) ORDER BY se.seat_row, se.seat_number SEPARATOR ', ') AS seats
+    $sql = "SELECT b.id, b.booking_code, b.total_amount, b.status, b.created_at, st.starts_at,
+                   m.title, m.poster_url, m.format, m.age_rating, t.name, sc.name,
+                   GROUP_CONCAT(CONCAT(se.seat_row, se.seat_number) ORDER BY se.seat_row, se.seat_number SEPARATOR ', ') AS seats,
+                   (SELECT o.payment_method FROM orders o WHERE o.booking_id = b.id ORDER BY o.id DESC LIMIT 1) AS payment_method,
+                   (SELECT COALESCE(NULLIF(pt.provider_transaction_no, ''), pt.txn_ref) FROM online_payment_transactions pt WHERE pt.booking_id = b.id ORDER BY pt.id DESC LIMIT 1) AS payment_ref,
+                   (SELECT COUNT(*) FROM customer_booking_tickets cbt WHERE cbt.booking_id = b.id) AS ticket_count
             FROM bookings b
             INNER JOIN showtimes st ON st.id = b.showtime_id
             INNER JOIN movies m ON m.id = st.movie_id
@@ -3923,19 +3932,32 @@ if ($resource === 'booking_history') {
             LEFT JOIN booking_seats bs ON bs.booking_id = b.id
             LEFT JOIN seats se ON se.id = bs.seat_id
             WHERE b.user_id = ?
-            GROUP BY b.id, b.booking_code, b.total_amount, b.status, st.starts_at, m.title, t.name, sc.name
-            ORDER BY st.starts_at DESC";
+            GROUP BY b.id, b.booking_code, b.total_amount, b.status, b.created_at, st.starts_at, m.title, m.poster_url, m.format, m.age_rating, t.name, sc.name
+            ORDER BY b.created_at DESC, b.id DESC";
     $stmt = $db->prepare($sql);
     if (!$stmt) aurora_response(array('message' => 'Không thể tải lịch sử đặt vé.'), 500);
     $stmt->bind_param('i', $userId);
     $stmt->execute();
-    $stmt->bind_result($id, $code, $totalAmount, $status, $startsAt, $movieTitle, $theaterName, $screenName, $seats);
+    $stmt->bind_result($id, $code, $totalAmount, $status, $createdAt, $startsAt, $movieTitle, $posterUrl, $movieFormat, $ageRating, $theaterName, $screenName, $seats, $paymentMethod, $paymentRef, $ticketCount);
     $bookings = array();
     while ($stmt->fetch()) {
         $bookings[] = array(
-            'id' => (int)$id, 'code' => $code, 'totalAmount' => (float)$totalAmount,
-            'status' => $status, 'startsAt' => $startsAt, 'movieTitle' => $movieTitle,
-            'theaterName' => $theaterName, 'screenName' => $screenName, 'seats' => $seats
+            'id' => (int)$id,
+            'code' => $code,
+            'totalAmount' => (float)$totalAmount,
+            'status' => $status,
+            'createdAt' => $createdAt,
+            'startsAt' => $startsAt,
+            'movieTitle' => $movieTitle,
+            'posterUrl' => $posterUrl,
+            'format' => $movieFormat,
+            'ageRating' => $ageRating,
+            'theaterName' => $theaterName,
+            'screenName' => $screenName,
+            'seats' => $seats,
+            'paymentMethod' => $paymentMethod,
+            'paymentRef' => $paymentRef,
+            'ticketCount' => (int)$ticketCount
         );
     }
     $stmt->close();

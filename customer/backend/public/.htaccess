@@ -1,6 +1,8 @@
 <IfModule mod_rewrite.c>
     RewriteEngine On
 
+    RewriteRule ^vnpay-return$ vnpay_return.php [L,QSA]
+
     RewriteCond %{REQUEST_FILENAME} !-d
     RewriteCond %{REQUEST_FILENAME} !-f
     RewriteRule ^ index.php [L]
@@ -13,10 +15,6 @@
 </IfModule>
 
 <IfModule mod_headers.c>
-    SetEnvIf Origin "^https?://(localhost|127\\.0\\.0\\.1)(:3000|:5173)?$" ACAO=$0
-    Header always set Access-Control-Allow-Origin "%{ACAO}e" env=ACAO
-    Header always set Access-Control-Allow-Credentials "true"
-    Header always set Access-Control-Allow-Headers "Content-Type"
-    Header always set Access-Control-Allow-Methods "GET, POST, OPTIONS"
+    # CORS headers are emitted by api.php; avoid duplicating Access-Control-Allow-Origin under XAMPP mod_headers.
     Header always set Vary "Origin"
 </IfModule>

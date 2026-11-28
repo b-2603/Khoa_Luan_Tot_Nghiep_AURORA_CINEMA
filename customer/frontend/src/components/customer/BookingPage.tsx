@@ -15,6 +15,7 @@ import {
   RefreshCw, ShieldCheck, Sparkles, Tag, Ticket, User, X,
 } from 'lucide-react';
 import { useEffect, useRef, useState } from 'react';
+import AutoPaymentTicketStep, { type ActiveOnlinePayment } from './AutoPaymentTicketStep';
 
 const API = 'http://localhost/AURORA%20CINEMA/customer/backend/public/api.php';
 const HOLD_SECONDS = 600; // 10 phút giữ ghế
@@ -1180,12 +1181,13 @@ function PaymentStep({
   onApplyVoucher, onRemoveVoucher, payMethod, setPayMethod, user, error, onBack, vnpayConfig
 }: any) {
   const ticketPrice = showtime.ticket_price;
-  const PAY_METHODS = [
+  const PAY_METHODS: Array<{ id: PayMethod; title: string; desc: string; accent: string; bg: string; icon: JSX.Element }> = [
     {
       id: 'qr_vnpay',
       title: 'VNPAY Payment Gateway',
       desc: t('Thanh toán thật trên cổng VNPAY bằng QR, thẻ ATM hoặc tài khoản ngân hàng', 'Real payment on VNPAY by QR, ATM card or bank account', lang),
-      badge: 'Bảo mật',
+      accent: '#0d1b2e',
+      bg: '#f1f5f9',
       icon: <QrCode size={20} color="#0d1b2e" />,
     },
   ];
@@ -1530,12 +1532,12 @@ function PaymentStep({
                 key={pm.id}
                 className={`checkout-payment-option ${isChecked ? 'active' : ''}`}
                 style={{
-                  display: 'flex', alignItems: 'center', gap: 14,
-                  padding: '14px 18px', borderRadius: 12,
-                  border: `1.5px solid ${isChecked ? '#0d1b2e' : '#e2e8f0'}`,
+                  display: 'flex', alignItems: 'center', gap: 12,
+                  padding: '13px 16px', borderRadius: 12,
+                  border: `1.5px solid ${isChecked ? pm.accent : '#e2e8f0'}`,
                   background: isChecked ? '#f8fafc' : '#ffffff',
-                  cursor: 'pointer', transition: 'all 0.15s cubic-bezier(0.16, 1, 0.3, 1)',
-                  boxShadow: isChecked ? '0 2px 8px rgba(13,27,46,0.08)' : 'none',
+                  cursor: 'pointer', transition: 'all 0.15s ease',
+                  boxShadow: isChecked ? '0 2px 10px rgba(13,27,46,0.07)' : 'none',
                 }}
               >
                 <input
@@ -1544,30 +1546,25 @@ function PaymentStep({
                   value={pm.id}
                   checked={isChecked}
                   onChange={() => setPayMethod(pm.id)}
-                  style={{ accentColor: '#0d1b2e', width: 18, height: 18 }}
+                  style={{ accentColor: pm.accent, width: 17, height: 17, flexShrink: 0 }}
                 />
                 <div style={{
-                  width: 36, height: 36, borderRadius: 8,
-                  background: '#ffffff', border: '1px solid #e2e8f0',
+                  width: 38, height: 38, borderRadius: 10,
+                  background: pm.bg,
                   display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0
                 }}>
                   {pm.icon}
                 </div>
-                <div style={{ flex: 1 }}>
-                  <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-                    <span style={{ fontSize: 14, fontWeight: isChecked ? 800 : 600, color: '#0d1b2e' }}>
-                      {pm.title}
-                    </span>
-                    {pm.badge && (
-                      <span style={{ fontSize: 10, fontWeight: 800, background: '#dcfce7', color: '#15803d', padding: '1px 6px', borderRadius: 4 }}>
-                        {pm.badge}
-                      </span>
-                    )}
+                <div style={{ flex: 1, minWidth: 0 }}>
+                  <div style={{ fontSize: 14, fontWeight: 700, color: '#0d1b2e', lineHeight: 1.3 }}>
+                    {pm.title}
                   </div>
-                  <div style={{ fontSize: 11.5, color: '#64748b', marginTop: 2 }}>{pm.desc}</div>
+                  <div style={{ fontSize: 12, color: '#64748b', marginTop: 2, lineHeight: 1.3 }}>
+                    {pm.desc}
+                  </div>
                 </div>
                 {isChecked && (
-                  <span style={{ color: '#0d1b2e', fontWeight: 800, fontSize: 16 }}>✓</span>
+                  <Check size={17} color={pm.accent} style={{ flexShrink: 0 }} />
                 )}
               </label>
             );

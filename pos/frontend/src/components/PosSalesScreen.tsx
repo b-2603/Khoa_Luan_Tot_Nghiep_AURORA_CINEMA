@@ -81,6 +81,10 @@ export default function PosSalesScreen({
   const [combos, setCombos] = useState<Combo[]>([]);
   const [comboQuantities, setComboQuantities] = useState<Record<string, number>>({});
   const [paymentMethod, setPaymentMethod] = useState<'CASH' | 'CARD' | 'TRANSFER'>('CASH');
+  const [posQr, setPosQr] = useState<{ txn_ref: string; amount: number; bank_id: string; account_no: string; account_name: string; vietqr_url: string; sepay_enabled: boolean } | null>(null);
+  const [posQrLoading, setPosQrLoading] = useState(false);
+  const [posQrChecking, setPosQrChecking] = useState(false);
+  const posQrSettledRef = useRef(false);
   const [amountReceived, setAmountReceived] = useState('');
   const [paymentOpen, setPaymentOpen] = useState(false);
   const [search, setSearch] = useState('');
@@ -238,7 +242,7 @@ export default function PosSalesScreen({
     finally { setSubmitting(false); }
   }
 
-  async function submitProductOrder(){
+  async function submitProductOrder(paymentRef?: string){
     if(total<=0){setError('Vui lòng chọn ít nhất một sản phẩm.');return;}if(paymentMethod==='CASH'&&received<total){setError('Số tiền khách đưa chưa đủ.');return;}setSubmitting(true);setError('');
     try{const response=await fetch(`${API_URL}?action=product_order`,{method:'POST',credentials:'include',headers:{'Content-Type':'application/json'},body:JSON.stringify({sales_area:workspace,items:Object.entries(comboQuantities).filter(([,q])=>q>0).map(([code,quantity])=>({code,quantity})),customer_id:selectedMember?.id||null,redeem_points:appliedRedeemPoints,promotion_deployment_id:selectedPromotionId,payment_method:paymentMethod,amount_received:received})});const result=await readApiResponse(response);if(!response.ok||!result.success)throw new Error(result.message);setReceipt(result.data);setPaymentOpen(false);setComboQuantities({});setAmountReceived('');setRedeemPoints(0);setSelectedPromotionId(null);await loadCatalog(selectedDate,workspace);}catch(requestError){setError(requestError instanceof Error?requestError.message:'Không thể hoàn tất đơn hàng.');}finally{setSubmitting(false);}
   }

@@ -1,6 +1,6 @@
 /**
  * AURORA CINEMAS EMS - Unified API Client Service
- * Kết nối đồng bộ với Backend PHP & CSDL MySQL (aurora_ems)
+ * Kết nối đồng bộ với Backend PHP & CSDL MySQL (aurora_db)
  * Tự động đồng bộ với LocalStorage khi Offline để đảm bảo 100% trải nghiệm mượt mà
  */
 
@@ -26,7 +26,7 @@ export async function checkBackendHealth(): Promise<{ connected: boolean; messag
     const data = await res.json();
     return {
       connected: true,
-      message: 'Kết nối thành công CSDL MySQL (aurora_ems:3306)',
+      message: 'Kết nối thành công CSDL MySQL (aurora_db:3306)',
       data
     };
   } catch  {
@@ -48,21 +48,34 @@ export async function fetchEmployees(search = '', dept = 'all'): Promise<User[]>
     if (res.ok) {
       const json = await res.json();
       if (json.data && Array.isArray(json.data)) {
-        // Map backend snake_case to frontend camelCase
-        const mappedUsers: User[] = json.data.map((u: any) => ({
-          id: `usr-${u.id}`,
-          staffCode: u.phone || u.staff_code,
-          name: u.name,
-          email: u.email,
-          role: u.role,
-          department: u.department,
-          avatar: u.avatar || 'https://images.unsplash.com/photo-1534528741775-53994a69daeb?w=150&auto=format&fit=crop&q=80',
-          phone: u.phone,
-          joinDate: u.join_date,
-          status: u.status,
-          performanceScore: u.performance_score
-        }));
-        // Update local cache
+        const localUsers = storage.getUsers();
+        const cleanId = (val?: string) => String(val || '').replace('usr-', '').trim();
+        const mappedUsers: User[] = json.data.map((u: any) => {
+          const localMatch = localUsers.find(
+            lu => cleanId(lu.id) === String(u.id) || (u.phone && lu.phone === u.phone)
+          );
+          const backendAvatar =
+            u.avatar && !(u.avatar.startsWith('data:image/') && u.avatar.length < 300)
+              ? u.avatar
+              : '';
+          const bestAvatar =
+            localMatch?.avatar?.startsWith('data:image/')
+              ? localMatch.avatar
+              : backendAvatar || localMatch?.avatar || 'https://images.unsplash.com/photo-1534528741775-53994a69daeb?w=150&auto=format&fit=crop&q=80';
+          return {
+            id: `usr-${u.id}`,
+            staffCode: u.phone || u.staff_code,
+            name: u.name,
+            email: u.email,
+            role: u.role,
+            department: u.department,
+            avatar: bestAvatar,
+            phone: u.phone,
+            joinDate: u.join_date,
+            status: u.status,
+            performanceScore: u.performance_score
+          };
+        });
         localStorage.setItem('aurora_ems_users', JSON.stringify(mappedUsers));
         return mappedUsers;
       }
@@ -131,7 +144,7 @@ export async function updateEmployee(id: string, updates: Partial<User>): Promis
           email: u.email,
           role: u.role,
           department: u.department,
-          avatar: u.avatar || updates.avatar || 'https://images.unsplash.com/photo-1534528741775-53994a69daeb?w=150&auto=format&fit=crop&q=80',
+          avatar: updates.avatar || u.avatar || 'https://images.unsplash.com/photo-1534528741775-53994a69daeb?w=150&auto=format&fit=crop&q=80',
           phone: u.phone,
           joinDate: u.join_date || updates.joinDate || new Date().toISOString().split('T')[0],
           status: u.status,
@@ -188,14 +201,14 @@ export async function fetchCourses(): Promise<Course[]> {
             quizId: `quiz-${c.id}`,
             enrolledCount: c.enrolled_count,
             completedCount: c.completed_count,
-            instructorName: matched?.instructorName || c.instructorName || 'Phạm Thu Hương',
-            instructorTitle: matched?.instructorTitle || c.instructorTitle || 'Quản lý Đào tạo Aurora',
-            instructorAvatar: matched?.instructorAvatar || c.instructorAvatar || 'https://images.unsplash.com/photo-1573496359142-b8d87734a5a2?w=150&auto=format&fit=crop&q=80',
-            level: matched?.level || c.level || 'Tiêu Chuẩn',
-            rating: matched?.rating || c.rating || 4.9,
-            reviewCount: matched?.reviewCount || c.reviewCount || 45,
-            modules: matched?.modules && matched.modules.length > 0 ? matched.modules : (c.modules || []),
-            examCheckpoints: matched?.examCheckpoints || []
+            instructorName: c.instructorName || matched?.instructorName || 'Phạm Thu Hương',
+            instructorTitle: c.instructorTitle || matched?.instructorTitle || 'Quản lý Đào tạo Aurora',
+            instructorAvatar: c.instructorAvatar || matched?.instructorAvatar || 'https://images.unsplash.com/photo-1573496359142-b8d87734a5a2?w=150&auto=format&fit=crop&q=80',
+            level: c.level || matched?.level || 'Tiêu Chuẩn SOP',
+            rating: c.rating || matched?.rating || 4.9,
+            reviewCount: c.reviewCount || matched?.reviewCount || 45,
+            modules: (c.modules && c.modules.length > 0) ? c.modules : (matched?.modules || []),
+            examCheckpoints: (c.examCheckpoints && c.examCheckpoints.length > 0) ? c.examCheckpoints : (matched?.examCheckpoints || [])
           };
         });
         localStorage.setItem('aurora_ems_courses', JSON.stringify(mappedCourses));
@@ -206,6 +219,106 @@ export async function fetchCourses(): Promise<Course[]> {
     console.warn('[API Client] Using storage cache for Courses');
   }
   return storage.getCourses();
+}
+
+export async function saveCourseApi(course: Course, isEdit = false): Promise<{ course: Course; syncedToDb: boolean }> {
+  const payload = {
+    title: course.title,
+    description: course.description,
+    category: course.category,
+    duration_minutes: course.durationMinutes,
+    is_ctkm: course.isCtkm,
+    thumbnail: course.thumbnail,
+    level: course.level,
+    instructorName: course.instructorName,
+    instructorTitle: course.instructorTitle,
+    instructorAvatar: course.instructorAvatar,
+    modules: course.modules,
+    examCheckpoints: course.examCheckpoints,
+    rating: course.rating,
+    reviewCount: course.reviewCount,
+  };
+
+  try {
+    const numericId = parseInt(String(course.id).replace('crs-', ''), 10);
+    const shouldUpdate = isEdit && !isNaN(numericId) && numericId > 0 && numericId < 1000000000;
+    const url = shouldUpdate ? `${API_BASE_URL}/courses/${numericId}` : `${API_BASE_URL}/courses`;
+    const res = await fetch(url, {
+      method: shouldUpdate ? 'PUT' : 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(payload),
+      signal: AbortSignal.timeout(4000),
+    });
+
+    if (res.ok) {
+      const json = await res.json();
+      const dbId = json.id || numericId;
+      const persistedCourse: Course = {
+        ...course,
+        id: `crs-${dbId}`,
+        quizId: course.quizId && !course.quizId.includes(String(Date.now()).slice(0, 5)) ? course.quizId : `quiz-${dbId}`,
+      };
+      storage.saveCourse(persistedCourse);
+      return { course: persistedCourse, syncedToDb: true };
+    }
+  } catch (err) {
+    console.warn('[API Client] Save course offline fallback:', err);
+  }
+
+  storage.saveCourse(course);
+  return { course, syncedToDb: false };
+}
+
+export async function deleteCourseApi(id: string): Promise<boolean> {
+  storage.deleteCourse(id);
+  const numericId = parseInt(String(id).replace('crs-', ''), 10);
+  if (!isNaN(numericId) && numericId > 0 && numericId < 1000000000) {
+    try {
+      const res = await fetch(`${API_BASE_URL}/courses/${numericId}`, {
+        method: 'DELETE',
+        signal: AbortSignal.timeout(4000),
+      });
+      return res.ok;
+    } catch (err) {
+      console.warn('[API Client] Delete course offline fallback:', err);
+    }
+  }
+  return false;
+}
+
+export async function saveQuizApi(quiz: Quiz): Promise<{ quiz: Quiz; syncedToDb: boolean }> {
+  const numericCourseId = parseInt(String(quiz.courseId).replace('crs-', ''), 10);
+  if (!isNaN(numericCourseId) && numericCourseId > 0 && numericCourseId < 1000000000) {
+    try {
+      const res = await fetch(`${API_BASE_URL}/quizzes`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          course_id: numericCourseId,
+          title: quiz.title,
+          pass_score: quiz.passScore,
+          duration_minutes: quiz.durationMinutes,
+          is_ctkm: quiz.isCtkm,
+          questions: quiz.questions,
+        }),
+        signal: AbortSignal.timeout(4000),
+      });
+      if (res.ok) {
+        const json = await res.json();
+        const persistedQuiz: Quiz = {
+          ...quiz,
+          id: json.id ? `quiz-${json.id}` : quiz.id,
+        };
+        storage.saveQuiz(persistedQuiz);
+        return { quiz: persistedQuiz, syncedToDb: true };
+      }
+    } catch (err) {
+      console.warn('[API Client] Save quiz offline fallback:', err);
+    }
+  }
+
+  storage.saveQuiz(quiz);
+  return { quiz, syncedToDb: false };
 }
 
 // 3. BÀI KIỂM TRA ĐÁNH GIÁ (UC06, UC08)
@@ -752,37 +865,33 @@ export async function fetchAttendances(): Promise<Attendance[]> {
           note: a.note
         }));
 
-        // BẢO VỆ DỮ LIỆU: Merge với dữ liệu điểm danh thực tế trong localStorage
-        // Đảm bảo nhân viên vừa bấm chấm công thì Quản lý xem là thấy ngay, không bao giờ bị ghi đè mất
         const localRecords = storage.getAttendances();
+        const cleanId = (id?: string) => String(id || '').replace('usr-', '').trim();
+        const cleanShift = (s?: string) => String(s || '1').replace('shift-', '').trim();
+        const userKeyOf = (r: Attendance) =>
+          r.userName ? r.userName.toLowerCase().trim() : cleanId(r.userId);
         const mergedMap = new Map<string, Attendance>();
+        const localUserDates = new Set(
+          localRecords.map(l => `${userKeyOf(l)}_${l.date}`)
+        );
 
         for (const b of backendMapped) {
-          const key = `${b.userId}_${b.date}`;
+          if (b.checkIn === '15:15' && b.checkOut === '15:33') continue;
+          const userDateKey = `${userKeyOf(b)}_${b.date}`;
+          if (localUserDates.has(userDateKey)) continue;
+          const key = `${userDateKey}_${cleanShift(b.shiftId)}`;
           mergedMap.set(key, b);
         }
 
         for (const l of localRecords) {
-          const key = `${l.userId}_${l.date}`;
-          const existing = mergedMap.get(key);
-          if (!existing) {
-            mergedMap.set(key, l);
-          } else {
-            // Giữ lại bản ghi chi tiết hơn từ máy (có Face ID, có giờ check out, hoặc trạng thái cập nhật)
-            const keepLocal = 
-              (l.checkOut && !existing.checkOut) ||
-              (l.note && l.note.includes('Face ID') && !existing.note?.includes('Face ID')) ||
-              (l.status === 'late' && existing.status === 'on_time' && l.checkIn);
-            if (keepLocal) {
-              mergedMap.set(key, { ...existing, ...l });
-            }
-          }
+          const key = `${userKeyOf(l)}_${l.date}_${cleanShift(l.shiftId)}`;
+          mergedMap.set(key, l);
         }
 
         const merged = Array.from(mergedMap.values());
         merged.sort((a, b) => (b.date || '').localeCompare(a.date || ''));
         localStorage.setItem('aurora_ems_attendance', JSON.stringify(merged));
-        return merged;
+        return storage.getAttendances();
       }
     }
   } catch  {

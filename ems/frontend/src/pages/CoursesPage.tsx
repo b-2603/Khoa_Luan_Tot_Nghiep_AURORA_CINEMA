@@ -973,9 +973,8 @@ export const CoursesPage: React.FC<CoursesPageProps> = ({ onNavigateToQuiz }) =>
                         <div className="flex items-center justify-between border-b border-slate-100 pb-2">
                           <h4 className="font-bold text-xs text-slate-800 flex items-center gap-1.5">
                             <Edit3 className="w-4 h-4 text-cyan-600" />
-                            <span>Ghi chú của bạn cho bài học này:</span>
+                            <span>Ghi chú bài học</span>
                           </h4>
-                          <span className="text-[10px] text-slate-400">Tự động lưu vào máy</span>
                         </div>
 
                         <textarea

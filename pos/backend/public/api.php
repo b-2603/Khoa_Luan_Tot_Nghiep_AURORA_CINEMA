@@ -973,4 +973,76 @@ if ($action === 'sales_order' && $requestMethod === 'POST') {
     } catch (Exception $exception) { $db->rollback(); $db->autocommit(true); $errorMessage = $exception->getMessage(); if (!$errorMessage) $errorMessage = 'Không thể hoàn tất giao dịch.'; jsonResponse(array('success' => false, 'message' => $errorMessage), 409); }
 }
 
+// ── POS VietQR + SePay Auto-Verification (dùng chung cấu hình từ customer/backend/.env) ──
+function posSharedVietqrConfig() {
+    $envPath = dirname(dirname(dirname(__DIR__))) . DIRECTORY_SEPARATOR . 'customer' . DIRECTORY_SEPARATOR . 'backend' . DIRECTORY_SEPARATOR . '.env';
+    $env = is_file($envPath) ? @parse_ini_file($envPath) : array();
+    if (!is_array($env)) $env = array();
+    $bankId = !empty($env['VIETQR_BANK_ID']) ? strtoupper(trim((string)$env['VIETQR_BANK_ID'])) : 'MB';
+    $accountNo = !empty($env['VIETQR_ACCOUNT_NO']) ? trim((string)$env['VIETQR_ACCOUNT_NO']) : '0395852972';
+    $accountName = !empty($env['VIETQR_ACCOUNT_NAME']) ? trim((string)$env['VIETQR_ACCOUNT_NAME']) : 'TONG HIEU KHIEM';
+    $sepayToken = !empty($env['SEPAY_API_TOKEN']) ? trim((string)$env['SEPAY_API_TOKEN']) : '';
+    return array('bank_id' => $bankId, 'account_no' => $accountNo, 'account_name' => $accountName, 'sepay_token' => $sepayToken);
+}
+
+if ($action === 'pos_vietqr_init' && $requestMethod === 'POST') {
+    requirePosUser();
+    $input = requestJson();
+    $amount = isset($input['amount']) ? (int)round((float)$input['amount']) : 0;
+    if ($amount < 1000) jsonResponse(array('success' => false, 'message' => 'Số tiền VietQR tối thiểu 1.000đ.'), 422);
+    $cfg = posSharedVietqrConfig();
+    $txnRef = 'POSQR' . date('ymdHis') . strtoupper(substr(md5(uniqid((string)mt_rand(), true)), 0, 6));
+    $qs = http_build_query(array('amount' => $amount, 'addInfo' => $txnRef, 'accountName' => $cfg['account_name']));
+    $vietqrUrl = 'https://img.vietqr.io/image/' . rawurlencode($cfg['bank_id']) . '-' . rawurlencode($cfg['account_no']) . '-compact2.png?' . $qs;
+    jsonResponse(array('success' => true, 'data' => array(
+        'txn_ref' => $txnRef,
+        'amount' => $amount,
+        'bank_id' => $cfg['bank_id'],
+        'account_no' => $cfg['account_no'],
+        'account_name' => $cfg['account_name'],
+        'vietqr_url' => $vietqrUrl,
+        'sepay_enabled' => $cfg['sepay_token'] !== ''
+    )));
+}
+
+if ($action === 'pos_vietqr_check' && $requestMethod === 'GET') {
+    requirePosUser();
+    $txnRef = isset($_GET['txn_ref']) ? strtoupper(trim((string)$_GET['txn_ref'])) : '';
+    $amount = isset($_GET['amount']) ? (float)$_GET['amount'] : 0;
+    if ($txnRef === '' || !preg_match('/^[A-Z0-9_-]{6,60}$/', $txnRef) || $amount <= 0) {
+        jsonResponse(array('success' => false, 'message' => 'Tham số kiểm tra VietQR không hợp lệ.'), 422);
+    }
+    $cfg = posSharedVietqrConfig();
+    if ($cfg['sepay_token'] === '' || !function_exists('curl_init')) {
+        jsonResponse(array('success' => true, 'data' => array('paid' => false, 'sepay_enabled' => false)));
+    }
+    $url = 'https://my.sepay.vn/userapi/transactions/list?account_number=' . rawurlencode($cfg['account_no']) . '&limit=20';
+    $ch = curl_init($url);
+    curl_setopt($ch, CURLOPT_HTTPHEADER, array('Authorization: Bearer ' . $cfg['sepay_token'], 'Accept: application/json'));
+    curl_setopt($ch, CURLOPT_RETURNTRANSFER, true);
+    curl_setopt($ch, CURLOPT_TIMEOUT, 4);
+    $res = curl_exec($ch);
+    $httpCode = (int)curl_getinfo($ch, CURLINFO_HTTP_CODE);
+    curl_close($ch);
+    if ($res && $httpCode >= 200 && $httpCode < 300) {
+        $decoded = json_decode($res, true);
+        $items = isset($decoded['transactions']) && is_array($decoded['transactions']) ? $decoded['transactions'] : array();
+        foreach ($items as $tx) {
+            $amountIn = isset($tx['amount_in']) ? (float)$tx['amount_in'] : 0;
+            $content = strtoupper((string)(isset($tx['transaction_content']) ? $tx['transaction_content'] : ''));
+            if ($amountIn >= $amount - 1 && strpos($content, $txnRef) !== false) {
+                $txNo = isset($tx['id']) ? ('SEPAY-' . $tx['id']) : ('SEPAY-' . date('ymdHis'));
+                jsonResponse(array('success' => true, 'data' => array(
+                    'paid' => true,
+                    'transaction_no' => $txNo,
+                    'bank_code' => isset($tx['bank_brand_name']) ? $tx['bank_brand_name'] : $cfg['bank_id'],
+                    'amount_in' => $amountIn,
+                    'paid_at' => isset($tx['transaction_date']) ? $tx['transaction_date'] : date('Y-m-d H:i:s')
+                )));
+            }
+        }
+    }
+    jsonResponse(array('success' => true, 'data' => array('paid' => false, 'sepay_enabled' => true)));
+}
+
 jsonResponse(array('success' => false, 'message' => "Route '{$action}' không tồn tại."), 404);

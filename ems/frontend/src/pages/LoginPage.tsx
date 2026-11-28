@@ -313,47 +313,6 @@ export const LoginPage: React.FC<LoginPageProps> = ({ onLoginSuccess }) => {
                 </button>
               </div>
             </form>
-
-            {/* Quick Demo Login Chips */}
-            <div className="mt-5 pt-4 border-t border-slate-200/80">
-              <div className="flex items-center justify-between mb-2">
-                <span className="text-[11px] font-bold text-slate-600">⚡ Chọn nhanh tài khoản trải nghiệm:</span>
-                <span className="text-[10px] text-amber-800 bg-amber-100/80 px-2 py-0.5 rounded-full font-bold">MK: 8888</span>
-              </div>
-              <div className="grid grid-cols-2 gap-2">
-                <button
-                  type="button"
-                  onClick={() => {
-                    setIdentifier('0988888888');
-                    setPassword('8888');
-                  }}
-                  className="p-2.5 text-left bg-slate-50 hover:bg-[#0d1b2e] hover:text-white border border-slate-200 hover:border-[#f4c04a] rounded-xl text-xs transition group cursor-pointer shadow-2xs"
-                >
-                  <div className="font-extrabold flex items-center justify-between text-slate-800 group-hover:text-white">
-                    <span>Quản Lý</span>
-                    <span className="text-[10px] text-[#f4c04a] font-black">★ Manager</span>
-                  </div>
-                  <div className="text-[11px] font-mono text-slate-500 group-hover:text-slate-300 mt-0.5">0988888888</div>
-                </button>
-
-                <button
-                  type="button"
-                  onClick={() => {
-                    setIdentifier('0901234567');
-                    setPassword('8888');
-                  }}
-                  className="p-2.5 text-left bg-slate-50 hover:bg-[#0d1b2e] hover:text-white border border-slate-200 hover:border-[#f4c04a] rounded-xl text-xs transition group cursor-pointer shadow-2xs"
-                >
-                  <div className="font-extrabold flex items-center justify-between text-slate-800 group-hover:text-white">
-                    <span>Nhân Viên</span>
-                    <span className="text-[10px] text-indigo-600 group-hover:text-[#f4c04a] font-black">Staff</span>
-                  </div>
-                  <div className="text-[11px] font-mono text-slate-500 group-hover:text-slate-300 mt-0.5">0901234567</div>
-                </button>
-              </div>
-            </div>
-
-
           </div>
         </div>
       </div>

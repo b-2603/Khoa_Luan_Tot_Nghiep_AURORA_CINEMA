@@ -173,17 +173,17 @@ export const ProfilePage: React.FC<ProfilePageProps> = ({ currentUser, onUpdateU
     };
   }, [isFaceModalOpen]);
 
-  // Lưu ảnh hồ sơ mới (Tùy chọn tải ảnh hoặc link)
   const handleSaveAvatar = (newAvatar: string) => {
     if (!newAvatar.trim()) return;
     setAvatarUrl(newAvatar);
     setAvatarPreview(newAvatar);
     const updated = updateUser(currentUser.id, { avatar: newAvatar });
     updateEmployee(currentUser.id, { avatar: newAvatar }).catch(console.warn);
-    if (updated && onUpdateUser) {
-      onUpdateUser(updated);
+    if (onUpdateUser) {
+      onUpdateUser(updated || { ...currentUser, avatar: newAvatar });
     }
     setIsAvatarModalOpen(false);
+    setIsAvatarMenuOpen(false);
     showNotification('Đã cập nhật ảnh hồ sơ thành công!', 'success');
   };
 
@@ -197,9 +197,29 @@ export const ProfilePage: React.FC<ProfilePageProps> = ({ currentUser, onUpdateU
     const reader = new FileReader();
     reader.onload = () => {
       if (typeof reader.result === 'string') {
-        // Mở chế độ cắt căn chỉnh ảnh tròn khung hình NGAY LẬP TỨC
-        setCroppingImage(reader.result);
-        setIsAvatarModalOpen(false);
+        const rawDataUrl = reader.result;
+        const img = new window.Image();
+        img.onload = () => {
+          const canvas = document.createElement('canvas');
+          const size = 320;
+          canvas.width = size;
+          canvas.height = size;
+          const ctx = canvas.getContext('2d');
+          if (ctx) {
+            const minSide = Math.min(img.width, img.height);
+            const sx = (img.width - minSide) / 2;
+            const sy = (img.height - minSide) / 2;
+            ctx.drawImage(img, sx, sy, minSide, minSide, 0, 0, size, size);
+            const compressedUrl = canvas.toDataURL('image/jpeg', 0.85);
+            handleSaveAvatar(compressedUrl);
+          } else {
+            handleSaveAvatar(rawDataUrl);
+          }
+        };
+        img.onerror = () => {
+          handleSaveAvatar(rawDataUrl);
+        };
+        img.src = rawDataUrl;
       }
     };
     reader.readAsDataURL(file);
@@ -317,12 +337,11 @@ export const ProfilePage: React.FC<ProfilePageProps> = ({ currentUser, onUpdateU
               </button>
             </div>
 
-            {/* Floating Camera Button Badge at Bottom-Right (Mobile & Quick Access) */}
             <button
               type="button"
-              onClick={() => setIsAvatarMenuOpen((prev) => !prev)}
+              onClick={() => fileInputRef.current?.click()}
               className="absolute -bottom-1 -right-1 p-2 bg-amber-500 hover:bg-amber-400 text-slate-950 rounded-2xl shadow-md border-2 border-white cursor-pointer transition transform hover:scale-110 active:scale-95 z-10"
-              title="Tùy chọn ảnh đại diện"
+              title="Tải ảnh đại diện mới từ thiết bị"
             >
               <Camera className="w-3.5 h-3.5 text-slate-950" />
             </button>
