@@ -18565,6 +18565,17 @@ ALTER TABLE `tms_showtime_ticket_types`
 ALTER TABLE `transactions`
   ADD CONSTRAINT `fk_transactions_customer` FOREIGN KEY (`customer_id`) REFERENCES `customers` (`id`) ON DELETE SET NULL;
 
+-- Per-account emoji history used by the communications picker.
+CREATE TABLE IF NOT EXISTS `aurora_emoji_history` (
+  `actor_system` varchar(8) NOT NULL,
+  `actor_user_id` bigint(20) UNSIGNED NOT NULL,
+  `emoji` varchar(191) NOT NULL,
+  `use_count` int(10) UNSIGNED NOT NULL DEFAULT 1,
+  `last_used_at` datetime NOT NULL,
+  PRIMARY KEY (`actor_system`,`actor_user_id`,`emoji`),
+  KEY `idx_emoji_history_recent` (`actor_system`,`actor_user_id`,`last_used_at`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8 COLLATE=utf8_unicode_ci;
+
 -- Communication group tables added while merging the shared aurora_db dump.
 CREATE TABLE IF NOT EXISTS `aurora_chat_groups` (
   `id` bigint(20) UNSIGNED NOT NULL AUTO_INCREMENT,

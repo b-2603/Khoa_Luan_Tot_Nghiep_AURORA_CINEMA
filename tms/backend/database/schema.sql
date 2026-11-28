@@ -338,10 +338,18 @@ CREATE TABLE IF NOT EXISTS `aurora_message_attachments` (
 
 CREATE TABLE IF NOT EXISTS `aurora_message_reactions` (
   `message_id` BIGINT UNSIGNED NOT NULL, `actor_system` VARCHAR(8) NOT NULL,
-  `actor_user_id` BIGINT UNSIGNED NOT NULL, `emoji` VARCHAR(16) NOT NULL,
+  `actor_user_id` BIGINT UNSIGNED NOT NULL, `emoji` VARCHAR(191) NOT NULL,
   `created_at` DATETIME NOT NULL,
   PRIMARY KEY (`message_id`,`actor_system`,`actor_user_id`,`emoji`),
   KEY `idx_reaction_message` (`message_id`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8 COLLATE=utf8_unicode_ci;
+
+CREATE TABLE IF NOT EXISTS `aurora_emoji_history` (
+  `actor_system` VARCHAR(8) NOT NULL, `actor_user_id` BIGINT UNSIGNED NOT NULL,
+  `emoji` VARCHAR(191) NOT NULL, `use_count` INT UNSIGNED NOT NULL DEFAULT 1,
+  `last_used_at` DATETIME NOT NULL,
+  PRIMARY KEY (`actor_system`,`actor_user_id`,`emoji`),
+  KEY `idx_emoji_history_recent` (`actor_system`,`actor_user_id`,`last_used_at`)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8 COLLATE=utf8_unicode_ci;
 
 INSERT INTO `users` (`username`, `password_hash`, `full_name`, `phone`, `email`, `role`, `status`)

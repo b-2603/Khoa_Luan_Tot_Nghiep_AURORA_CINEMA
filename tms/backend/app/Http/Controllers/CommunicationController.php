@@ -32,8 +32,15 @@ class CommunicationController
             ) ENGINE=InnoDB DEFAULT CHARSET=utf8 COLLATE=utf8_unicode_ci",
             "CREATE TABLE IF NOT EXISTS aurora_message_reactions (
                 message_id BIGINT UNSIGNED NOT NULL, actor_system VARCHAR(8) NOT NULL,
-                actor_user_id BIGINT UNSIGNED NOT NULL, emoji VARCHAR(16) NOT NULL, created_at DATETIME NOT NULL,
+                actor_user_id BIGINT UNSIGNED NOT NULL, emoji VARCHAR(191) NOT NULL, created_at DATETIME NOT NULL,
                 PRIMARY KEY(message_id,actor_system,actor_user_id,emoji), KEY idx_reaction_message(message_id)
+            ) ENGINE=InnoDB DEFAULT CHARSET=utf8 COLLATE=utf8_unicode_ci",
+            "CREATE TABLE IF NOT EXISTS aurora_emoji_history (
+                actor_system VARCHAR(8) NOT NULL, actor_user_id BIGINT UNSIGNED NOT NULL,
+                emoji VARCHAR(191) NOT NULL, use_count INT UNSIGNED NOT NULL DEFAULT 1,
+                last_used_at DATETIME NOT NULL,
+                PRIMARY KEY(actor_system,actor_user_id,emoji),
+                KEY idx_emoji_history_recent(actor_system,actor_user_id,last_used_at)
             ) ENGINE=InnoDB DEFAULT CHARSET=utf8 COLLATE=utf8_unicode_ci",
             "CREATE TABLE IF NOT EXISTS aurora_chat_groups (
                 id BIGINT UNSIGNED NOT NULL AUTO_INCREMENT PRIMARY KEY, name VARCHAR(120) NOT NULL,
@@ -58,6 +65,9 @@ class CommunicationController
             $found = $db->query("SHOW COLUMNS FROM aurora_internal_messages LIKE '{$name}'");
             if ((!$found || !$found->num_rows) && !$db->query("ALTER TABLE aurora_internal_messages ADD COLUMN `{$name}` {$definition}")) return false;
         }
+        $reactionColumn=$db->query("SHOW COLUMNS FROM aurora_message_reactions LIKE 'emoji'");
+        $reactionDefinition=$reactionColumn?$reactionColumn->fetch_assoc():null;
+        if($reactionDefinition&&strtolower($reactionDefinition['Type'])!=='varchar(191)'&&!$db->query("ALTER TABLE aurora_message_reactions MODIFY emoji VARCHAR(191) NOT NULL"))return false;
         $indexes = array(
             'aurora_internal_messages'=>array('idx_message_thread'=>'sender_system,sender_user_id,recipient_system,recipient_user_id,id'),
             'aurora_message_attachments'=>array('idx_attachment_message'=>'message_id'),
@@ -72,6 +82,31 @@ class CommunicationController
 
     private function failDatabase($message) { jsonResponse(array('success'=>false,'message'=>$message.' '.$this->db->error), 500); }
     private function uploadDir() { return dirname(dirname(dirname(dirname(dirname(dirname(__FILE__)))))).DIRECTORY_SEPARATOR.'uploads'.DIRECTORY_SEPARATOR.'communications'; }
+
+    /** Store Unicode emoji as ASCII hex so this also works on legacy utf8 tables. */
+    private function encodeReaction($emoji)
+    {
+        $emoji=trim((string)$emoji);
+        $emojiPattern='/^(?=[\s\S]*[\x{1F000}-\x{1FAFF}\x{1F1E6}-\x{1F1FF}\x{200D}\x{20E3}\x{2300}-\x{23FF}\x{2600}-\x{27BF}\x{2B00}-\x{2BFF}])\X$/u';
+        if($emoji===''||strlen($emoji)>64||!preg_match($emojiPattern,$emoji))return null;
+        return 'u'.bin2hex($emoji);
+    }
+
+    private function decodeReaction($stored)
+    {
+        $legacy=array_search($stored,$this->reactionCodes,true);if($legacy!==false)return $legacy;
+        if(strlen($stored)>1&&$stored[0]==='u'&&ctype_xdigit(substr($stored,1))&&strlen(substr($stored,1))%2===0){$decoded=pack('H*',substr($stored,1));if($decoded!==false)return $decoded;}
+        return $stored;
+    }
+
+    private function recentEmojis($me)
+    {
+        $items=array();
+        $result=$this->db->query("SELECT emoji FROM aurora_emoji_history WHERE actor_system='tms' AND actor_user_id=".(int)$me." ORDER BY last_used_at DESC,use_count DESC LIMIT 24");
+        if(!$result)return $items;
+        while($row=$result->fetch_assoc())$items[]=$this->decodeReaction($row['emoji']);
+        return $items;
+    }
 
     private function partner($value)
     {
@@ -168,18 +203,18 @@ class CommunicationController
     private function messages($me,$system,$id)
     {
         $condition=$system==='group'?"source.group_id={$id}":$this->thread($me,$system,$id,'source');$items=array();$ids=array();
-        $result=$this->db->query("SELECT m.*,a.id attachment_id,a.original_name,a.mime_type,a.size_bytes,r.content reply_content,r.message_type reply_message_type,r.sender_system reply_sender_system,CASE WHEN m.sender_system='tms' THEN tu.full_name ELSE eu.name END sender_name FROM (SELECT source.* FROM aurora_internal_messages source WHERE {$condition} ORDER BY source.id DESC LIMIT 200) m LEFT JOIN aurora_message_attachments a ON a.message_id=m.id LEFT JOIN aurora_internal_messages r ON r.id=m.reply_to_id LEFT JOIN users tu ON m.sender_system='tms' AND tu.id=m.sender_user_id LEFT JOIN ems_users eu ON m.sender_system='ems' AND eu.id=m.sender_user_id ORDER BY m.id ASC");
+        $result=$this->db->query("SELECT m.*,a.id attachment_id,a.original_name,a.mime_type,a.size_bytes,r.content reply_content,r.message_type reply_message_type,r.sender_system reply_sender_system,CASE WHEN r.sender_system='tms' THEN rtu.full_name WHEN r.sender_system='ems' THEN reu.name ELSE NULL END reply_sender_name,CASE WHEN m.sender_system='tms' THEN tu.full_name ELSE eu.name END sender_name FROM (SELECT source.* FROM aurora_internal_messages source WHERE {$condition} ORDER BY source.id DESC LIMIT 200) m LEFT JOIN aurora_message_attachments a ON a.message_id=m.id LEFT JOIN aurora_internal_messages r ON r.id=m.reply_to_id LEFT JOIN users rtu ON r.sender_system='tms' AND rtu.id=r.sender_user_id LEFT JOIN ems_users reu ON r.sender_system='ems' AND reu.id=r.sender_user_id LEFT JOIN users tu ON m.sender_system='tms' AND tu.id=m.sender_user_id LEFT JOIN ems_users eu ON m.sender_system='ems' AND eu.id=m.sender_user_id ORDER BY m.id ASC");
         if(!$result)$this->failDatabase('Không thể đọc nội dung hội thoại.');
         while($row=$result->fetch_assoc()){
             $key=(int)$row['id'];$row['id']=$key;$row['sender_user_id']=(int)$row['sender_user_id'];$row['mine']=$row['sender_system']==='tms'&&$row['sender_user_id']===$me;
             $row['attachment']=$row['attachment_id']?array('id'=>(int)$row['attachment_id'],'name'=>$row['original_name'],'mime'=>$row['mime_type'],'size'=>(int)$row['size_bytes']):null;
-            $row['reply']=$row['reply_to_id']?array('id'=>(int)$row['reply_to_id'],'content'=>$row['reply_content'],'type'=>$row['reply_message_type'],'sender_system'=>$row['reply_sender_system']):null;
+            $row['reply']=$row['reply_to_id']?array('id'=>(int)$row['reply_to_id'],'content'=>$row['reply_content'],'type'=>$row['reply_message_type'],'sender_system'=>$row['reply_sender_system'],'sender_name'=>$row['reply_sender_name']):null;
             $row['reactions']=array();$items[$key]=$row;$ids[]=$key;
         }
         if($ids){
             $result=$this->db->query("SELECT message_id,emoji,COUNT(*) total,MAX(actor_system='tms' AND actor_user_id={$me}) mine FROM aurora_message_reactions WHERE message_id IN (".implode(',',$ids).") GROUP BY message_id,emoji ORDER BY MIN(created_at)");
             if(!$result)$this->failDatabase('Không thể đọc cảm xúc tin nhắn.');
-            while($row=$result->fetch_assoc()){$symbol=array_search($row['emoji'],$this->reactionCodes,true);$items[(int)$row['message_id']]['reactions'][]=array('emoji'=>$symbol!==false?$symbol:$row['emoji'],'count'=>(int)$row['total'],'mine'=>(bool)$row['mine']);}
+            while($row=$result->fetch_assoc()){$items[(int)$row['message_id']]['reactions'][]=array('emoji'=>$this->decodeReaction($row['emoji']),'count'=>(int)$row['total'],'mine'=>(bool)$row['mine']);}
         }
         return array_values($items);
     }
@@ -198,12 +233,23 @@ class CommunicationController
 
     private function react($me,$system,$id,$input)
     {
-        $messageId=(int)(isset($input['message_id'])?$input['message_id']:0);$emoji=(string)(isset($input['emoji'])?$input['emoji']:'');
-        if(!$messageId||!isset($this->reactionCodes[$emoji]))jsonResponse(array('success'=>false,'message'=>'Cảm xúc không hợp lệ.'),422);
-        $thread=$system==='group'?"m.group_id={$id}":$this->thread($me,$system,$id);$result=$this->db->query("SELECT m.id FROM aurora_internal_messages m WHERE m.id={$messageId} AND {$thread} LIMIT 1");if(!$result||!$result->fetch_assoc())jsonResponse(array('success'=>false,'message'=>'Tin nhắn không thuộc cuộc trò chuyện này.'),404);
-        $code=$this->reactionCodes[$emoji];$exists=$this->db->query("SELECT 1 FROM aurora_message_reactions WHERE message_id={$messageId} AND actor_system='tms' AND actor_user_id={$me} AND emoji='{$code}'");
-        $sql=$exists&&$exists->num_rows?"DELETE FROM aurora_message_reactions WHERE message_id={$messageId} AND actor_system='tms' AND actor_user_id={$me} AND emoji='{$code}'":"INSERT INTO aurora_message_reactions(message_id,actor_system,actor_user_id,emoji,created_at) VALUES({$messageId},'tms',{$me},'{$code}',NOW())";
-        if(!$this->db->query($sql))$this->failDatabase('Không thể cập nhật cảm xúc.');jsonResponse(array('success'=>true));
+        $messageId=(int)(isset($input['message_id'])?$input['message_id']:0);
+        $code=$this->encodeReaction(isset($input['emoji'])?$input['emoji']:'');
+        if(!$messageId||$code===null)jsonResponse(array('success'=>false,'message'=>'Vui lòng chọn đúng một biểu tượng cảm xúc.'),422);
+
+        $thread=$system==='group'?"m.group_id={$id}":$this->thread($me,$system,$id);
+        $message=$this->db->query("SELECT m.id FROM aurora_internal_messages m WHERE m.id={$messageId} AND {$thread} LIMIT 1");
+        if(!$message||!$message->fetch_assoc())jsonResponse(array('success'=>false,'message'=>'Tin nhắn không thuộc cuộc trò chuyện này.'),404);
+
+        $code=$this->db->real_escape_string($code);
+        $exists=$this->db->query("SELECT 1 FROM aurora_message_reactions WHERE message_id={$messageId} AND actor_system='tms' AND actor_user_id={$me} AND emoji='{$code}' LIMIT 1");
+        $active=!($exists&&$exists->num_rows);
+        $sql=$active
+            ? "INSERT INTO aurora_message_reactions(message_id,actor_system,actor_user_id,emoji,created_at) VALUES({$messageId},'tms',{$me},'{$code}',NOW())"
+            : "DELETE FROM aurora_message_reactions WHERE message_id={$messageId} AND actor_system='tms' AND actor_user_id={$me} AND emoji='{$code}'";
+        if(!$this->db->query($sql))$this->failDatabase('Không thể cập nhật cảm xúc.');
+        if(!$this->db->query("INSERT INTO aurora_emoji_history(actor_system,actor_user_id,emoji,use_count,last_used_at) VALUES('tms',{$me},'{$code}',1,NOW()) ON DUPLICATE KEY UPDATE use_count=use_count+1,last_used_at=NOW()"))$this->failDatabase('Không thể lưu lịch sử emoji.');
+        jsonResponse(array('success'=>true,'data'=>array('active'=>$active)));
     }
 
     private function send($me,$system,$id,$input)
@@ -229,7 +275,7 @@ class CommunicationController
     public function handle($method)
     {
         $user=requireAdmin();$me=(int)$user['id'];if(!self::ensureSchema($this->db))$this->failDatabase('Không thể khởi tạo kênh trao đổi trong aurora_db.');
-        if($method==='GET'&&empty($_GET['partner']))jsonResponse(array('success'=>true,'data'=>array('contacts'=>$this->contacts($me),'conversations'=>$this->summaries($me))));
+        if($method==='GET'&&empty($_GET['partner']))jsonResponse(array('success'=>true,'data'=>array('contacts'=>$this->contacts($me),'conversations'=>$this->summaries($me),'recent_emojis'=>$this->recentEmojis($me))));
         $input=$method==='GET'?$_GET:requestJson();if($method==='POST'&&isset($input['operation'])&&$input['operation']==='create_group')$this->createGroup($me,$input);$partner=$this->partner(isset($input['partner'])?$input['partner']:'');$this->requireContact($me,$partner);$system=$this->db->real_escape_string($partner['system']);$id=(int)$partner['id'];
         if($method==='POST'&&isset($input['operation'])&&$input['operation']==='add_members'&&$system==='group')$this->addGroupMembers($me,$id,$input);
         if($method==='GET')jsonResponse(array('success'=>true,'data'=>array('items'=>$this->messages($me,$system,$id),'members'=>$system==='group'?$this->groupMembers($id):array())));
